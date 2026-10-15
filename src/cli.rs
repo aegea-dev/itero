@@ -54,6 +54,26 @@ pub enum Cmd {
     /// A worker: one job, JSON in on stdin, its output as JSON on stdout
     #[command(hide = true)]
     Worker,
+    /// Keeps `itero daemon` running: restarts it when it exits, stops
+    /// answering or stops making passes (what the service runs)
+    #[command(hide = true)]
+    Watchdog {
+        /// Seconds between the daemon's passes
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
+        /// Seconds between checks of the daemon's /health
+        #[arg(long, default_value_t = 10)]
+        check_every: u64,
+        /// Checks in a row without an answer before a restart
+        #[arg(long, default_value_t = 3)]
+        misses: u32,
+        /// Seconds without a pass before the daemon counts as hung
+        #[arg(long, default_value_t = 600)]
+        stale_after: u64,
+        /// Where its lines and the daemon's stderr go
+        #[arg(long)]
+        log: Option<std::path::PathBuf>,
+    },
 }
 
 /// Lists a command's subcommands, and theirs, by name in help: one display
@@ -196,6 +216,28 @@ fn dispatch(cli: Cli) -> Result<()> {
             let j = crate::engine::journal::Journal::open(&ws)?;
             let m = j.memory(&workflow)?;
             println!("{}", serde_json::to_string_pretty(&m)?);
+        }
+        Cmd::Watchdog {
+            interval,
+            check_every,
+            misses,
+            stale_after,
+            log,
+        } => {
+            use crate::engine::watchdog::{Options, Rules, run};
+            let ws = workspace()?;
+            run(&Options {
+                exe: std::env::current_exe()?,
+                daemon_args: vec!["--interval".into(), interval.to_string()],
+                port: ws.port,
+                rules: Rules {
+                    check_every: std::time::Duration::from_secs(check_every),
+                    misses,
+                    stale_after: std::time::Duration::from_secs(stale_after),
+                    ..Rules::default()
+                },
+                log,
+            })?;
         }
         Cmd::Manager => {
             crate::engine::die_at("manager");
