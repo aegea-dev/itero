@@ -6,6 +6,7 @@ pub mod daemon;
 pub mod eval;
 pub mod journal;
 pub mod manager;
+pub mod schedule;
 pub mod secrets;
 pub mod worker;
 

@@ -3,7 +3,7 @@
 //! and log, and keeps each run's place, the workflow versions runs are
 //! pinned to, and timers.
 use super::{Runtime, Timer};
-use crate::workflow::File;
+use crate::workflow::{self, File};
 use crate::workspace::Workspace;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE TABLE IF NOT EXISTS workflows (pin TEXT PRIMARY KEY, definition TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY AUTOINCREMENT, run TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS jobs (seq INTEGER PRIMARY KEY, runs INTEGER NOT NULL, lost TEXT);
+CREATE TABLE IF NOT EXISTS schedules (key TEXT PRIMARY KEY, last TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
 
@@ -299,6 +300,81 @@ impl Journal {
         .transpose()
     }
 
+    /// Starts a run of a workflow, pinned at its version: the run, and its
+    /// `run.started` event, in one transaction. With a schedule's key, that
+    /// schedule's last slot becomes `now` in the same transaction, so a slot
+    /// never starts two runs. Returns the run's id.
+    pub fn start_run(
+        &mut self,
+        f: &File,
+        args: &Map<String, Value>,
+        now: &str,
+        schedule: Option<&str>,
+    ) -> Result<String> {
+        let id = uuid::Uuid::now_v7().to_string();
+        let pin = workflow::pin(f);
+        let rt = Runtime {
+            state: f.start.clone(),
+            chain: None,
+            failed: None,
+        };
+        let tx = self.db.transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO workflows (pin, definition) VALUES (?1, ?2)",
+            params![pin, json(f)?],
+        )?;
+        tx.execute(
+            "INSERT INTO runs (id, workflow, pin, runtime, args, started) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, f.name, pin, json(&rt)?, json(args)?, now],
+        )?;
+        let e = Envelope::new(
+            "daemon",
+            "run.started",
+            &subject(&id),
+            now,
+            None,
+            Value::Object(Map::new()),
+        );
+        publish(&tx, &e)?;
+        if let Some(key) = schedule {
+            set_schedule_last(&tx, key, now)?;
+        }
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Every run, oldest first.
+    pub fn runs(&self) -> Result<Vec<Run>> {
+        let mut s = self
+            .db
+            .prepare("SELECT id FROM runs ORDER BY started, id")?;
+        let ids: Vec<String> = s
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut out = vec![];
+        for id in ids {
+            out.extend(self.run(&id)?);
+        }
+        Ok(out)
+    }
+
+    /// When a schedule (`<workflow>#<trigger>`) last started a run, or was
+    /// first seen.
+    pub fn schedule_last(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT last FROM schedules WHERE key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn set_schedule_last(&self, key: &str, at: &str) -> Result<()> {
+        set_schedule_last(&self.db, key, at)
+    }
+
     /// The definition of a pinned workflow version.
     pub fn workflow(&self, pin: &str) -> Result<Option<File>> {
         let t: Option<String> = self
@@ -368,6 +444,14 @@ impl Journal {
         tx.commit()?;
         Ok(())
     }
+}
+
+fn set_schedule_last(db: &Connection, key: &str, at: &str) -> Result<()> {
+    db.execute(
+        "INSERT INTO schedules (key, last) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET last = ?2",
+        params![key, at],
+    )?;
+    Ok(())
 }
 
 fn publish(db: &Connection, e: &Envelope) -> Result<()> {

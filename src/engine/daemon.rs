@@ -7,7 +7,7 @@ use super::worker::{Failure, LOST_EXIT};
 use super::{Answer, Event, Input, Interpreter, Job, Program};
 use crate::workflow::{FAILED, actions};
 use crate::workspace::Workspace;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -60,6 +60,7 @@ pub(crate) fn stamp(t: DateTime<Utc>) -> String {
 pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let mut j = Journal::open(ws)?;
     let mut pass = Pass::default();
+    fire_schedules(ws, &mut j, now)?;
     for (id, run, data) in j.due_timers(&stamp(now))? {
         let e = Envelope::new(
             "daemon",
@@ -149,6 +150,27 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
         }
     }
     Ok(pass)
+}
+
+/// Starts a run of every workflow whose schedule is due. A schedule seen for
+/// the first time only starts counting: it waits for its first slot.
+fn fire_schedules(ws: &Workspace, j: &mut Journal, now: DateTime<Utc>) -> Result<()> {
+    for (_, f) in ws.workflows()? {
+        for (i, t) in f.triggers.iter().enumerate() {
+            let key = format!("{}#{i}", f.name);
+            let Some(last) = j.schedule_last(&key)? else {
+                j.set_schedule_last(&key, &stamp(now))?;
+                continue;
+            };
+            let last: DateTime<Utc> = last
+                .parse()
+                .map_err(|_| anyhow!("schedule {key}: its last slot is not a time: {last}"))?;
+            if super::schedule::due(&t.schedule, last, now).map_err(|e| anyhow!(e))? {
+                j.start_run(&f, &t.args, &stamp(now), Some(&key))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Why a job that kept being lost failed.

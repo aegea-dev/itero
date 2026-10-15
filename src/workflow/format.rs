@@ -11,6 +11,9 @@ pub struct File {
     pub description: String,
     /// Every state a run can be in, in order.
     pub states: Vec<String>,
+    /// What starts a run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub triggers: Vec<Trigger>,
     /// Where a run begins.
     pub start: String,
     /// The closing states.
@@ -18,6 +21,16 @@ pub struct File {
     pub end: Vec<String>,
     #[serde(default)]
     pub transitions: Vec<Transition>,
+}
+
+/// What starts a run: a schedule (cron, in the machine's local time), and
+/// the arguments the run gets.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Trigger {
+    pub schedule: String,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub args: Map<String, Value>,
 }
 
 /// A move from one state to another.

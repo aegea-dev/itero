@@ -120,6 +120,9 @@ pub fn validate(file: &str, f: &File) -> Result<(), WorkflowError> {
             ));
         }
     }
+    for t in &f.triggers {
+        crate::engine::schedule::check(&t.schedule).map_err(&whole)?;
+    }
     if !f.states.contains(&f.start) {
         return Err(whole(format!("start \"{}\" is not a state", f.start)));
     }
