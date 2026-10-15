@@ -1,0 +1,30 @@
+[package]
+name = "itero"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Runs workflows again and again: schedules, events, steps, workers"
+
+[dependencies]
+clap = { version = "~4.6.6", features = ["derive"] }
+serde = { version = "~1.0.229", features = ["derive"] }
+serde_json = "~1.0.151"
+toml = "~1.1.6"
+chrono = "~0.4.45"
+anyhow = "~1.0.104"
+cel-interpreter = { version = "~0.9.1", features = ["json"] }
+sha2 = "~0.11.1"
+humantime = "~2.4.0"
+rusqlite = { version = "~0.40.2", features = ["bundled"] }
+uuid = { version = "~1.28.0", features = ["v7"] }
+# native-tls, not the default rustls: its aws-lc-rs is not MIT or Apache-2.0
+reqwest = { version = "~0.13.5", default-features = false, features = ["blocking", "json", "native-tls", "http2"] }
+wait-timeout = "~0.2.1"
+keyring = "~4.2.0"
+fs2 = "~0.4.3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "~0.2.190"
+
+[dev-dependencies]
+tempfile = "~3.27.0"
