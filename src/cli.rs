@@ -48,6 +48,11 @@ pub enum Cmd {
     Runs,
     /// A workflow's memory, as JSON
     Memory { workflow: String },
+    /// Start this workspace's daemon at login, kept up by a watchdog
+    Service {
+        #[command(subcommand)]
+        cmd: ServiceCmd,
+    },
     /// The workflow manager: one decision, JSON in on stdin, JSON out on stdout
     #[command(hide = true)]
     Manager,
@@ -74,6 +79,20 @@ pub enum Cmd {
         #[arg(long)]
         log: Option<std::path::PathBuf>,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ServiceCmd {
+    /// Run the daemon as a service (per user, at login), kept up by a watchdog
+    Install {
+        /// Seconds between passes
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
+    },
+    /// Stop and remove the service
+    Uninstall,
+    /// The service's state and the daemon's health
+    Status,
 }
 
 /// Lists a command's subcommands, and theirs, by name in help: one display
@@ -216,6 +235,58 @@ fn dispatch(cli: Cli) -> Result<()> {
             let j = crate::engine::journal::Journal::open(&ws)?;
             let m = j.memory(&workflow)?;
             println!("{}", serde_json::to_string_pretty(&m)?);
+        }
+        Cmd::Service { cmd } => {
+            use crate::engine::service;
+            let ws = workspace()?;
+            match cmd {
+                ServiceCmd::Install { interval } => {
+                    let exe = std::env::current_exe()?;
+                    let log = service::log_file(&ws.root);
+                    if let Some(dir) = log.parent() {
+                        std::fs::create_dir_all(dir)?;
+                    }
+                    let path = std::env::var("PATH").ok();
+                    service::install(service::install_ctx(&ws.root, &exe, interval, path))?;
+                    println!(
+                        "installed: {} runs itero in {}; it starts at login",
+                        service::label(&ws.root).to_qualified_name(),
+                        ws.root.display()
+                    );
+                    println!("API: http://127.0.0.1:{}/", ws.port);
+                    println!("log: {}", log.display());
+                    println!("it keeps this shell's PATH; install again after changing it");
+                }
+                ServiceCmd::Uninstall => {
+                    if service::uninstall(&ws.root)? {
+                        println!("stopped and removed");
+                    } else {
+                        println!("no service for {}", ws.root.display());
+                    }
+                }
+                ServiceCmd::Status => {
+                    println!("service: {}", service::status(&ws.root)?);
+                    let health = reqwest::blocking::Client::builder()
+                        .timeout(std::time::Duration::from_secs(3))
+                        .build()?
+                        .get(format!("http://127.0.0.1:{}/health", ws.port))
+                        .send()
+                        .and_then(|r| r.json::<serde_json::Value>());
+                    match health {
+                        Ok(h) => println!(
+                            "daemon: pid {}, {} passes, last {}{}",
+                            h["pid"],
+                            h["passes"],
+                            h["last_pass"].as_str().unwrap_or("none yet"),
+                            h["last_error"]
+                                .as_str()
+                                .map(|e| format!(", last error: {e}"))
+                                .unwrap_or_default()
+                        ),
+                        Err(_) => println!("daemon: no answer on port {}", ws.port),
+                    }
+                }
+            }
         }
         Cmd::Watchdog {
             interval,

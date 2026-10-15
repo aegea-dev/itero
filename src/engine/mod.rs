@@ -10,6 +10,7 @@ pub mod journal;
 pub mod manager;
 pub mod schedule;
 pub mod secrets;
+pub mod service;
 pub mod watchdog;
 pub mod worker;
 
