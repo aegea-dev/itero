@@ -31,8 +31,11 @@ built in iterations; section 9 says what the first one holds.
 - **`itero manager`** is pure: JSON in, JSON out, no IO, no clock, no
   randomness. The same input always gives the same answer.
 - **`itero worker`** runs one action in its own process group and exits.
-- The watchdog, the OS service (launchd, systemd), secrets (the OS secret
-  store) and leases come from primum as they are.
+- **`itero service install`** registers a per-user service (launchd,
+  systemd) that runs **`itero watchdog`** in the workspace at login; the
+  watchdog runs `itero daemon` and restarts it when it exits, stops
+  answering `/health` or stops making passes. Both come from primum, as do
+  secrets (the OS secret store) and leases.
 - One daemon per workspace. A person may keep several workspaces apart
   (work, home); each has its own daemon and port.
 - Installed by an install script, Homebrew and cargo.
@@ -87,8 +90,13 @@ A trigger has one of `schedule` and `on`, and gives the run its `args`. A
 workflow declares its own triggers (`"triggers": [...]` in its file). An
 app's event starts one run per matching trigger, in one transaction with
 handling the event, so an event delivered again starts nothing twice; an
-event nothing waits for is handled with a note. Later (iteration 3): the
-workspace's `triggers/` adds triggers, or replaces a workflow's own by name.
+event nothing waits for is handled with a note.
+
+The workspace's `triggers/<workflow>.json` adds triggers to a workflow's
+own, or replaces them (`"replace": true`). A workflow's version leaves its
+triggers out: when it runs is the workspace's business, not part of what
+a run is pinned to. A schedule's last slot is kept under its workflow and
+cron text, so merging or reordering triggers keeps it.
 
 ## 5. Memory
 
@@ -152,8 +160,11 @@ another site cannot post one without a preflight, which is never granted).
 `install.sh` (curl or wget, POSIX sh) installs a release for macOS (Apple
 Silicon, Intel) or Linux (x86_64, aarch64): it checks the archive's SHA-256
 before unpacking, puts `itero` in `~/.local/bin` and, on macOS, `Itero.app`
-in `~/Applications`, and never edits a shell profile. `make dist` makes the
-archives; the release workflow publishes them on a version tag.
+in `~/Applications`, and never edits a shell profile. Homebrew
+(`brew install erhangundogan/tap/itero`) installs the same archives, with
+`Itero.app` in the formula's `libexec`, where the worker also looks. `make
+dist` makes the archives; the release workflow publishes them on a version
+tag and writes their checksums into the tap's formula.
 
 primum becomes an app: its ticket changes become events, and changing a
 ticket is an action that runs `primum`.
@@ -205,6 +216,7 @@ one notification on the next run and none after. Tests write a small mbox
 file instead of sending mail, and stub the notifier.
 
 Iteration 2 (`docs/plan-2-api-events-install.md`) added the HTTP API, event
-triggers and the installer. Left for later iterations: the workspace's
-`triggers/`, NATS, the inbox, primum as an app, the service and watchdog
-commands, Homebrew, the marketplace.
+triggers and the installer; iteration 3
+(`docs/plan-3-service-triggers-homebrew.md`) the service at login, the
+workspace's `triggers/` and Homebrew. Left for later iterations: NATS, the
+inbox, primum as an app, the marketplace.

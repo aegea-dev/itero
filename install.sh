@@ -405,6 +405,7 @@ Check your network connection and try again."
 
 	say ""
 	say "Next:  mkdir my-workflows && cd my-workflows && echo 'port = 8787' > itero.toml && itero daemon"
+	say "       and to start it at login, in that folder:  itero service install"
 }
 
 main "$@"

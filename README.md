@@ -7,17 +7,19 @@ actions; it decides nothing on its own beyond what a workflow says.
 
 itero is young: schedules and app events start workflows with steps, each
 workflow has a memory, actions run commands, shell lines and desktop
-notifications, and the daemon has a local HTTP API. The service (start at
-login) and Homebrew come next.
+notifications, the daemon has a local HTTP API, and it starts at login.
 
 ## Install
 
 ```bash
+brew install erhangundogan/tap/itero
+# or
 curl -fsSL https://raw.githubusercontent.com/erhangundogan/itero/main/install.sh | sh
 ```
 
-It checks the release archive's SHA-256 before unpacking, installs `itero`
-to `~/.local/bin` and, on macOS, `Itero.app` to `~/Applications`, and never
+Homebrew puts `Itero.app` in the formula's own folder. The script checks
+the release archive's SHA-256 before unpacking, installs `itero` to
+`~/.local/bin` and, on macOS, `Itero.app` to `~/Applications`, and never
 edits your shell profile. `--version X.Y.Z`, `--to DIR` and `--uninstall`
 are its options (`sh -s -- --help`).
 
@@ -57,7 +59,30 @@ actions = ["actions"]
 
 Commands: `itero daemon`, `itero emit <type> [--data JSON] [--run ID]`,
 `itero check` (every workflow and action, with its version), `itero runs`,
-`itero memory <workflow>`.
+`itero memory <workflow>`, `itero service install|status|uninstall`.
+
+### Workspace triggers
+
+`triggers/<workflow>.json` sets when a workflow runs in this workspace,
+without editing the workflow: its triggers are added to the workflow's
+own, or used instead of them with `"replace": true`. For the mail check, a
+10 minute schedule and this machine's mailbox:
+
+```json
+{ "replace": true,
+  "triggers": [ { "schedule": "*/10 * * * *", "args": { "mailbox": "/var/mail/me" } } ] }
+```
+
+### Start at login
+
+In a workspace, `itero service install` runs its daemon as a per-user
+service (a launchd agent on macOS, a systemd user unit on Linux) that
+starts at login. A watchdog keeps it up: it restarts the daemon when it
+exits, stops answering `/health`, or stops making passes. One service per
+workspace, each on its workspace's port; it logs to `.itero/daemon.log` and
+keeps the installing shell's `PATH` (install again after changing it).
+`itero service status` shows the service and the daemon's health; `itero
+service uninstall` removes it.
 
 ## The API
 
