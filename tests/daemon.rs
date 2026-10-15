@@ -130,3 +130,39 @@ fn a_failed_run_sets_no_memory() {
     assert!(j.runs().unwrap()[0].ended.is_some());
     assert!(j.memory("bozuk").unwrap().is_empty());
 }
+
+#[test]
+fn an_app_event_starts_the_workflows_waiting_for_it_once() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(
+        d.path(),
+        "kucuk-resim",
+        r#"{ "name": "kucuk-resim",
+      "triggers": [ { "on": "foto.eklendi", "args": { "boyut": 256 } } ],
+      "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+      "transitions": [ { "from": "basla", "to": "bitti",
+        "do": [ { "action": "memory.set@1", "with": { "son": "${input.yol}", "boyut": "${args.boyut}" } } ] } ] }"#,
+    );
+    let now = "2026-10-15T14:00:00Z";
+    let data = serde_json::json!({"yol": "çarşı.jpg"});
+    itero::engine::events::emit(&ws, "foto.eklendi", Some(data), None, now).unwrap();
+    itero::engine::events::emit(&ws, "baska.olay", None, None, now).unwrap();
+    run_once(&ws, t(now), exe()).unwrap();
+    run_once(&ws, t(now), exe()).unwrap();
+    let j = Journal::open(&ws).unwrap();
+    let runs = j.runs().unwrap();
+    assert_eq!(runs.len(), 1, "one run, however many passes");
+    assert_eq!(runs[0].runtime.state, "bitti");
+    let m = j.memory("kucuk-resim").unwrap();
+    assert_eq!(m["son"], "çarşı.jpg");
+    assert_eq!(m["boyut"], 256);
+    // the event nothing waits for is handled, with a note, not an error
+    let other = j
+        .events(Some("itero.app"))
+        .unwrap()
+        .into_iter()
+        .find(|r| r.event.kind == "baska.olay")
+        .unwrap();
+    assert!(other.handled.is_some() && other.error.is_none());
+    assert_eq!(other.note.as_deref(), Some("no workflow starts on it"));
+}

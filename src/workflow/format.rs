@@ -23,12 +23,16 @@ pub struct File {
     pub transitions: Vec<Transition>,
 }
 
-/// What starts a run: a schedule (cron, in the machine's local time), and
-/// the arguments the run gets.
+/// What starts a run: a schedule (cron, in the machine's local time) or an
+/// app's event (`on`, its type), one of them, and the arguments the run
+/// gets. A run an event starts has the event's data as its input.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Trigger {
-    pub schedule: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<String>,
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub args: Map<String, Value>,
 }

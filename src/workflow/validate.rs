@@ -121,7 +121,19 @@ pub fn validate(file: &str, f: &File) -> Result<(), WorkflowError> {
         }
     }
     for t in &f.triggers {
-        crate::engine::schedule::check(&t.schedule).map_err(&whole)?;
+        match (&t.schedule, &t.on) {
+            (Some(s), None) => crate::engine::schedule::check(s).map_err(&whole)?,
+            (None, Some(on)) => {
+                if !on.split('.').all(is_word) {
+                    return Err(whole(format!(
+                        "trigger on \"{on}\" is an event type, like photo.added"
+                    )));
+                }
+            }
+            _ => {
+                return Err(whole("a trigger has a schedule or on, one of them".into()));
+            }
+        }
     }
     if !f.states.contains(&f.start) {
         return Err(whole(format!("start \"{}\" is not a state", f.start)));

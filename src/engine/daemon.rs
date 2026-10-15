@@ -132,6 +132,11 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
     // next events
     loop {
         while let Some(r) = j.next()? {
+            if r.event.subject == journal::subject("app") {
+                start_triggered(ws, &mut j, &r, now)?;
+                pass.delivered += 1;
+                continue;
+            }
             if let Delivered::Deferred = deliver(&mut j, &r, now, exe)? {
                 // events are delivered in order: the rest waits with it
                 pass.deferred += 1;
@@ -213,6 +218,9 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
 fn fire_schedules(ws: &Workspace, j: &mut Journal, now: DateTime<Utc>) -> Result<()> {
     for (_, f) in ws.workflows()? {
         for (i, t) in f.triggers.iter().enumerate() {
+            let Some(schedule) = &t.schedule else {
+                continue;
+            };
             let key = format!("{}#{i}", f.name);
             let Some(last) = j.schedule_last(&key)? else {
                 j.set_schedule_last(&key, &stamp(now))?;
@@ -221,10 +229,35 @@ fn fire_schedules(ws: &Workspace, j: &mut Journal, now: DateTime<Utc>) -> Result
             let last: DateTime<Utc> = last
                 .parse()
                 .map_err(|_| anyhow!("schedule {key}: its last slot is not a time: {last}"))?;
-            if super::schedule::due(&t.schedule, last, now).map_err(|e| anyhow!(e))? {
+            if super::schedule::due(schedule, last, now).map_err(|e| anyhow!(e))? {
                 j.start_run(&f, &t.args, &stamp(now), Some(&key))?;
             }
         }
+    }
+    Ok(())
+}
+
+/// An app's event: a run of every workflow with an `on` trigger for its
+/// type, the trigger's args and the event's data as input.
+fn start_triggered(
+    ws: &Workspace,
+    j: &mut Journal,
+    r: &Recorded,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let flows = ws.workflows()?;
+    let starts: Vec<(&crate::workflow::File, &Map<String, Value>)> = flows
+        .iter()
+        .flat_map(|(_, f)| {
+            f.triggers
+                .iter()
+                .filter(|t| t.on.as_deref() == Some(r.event.kind.as_str()))
+                .map(move |t| (f, &t.args))
+        })
+        .collect();
+    let ids = j.start_runs_for_event(r.seq, &starts, &r.event.data, &stamp(now))?;
+    if ids.is_empty() {
+        eprintln!("{}: no workflow starts on it", r.event.kind);
     }
     Ok(())
 }

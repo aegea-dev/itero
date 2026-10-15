@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS events (
   cause TEXT,
   data TEXT NOT NULL,
   handled TEXT,
-  error TEXT
+  error TEXT,
+  note TEXT
 );
 CREATE INDEX IF NOT EXISTS events_open ON events (handled, seq);
 CREATE TABLE IF NOT EXISTS runs (
@@ -92,6 +93,8 @@ pub struct Recorded {
     pub event: Envelope,
     pub handled: Option<String>,
     pub error: Option<String>,
+    /// What handling it did, when it did nothing a run shows.
+    pub note: Option<String>,
 }
 
 /// A run as the journal holds it.
@@ -160,10 +163,11 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Recorded> {
         },
         handled: r.get(8)?,
         error: r.get(9)?,
+        note: r.get(10)?,
     })
 }
 
-const COLUMNS: &str = "seq, id, time, type, source, subject, cause, data, handled, error";
+const COLUMNS: &str = "seq, id, time, type, source, subject, cause, data, handled, error, note";
 
 impl Journal {
     /// Opens (and creates) a workspace's journal; one from a newer itero is
@@ -314,36 +318,38 @@ impl Journal {
         now: &str,
         schedule: Option<&str>,
     ) -> Result<String> {
-        let id = uuid::Uuid::now_v7().to_string();
-        let pin = workflow::pin(f);
-        let rt = Runtime {
-            state: f.start.clone(),
-            chain: None,
-            failed: None,
-        };
         let tx = self.db.transaction()?;
-        tx.execute(
-            "INSERT OR IGNORE INTO workflows (pin, definition) VALUES (?1, ?2)",
-            params![pin, json(f)?],
-        )?;
-        tx.execute(
-            "INSERT INTO runs (id, workflow, pin, runtime, args, started) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, f.name, pin, json(&rt)?, json(args)?, now],
-        )?;
-        let e = Envelope::new(
-            "daemon",
-            "run.started",
-            &subject(&id),
-            now,
-            None,
-            Value::Object(Map::new()),
-        );
-        publish(&tx, &e)?;
+        let id = insert_run(&tx, f, args, &Value::Object(Map::new()), now)?;
         if let Some(key) = schedule {
             set_schedule_last(&tx, key, now)?;
         }
         tx.commit()?;
         Ok(id)
+    }
+
+    /// Starts a run for each of `starts` on app event `seq`, the event's
+    /// data their input, and marks the event handled: one transaction, so
+    /// an event delivered again starts nothing twice. No starts is noted,
+    /// not an error.
+    pub fn start_runs_for_event(
+        &mut self,
+        seq: i64,
+        starts: &[(&File, &Map<String, Value>)],
+        input: &Value,
+        at: &str,
+    ) -> Result<Vec<String>> {
+        let tx = self.db.transaction()?;
+        let mut ids = vec![];
+        for (f, args) in starts {
+            ids.push(insert_run(&tx, f, args, input, at)?);
+        }
+        let note = starts.is_empty().then_some("no workflow starts on it");
+        tx.execute(
+            "UPDATE events SET handled = ?2, note = ?3 WHERE seq = ?1 AND handled IS NULL",
+            params![seq, at, note],
+        )?;
+        tx.commit()?;
+        Ok(ids)
     }
 
     /// Every run, oldest first.
@@ -472,6 +478,42 @@ impl Journal {
         tx.commit()?;
         Ok(())
     }
+}
+
+/// A new run of `f`, pinned at its version, and its `run.started` event
+/// carrying `input`; returns its id.
+fn insert_run(
+    db: &Connection,
+    f: &File,
+    args: &Map<String, Value>,
+    input: &Value,
+    now: &str,
+) -> Result<String> {
+    let id = uuid::Uuid::now_v7().to_string();
+    let pin = workflow::pin(f);
+    let rt = Runtime {
+        state: f.start.clone(),
+        chain: None,
+        failed: None,
+    };
+    db.execute(
+        "INSERT OR IGNORE INTO workflows (pin, definition) VALUES (?1, ?2)",
+        params![pin, json(f)?],
+    )?;
+    db.execute(
+        "INSERT INTO runs (id, workflow, pin, runtime, args, started) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, f.name, pin, json(&rt)?, json(args)?, now],
+    )?;
+    let e = Envelope::new(
+        "daemon",
+        "run.started",
+        &subject(&id),
+        now,
+        None,
+        input.clone(),
+    );
+    publish(db, &e)?;
+    Ok(id)
 }
 
 fn set_schedule_last(db: &Connection, key: &str, at: &str) -> Result<()> {

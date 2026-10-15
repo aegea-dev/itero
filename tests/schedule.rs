@@ -83,3 +83,26 @@ fn a_workflow_with_a_bad_schedule_is_refused() {
     let e = itero::workflow::parse(flow).unwrap_err().to_string();
     assert!(e.contains("her gün"), "{e}");
 }
+
+#[test]
+fn a_trigger_has_a_schedule_or_an_event_not_both() {
+    let with = |t: &str| {
+        format!(
+            r#"{{ "name": "akis", "triggers": [ {t} ],
+      "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+      "transitions": [ {{ "from": "basla", "to": "bitti" }} ] }}"#
+        )
+    };
+    itero::workflow::parse(&with(r#"{ "on": "foto.eklendi" }"#)).unwrap();
+    for bad in [
+        r#"{ "schedule": "* * * * *", "on": "foto.eklendi" }"#,
+        r#"{ "args": { "a": 1 } }"#,
+    ] {
+        let e = itero::workflow::parse(&with(bad)).unwrap_err().to_string();
+        assert!(e.contains("schedule or on"), "{e}");
+    }
+    let e = itero::workflow::parse(&with(r#"{ "on": "Foto Eklendi" }"#))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("Foto Eklendi"), "{e}");
+}
