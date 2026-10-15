@@ -1,0 +1,95 @@
+name: Release
+
+# On a version tag: a draft release, an archive per target made by `make dist`
+# (the recipe scripts/test-install.sh installs from, so the names install.sh
+# expects and the names published here are one and the same), then the
+# release is published. It first runs once the repository exists.
+on:
+  push:
+    tags: ["v*"]
+
+# Read-only by default; each job that writes to the release says so.
+permissions:
+  contents: read
+
+jobs:
+  # Uploads go to an existing release; pushing a tag does not make one. A
+  # draft, so a failed build keeps it from going public.
+  create-release:
+    name: create draft release
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creates the draft release
+    steps:
+      - name: Create or reuse the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eux
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release already exists, reusing it"
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" \
+              --notes "itero $GITHUB_REF_NAME. Install: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh"
+          fi
+
+  build:
+    needs: create-release
+    name: build ${{ matrix.target }}
+    strategy:
+      # one target failing must not cancel the others
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # cross built on the Apple Silicon runner: Rust targets Intel Macs
+          # from there, and codesign signs either
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write # uploads the archives to the draft release
+    # the default is 6 hours; no build here needs a fraction of that
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # nothing later in the job pushes or fetches with this token
+          persist-credentials: false
+
+      - name: Add the target
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build the archive and its checksum
+        shell: bash
+        run: make dist TAG="$GITHUB_REF_NAME" TARGET=${{ matrix.target }}
+
+      - name: Upload them to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 --clobber
+
+  publish:
+    needs: build
+    name: publish the release
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # undrafts the release
+    steps:
+      - name: Undraft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false

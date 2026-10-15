@@ -62,6 +62,36 @@ notifier: ## Build Itero.app (macOS), which notify@1 shows notifications through
 	cp target/$(PROFILE)/itero-notifier $(APP)/Contents/MacOS/itero-notifier
 	codesign --force --sign - $(APP)
 
+# A release archive for one target (this machine's unless TARGET is given),
+# and its checksum: what install.sh downloads and release.yml publishes.
+# Always built with --target, so a host build and a cross build are one
+# recipe. TAG names the release.
+TAG ?= v$(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
+TARGET_DIR ?= $(or $(CARGO_TARGET_DIR),target)
+DIST ?= dist
+NAME = itero-$(TAG)-$(TARGET)
+OUT = $(TARGET_DIR)/$(TARGET)/release
+.PHONY: dist
+dist: ## Build the release archive and checksum (TAG=vX.Y.Z, TARGET=triple)
+	$(CARGO) build --release --target $(TARGET) --bin itero
+	rm -rf $(DIST)/stage && mkdir -p $(DIST)/stage
+	cp $(OUT)/itero $(DIST)/stage/itero
+	@case "$(TARGET)" in *-apple-darwin) \
+	  $(CARGO) build --release --target $(TARGET) --bin itero-notifier && \
+	  mkdir -p $(DIST)/stage/Itero.app/Contents/MacOS && \
+	  cp packaging/macos/Info.plist $(DIST)/stage/Itero.app/Contents/Info.plist && \
+	  cp $(OUT)/itero-notifier $(DIST)/stage/Itero.app/Contents/MacOS/itero-notifier && \
+	  codesign --force --sign - $(DIST)/stage/Itero.app ;; \
+	esac
+	tar czf $(DIST)/$(NAME).tar.gz -C $(DIST)/stage .
+	cd $(DIST) && (shasum -a 256 $(NAME).tar.gz 2>/dev/null || sha256sum $(NAME).tar.gz) > $(NAME).sha256
+	rm -rf $(DIST)/stage
+
+.PHONY: test-install
+test-install: ## Install from a local release through install.sh, in temp folders
+	sh scripts/test-install.sh
+
 .PHONY: install
 install: ## Install itero to ~/.cargo/bin, and on macOS Itero.app to ~/Applications
 	$(CARGO) install --path . --force --bin itero
