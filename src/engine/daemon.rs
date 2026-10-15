@@ -252,6 +252,7 @@ fn give_up(j: &mut Journal, seq: i64, why: String) -> Result<Delivered> {
         run: None,
         timers: None,
         events: vec![],
+        memory: None,
     })?;
     Ok(Delivered::Handled)
 }
@@ -280,7 +281,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
         workflow: workflow.clone(),
         run: run_map,
         args: run.args.clone(),
-        memory: Map::new(),
+        memory: j.memory(&run.workflow)?,
         runtime: run.runtime.clone(),
         event: Event {
             id: r.event.id.clone(),
@@ -324,6 +325,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
         run: Some((&id, &answer.runtime, ended)),
         timers: answer.timers.as_deref(),
         events,
+        memory: (!answer.memory.is_empty()).then_some((&run.workflow, &answer.memory)),
     })?;
     super::die_at("answer");
     Ok(Delivered::Handled)
@@ -608,5 +610,6 @@ fn save_result(
         run: None,
         timers: None,
         events: vec![e],
+        memory: None,
     })
 }

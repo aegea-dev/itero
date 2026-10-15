@@ -1,7 +1,7 @@
 //! The engine's journal: one SQLite file per workspace,
 //! `.itero/journal.sqlite`, local and never synced. It is the event queue
 //! and log, and keeps each run's place, the workflow versions runs are
-//! pinned to, and timers.
+//! pinned to, timers, schedules, and each workflow's memory.
 use super::{Runtime, Timer};
 use crate::workflow::{self, File};
 use crate::workspace::Workspace;
@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS workflows (pin TEXT PRIMARY KEY, definition TEXT NOT 
 CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY AUTOINCREMENT, run TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS jobs (seq INTEGER PRIMARY KEY, runs INTEGER NOT NULL, lost TEXT);
 CREATE TABLE IF NOT EXISTS schedules (key TEXT PRIMARY KEY, last TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS memory (workflow TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (workflow, key));
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
 
@@ -128,6 +129,8 @@ pub struct Handled<'a> {
     /// The run's timers from now on; `None` leaves them.
     pub timers: Option<&'a [Timer]>,
     pub events: Vec<Envelope>,
+    /// Keys of a workflow's memory to set.
+    pub memory: Option<(&'a str, &'a Map<String, Value>)>,
 }
 
 pub struct Journal {
@@ -375,6 +378,22 @@ impl Journal {
         set_schedule_last(&self.db, key, at)
     }
 
+    /// A workflow's memory: every key its runs have set.
+    pub fn memory(&self, workflow: &str) -> Result<Map<String, Value>> {
+        let mut s = self
+            .db
+            .prepare("SELECT key, value FROM memory WHERE workflow = ?1 ORDER BY key")?;
+        let rows = s.query_map(params![workflow], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut out = Map::new();
+        for r in rows {
+            let (k, v) = r?;
+            out.insert(k, serde_json::from_str(&v)?);
+        }
+        Ok(out)
+    }
+
     /// The definition of a pinned workflow version.
     pub fn workflow(&self, pin: &str) -> Result<Option<File>> {
         let t: Option<String> = self
@@ -440,6 +459,15 @@ impl Journal {
         }
         for e in &h.events {
             publish(&tx, e)?;
+        }
+        if let Some((workflow, m)) = h.memory {
+            for (k, v) in m {
+                tx.execute(
+                    "INSERT INTO memory (workflow, key, value) VALUES (?1, ?2, ?3)
+                     ON CONFLICT (workflow, key) DO UPDATE SET value = ?3",
+                    params![workflow, k, json(v)?],
+                )?;
+            }
         }
         tx.commit()?;
         Ok(())

@@ -75,3 +75,54 @@ fn a_run_with_a_job_runs_it_in_a_worker() {
         .expect("the job's result");
     assert_eq!(done.event.data["output"]["stdout"], "çıktı\n");
 }
+
+#[test]
+fn memory_set_by_one_run_is_read_by_the_next() {
+    let d = tempfile::tempdir().unwrap();
+    // each run adds one to sayi, reading what the last run left
+    let ws = workspace(
+        d.path(),
+        "sayac",
+        r#"{ "name": "sayac",
+      "triggers": [ { "schedule": "*/5 * * * *" } ],
+      "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+      "transitions": [ { "from": "basla", "to": "bitti",
+        "do": [ { "action": "memory.set@1",
+                  "with": { "sayi": "${has(memory.sayi) ? memory.sayi + 1 : 1}",
+                            "not": "çalıştı" } } ] } ] }"#,
+    );
+    for at in [
+        "2026-10-15T14:01:00Z",
+        "2026-10-15T14:05:10Z",
+        "2026-10-15T14:10:10Z",
+    ] {
+        run_once(&ws, t(at), exe()).unwrap();
+    }
+    let j = Journal::open(&ws).unwrap();
+    let m = j.memory("sayac").unwrap();
+    assert_eq!(m["sayi"], 2);
+    assert_eq!(m["not"], "çalıştı");
+    assert!(j.memory("başka").unwrap().is_empty());
+}
+
+#[test]
+fn a_failed_run_sets_no_memory() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(
+        d.path(),
+        "bozuk",
+        r#"{ "name": "bozuk",
+      "triggers": [ { "schedule": "*/5 * * * *" } ],
+      "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+      "transitions": [ { "from": "basla", "to": "bitti",
+        "do": [ { "action": "memory.set@1", "with": { "yarim": "kalmamalı" } },
+                { "action": "command@1", "with": { "run": ["false"] } } ] } ] }"#,
+    );
+    for at in ["2026-10-15T14:01:00Z", "2026-10-15T14:05:10Z"] {
+        run_once(&ws, t(at), exe()).unwrap();
+    }
+    let j = Journal::open(&ws).unwrap();
+    assert_eq!(j.runs().unwrap()[0].runtime.state, "failed");
+    assert!(j.runs().unwrap()[0].ended.is_some());
+    assert!(j.memory("bozuk").unwrap().is_empty());
+}
