@@ -79,12 +79,16 @@ What starts a run:
 
 - **a schedule**: `"schedule": "*/5 * * * *"` (cron, the machine's local
   time);
-- **an event**: `"on": "photo.added"`, an event an app sends;
+- **an event**: `"on": "photo.added"`, an event an app sends; the event's
+  `data` is the run's `input`;
 - for primum later: a ticket attached to a workflow.
 
-A workflow can declare its own triggers (`"triggers": [...]` in its file),
-for its housekeeping. The workspace's `triggers/` can add triggers, or
-replace a workflow's own by name. A trigger gives the run its `args`.
+A trigger has one of `schedule` and `on`, and gives the run its `args`. A
+workflow declares its own triggers (`"triggers": [...]` in its file). An
+app's event starts one run per matching trigger, in one transaction with
+handling the event, so an event delivered again starts nothing twice; an
+event nothing waits for is handled with a note. Later (iteration 3): the
+workspace's `triggers/` adds triggers, or replaces a workflow's own by name.
 
 ## 5. Memory
 
@@ -129,10 +133,27 @@ Built-ins:
 
 Apps connect through the daemon, not as a library:
 
-- **events in**: `POST /api/events` (type, data, optionally a run or a
-  subject), a file in the workspace's `inbox/`, and later a message queue
-  (the journal first; NATS later);
+- **events in**: `POST /events` (`{"type", "data"?, "run"?}`) or `itero
+  emit` (which writes the journal directly, so it works with the daemon
+  stopped); later a file in the workspace's `inbox/`, and NATS. With
+  `run`, the event goes to that run; without, it may start runs. The
+  engine's own types (`action.*`, `timer.*`, `run.*`) are refused;
 - **actions out**: actions that call the app (its CLI or API).
+
+The daemon's API listens on 127.0.0.1:<port> only: `GET /health`, `POST
+/events`, `GET /runs` (`?workflow=`, `?limit=`), `GET /runs/{id}` (with its
+events), `GET /workflows`, `GET /workflows/{name}/memory`. A request whose
+`Host` is not this port on 127.0.0.1 or localhost is refused (no reaching
+it by DNS rebinding), and events must be `application/json` (a page on
+another site cannot post one without a preflight, which is never granted).
+
+## Installing
+
+`install.sh` (curl or wget, POSIX sh) installs a release for macOS (Apple
+Silicon, Intel) or Linux (x86_64, aarch64): it checks the archive's SHA-256
+before unpacking, puts `itero` in `~/.local/bin` and, on macOS, `Itero.app`
+in `~/Applications`, and never edits a shell profile. `make dist` makes the
+archives; the release workflow publishes them on a version tag.
 
 primum becomes an app: its ticket changes become events, and changing a
 ticket is an action that runs `primum`.
@@ -183,7 +204,7 @@ minutes, and a mail sent locally (`echo hi | mail -s deneme $USER`) gives
 one notification on the next run and none after. Tests write a small mbox
 file instead of sending mail, and stub the notifier.
 
-Left for later iterations: the HTTP API (the port is read but nothing
-listens yet), event triggers from apps, the queue, the inbox, primum as an
-app, the service and watchdog commands, the install script, Homebrew, the
-marketplace.
+Iteration 2 (`docs/plan-2-api-events-install.md`) added the HTTP API, event
+triggers and the installer. Left for later iterations: the workspace's
+`triggers/`, NATS, the inbox, primum as an app, the service and watchdog
+commands, Homebrew, the marketplace.

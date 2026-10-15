@@ -5,9 +5,21 @@ and again, on a schedule or when something happens, on one machine, using
 the command line tools already there. Apps send it events and receive its
 actions; it decides nothing on its own beyond what a workflow says.
 
-itero is at its first iteration: schedules, workflows with steps, a
-workflow's memory, and actions that run commands, shell lines and desktop
-notifications. The HTTP API, events from apps and the service come next.
+itero is young: schedules and app events start workflows with steps, each
+workflow has a memory, actions run commands, shell lines and desktop
+notifications, and the daemon has a local HTTP API. The service (start at
+login) and Homebrew come next.
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/erhangundogan/itero/main/install.sh | sh
+```
+
+It checks the release archive's SHA-256 before unpacking, installs `itero`
+to `~/.local/bin` and, on macOS, `Itero.app` to `~/Applications`, and never
+edits your shell profile. `--version X.Y.Z`, `--to DIR` and `--uninstall`
+are its options (`sh -s -- --help`).
 
 ## Build
 
@@ -30,20 +42,45 @@ A folder with `itero.toml` is a workspace; `itero daemon` runs its
 workflows, pass after pass.
 
 ```toml
-port = 8787                    # read, not served yet
+port = 8787                    # the API, on 127.0.0.1
 workflows = ["workflows"]      # any number of folders
 actions = ["actions"]
 ```
 
 - `workflows/<name>.json`: a workflow: states, transitions, and the actions
-  each transition runs in order; `triggers` say when a run starts.
+  each transition runs in order; `triggers` say when a run starts: a
+  `schedule` (cron) or `on` an app's event, whose data is the run's input.
 - `actions/<name>/action.json`: the workspace's own actions, programs that
   read a job as JSON on stdin and print their output.
 - `.itero/journal.sqlite`: every event, run and job, and each workflow's
   memory. Local, never synced.
 
-Commands: `itero daemon`, `itero check` (every workflow and action, with
-its version), `itero runs`, `itero memory <workflow>`.
+Commands: `itero daemon`, `itero emit <type> [--data JSON] [--run ID]`,
+`itero check` (every workflow and action, with its version), `itero runs`,
+`itero memory <workflow>`.
+
+## The API
+
+`itero daemon` serves on `127.0.0.1:<port>` only, and refuses a request
+whose `Host` is not that address:
+
+| Route | Does |
+|---|---|
+| `GET /health` | the loop's passes, the last one and its error |
+| `POST /events` | an event, `{"type", "data"?, "run"?}` as `application/json`; 202 `{"id"}` |
+| `GET /runs` | runs, newest first (`?workflow=`, `?limit=`) |
+| `GET /runs/{id}` | a run and its events |
+| `GET /workflows` | each workflow's name, version and triggers |
+| `GET /workflows/{name}/memory` | a workflow's memory |
+
+An event without `run` may start runs: every workflow with a trigger `on`
+its type. For example, a workflow with `"triggers": [ { "on":
+"photo.added" } ]` starts when an app sends:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/events -H 'content-type: application/json' \
+  -d '{"type": "photo.added", "data": {"path": "trip/market.jpg"}}'
+```
 
 ## The mail check
 
@@ -62,5 +99,6 @@ none until more mail comes. Ctrl-C stops the daemon.
 ## Design
 
 [`docs/design.md`](docs/design.md) says what itero is made of and what was
-decided; [`docs/plan-1-mail-check.md`](docs/plan-1-mail-check.md) is the
-plan this first iteration followed.
+decided; [`docs/plan-1-mail-check.md`](docs/plan-1-mail-check.md) and
+[`docs/plan-2-api-events-install.md`](docs/plan-2-api-events-install.md)
+are the plans the iterations followed.
