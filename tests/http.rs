@@ -65,3 +65,54 @@ async fn another_host_is_refused() {
         .unwrap();
     assert_eq!(send(&app, req).await.0, StatusCode::OK);
 }
+
+fn post(path: &str, body: &str) -> Request<Body> {
+    Request::post(path)
+        .header("host", "127.0.0.1:8790")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn an_event_posted_is_saved_and_wakes_the_loop() {
+    let d = tempfile::tempdir().unwrap();
+    let (app, woken) = app(d.path());
+    let (code, v) = send(
+        &app,
+        post(
+            "/events",
+            r#"{"type": "foto.eklendi", "data": {"yol": "çarşı.jpg"}}"#,
+        ),
+    )
+    .await;
+    assert_eq!(code, StatusCode::ACCEPTED, "{v}");
+    assert!(v["id"].is_string());
+    assert!(woken.try_recv().is_ok(), "the loop is woken");
+    let (code, v) = send(&app, post("/events", r#"{"type": "timer.fired"}"#)).await;
+    assert_eq!(code, StatusCode::BAD_REQUEST);
+    assert!(v["error"].as_str().unwrap().contains("engine's own"));
+    let (code, _) = send(
+        &app,
+        post("/events", r#"{"type": "onay.geldi", "run": "yok"}"#),
+    )
+    .await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_event_must_be_json_said_so() {
+    let d = tempfile::tempdir().unwrap();
+    let (app, _w) = app(d.path());
+    let req = Request::post("/events")
+        .header("host", "127.0.0.1:8790")
+        .header("content-type", "text/plain")
+        .body(Body::from(r#"{"type": "foto.eklendi"}"#))
+        .unwrap();
+    let (code, _) = send(&app, req).await;
+    assert_eq!(
+        code,
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "a cross-site form post is refused"
+    );
+}

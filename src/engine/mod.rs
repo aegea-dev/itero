@@ -4,6 +4,7 @@
 pub mod builtins;
 pub mod daemon;
 pub mod eval;
+pub mod events;
 pub mod http;
 pub mod journal;
 pub mod manager;

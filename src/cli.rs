@@ -32,6 +32,18 @@ pub enum Cmd {
     },
     /// Check every workflow and action; print each with its version
     Check,
+    /// Send an event: to a run, or to the workspace, where it may start runs
+    Emit {
+        /// The event's type, like photo.added
+        #[arg(value_name = "TYPE")]
+        kind: String,
+        /// Its data, a JSON object
+        #[arg(long)]
+        data: Option<String>,
+        /// The run it is for; without, it is for the workspace
+        #[arg(long)]
+        run: Option<String>,
+    },
     /// The runs, newest first: id, workflow, state, started, ended
     Runs,
     /// A workflow's memory, as JSON
@@ -136,6 +148,17 @@ fn dispatch(cli: Cli) -> Result<()> {
                 eprintln!("itero: serving on http://127.0.0.1:{}/", ws.port);
                 http::serve(http::router(ws.clone(), engine), ws.port)?;
             }
+        }
+        Cmd::Emit { kind, data, run } => {
+            let ws = workspace()?;
+            let data = data
+                .map(|d| {
+                    serde_json::from_str(&d).map_err(|_| anyhow!("--data takes a JSON object"))
+                })
+                .transpose()?;
+            let now = crate::engine::daemon::stamp(chrono::Utc::now());
+            let id = crate::engine::events::emit(&ws, &kind, data, run.as_deref(), &now)?;
+            println!("{id}");
         }
         Cmd::Check => {
             let ws = workspace()?;

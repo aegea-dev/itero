@@ -106,10 +106,12 @@ pub struct Run {
     pub ended: Option<String>,
 }
 
-/// A subject: `itero.run.<id>`, or `itero.worker` for jobs.
+/// A subject: `itero.run.<id>`, `itero.worker` for jobs, or `itero.app`
+/// for an app's events (which may start runs).
 pub fn subject(target: &str) -> String {
     match target {
         "worker" => "itero.worker".into(),
+        "app" => "itero.app".into(),
         id => format!("itero.run.{id}"),
     }
 }

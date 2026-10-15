@@ -3,11 +3,12 @@
 //! header must name this port on 127.0.0.1 or localhost.
 use super::daemon::Health;
 use crate::workspace::Workspace;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Value, json};
 use std::sync::mpsc::Sender;
@@ -40,6 +41,7 @@ pub fn router(ws: Workspace, engine: Arc<Engine>) -> Router {
     };
     Router::new()
         .route("/health", get(health))
+        .route("/events", post(event))
         .layer(middleware::from_fn_with_state(s.clone(), local_only))
         .with_state(s)
 }
@@ -82,6 +84,48 @@ async fn health(State(s): State<Shared>) -> Json<Value> {
         "last_pass": h.last_pass,
         "last_error": h.last_error,
     }))
+}
+
+/// An event as it is posted.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Posted {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    data: Option<Value>,
+    #[serde(default)]
+    run: Option<String>,
+}
+
+async fn event(
+    State(s): State<Shared>,
+    body: Result<Json<Posted>, JsonRejection>,
+) -> Result<Reply, Reply> {
+    // Json refuses any Content-Type but application/json (415): a page on
+    // another site cannot post one without a preflight, never granted here
+    let Json(p) = body.map_err(|r| fail(r.status(), r.body_text()))?;
+    let ws = s.ws.clone();
+    let now = super::daemon::stamp(chrono::Utc::now());
+    // the journal may wait on a busy SQLite: off the async threads
+    let id = tokio::task::spawn_blocking(move || {
+        super::events::emit(&ws, &p.kind, p.data, p.run.as_deref(), &now)
+    })
+    .await
+    .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| {
+        use super::events::EmitError::*;
+        let code = match &e {
+            Bad(_) => StatusCode::BAD_REQUEST,
+            NoRun(_) => StatusCode::NOT_FOUND,
+            Ended(_) => StatusCode::CONFLICT,
+            Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        fail(code, e.to_string())
+    })?;
+    // a loop that has stopped finds the event in the journal when it starts
+    let _ = s.engine.wake.send(());
+    Ok((StatusCode::ACCEPTED, Json(json!({ "id": id }))))
 }
 
 /// Serves `router` on 127.0.0.1:`port` until the process ends.
