@@ -6,7 +6,7 @@ class Itero < Formula
   desc "Runs workflows again and again: schedules, events, steps, workers"
   homepage "https://github.com/aegea-dev/itero"
   version "0.1.0"
-  license "MIT"
+  license "Apache-2.0"
 
   on_macos do
     on_arm do

@@ -2,7 +2,7 @@
 name = "itero"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "Apache-2.0"
 description = "Runs workflows again and again: schedules, events, steps, workers"
 repository = "https://github.com/aegea-dev/itero"
 
