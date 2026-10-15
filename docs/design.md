@@ -112,8 +112,12 @@ Built-ins:
   into its text: `sh@1` takes `run` (fixed text) and `env` (templates
   allowed); a template in `run` is refused when the workflow is checked.
   A mail subject with `; rm -rf ~` in it stays text.
-- **Output**: stdout that parses as JSON is `output.json`; any other is
-  `output.lines`; `output.exit`, `output.stderr` as well.
+- **Output**: every action a worker runs as a program (`command@1`,
+  `sh@1`, workspace actions) gives `output.exit`, `output.stdout`,
+  `output.stderr`, `output.lines` (stdout's lines), and `output.json` when
+  stdout parses as JSON. `command@1` and `sh@1` fail on a non-zero exit
+  unless their `expect` says otherwise; a workspace action that exits
+  non-zero fails.
 - Project actions (`actions/`): `executable`, `python@`, `bun@`, as in
   primum's actionables.
 - Every job carries an idempotency key, the same when it runs again.
@@ -169,8 +173,9 @@ One example, end to end, and only what it needs:
 }
 ```
 
-`mail.check@1` is a project action (`actions/mail/`): a small script around
-`mail -H -f "$MAILBOX"` and the mailbox's `From ` lines, printing
+`mail.check@1` is a workspace action (`actions/mail/`): a small POSIX
+script reading the mbox file's `From ` and `Subject: ` lines with `grep`,
+`awk` and `sed`, printing
 `{"new": n, "seen": "<last message's id>", "summary": "..."}`.
 
 Done when `itero daemon` in a workspace with this workflow runs it every 5

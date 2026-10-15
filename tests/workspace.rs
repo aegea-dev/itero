@@ -57,6 +57,18 @@ fn defaults_are_one_workflows_and_one_actions_folder_on_8787() {
 }
 
 #[test]
+fn a_workspace_without_its_folders_has_no_workflows_and_its_daemon_idles() {
+    let d = tempfile::tempdir().unwrap();
+    write(d.path(), "itero.toml", "");
+    let ws = workspace::find(d.path()).unwrap();
+    assert!(ws.workflows().unwrap().is_empty());
+    assert!(ws.actions().unwrap().is_empty());
+    let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
+    let pass = itero::engine::daemon::run_once(&ws, chrono::Utc::now(), exe).unwrap();
+    assert_eq!(pass, itero::engine::daemon::Pass::default());
+}
+
+#[test]
 fn no_itero_toml_is_an_error_saying_how_to_make_one() {
     let d = tempfile::tempdir().unwrap();
     let e = workspace::find(d.path()).unwrap_err().to_string();

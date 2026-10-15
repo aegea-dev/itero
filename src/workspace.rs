@@ -118,10 +118,15 @@ impl Workspace {
 
     /// Every workflow in the workflows folders, checked, and the actions
     /// it names found. Two workflows with one name is an error naming both.
+    /// A folder that is not there holds none: a workspace without
+    /// workflows is idle (`itero check` says which folders are missing).
     pub fn workflows(&self) -> Result<Vec<(PathBuf, workflow::File)>> {
         let defs: Vec<actions::Definition> = self.actions()?.into_iter().map(|(_, d)| d).collect();
         let mut out: Vec<(PathBuf, workflow::File)> = vec![];
         for dir in &self.workflows {
+            if !dir.exists() {
+                continue;
+            }
             let files = listed(dir, |p| {
                 (p.extension().is_some_and(|x| x == "json") && p.is_file()).then(|| p.to_path_buf())
             })?;

@@ -112,6 +112,11 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
         Cmd::Check => {
             let ws = workspace()?;
+            for dir in ws.workflows.iter().chain(&ws.actions) {
+                if !dir.exists() {
+                    eprintln!("note: no folder {}", dir.display());
+                }
+            }
             for (_, f) in ws.workflows()? {
                 let version = crate::workflow::version(&f);
                 println!("{}  {}", f.name, crate::workflow::short(&version));

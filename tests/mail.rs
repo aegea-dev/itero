@@ -12,6 +12,8 @@ fn example(d: &Path, mbox: &Path) -> PathBuf {
         .status()
         .unwrap();
     assert!(status.success());
+    // a journal left by trying the example by hand is not the test's
+    let _ = std::fs::remove_dir_all(ws.join(".itero"));
     let flow = ws.join("workflows/mail-check.json");
     let text = std::fs::read_to_string(&flow).unwrap().replace(
         "\"mailbox\": \"\"",
