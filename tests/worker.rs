@@ -154,6 +154,27 @@ fn sh_runs_a_pipeline_with_values_only_in_its_environment() {
     );
 }
 
+/// Runs a job in `itero worker`, its own process, with `env` set: what
+/// notify@1 reads comes from the worker's environment.
+fn in_worker(j: &Job, env: &[(&str, &std::ffi::OsStr)]) -> Value {
+    let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+        .arg("worker")
+        .envs(env.iter().copied())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    c.stdin
+        .take()
+        .unwrap()
+        .write_all(serde_json::to_string(j).unwrap().as_bytes())
+        .unwrap();
+    let out = c.wait_with_output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
 #[test]
 fn notify_writes_to_its_log_when_one_is_set() {
     let d = tempfile::tempdir().unwrap();
@@ -163,27 +184,60 @@ fn notify_writes_to_its_log_when_one_is_set() {
         json!({"title": "Posta", "text": "2 yeni ileti: Çay saati"}),
         d.path().to_path_buf(),
     );
-    // in its own process: the log is read from the worker's environment
-    let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-        .arg("worker")
-        .env("ITERO_NOTIFY_LOG", &log)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    c.stdin
-        .take()
-        .unwrap()
-        .write_all(serde_json::to_string(&j).unwrap().as_bytes())
-        .unwrap();
-    let out = c.wait_with_output().unwrap();
-    assert!(out.status.success(), "{out:?}");
-    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let v = in_worker(&j, &[("ITERO_NOTIFY_LOG", log.as_os_str())]);
     assert_eq!(v["output"]["shown"], true);
     assert_eq!(
         std::fs::read_to_string(&log).unwrap(),
         "Posta\t2 yeni ileti: Çay saati\n"
     );
+}
+
+/// macOS: Itero.app's notifier (here a stand-in, by ITERO_NOTIFIER).
+/// Elsewhere: notify-send (here a stand-in, first on PATH). Either gets
+/// the title and text as its last two arguments, never in a script.
+#[cfg(unix)]
+#[test]
+fn notify_runs_the_notifier_with_the_title_and_text_as_arguments() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let got = d.path().join("argümanlar");
+    let name = if cfg!(target_os = "macos") {
+        "itero-notifier"
+    } else {
+        "notify-send"
+    };
+    let fake = d.path().join(name);
+    std::fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{}'\n",
+            got.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let j = job(
+        "notify@1",
+        json!({"title": "Posta; touch kırık", "text": "1 new: $(çay)"}),
+        d.path().to_path_buf(),
+    );
+    let path = format!(
+        "{}:{}",
+        d.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let v = in_worker(
+        &j,
+        &[
+            ("ITERO_NOTIFIER", fake.as_os_str()),
+            ("PATH", std::ffi::OsStr::new(&path)),
+        ],
+    );
+    assert_eq!(v["output"], json!({"shown": true, "by": name}));
+    let args = std::fs::read_to_string(&got).unwrap();
+    let last: Vec<&str> = args.lines().rev().take(2).collect();
+    assert_eq!(last, ["1 new: $(çay)", "Posta; touch kırık"]);
+    assert!(!d.path().join("kırık").exists());
 }
 
 #[cfg(unix)]

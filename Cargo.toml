@@ -27,5 +27,12 @@ croner = "~4.0.1"
 [target.'cfg(unix)'.dependencies]
 libc = "~0.2.190"
 
+# itero-notifier: notifications as itero (Itero.app), through UserNotifications
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "~0.6.5"
+objc2-foundation = { version = "~0.3.2", default-features = false, features = ["std", "NSString", "NSError"] }
+objc2-user-notifications = { version = "~0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger"] }
+block2 = "~0.6.2"
+
 [dev-dependencies]
 tempfile = "~3.27.0"

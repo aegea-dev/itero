@@ -18,6 +18,12 @@ make lint-check  # clippy, warnings fail
 make fmt-check
 ```
 
+On macOS, `make notifier` builds `Itero.app` next to the binary (and `make
+install` puts it in `~/Applications`): notifications then come from itero,
+which asks once to be allowed to show them. Without it they come through
+`osascript`, shown as Script Editor's. On Linux, notifications go through
+`notify-send` (or `gdbus`, or `kdialog`).
+
 ## A workspace
 
 A folder with `itero.toml` is a workspace; `itero daemon` runs its

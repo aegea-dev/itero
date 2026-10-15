@@ -104,7 +104,7 @@ Built-ins:
 | `http.request@1` | an HTTP request, with an idempotency key header |
 | `command@1` | a program and its arguments, no shell |
 | `sh@1` | a shell line (`sh -c`), for pipelines |
-| `notify@1` | a desktop notification: osascript on macOS, notify-send on Linux |
+| `notify@1` | a desktop notification: on macOS through `Itero.app` (sent as itero, with its own entry in System Settings, Notifications), else `osascript`; on Linux the first of `notify-send`, `gdbus` (freedesktop notifications), `kdialog` |
 | `memory.set@1` | sets keys in the workflow's memory (pure, in the manager) |
 | `json.pick@1`, `event.emit@1` | as in primum (pure) |
 

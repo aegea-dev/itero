@@ -348,8 +348,81 @@ fn sh(job: &Job) -> Result<Value, String> {
     Ok(output(&out))
 }
 
-/// A desktop notification: osascript on macOS, notify-send elsewhere, the
-/// title and text as arguments (never in a script's text). With
+/// `Itero.app`'s notifier on macOS: `ITERO_NOTIFIER` (the app or its
+/// program), else beside the itero binary, else in ~/Applications or
+/// /Applications.
+fn notifier() -> Option<PathBuf> {
+    let program = |app: PathBuf| app.join("Contents/MacOS/itero-notifier");
+    if let Some(p) = std::env::var_os("ITERO_NOTIFIER").map(PathBuf::from) {
+        return Some(if p.extension().is_some_and(|x| x == "app") {
+            program(p)
+        } else {
+            p
+        });
+    }
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.join("Itero.app")));
+    let home = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Applications/Itero.app"));
+    [beside, home, Some(PathBuf::from("/Applications/Itero.app"))]
+        .into_iter()
+        .flatten()
+        .map(program)
+        .find(|p| p.is_file())
+}
+
+/// The ways to show a notification here, in order: each a program and its
+/// arguments before the title and text. On macOS, Itero.app's notifier
+/// (notifications from itero), else osascript (shown as Script Editor's).
+/// Elsewhere, whichever the desktop has: notify-send (libnotify), gdbus
+/// (the freedesktop notification service), kdialog (KDE).
+fn notifiers(title: &str, body: &str) -> Vec<(PathBuf, Vec<String>)> {
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    if cfg!(target_os = "macos") {
+        let script = s(&[
+            "-e",
+            "on run argv",
+            "-e",
+            "display notification (item 2 of argv) with title (item 1 of argv)",
+            "-e",
+            "end run",
+        ]);
+        let mut out: Vec<(PathBuf, Vec<String>)> =
+            notifier().into_iter().map(|p| (p, vec![])).collect();
+        out.push(("osascript".into(), script));
+        out.iter_mut()
+            .for_each(|(_, a)| a.extend([title.to_string(), body.to_string()]));
+        return out;
+    }
+    vec![
+        ("notify-send".into(), s(&["--app-name=itero", title, body])),
+        (
+            "gdbus".into(),
+            s(&[
+                "call",
+                "--session",
+                "--dest=org.freedesktop.Notifications",
+                "--object-path=/org/freedesktop/Notifications",
+                "--method=org.freedesktop.Notifications.Notify",
+                "itero",
+                "0",
+                "",
+                title,
+                body,
+                "[]",
+                "{}",
+                "-1",
+            ]),
+        ),
+        (
+            "kdialog".into(),
+            s(&["--title", title, "--passivepopup", body, "10"]),
+        ),
+    ]
+}
+
+/// A desktop notification, the title and text as arguments (never in a
+/// script's text), through the first of `notifiers` there is. With
 /// `ITERO_NOTIFY_LOG` set, a line is appended to that file instead.
 fn notify(job: &Job) -> Result<Value, String> {
     let title = text(job, "title").ok_or("needs with.title")?;
@@ -363,33 +436,36 @@ fn notify(job: &Job) -> Result<Value, String> {
         writeln!(f, "{title}\t{body}").map_err(|e| e.to_string())?;
         return Ok(json!({"shown": true}));
     }
-    let mut c = if cfg!(target_os = "macos") {
-        let mut c = Command::new("osascript");
-        c.args([
-            "-e",
-            "on run argv",
-            "-e",
-            "display notification (item 2 of argv) with title (item 1 of argv)",
-            "-e",
-            "end run",
-        ]);
-        c
-    } else {
-        Command::new("notify-send")
-    };
-    let out = c
-        .arg(&title)
-        .arg(&body)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot show a notification: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "cannot show a notification: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+    let mut tried = vec![];
+    for (program, args) in notifiers(&title, &body) {
+        let out = match Command::new(&program)
+            .args(&args)
+            .stdin(Stdio::null())
+            .output()
+        {
+            Ok(out) => out,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tried.push(program.display().to_string());
+                continue;
+            }
+            Err(e) => return Err(format!("cannot run {}: {e}", program.display())),
+        };
+        if !out.status.success() {
+            return Err(format!(
+                "{}: {}",
+                program.display(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        let by = program
+            .file_name()
+            .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+        return Ok(json!({"shown": true, "by": by}));
     }
-    Ok(json!({"shown": true}))
+    Err(format!(
+        "no way to show a notification here (tried {}): install libnotify's notify-send",
+        tried.join(", ")
+    ))
 }
 
 fn program(job: &Job) -> Result<Value, Failure> {

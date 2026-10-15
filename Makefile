@@ -48,9 +48,29 @@ lint: ## Run clippy (lists warnings, does not fail on them)
 lint-check: ## Run clippy: any warning fails the build
 	$(CARGO) clippy --all-targets -- -D warnings
 
+# Itero.app around itero-notifier, next to the itero binary, where `itero
+# worker` looks for it: macOS shows notifications with a sender only when an
+# app sends them. Signed ad hoc (no developer account needed on this Mac).
+PROFILE ?= debug
+APP = target/$(PROFILE)/Itero.app
+.PHONY: notifier
+notifier: ## Build Itero.app (macOS), which notify@1 shows notifications through
+	$(CARGO) build --bin itero-notifier $(if $(filter release,$(PROFILE)),--release,)
+	rm -rf $(APP)
+	mkdir -p $(APP)/Contents/MacOS
+	cp packaging/macos/Info.plist $(APP)/Contents/Info.plist
+	cp target/$(PROFILE)/itero-notifier $(APP)/Contents/MacOS/itero-notifier
+	codesign --force --sign - $(APP)
+
 .PHONY: install
-install: ## Install to ~/.cargo/bin
-	$(CARGO) install --path . --force
+install: ## Install itero to ~/.cargo/bin, and on macOS Itero.app to ~/Applications
+	$(CARGO) install --path . --force --bin itero
+	@if [ "$$(uname)" = Darwin ]; then \
+	  $(MAKE) notifier PROFILE=release && \
+	  mkdir -p $(HOME)/Applications && rm -rf $(HOME)/Applications/Itero.app && \
+	  cp -R target/release/Itero.app $(HOME)/Applications/Itero.app && \
+	  echo "Itero.app in ~/Applications"; \
+	fi
 
 .PHONY: clean
 clean: ## Remove build artifacts (cargo clean)
