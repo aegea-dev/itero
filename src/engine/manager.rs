@@ -107,6 +107,7 @@ impl Machine<'_> {
         memory: &'v Map<String, Value>,
         input: &'v Value,
         prev: &'v Value,
+        steps: &'v Map<String, Value>,
         output: Option<&'v Value>,
     ) -> Vars<'v> {
         Vars {
@@ -115,6 +116,7 @@ impl Machine<'_> {
             args: &self.i.args,
             input,
             prev,
+            steps,
             output,
         }
     }
@@ -136,7 +138,7 @@ impl Machine<'_> {
                 continue;
             }
             let ok = match &t.when {
-                Some(w) => truth(w, &self.vars(&memory, &e.data, &e.data, None))?,
+                Some(w) => truth(w, &self.vars(&memory, &e.data, &e.data, &Map::new(), None))?,
                 None => true,
             };
             if ok {
@@ -183,6 +185,7 @@ impl Machine<'_> {
             index: 0,
             prev: input.clone(),
             input,
+            steps: Map::new(),
             memory: Map::new(),
             emits: vec![],
         });
@@ -198,10 +201,21 @@ impl Machine<'_> {
                 return self.complete();
             };
             let memory = self.memory();
+            if let Some(w) = &a.when {
+                match truth(w, &self.vars(&memory, &c.input, &c.prev, &c.steps, None)) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        let chain = self.rt.chain.as_mut().expect("a chain is running");
+                        chain.index += 1;
+                        continue;
+                    }
+                    Err(m) => return self.fail(format!("{}: {m}", a.action)),
+                }
+            }
             let with = match &a.with {
                 Some(w) => match render(
                     &Value::Object(w.clone()),
-                    &self.vars(&memory, &c.input, &c.prev, None),
+                    &self.vars(&memory, &c.input, &c.prev, &c.steps, None),
                 ) {
                     Ok(Value::Object(o)) => o,
                     Ok(_) => Map::new(),
@@ -244,10 +258,19 @@ impl Machine<'_> {
             if let Err(m) = self.check(&a.action, a.expect.as_deref(), &done.output) {
                 return self.fail(m);
             }
-            let chain = self.rt.chain.as_mut().expect("a chain is running");
-            chain.prev = done.output;
-            chain.index += 1;
+            self.step_done(a.id.as_deref(), done.output);
         }
+    }
+
+    /// The running action's output is known: it is `prev`, and `steps.<id>`
+    /// when it has an id, and the chain moves on.
+    fn step_done(&mut self, id: Option<&str>, output: Value) {
+        let chain = self.rt.chain.as_mut().expect("a chain is running");
+        if let Some(id) = id {
+            chain.steps.insert(id.to_string(), output.clone());
+        }
+        chain.prev = output;
+        chain.index += 1;
     }
 
     /// Whether an action's output passes its check.
@@ -257,7 +280,10 @@ impl Machine<'_> {
         };
         let c = self.rt.chain.as_ref().expect("a chain is running");
         let memory = self.memory();
-        match truth(src, &self.vars(&memory, &c.input, &c.prev, Some(output))) {
+        match truth(
+            src,
+            &self.vars(&memory, &c.input, &c.prev, &c.steps, Some(output)),
+        ) {
             Ok(true) => Ok(()),
             Ok(false) => Err(format!("{action}: expect failed: {src}")),
             Err(m) => Err(format!("{action}: {m}")),
@@ -286,7 +312,7 @@ impl Machine<'_> {
             }
             if t.on.is_none() {
                 let ok = match &t.when {
-                    Some(w) => truth(w, &self.vars(&memory, input, input, None))?,
+                    Some(w) => truth(w, &self.vars(&memory, input, input, &Map::new(), None))?,
                     None => true,
                 };
                 if ok && auto.is_none() {
@@ -347,9 +373,7 @@ impl Machine<'_> {
         if let Err(m) = self.check(&a.action, a.expect.as_deref(), &output) {
             return self.fail(m);
         }
-        let chain = self.rt.chain.as_mut().expect("a chain is running");
-        chain.prev = output;
-        chain.index += 1;
+        self.step_done(a.id.as_deref(), output);
         self.advance()
     }
 

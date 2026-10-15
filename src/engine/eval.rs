@@ -11,6 +11,8 @@ pub struct Vars<'a> {
     pub args: &'a Map<String, Value>,
     pub input: &'a Value,
     pub prev: &'a Value,
+    /// The outputs of the chain's actions with an `id`.
+    pub steps: &'a Map<String, Value>,
     /// The action's output, for `expect`.
     pub output: Option<&'a Value>,
 }
@@ -50,6 +52,7 @@ pub fn value(src: &str, v: &Vars) -> Result<Value, String> {
     c.add_variable_from_value("args", object(v.args));
     c.add_variable_from_value("input", cel(v.input));
     c.add_variable_from_value("prev", cel(v.prev));
+    c.add_variable_from_value("steps", object(v.steps));
     if let Some(o) = v.output {
         c.add_variable_from_value("output", cel(o));
     }

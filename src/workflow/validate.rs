@@ -66,6 +66,14 @@ fn check_transition(t: &Transition, states: &[String]) -> Result<(), String> {
     }
     for a in &t.actions {
         actions::check(&a.action, a.with.as_ref())?;
+        if let Some(id) = &a.id
+            && !is_word(id)
+        {
+            return Err(format!("id \"{id}\" is lowercase letters, digits and -"));
+        }
+        if let Some(w) = &a.when {
+            expr::compile(w)?;
+        }
         if let Some(e) = &a.expect {
             expr::compile(e)?;
         }
@@ -118,12 +126,19 @@ pub fn validate(file: &str, f: &File) -> Result<(), WorkflowError> {
     if let Some(e) = f.end.iter().find(|e| !f.states.contains(e)) {
         return Err(whole(format!("end \"{e}\" is not a state")));
     }
+    let mut ids: Vec<&str> = vec![];
     for t in &f.transitions {
         check_transition(t, &f.states).map_err(|message| WorkflowError {
             file: file.to_string(),
             at: Some(format!("transition \"{} -> {}\"", t.from, t.to)),
             message,
         })?;
+        for id in t.actions.iter().filter_map(|a| a.id.as_deref()) {
+            if ids.contains(&id) {
+                return Err(whole(format!("id \"{id}\" is used twice")));
+            }
+            ids.push(id);
+        }
     }
     Ok(())
 }

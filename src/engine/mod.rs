@@ -81,6 +81,9 @@ pub struct Chain {
     pub input: Value,
     /// The last finished action's output.
     pub prev: Value,
+    /// The outputs of the actions with an `id`, by id.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub steps: Map<String, Value>,
     /// Memory changes held back until the chain succeeds.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub memory: Map<String, Value>,

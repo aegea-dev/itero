@@ -51,6 +51,12 @@ pub struct Transition {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Action {
     pub action: String,
+    /// Names its output: `steps.<id>` for the rest of the chain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// A condition: false skips the action, and `prev` passes through.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -65,6 +71,10 @@ pub struct Action {
 struct Call {
     action: String,
     #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    when: Option<String>,
+    #[serde(default)]
     description: String,
     #[serde(default)]
     with: Option<Map<String, Value>>,
@@ -77,6 +87,8 @@ impl<'de> Deserialize<'de> for Action {
         match Value::deserialize(d)? {
             Value::String(action) => Ok(Action {
                 action,
+                id: None,
+                when: None,
                 description: String::new(),
                 with: None,
                 expect: None,
@@ -85,6 +97,8 @@ impl<'de> Deserialize<'de> for Action {
                 let c: Call = serde_json::from_value(v).map_err(serde::de::Error::custom)?;
                 Ok(Action {
                     action: c.action,
+                    id: c.id,
+                    when: c.when,
                     description: c.description,
                     with: c.with,
                     expect: c.expect,

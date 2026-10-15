@@ -336,3 +336,108 @@ fn bad_input_is_an_error() {
     i.now = "dün".into();
     assert!(decide(&i).unwrap_err().contains("now"));
 }
+
+/// A run of `flow` (workflow JSON) at its start, given one event.
+fn flow_input(flow: &str, kind: &str, data: Value) -> Input {
+    let workflow = itero::workflow::parse(flow).unwrap();
+    let mut i = input(at(&workflow.start), kind, "e1", data);
+    i.workflow = workflow;
+    i
+}
+
+/// The result of the job the answer `a` asked for.
+fn finished(i: &Input, a: &Answer, output: Value) -> Input {
+    let req = &a.events[0].data;
+    let data = json!({"chain": req["chain"], "index": req["index"], "output": output});
+    let mut next = i.clone();
+    next.runtime = a.runtime.clone();
+    next.event = Event {
+        id: "e2".into(),
+        kind: "action.finished".into(),
+        data,
+    };
+    next
+}
+
+#[test]
+fn a_named_steps_output_is_seen_later_and_when_skips_an_action() {
+    // basla -> bitti: a worker job (id kontrol), then two pure actions: the
+    // first runs only when kontrol found something, the second always
+    let flow = r#"{ "name": "akis", "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+      "transitions": [ { "from": "basla", "to": "bitti", "do": [
+        { "id": "kontrol", "action": "command@1", "with": { "run": ["true"] } },
+        { "action": "memory.set@1", "when": "steps.kontrol.json.yeni > 0",
+          "with": { "uyari": "${steps.kontrol.json['özet']}" } },
+        { "action": "memory.set@1", "with": { "son": "${steps.kontrol.json.son}" } }
+      ] } ] }"#;
+    let i = flow_input(flow, "run.started", json!({}));
+    let a = decide(&i).unwrap();
+    assert_eq!(a.events[0].kind, "action.requested");
+    // yeni = 0: the first memory.set is skipped
+    let out = json!({"exit": 0, "json": {"yeni": 0, "özet": "", "son": "m-7"}});
+    let b = decide(&finished(&i, &a, out)).unwrap();
+    assert_eq!(b.runtime.state, "bitti");
+    assert_eq!(b.memory, *json!({"son": "m-7"}).as_object().unwrap());
+    // yeni = 2: both run
+    let out = json!({"exit": 0, "json": {"yeni": 2, "özet": "2 yeni ileti", "son": "m-9"}});
+    let b = decide(&finished(&i, &a, out)).unwrap();
+    assert_eq!(b.memory["uyari"], "2 yeni ileti");
+    assert_eq!(b.memory["son"], "m-9");
+}
+
+#[test]
+fn a_skipped_action_passes_prev_through() {
+    let flow = r#"{ "name": "akis", "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+      "transitions": [ { "from": "basla", "to": "bitti", "do": [
+        { "action": "json.pick@1", "with": { "path": "a" } },
+        { "action": "json.pick@1", "when": "false", "with": { "path": "yok" } },
+        { "action": "memory.set@1", "with": { "deger": "${prev}" } }
+      ] } ] }"#;
+    let a = decide(&flow_input(flow, "run.started", json!({"a": "çay"}))).unwrap();
+    assert_eq!(a.runtime.state, "bitti");
+    assert_eq!(a.memory["deger"], "çay");
+}
+
+#[test]
+fn steps_last_across_jobs_in_the_runtime() {
+    let flow = r#"{ "name": "akis", "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+      "transitions": [ { "from": "basla", "to": "bitti", "do": [
+        { "id": "ilk", "action": "json.pick@1", "with": { "path": "a" } },
+        { "action": "command@1", "with": { "run": ["true"] } },
+        { "action": "memory.set@1", "with": { "ilk": "${steps.ilk}" } }
+      ] } ] }"#;
+    let i = flow_input(flow, "run.started", json!({"a": "gül"}));
+    let a = decide(&i).unwrap();
+    assert_eq!(a.runtime.chain.as_ref().unwrap().steps["ilk"], "gül");
+    let b = decide(&finished(&i, &a, json!({"exit": 0}))).unwrap();
+    assert_eq!(b.memory["ilk"], "gül");
+}
+
+#[test]
+fn an_id_used_twice_in_a_workflow_is_refused() {
+    let flow = r#"{ "name": "akis", "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+      "transitions": [ { "from": "basla", "to": "bitti", "do": [
+        { "id": "a", "action": "json.pick@1", "with": { "path": "x" } },
+        { "id": "a", "action": "json.pick@1", "with": { "path": "y" } } ] } ] }"#;
+    let e = itero::workflow::parse(flow).unwrap_err().to_string();
+    assert!(e.contains("id \"a\" is used twice"), "{e}");
+}
+
+#[test]
+fn a_bad_id_or_when_is_refused() {
+    let with = |extra: &str| {
+        format!(
+            r#"{{ "name": "akis", "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+          "transitions": [ {{ "from": "basla", "to": "bitti", "do": [
+            {{ {extra} "action": "json.pick@1", "with": {{ "path": "x" }} }} ] }} ] }}"#
+        )
+    };
+    let e = itero::workflow::parse(&with(r#""id": "Büyük","#))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("id \"Büyük\""), "{e}");
+    let e = itero::workflow::parse(&with(r#""when": "((","#))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("bad expression"), "{e}");
+}
