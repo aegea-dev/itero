@@ -2,7 +2,7 @@
 #
 # itero installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/erhangundogan/itero/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/aegea-dev/itero/main/install.sh | sh
 #   curl -fsSL .../install.sh | sh -s -- --version 0.2.0
 #   curl -fsSL .../install.sh | sh -s -- --uninstall
 #
@@ -16,7 +16,7 @@
 set -eu
 
 # The repository the releases come from: the one line to change when it moves.
-REPO="erhangundogan/itero"
+REPO="aegea-dev/itero"
 
 # Overridable only so the test suite can install from a local release and
 # serve a deliberately corrupted archive, proving the checksum check fires.
@@ -41,7 +41,7 @@ usage() {
 itero installer
 
 USAGE
-    curl -fsSL https://raw.githubusercontent.com/erhangundogan/itero/main/install.sh | sh
+    curl -fsSL https://raw.githubusercontent.com/aegea-dev/itero/main/install.sh | sh
     curl -fsSL .../install.sh | sh -s -- [OPTIONS]
 
 OPTIONS

@@ -161,7 +161,7 @@ another site cannot post one without a preflight, which is never granted).
 Silicon, Intel) or Linux (x86_64, aarch64): it checks the archive's SHA-256
 before unpacking, puts `itero` in `~/.local/bin` and, on macOS, `Itero.app`
 in `~/Applications`, and never edits a shell profile. Homebrew
-(`brew install erhangundogan/tap/itero`) installs the same archives, with
+(`brew install aegea-dev/tap/itero`) installs the same archives, with
 `Itero.app` in the formula's `libexec`, where the worker also looks. `make
 dist` makes the archives; the release workflow publishes them on a version
 tag and writes their checksums into the tap's formula.

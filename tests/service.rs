@@ -40,7 +40,7 @@ fn each_workspace_has_its_own_label() {
     let b = label(Path::new("/Users/biri/iş")).to_qualified_name();
     assert_ne!(a, b);
     assert!(
-        a.starts_with("dev.itero.daemon-") && a.len() == "dev.itero.daemon-".len() + 12,
+        a.starts_with("dev.aegea.itero.daemon-") && a.len() == "dev.aegea.itero.daemon-".len() + 12,
         "{a}"
     );
 }

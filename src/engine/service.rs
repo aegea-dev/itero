@@ -18,7 +18,7 @@ pub fn label(root: &Path) -> ServiceLabel {
         .take(6)
         .map(|b| format!("{b:02x}"))
         .collect();
-    format!("dev.itero.daemon-{hash}")
+    format!("dev.aegea.itero.daemon-{hash}")
         .parse()
         .expect("a valid label")
 }

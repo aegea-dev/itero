@@ -123,7 +123,7 @@ jobs:
           version="${tag#v}"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir /tmp/sums
           sha() { awk '{print $1}' "/tmp/sums/itero-$tag-$1.sha256"; }
-          git clone "https://x-access-token:${TAP_TOKEN}@github.com/erhangundogan/homebrew-tap.git" /tmp/tap
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/aegea-dev/homebrew-tap.git" /tmp/tap
           mkdir -p /tmp/tap/Formula
           # the file's order: macOS arm, macOS intel, Linux intel, Linux arm
           python3 - "$version" "$(sha aarch64-apple-darwin)" "$(sha x86_64-apple-darwin)" \

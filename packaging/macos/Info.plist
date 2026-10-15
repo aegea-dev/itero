@@ -6,7 +6,7 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key>
-  <string>dev.itero.notifier</string>
+  <string>dev.aegea.itero.notifier</string>
   <key>CFBundleName</key>
   <string>itero</string>
   <key>CFBundleDisplayName</key>

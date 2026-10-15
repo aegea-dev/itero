@@ -4,28 +4,28 @@
 # the tap's copy; the zeros here are placeholders for that.
 class Itero < Formula
   desc "Runs workflows again and again: schedules, events, steps, workers"
-  homepage "https://github.com/erhangundogan/itero"
+  homepage "https://github.com/aegea-dev/itero"
   version "0.1.0"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/erhangundogan/itero/releases/download/v#{version}/itero-v#{version}-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/aegea-dev/itero/releases/download/v#{version}/itero-v#{version}-aarch64-apple-darwin.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
     on_intel do
-      url "https://github.com/erhangundogan/itero/releases/download/v#{version}/itero-v#{version}-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/aegea-dev/itero/releases/download/v#{version}/itero-v#{version}-x86_64-apple-darwin.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/erhangundogan/itero/releases/download/v#{version}/itero-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/aegea-dev/itero/releases/download/v#{version}/itero-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
     on_arm do
-      url "https://github.com/erhangundogan/itero/releases/download/v#{version}/itero-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/aegea-dev/itero/releases/download/v#{version}/itero-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end

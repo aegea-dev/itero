@@ -12,9 +12,9 @@ notifications, the daemon has a local HTTP API, and it starts at login.
 ## Install
 
 ```bash
-brew install erhangundogan/tap/itero
+brew install aegea-dev/tap/itero
 # or
-curl -fsSL https://raw.githubusercontent.com/erhangundogan/itero/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/aegea-dev/itero/main/install.sh | sh
 ```
 
 Homebrew puts `Itero.app` in the formula's own folder. The script checks
