@@ -93,3 +93,60 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: gh release edit "$GITHUB_REF_NAME" --draft=false
+
+  # Writes the version and the published checksums into the tap's formula
+  # (packaging/homebrew/itero.rb is its source). Needs TAP_TOKEN, a token
+  # with contents:write on the tap: GITHUB_TOKEN cannot push there. Fails
+  # loudly without it, since a stale tap serves an old version silently.
+  tap:
+    name: bump the homebrew formula
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Write and push the formula
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "TAP_TOKEN is not set; the tap cannot be updated and would serve an old version." >&2
+            exit 1
+          fi
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir /tmp/sums
+          sha() { awk '{print $1}' "/tmp/sums/itero-$tag-$1.sha256"; }
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/erhangundogan/homebrew-tap.git" /tmp/tap
+          mkdir -p /tmp/tap/Formula
+          # the file's order: macOS arm, macOS intel, Linux intel, Linux arm
+          python3 - "$version" "$(sha aarch64-apple-darwin)" "$(sha x86_64-apple-darwin)" \
+            "$(sha x86_64-unknown-linux-gnu)" "$(sha aarch64-unknown-linux-gnu)" <<'PY'
+          import re, sys, pathlib
+          version, *shas = sys.argv[1:6]
+          s = pathlib.Path("packaging/homebrew/itero.rb").read_text()
+          s = re.sub(r'version "[^"]+"', f'version "{version}"', s, count=1)
+          out, i = [], 0
+          for line in s.split("\n"):
+              if re.match(r'\s*sha256 "', line) and i < len(shas):
+                  line = re.sub(r'"[^"]+"', f'"{shas[i]}"', line); i += 1
+              out.append(line)
+          assert i == 4, f"expected 4 sha256 lines, wrote {i}"
+          pathlib.Path("/tmp/tap/Formula/itero.rb").write_text("\n".join(out))
+          PY
+          cd /tmp/tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/itero.rb
+          if git diff --cached --quiet; then
+            echo "formula already current"
+          else
+            git commit -m "itero $version"
+            git push
+          fi

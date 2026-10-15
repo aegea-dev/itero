@@ -195,6 +195,62 @@ fn notify_writes_to_its_log_when_one_is_set() {
 /// macOS: Itero.app's notifier (here a stand-in, by ITERO_NOTIFIER).
 /// Elsewhere: notify-send (here a stand-in, first on PATH). Either gets
 /// the title and text as its last two arguments, never in a script.
+/// Homebrew's layout: `bin/itero` a link into the Cellar, `Itero.app` in the
+/// formula's `libexec`. The worker follows the link and finds the app.
+#[cfg(target_os = "macos")]
+#[test]
+fn notify_finds_itero_app_in_a_formulas_libexec() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let cellar = d.path().join("Cellar/itero/0.1.0");
+    std::fs::create_dir_all(cellar.join("bin")).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_itero"), cellar.join("bin/itero")).unwrap();
+    let app = cellar.join("libexec/Itero.app/Contents/MacOS");
+    std::fs::create_dir_all(&app).unwrap();
+    let got = d.path().join("argümanlar");
+    std::fs::write(
+        app.join("itero-notifier"),
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{}'\n",
+            got.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        app.join("itero-notifier"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    std::fs::create_dir_all(d.path().join("bin")).unwrap();
+    std::os::unix::fs::symlink(cellar.join("bin/itero"), d.path().join("bin/itero")).unwrap();
+    let j = job(
+        "notify@1",
+        json!({"title": "Posta", "text": "1 new: çay"}),
+        d.path().to_path_buf(),
+    );
+    let mut c = std::process::Command::new(d.path().join("bin/itero"))
+        .arg("worker")
+        .env("HOME", d.path())
+        .env_remove("ITERO_NOTIFIER")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    c.stdin
+        .take()
+        .unwrap()
+        .write_all(serde_json::to_string(&j).unwrap().as_bytes())
+        .unwrap();
+    let out = c.wait_with_output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["output"]["by"], "itero-notifier");
+    assert_eq!(
+        std::fs::read_to_string(&got).unwrap(),
+        "Posta\n1 new: çay\n"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn notify_runs_the_notifier_with_the_title_and_text_as_arguments() {

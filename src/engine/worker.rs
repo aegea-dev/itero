@@ -349,8 +349,8 @@ fn sh(job: &Job) -> Result<Value, String> {
 }
 
 /// `Itero.app`'s notifier on macOS: `ITERO_NOTIFIER` (the app or its
-/// program), else beside the itero binary, else in ~/Applications or
-/// /Applications.
+/// program), else beside the itero binary, else in a Homebrew formula's
+/// libexec, else in ~/Applications or /Applications.
 fn notifier() -> Option<PathBuf> {
     let program = |app: PathBuf| app.join("Contents/MacOS/itero-notifier");
     if let Some(p) = std::env::var_os("ITERO_NOTIFIER").map(PathBuf::from) {
@@ -360,15 +360,26 @@ fn notifier() -> Option<PathBuf> {
             p
         });
     }
-    let beside = std::env::current_exe()
-        .ok()
+    let exe = std::env::current_exe().ok();
+    let beside = exe
+        .as_ref()
         .and_then(|e| e.parent().map(|d| d.join("Itero.app")));
+    // Homebrew: bin/itero is a link into the Cellar; the app is in the
+    // formula's libexec, beside that bin
+    let libexec = exe
+        .and_then(|e| e.canonicalize().ok())
+        .and_then(|e| e.parent().map(|d| d.join("../libexec/Itero.app")));
     let home = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Applications/Itero.app"));
-    [beside, home, Some(PathBuf::from("/Applications/Itero.app"))]
-        .into_iter()
-        .flatten()
-        .map(program)
-        .find(|p| p.is_file())
+    [
+        beside,
+        libexec,
+        home,
+        Some(PathBuf::from("/Applications/Itero.app")),
+    ]
+    .into_iter()
+    .flatten()
+    .map(program)
+    .find(|p| p.is_file())
 }
 
 /// The ways to show a notification here, in order: each a program and its

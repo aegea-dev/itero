@@ -92,6 +92,10 @@ dist: ## Build the release archive and checksum (TAG=vX.Y.Z, TARGET=triple)
 test-install: ## Install from a local release through install.sh, in temp folders
 	sh scripts/test-install.sh
 
+.PHONY: test-formula
+test-formula: ## Install the formula from a local tap (macOS; changes Homebrew, undone after)
+	sh scripts/test-formula.sh
+
 .PHONY: install
 install: ## Install itero to ~/.cargo/bin, and on macOS Itero.app to ~/Applications
 	$(CARGO) install --path . --force --bin itero
