@@ -23,6 +23,8 @@ wait-timeout = "~0.2.1"
 keyring = "~4.2.0"
 fs2 = "~0.4.3"
 croner = "~4.0.1"
+axum = "~0.8.9"
+tokio = { version = "~1.53.1", features = ["rt-multi-thread", "net", "macros", "sync"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "~0.2.190"
@@ -36,3 +38,4 @@ block2 = "~0.6.2"
 
 [dev-dependencies]
 tempfile = "~3.27.0"
+tower = { version = "~0.5.3", features = ["util"] }

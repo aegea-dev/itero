@@ -28,7 +28,7 @@ fn default_actions() -> Vec<String> {
     vec!["actions".into()]
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Workspace {
     pub root: PathBuf,
     pub port: u16,

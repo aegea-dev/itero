@@ -26,6 +26,9 @@ pub enum Cmd {
         /// Seconds between passes
         #[arg(long, default_value_t = 1)]
         interval: u64,
+        /// The passes only: no HTTP API
+        #[arg(long)]
+        no_serve: bool,
     },
     /// Check every workflow and action; print each with its version
     Check,
@@ -88,6 +91,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             once,
             now,
             interval,
+            no_serve,
         } => {
             use crate::engine::daemon;
             let ws = workspace()?;
@@ -108,7 +112,30 @@ fn dispatch(cli: Cli) -> Result<()> {
                 "itero: running the workflows in {}, a pass every {interval}s (Ctrl-C stops)",
                 ws.root.display()
             );
-            daemon::run_loop(&ws, std::time::Duration::from_secs(interval), &exe, report);
+            use crate::engine::http::{self, Engine};
+            let (wake, woken) = std::sync::mpsc::channel();
+            let engine = std::sync::Arc::new(Engine {
+                health: std::sync::Mutex::new(daemon::Health::starting(&daemon::stamp(
+                    chrono::Utc::now(),
+                ))),
+                wake,
+            });
+            let looping = {
+                let (ws, engine) = (ws.clone(), engine.clone());
+                let interval = std::time::Duration::from_secs(interval);
+                std::thread::spawn(move || {
+                    daemon::run_loop(&ws, interval, &exe, &woken, &engine.health, report)
+                })
+            };
+            if no_serve {
+                // the loop's sender lives in `engine`: the loop runs for good
+                looping
+                    .join()
+                    .map_err(|_| anyhow!("the daemon's loop stopped unexpectedly"))?;
+            } else {
+                eprintln!("itero: serving on http://127.0.0.1:{}/", ws.port);
+                http::serve(http::router(ws.clone(), engine), ws.port)?;
+            }
         }
         Cmd::Check => {
             let ws = workspace()?;
