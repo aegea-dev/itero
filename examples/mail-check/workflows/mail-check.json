@@ -1,0 +1,19 @@
+{
+  "name": "mail-check",
+  "description": "Notifies about mail not seen before.",
+  "triggers": [ { "schedule": "*/5 * * * *", "args": { "mailbox": "" } } ],
+  "states": ["start", "done"],
+  "start": "start",
+  "end": ["done"],
+  "transitions": [
+    { "from": "start", "to": "done",
+      "do": [
+        { "id": "check", "action": "mail.check@1",
+          "with": { "mailbox": "${args.mailbox}",
+                    "seen": "${has(memory.seen) ? memory.seen : ''}" } },
+        { "action": "notify@1", "when": "steps.check.json.new > 0",
+          "with": { "title": "Mail", "text": "${steps.check.json.summary}" } },
+        { "action": "memory.set@1", "with": { "seen": "${steps.check.json.seen}" } }
+      ] }
+  ]
+}

@@ -15,6 +15,24 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Cmd {
+    /// Run the workspace's workflows: their schedules, events and jobs, pass after pass
+    Daemon {
+        /// One pass, then stop
+        #[arg(long)]
+        once: bool,
+        /// The time to run at, with --once (RFC 3339; for tests)
+        #[arg(long, requires = "once")]
+        now: Option<String>,
+        /// Seconds between passes
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
+    },
+    /// Check every workflow and action; print each with its version
+    Check,
+    /// The runs, newest first: id, workflow, state, started, ended
+    Runs,
+    /// A workflow's memory, as JSON
+    Memory { workflow: String },
     /// The workflow manager: one decision, JSON in on stdin, JSON out on stdout
     #[command(hide = true)]
     Manager,
@@ -51,8 +69,79 @@ pub fn run(args: Vec<String>) -> i32 {
     }
 }
 
+/// What a pass did, on stderr: only when it did something, or failed.
+fn report(pass: &Result<crate::engine::daemon::Pass>) {
+    match pass {
+        Ok(p) if p.delivered + p.worked + p.lost + p.deferred > 0 => eprintln!(
+            "{} events, {} jobs, {} lost (run again), {} waiting",
+            p.delivered, p.worked, p.lost, p.deferred
+        ),
+        Ok(_) => {}
+        Err(e) => eprintln!("error: {e:#}"),
+    }
+}
+
 fn dispatch(cli: Cli) -> Result<()> {
+    let workspace = || crate::workspace::find(&std::env::current_dir()?);
     match cli.cmd {
+        Cmd::Daemon {
+            once,
+            now,
+            interval,
+        } => {
+            use crate::engine::daemon;
+            let ws = workspace()?;
+            let exe = std::env::current_exe()?;
+            if once {
+                let at = match &now {
+                    Some(t) => t
+                        .parse::<chrono::DateTime<chrono::Utc>>()
+                        .map_err(|_| anyhow!("--now takes an RFC 3339 time, not {t}"))?,
+                    None => chrono::Utc::now(),
+                };
+                let pass = daemon::run_once(&ws, at, &exe);
+                report(&pass);
+                pass?;
+                return Ok(());
+            }
+            eprintln!(
+                "itero: running the workflows in {}, a pass every {interval}s (Ctrl-C stops)",
+                ws.root.display()
+            );
+            daemon::run_loop(&ws, std::time::Duration::from_secs(interval), &exe, report);
+        }
+        Cmd::Check => {
+            let ws = workspace()?;
+            for (_, f) in ws.workflows()? {
+                let version = crate::workflow::version(&f);
+                println!("{}  {}", f.name, crate::workflow::short(&version));
+            }
+            for (_, d) in ws.actions()? {
+                for target in d.targets.keys() {
+                    println!("{}.{target}@{}", d.name, d.version);
+                }
+            }
+        }
+        Cmd::Runs => {
+            let ws = workspace()?;
+            let j = crate::engine::journal::Journal::open(&ws)?;
+            for r in j.runs()?.iter().rev() {
+                println!(
+                    "{}  {:<20} {:<12} {}  {}",
+                    r.id,
+                    r.workflow,
+                    r.runtime.state,
+                    r.started,
+                    r.ended.as_deref().unwrap_or("-")
+                );
+            }
+        }
+        Cmd::Memory { workflow } => {
+            let ws = workspace()?;
+            let j = crate::engine::journal::Journal::open(&ws)?;
+            let m = j.memory(&workflow)?;
+            println!("{}", serde_json::to_string_pretty(&m)?);
+        }
         Cmd::Manager => {
             crate::engine::die_at("manager");
             let mut text = String::new();

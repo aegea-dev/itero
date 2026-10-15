@@ -55,6 +55,20 @@ pub(crate) fn stamp(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// Runs a pass over the workspace every `interval`, for good; `report`
+/// hears of each. A pass that fails is reported and the next one runs.
+pub fn run_loop(
+    ws: &Workspace,
+    interval: std::time::Duration,
+    exe: &Path,
+    report: impl Fn(&Result<Pass>),
+) -> ! {
+    loop {
+        report(&run_once(ws, Utc::now(), exe));
+        std::thread::sleep(interval);
+    }
+}
+
 /// One pass over a workspace; `exe` is the itero binary, run as `itero
 /// manager` and `itero worker`.
 pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {

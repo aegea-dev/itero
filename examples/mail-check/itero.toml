@@ -1,0 +1,3 @@
+# The mail check: every 5 minutes, a notification for mail not seen before.
+# Run `itero daemon` in this folder.
+port = 8787
