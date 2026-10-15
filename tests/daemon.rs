@@ -166,3 +166,34 @@ fn an_app_event_starts_the_workflows_waiting_for_it_once() {
     assert!(other.handled.is_some() && other.error.is_none());
     assert_eq!(other.note.as_deref(), Some("no workflow starts on it"));
 }
+
+#[test]
+fn a_schedule_keeps_its_last_slot_when_triggers_are_reordered() {
+    let d = tempfile::tempdir().unwrap();
+    let flow = |triggers: &str| {
+        format!(
+            r#"{{ "name": "sayac", "triggers": {triggers},
+      "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+      "transitions": [ {{ "from": "basla", "to": "bitti",
+        "do": [ {{ "action": "memory.set@1", "with": {{ "son": "çalıştı" }} }} ] }} ] }}"#
+        )
+    };
+    let ws = workspace(
+        d.path(),
+        "sayac",
+        &flow(r#"[ { "schedule": "*/5 * * * *" } ]"#),
+    );
+    run_once(&ws, t("2026-10-15T14:01:00Z"), exe()).unwrap();
+    // an event trigger put first: the schedule's place changes, its key does not
+    std::fs::write(
+        d.path().join("workflows/sayac.json"),
+        flow(r#"[ { "on": "elle" }, { "schedule": "*/5 * * * *" } ]"#),
+    )
+    .unwrap();
+    run_once(&ws, t("2026-10-15T14:05:10Z"), exe()).unwrap();
+    assert_eq!(
+        Journal::open(&ws).unwrap().runs().unwrap().len(),
+        1,
+        "the 14:05 slot ran"
+    );
+}

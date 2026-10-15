@@ -14,6 +14,18 @@ struct Settings {
     workflows: Vec<String>,
     #[serde(default = "default_actions")]
     actions: Vec<String>,
+    #[serde(default = "default_triggers")]
+    triggers: String,
+}
+
+/// A workspace's `triggers/<workflow>.json`: triggers added to the
+/// workflow's own, or (`replace`) used instead of them.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TriggerFile {
+    #[serde(default)]
+    replace: bool,
+    triggers: Vec<workflow::format::Trigger>,
 }
 
 fn default_port() -> u16 {
@@ -28,12 +40,18 @@ fn default_actions() -> Vec<String> {
     vec!["actions".into()]
 }
 
+fn default_triggers() -> String {
+    "triggers".into()
+}
+
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub root: PathBuf,
     pub port: u16,
     pub workflows: Vec<PathBuf>,
     pub actions: Vec<PathBuf>,
+    /// The workspace's own triggers for its workflows.
+    pub triggers: PathBuf,
 }
 
 /// A listed folder: `~/` is the home folder, a relative path is under the
@@ -64,6 +82,7 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
         port: s.port,
         workflows: s.workflows.iter().map(|w| folder(root, w)).collect(),
         actions: s.actions.iter().map(|a| folder(root, a)).collect(),
+        triggers: folder(root, &s.triggers),
     })
 }
 
@@ -144,6 +163,38 @@ impl Workspace {
                 out.push((f, w));
             }
         }
+        self.merge_triggers(&mut out)?;
         Ok(out)
+    }
+
+    /// Applies each `triggers/<workflow>.json` to its workflow. A folder
+    /// that is not there holds none.
+    fn merge_triggers(&self, flows: &mut [(PathBuf, workflow::File)]) -> Result<()> {
+        if !self.triggers.exists() {
+            return Ok(());
+        }
+        let files = listed(&self.triggers, |p| {
+            (p.extension().is_some_and(|x| x == "json") && p.is_file()).then(|| p.to_path_buf())
+        })?;
+        for f in files {
+            let name = f.display();
+            let text =
+                std::fs::read_to_string(&f).with_context(|| format!("cannot read {name}"))?;
+            let tf: TriggerFile =
+                serde_json::from_str(&text).map_err(|e| anyhow!("{name}: {e}"))?;
+            let stem = f.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            let Some((_, w)) = flows.iter_mut().find(|(_, w)| w.name == stem) else {
+                bail!("{name}: no workflow {stem}");
+            };
+            for t in &tf.triggers {
+                workflow::validate::check_trigger(t).map_err(|e| anyhow!("{name}: {e}"))?;
+            }
+            if tf.replace {
+                w.triggers = tf.triggers;
+            } else {
+                w.triggers.extend(tf.triggers);
+            }
+        }
+        Ok(())
     }
 }

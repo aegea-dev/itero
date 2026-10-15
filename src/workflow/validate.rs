@@ -1,7 +1,7 @@
 //! The checks a workflow passes before it runs. The first problem found is
 //! reported, naming the file and the transition.
 use super::actions::{self, Definition};
-use super::format::{File, Transition};
+use super::format::{File, Transition, Trigger};
 use super::{FAILED, WorkflowError, expr};
 use serde_json::Value;
 
@@ -88,6 +88,19 @@ fn check_transition(t: &Transition, states: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Checks a trigger: a schedule that reads as cron, or `on` an event type,
+/// one of them.
+pub fn check_trigger(t: &Trigger) -> Result<(), String> {
+    match (&t.schedule, &t.on) {
+        (Some(s), None) => crate::engine::schedule::check(s),
+        (None, Some(on)) if on.split('.').all(is_word) => Ok(()),
+        (None, Some(on)) => Err(format!(
+            "trigger on \"{on}\" is an event type, like photo.added"
+        )),
+        _ => Err("a trigger has a schedule or on, one of them".into()),
+    }
+}
+
 /// Checks a parsed workflow; `file` names it in errors (empty for text
 /// that has no file).
 pub fn validate(file: &str, f: &File) -> Result<(), WorkflowError> {
@@ -121,19 +134,7 @@ pub fn validate(file: &str, f: &File) -> Result<(), WorkflowError> {
         }
     }
     for t in &f.triggers {
-        match (&t.schedule, &t.on) {
-            (Some(s), None) => crate::engine::schedule::check(s).map_err(&whole)?,
-            (None, Some(on)) => {
-                if !on.split('.').all(is_word) {
-                    return Err(whole(format!(
-                        "trigger on \"{on}\" is an event type, like photo.added"
-                    )));
-                }
-            }
-            _ => {
-                return Err(whole("a trigger has a schedule or on, one of them".into()));
-            }
-        }
+        check_trigger(t).map_err(&whole)?;
     }
     if !f.states.contains(&f.start) {
         return Err(whole(format!("start \"{}\" is not a state", f.start)));

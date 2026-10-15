@@ -216,12 +216,18 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
 /// Starts a run of every workflow whose schedule is due. A schedule seen for
 /// the first time only starts counting: it waits for its first slot.
 fn fire_schedules(ws: &Workspace, j: &mut Journal, now: DateTime<Utc>) -> Result<()> {
+    // a schedule's key names it, not its place among the triggers: merging
+    // or reordering keeps its last slot; the same schedule twice is one
+    let mut seen = BTreeSet::new();
     for (_, f) in ws.workflows()? {
-        for (i, t) in f.triggers.iter().enumerate() {
+        for t in &f.triggers {
             let Some(schedule) = &t.schedule else {
                 continue;
             };
-            let key = format!("{}#{i}", f.name);
+            let key = format!("{}#{schedule}", f.name);
+            if !seen.insert(key.clone()) {
+                continue;
+            }
             let Some(last) = j.schedule_last(&key)? else {
                 j.set_schedule_last(&key, &stamp(now))?;
                 continue;
