@@ -123,6 +123,8 @@ pub fn run_of(subject: &str) -> Option<&str> {
 pub struct Handled<'a> {
     /// The event answered.
     pub seq: i64,
+    /// When: the daemon's pass time (RFC 3339), never the clock's.
+    pub at: &'a str,
     pub error: Option<String>,
     /// The run's runtime state after it, and whether the run has ended.
     pub run: Option<(&'a str, &'a Runtime, bool)>,
@@ -139,10 +141,6 @@ pub struct Journal {
 
 fn json<T: Serialize>(v: &T) -> Result<String> {
     Ok(serde_json::to_string(v)?)
-}
-
-fn now() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Recorded> {
@@ -436,7 +434,7 @@ impl Journal {
 
     /// Saves an answer: all of it, or (on any error) none of it.
     pub fn handle(&mut self, h: Handled) -> Result<()> {
-        let now = now();
+        let now = h.at;
         let tx = self.db.transaction()?;
         tx.execute(
             "UPDATE events SET handled = ?2, error = ?3 WHERE seq = ?1",

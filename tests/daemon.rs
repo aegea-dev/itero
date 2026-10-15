@@ -44,7 +44,11 @@ fn a_scheduled_workflow_starts_a_run_once_per_slot() {
     assert_eq!(runs[0].runtime.state, "bitti");
     assert_eq!(runs[0].args["kaynak"], "zamanlayıcı");
     assert_eq!(runs[0].started, "2026-10-15T14:05:10Z");
-    assert!(runs[0].ended.is_some());
+    assert_eq!(
+        runs[0].ended.as_deref(),
+        Some("2026-10-15T14:05:10Z"),
+        "the pass's time, not the clock's"
+    );
     // the 14:10 slot: a second run
     run_once(&ws, t("2026-10-15T14:10:00Z"), exe()).unwrap();
     assert_eq!(j.runs().unwrap().len(), 2);

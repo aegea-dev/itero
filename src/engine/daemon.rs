@@ -259,9 +259,10 @@ fn ask(exe: &Path, input: &Input) -> Result<Answer, Failure> {
 }
 
 /// Marks an event handled with the reason it could not be delivered.
-fn give_up(j: &mut Journal, seq: i64, why: String) -> Result<Delivered> {
+fn give_up(j: &mut Journal, seq: i64, at: &str, why: String) -> Result<Delivered> {
     j.handle(Handled {
         seq,
+        at,
         error: Some(why),
         run: None,
         timers: None,
@@ -274,15 +275,21 @@ fn give_up(j: &mut Journal, seq: i64, why: String) -> Result<Delivered> {
 /// Delivers one event to its run's manager and saves the answer.
 fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Result<Delivered> {
     let Some(id) = journal::run_of(&r.event.subject).map(str::to_string) else {
-        return give_up(j, r.seq, format!("no run in {}", r.event.subject));
+        return give_up(
+            j,
+            r.seq,
+            &stamp(now),
+            format!("no run in {}", r.event.subject),
+        );
     };
     let Some(run) = j.run(&id)? else {
-        return give_up(j, r.seq, format!("no run {id}"));
+        return give_up(j, r.seq, &stamp(now), format!("no run {id}"));
     };
     let Some(workflow) = j.workflow(&run.pin)? else {
         return give_up(
             j,
             r.seq,
+            &stamp(now),
             format!("workflow {} is not in the journal", run.pin),
         );
     };
@@ -305,7 +312,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
     };
     let answer = match ask_again(exe, &input) {
         Ok(a) => a,
-        Err(Failure::Error(why)) => return give_up(j, r.seq, why),
+        Err(Failure::Error(why)) => return give_up(j, r.seq, &stamp(now), why),
         Err(Failure::Lost(why)) => {
             eprintln!(
                 "{}: {id}: {why}; {} waits for the next pass",
@@ -335,6 +342,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
     let ended = answer.runtime.chain.is_none() && (workflow.end.contains(state) || state == FAILED);
     j.handle(Handled {
         seq: r.seq,
+        at: &stamp(now),
         error: None,
         run: Some((&id, &answer.runtime, ended)),
         timers: answer.timers.as_deref(),
@@ -620,6 +628,7 @@ fn save_result(
     );
     j.handle(Handled {
         seq: r.seq,
+        at: &stamp(now),
         error: None,
         run: None,
         timers: None,
