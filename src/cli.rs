@@ -180,7 +180,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Runs => {
             let ws = workspace()?;
             let j = crate::engine::journal::Journal::open(&ws)?;
-            for r in j.runs()?.iter().rev() {
+            for r in j.runs_page(None, usize::MAX)? {
                 println!(
                     "{}  {:<20} {:<12} {}  {}",
                     r.id,

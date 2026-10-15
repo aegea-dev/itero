@@ -352,6 +352,22 @@ impl Journal {
         Ok(ids)
     }
 
+    /// The newest `limit` runs, of one workflow or all, newest first.
+    pub fn runs_page(&self, workflow: Option<&str>, limit: usize) -> Result<Vec<Run>> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut s = self.db.prepare(
+            "SELECT id FROM runs WHERE ?1 IS NULL OR workflow = ?1 ORDER BY started DESC, id DESC LIMIT ?2",
+        )?;
+        let ids: Vec<String> = s
+            .query_map(params![workflow, limit], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut out = vec![];
+        for id in ids {
+            out.extend(self.run(&id)?);
+        }
+        Ok(out)
+    }
+
     /// Every run, oldest first.
     pub fn runs(&self) -> Result<Vec<Run>> {
         let mut s = self

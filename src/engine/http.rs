@@ -2,9 +2,10 @@
 //! what the journal holds (runs, workflows, memory). Local only: the Host
 //! header must name this port on 127.0.0.1 or localhost.
 use super::daemon::Health;
+use super::journal::Journal;
 use crate::workspace::Workspace;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Request, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -42,6 +43,10 @@ pub fn router(ws: Workspace, engine: Arc<Engine>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/events", post(event))
+        .route("/runs", get(runs))
+        .route("/runs/{id}", get(run))
+        .route("/workflows", get(workflows))
+        .route("/workflows/{name}/memory", get(memory))
         .layer(middleware::from_fn_with_state(s.clone(), local_only))
         .with_state(s)
 }
@@ -126,6 +131,116 @@ async fn event(
     // a loop that has stopped finds the event in the journal when it starts
     let _ = s.engine.wake.send(());
     Ok((StatusCode::ACCEPTED, Json(json!({ "id": id }))))
+}
+
+/// Runs `f` on the workspace off the async threads (the journal may wait
+/// on a busy SQLite): its value as JSON, or its error as a reply.
+async fn blocking(
+    s: &Shared,
+    f: impl FnOnce(&Workspace) -> Result<Value, Reply> + Send + 'static,
+) -> Result<Json<Value>, Reply> {
+    let ws = s.ws.clone();
+    tokio::task::spawn_blocking(move || f(&ws))
+        .await
+        .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map(Json)
+}
+
+fn internal(e: anyhow::Error) -> Reply {
+    fail(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))
+}
+
+/// A run as lists show it.
+fn run_row(r: &super::journal::Run) -> Value {
+    json!({
+        "id": r.id,
+        "workflow": r.workflow,
+        "state": r.runtime.state,
+        "started": r.started,
+        "ended": r.ended,
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct RunsQuery {
+    workflow: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn runs(State(s): State<Shared>, Query(q): Query<RunsQuery>) -> Result<Json<Value>, Reply> {
+    blocking(&s, move |ws| {
+        let j = Journal::open(ws).map_err(internal)?;
+        let runs = j
+            .runs_page(q.workflow.as_deref(), q.limit.unwrap_or(50))
+            .map_err(internal)?;
+        Ok(Value::Array(runs.iter().map(run_row).collect()))
+    })
+    .await
+}
+
+async fn run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Json<Value>, Reply> {
+    blocking(&s, move |ws| {
+        let j = Journal::open(ws).map_err(internal)?;
+        let r = j
+            .run(&id)
+            .map_err(internal)?
+            .ok_or_else(|| fail(StatusCode::NOT_FOUND, format!("no run {id}")))?;
+        let events: Vec<Value> = j
+            .events(Some(&super::journal::subject(&id)))
+            .map_err(internal)?
+            .iter()
+            .map(|e| {
+                json!({
+                    "seq": e.seq,
+                    "type": e.event.kind,
+                    "time": e.event.time,
+                    "handled": e.handled,
+                    "error": e.error,
+                    "data": e.event.data,
+                })
+            })
+            .collect();
+        let mut v = run_row(&r);
+        v["args"] = Value::Object(r.args.clone());
+        v["events"] = Value::Array(events);
+        Ok(v)
+    })
+    .await
+}
+
+async fn workflows(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
+    blocking(&s, |ws| {
+        let flows = ws.workflows().map_err(internal)?;
+        Ok(Value::Array(
+            flows
+                .iter()
+                .map(|(_, f)| {
+                    json!({
+                        "name": f.name,
+                        "version": crate::workflow::version(f),
+                        "triggers": f.triggers,
+                    })
+                })
+                .collect(),
+        ))
+    })
+    .await
+}
+
+async fn memory(State(s): State<Shared>, Path(name): Path<String>) -> Result<Json<Value>, Reply> {
+    blocking(&s, move |ws| {
+        let known = ws
+            .workflows()
+            .map_err(internal)?
+            .iter()
+            .any(|(_, f)| f.name == name);
+        if !known {
+            return Err(fail(StatusCode::NOT_FOUND, format!("no workflow {name}")));
+        }
+        let j = Journal::open(ws).map_err(internal)?;
+        Ok(Value::Object(j.memory(&name).map_err(internal)?))
+    })
+    .await
 }
 
 /// Serves `router` on 127.0.0.1:`port` until the process ends.
