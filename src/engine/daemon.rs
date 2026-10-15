@@ -41,7 +41,7 @@ const MAX_TRIES: usize = 3;
 const MAX_RUNS: i64 = 3;
 
 /// The built-ins a worker runs; any other action is a workspace action.
-const WORKER_BUILT_INS: [&str; 2] = ["http.request@1", "command@1"];
+const WORKER_BUILT_INS: [&str; 4] = ["http.request@1", "command@1", "sh@1", "notify@1"];
 
 /// What became of an event given to `deliver`.
 enum Delivered {

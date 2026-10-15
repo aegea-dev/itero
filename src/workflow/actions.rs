@@ -11,12 +11,14 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 /// The built-in actions at their versions.
-pub const BUILT_IN: [&str; 5] = [
+pub const BUILT_IN: [&str; 7] = [
     "memory.set@1",
     "json.pick@1",
     "event.emit@1",
     "http.request@1",
     "command@1",
+    "sh@1",
+    "notify@1",
 ];
 
 /// Names a workspace action cannot take: the built-ins' prefixes.
@@ -215,6 +217,13 @@ pub fn split(name: &str) -> Option<(&str, &str, &str)> {
     Some((def, target, version))
 }
 
+/// An environment variable's name: ASCII letters, digits and `_`, not
+/// starting with a digit.
+fn is_env_name(s: &str) -> bool {
+    s.chars().next().is_some_and(|c| !c.is_ascii_digit())
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// Checks that a built-in has what it needs in `with`. Any other name must
 /// read as a workspace action, `<name>.<target>@<version>`; whether there
 /// is one is `workspace`'s check, against its actions folders.
@@ -266,6 +275,33 @@ pub fn check(name: &str, with: Option<&Map<String, Value>>) -> Result<(), String
                 .is_some_and(|a| !a.is_empty() && a.iter().all(Value::is_string));
             if !ok {
                 return Err("command@1 needs with.run, a list of strings".into());
+            }
+        }
+        "sh@1" => {
+            only(&["run", "env"])?;
+            let run = with.get("run").and_then(Value::as_str).unwrap_or("");
+            if run.is_empty() {
+                return Err("sh@1 needs with.run, a shell line".into());
+            }
+            if run.contains("${") {
+                return Err("sh@1: a template in run; put values in env and use $NAME".into());
+            }
+            match with.get("env") {
+                None => {}
+                Some(Value::Object(env)) => {
+                    if let Some(k) = env.keys().find(|k| !is_env_name(k)) {
+                        return Err(format!(
+                            "sh@1: env name \"{k}\" is letters, digits and _, not starting with a digit"
+                        ));
+                    }
+                }
+                Some(_) => return Err("sh@1 needs with.env as an object".into()),
+            }
+        }
+        "notify@1" => {
+            only(&["title", "text"])?;
+            if !text("title") || !text("text") {
+                return Err("notify@1 needs with.title and with.text".into());
             }
         }
         _ => {

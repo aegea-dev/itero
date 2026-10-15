@@ -183,6 +183,8 @@ pub fn run(job: &Job) -> Result<Value, Failure> {
     match a {
         "http.request@1" => http(job).map_err(|e| Failure::Error(format!("{a}: {e}"))),
         "command@1" => command(job).map_err(|e| Failure::Error(format!("{a}: {e}"))),
+        "sh@1" => sh(job).map_err(|e| Failure::Error(format!("{a}: {e}"))),
+        "notify@1" => notify(job).map_err(|e| Failure::Error(format!("{a}: {e}"))),
         _ if job.program.is_some() => program(job).map_err(|e| e.context(a)),
         _ => Err(Failure::Error(format!("{a} does not run in a worker"))),
     }
@@ -304,11 +306,90 @@ fn command(job: &Job) -> Result<Value, String> {
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("cannot run {program}: {e}"))?;
-    Ok(json!({
+    Ok(output(&out))
+}
+
+/// What a program printed, as an action's output: its exit code, stdout
+/// and stderr as text, stdout's lines, and stdout as `json` when it parses.
+fn output(out: &std::process::Output) -> Value {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut o = json!({
         "exit": out.status.code().unwrap_or(-1),
-        "stdout": String::from_utf8_lossy(&out.stdout),
+        "stdout": stdout,
         "stderr": String::from_utf8_lossy(&out.stderr),
-    }))
+        "lines": stdout.lines().collect::<Vec<_>>(),
+    });
+    if !stdout.trim().is_empty()
+        && let Ok(j) = serde_json::from_str::<Value>(&stdout)
+    {
+        o["json"] = j;
+    }
+    o
+}
+
+/// A shell line, `sh -c`, in the workspace. Values reach it only through
+/// its environment (`with.env`), never pasted into its text.
+fn sh(job: &Job) -> Result<Value, String> {
+    let run = text(job, "run").ok_or("needs with.run")?;
+    let mut c = Command::new("sh");
+    c.arg("-c")
+        .arg(&run)
+        .current_dir(&job.root)
+        .stdin(Stdio::null());
+    if let Some(env) = job.with.get("env").and_then(Value::as_object) {
+        for (k, v) in env {
+            match v {
+                Value::String(s) => c.env(k, s),
+                other => c.env(k, other.to_string()),
+            };
+        }
+    }
+    let out = c.output().map_err(|e| format!("cannot run sh: {e}"))?;
+    Ok(output(&out))
+}
+
+/// A desktop notification: osascript on macOS, notify-send elsewhere, the
+/// title and text as arguments (never in a script's text). With
+/// `ITERO_NOTIFY_LOG` set, a line is appended to that file instead.
+fn notify(job: &Job) -> Result<Value, String> {
+    let title = text(job, "title").ok_or("needs with.title")?;
+    let body = text(job, "text").ok_or("needs with.text")?;
+    if let Some(log) = std::env::var_os("ITERO_NOTIFY_LOG") {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+            .map_err(|e| format!("cannot open {}: {e}", PathBuf::from(&log).display()))?;
+        writeln!(f, "{title}\t{body}").map_err(|e| e.to_string())?;
+        return Ok(json!({"shown": true}));
+    }
+    let mut c = if cfg!(target_os = "macos") {
+        let mut c = Command::new("osascript");
+        c.args([
+            "-e",
+            "on run argv",
+            "-e",
+            "display notification (item 2 of argv) with title (item 1 of argv)",
+            "-e",
+            "end run",
+        ]);
+        c
+    } else {
+        Command::new("notify-send")
+    };
+    let out = c
+        .arg(&title)
+        .arg(&body)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot show a notification: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cannot show a notification: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(json!({"shown": true}))
 }
 
 fn program(job: &Job) -> Result<Value, Failure> {
@@ -390,10 +471,5 @@ fn program(job: &Job) -> Result<Value, Failure> {
             format!("exit {exit}: {why}")
         }));
     }
-    serde_json::from_slice(&out.stdout).map_err(|_| {
-        Failure::Error(format!(
-            "printed no JSON: {}",
-            String::from_utf8_lossy(&out.stdout).trim()
-        ))
-    })
+    Ok(output(&out))
 }

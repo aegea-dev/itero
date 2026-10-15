@@ -13,7 +13,7 @@ pub fn is_pure(action: &str) -> bool {
 pub fn default_expect(action: &str) -> Option<&'static str> {
     match action {
         "http.request@1" => Some("output.status >= 200 && output.status < 300"),
-        "command@1" => Some("output.exit == 0"),
+        "command@1" | "sh@1" => Some("output.exit == 0"),
         _ => None,
     }
 }
