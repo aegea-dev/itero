@@ -11,12 +11,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 /// The journal's schema version, kept in its `meta` table.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 1 + MIGRATIONS.len() as i64;
+
+/// The steps from each version to the next: `MIGRATIONS[0]` takes version 1
+/// to 2, and so on. A step is only ever added, never changed: a journal on
+/// someone's machine was made by the steps as they were.
+const MIGRATIONS: [&str; 1] = [
+    // 2: what handling an event did, when no run shows it
+    "ALTER TABLE events ADD COLUMN note TEXT;",
+];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
 /// while it ran.
 const STOPPED: &str = "the daemon stopped while it ran";
 
+/// Version 1's tables; `MIGRATIONS` take them to this version.
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,8 +37,7 @@ CREATE TABLE IF NOT EXISTS events (
   cause TEXT,
   data TEXT NOT NULL,
   handled TEXT,
-  error TEXT,
-  note TEXT
+  error TEXT
 );
 CREATE INDEX IF NOT EXISTS events_open ON events (handled, seq);
 CREATE TABLE IF NOT EXISTS runs (
@@ -188,16 +196,24 @@ impl Journal {
                 r.get(0)
             })
             .optional()?;
-        if let Some(v) = version {
-            let v: i64 = v
+        // a journal being made has no version yet: it starts at 1
+        let v: i64 = match version {
+            None => 1,
+            Some(v) => v
                 .parse()
-                .with_context(|| format!("the journal's schema version is not a number: {v}"))?;
-            if v > SCHEMA_VERSION {
-                bail!(
-                    "{} was made by a newer itero (journal schema {v}; this itero knows up to {SCHEMA_VERSION}): update itero",
-                    path.display()
-                );
-            }
+                .with_context(|| format!("the journal's schema version is not a number: {v}"))?,
+        };
+        if v > SCHEMA_VERSION {
+            bail!(
+                "{} was made by a newer itero (journal schema {v}; this itero knows up to {SCHEMA_VERSION}): update itero",
+                path.display()
+            );
+        }
+        if v < 1 {
+            bail!("{}: journal schema {v} is not a version", path.display());
+        }
+        for step in &MIGRATIONS[(v - 1) as usize..] {
+            tx.execute_batch(step)?;
         }
         tx.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?1)",
