@@ -5,6 +5,12 @@
 # 127.0.0.1. Its login checks are off: any account exists once used. The
 # server's container is removed afterwards, whatever the tests did.
 #
+# Containers reach this machine as host.docker.internal, which
+# --add-host=host-gateway points at the bridge network's gateway. Docker
+# Desktop forwards that to 127.0.0.1; a Linux Docker Engine does not, so
+# where the gateway is an address of this machine the ports are published
+# there too: reachable from containers, still not from the network.
+#
 # Docker: the `docker` CLI as configured (set DOCKER_CONTEXT to pick one).
 set -eu
 
@@ -15,9 +21,22 @@ TOOLCHAIN=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT INT TERM
 
+addresses=127.0.0.1
+gateway=$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
+if [ -n "$gateway" ] && command -v ip >/dev/null 2>&1 &&
+	ip -o -4 addr show | grep -q " $gateway/"; then
+	addresses="$addresses $gateway"
+fi
+ports=""
+for a in $addresses; do
+	ports="$ports -p $a:13025:3025 -p $a:13110:3110 -p $a:13143:3143"
+done
+
+# $ports unquoted: one word per flag
+# shellcheck disable=SC2086
 docker run -d --rm --name "$NAME" \
 	-e GREENMAIL_OPTS='-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled' \
-	-p 127.0.0.1:13025:3025 -p 127.0.0.1:13110:3110 -p 127.0.0.1:13143:3143 \
+	$ports \
 	"$IMAGE" >/dev/null
 
 # up when IMAP answers its greeting
