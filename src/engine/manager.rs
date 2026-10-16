@@ -133,17 +133,21 @@ impl Machine<'_> {
         }
         let memory = self.memory();
         let mut found = None;
-        for (i, t) in self.i.workflow.transitions.iter().enumerate() {
-            if t.from != self.rt.state || t.on.as_deref() != Some(e.kind.as_str()) {
-                continue;
-            }
-            let ok = match &t.when {
-                Some(w) => truth(w, &self.vars(&memory, &e.data, &e.data, &Map::new(), None))?,
-                None => true,
-            };
-            if ok {
-                found = Some(i);
-                break;
+        // a transition from the run's own state first, then from anywhere
+        let state = self.rt.state.clone();
+        'look: for from in [state.as_str(), crate::workflow::ANY] {
+            for (i, t) in self.i.workflow.transitions.iter().enumerate() {
+                if t.from != from || t.on.as_deref() != Some(e.kind.as_str()) {
+                    continue;
+                }
+                let ok = match &t.when {
+                    Some(w) => truth(w, &self.vars(&memory, &e.data, &e.data, &Map::new(), None))?,
+                    None => true,
+                };
+                if ok {
+                    found = Some(i);
+                    break 'look;
+                }
             }
         }
         match found {

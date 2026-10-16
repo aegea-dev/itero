@@ -44,3 +44,25 @@ fn limits_are_not_part_of_the_version() {
     let b = workflow::parse(&flow(r#""concurrency": { "max": 1 }, "pause_after": 0,"#)).unwrap();
     assert_eq!(workflow::version(&a), workflow::version(&b));
 }
+
+/// A workflow with one transition, `tr`.
+fn with_transition(tr: &str) -> Result<workflow::File, workflow::WorkflowError> {
+    workflow::parse(&format!(
+        r#"{{ "name": "a", "description": "ağ", "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+             "transitions": [ {tr} ] }}"#
+    ))
+}
+
+#[test]
+fn a_transition_from_anywhere_needs_on_and_takes_no_timeout() {
+    assert!(with_transition(r#"{ "from": "*", "to": "bitti", "on": "dur" }"#).is_ok());
+    let e = with_transition(r#"{ "from": "*", "to": "bitti" }"#).unwrap_err();
+    assert!(e.to_string().contains("from \"*\" needs on"), "{e}");
+    let e = with_transition(
+        r#"{ "from": "*", "to": "bitti", "on": "dur", "timeout": "5m", "on_timeout": "bitti" }"#,
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("from \"*\" takes no timeout"), "{e}");
+    let e = with_transition(r#"{ "from": "basla", "to": "*", "on": "dur" }"#).unwrap_err();
+    assert!(e.to_string().contains("to \"*\" is not a state"), "{e}");
+}

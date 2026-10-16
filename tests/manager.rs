@@ -453,3 +453,35 @@ fn a_bad_id_or_when_is_refused() {
         .to_string();
     assert!(e.contains("bad expression"), "{e}");
 }
+
+/// An order that can be cancelled from wherever it is, except that
+/// `odeme` has its own answer to the same event.
+const IPTAL: &str = r#"{ "name": "siparis", "description": "sipariş",
+  "states": ["yeni", "odeme", "iptal", "geri-odeme", "bitti"],
+  "start": "yeni", "end": ["iptal", "geri-odeme", "bitti"],
+  "transitions": [
+    { "from": "yeni", "to": "odeme", "on": "odendi" },
+    { "from": "odeme", "to": "bitti", "on": "gonderildi" },
+    { "from": "odeme", "to": "geri-odeme", "on": "iptal.istendi" },
+    { "from": "*", "to": "iptal", "on": "iptal.istendi" } ] }"#;
+
+fn on(state: &str, kind: &str) -> Answer {
+    let mut i = input(at(state), kind, "e9", json!({"neden": "vazgeçti"}));
+    i.workflow = itero::workflow::parse(IPTAL).unwrap();
+    decide(&i).unwrap()
+}
+
+#[test]
+fn a_transition_from_anywhere_is_taken_where_nothing_closer_is() {
+    assert_eq!(on("yeni", "iptal.istendi").runtime.state, "iptal");
+    assert_eq!(
+        on("odeme", "iptal.istendi").runtime.state,
+        "geri-odeme",
+        "the state's own wins"
+    );
+    assert_eq!(
+        on("yeni", "gonderildi").runtime.state,
+        "yeni",
+        "no transition"
+    );
+}

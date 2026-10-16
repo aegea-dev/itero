@@ -31,8 +31,19 @@ pub fn check_templates(text: &str) -> Result<(), String> {
 }
 
 fn check_transition(t: &Transition, states: &[String]) -> Result<(), String> {
+    if t.from == super::ANY {
+        if t.on.is_none() {
+            return Err(
+                "from \"*\" needs on: a transition from anywhere waits for an event".into(),
+            );
+        }
+        if t.timeout.is_some() {
+            return Err("from \"*\" takes no timeout".into());
+        }
+    }
+    let from = (t.from != super::ANY).then_some(&t.from);
     let named = [
-        ("from", Some(&t.from)),
+        ("from", from),
         ("to", Some(&t.to)),
         ("on_timeout", t.on_timeout.as_ref()),
         ("on_fail", t.on_fail.as_ref()),
