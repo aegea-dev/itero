@@ -1,0 +1,55 @@
+name: Test
+
+# Formatting, clippy and the test suite on every pull request and on main,
+# on Linux and macOS: the same make targets as on a development machine.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test ${{ matrix.os }}
+    strategy:
+      # a failure on one system must not hide the other's result
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # rustup installs the toolchain and components rust-toolchain.toml
+      # names, the one place the version is written.
+      - name: Install the toolchain
+        run: rustup toolchain install
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Formatting
+        run: make fmt-check
+
+      - name: Clippy
+        run: make lint-check
+
+      - name: Tests
+        run: make test
