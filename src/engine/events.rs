@@ -31,9 +31,9 @@ impl std::fmt::Display for EmitError {
 impl std::error::Error for EmitError {}
 
 /// Types the engine sends itself: from outside they would forge a worker's
-/// result, a timer, or a run's start.
-fn engine_own(kind: &str) -> bool {
-    ["action.", "timer.", "run."]
+/// result, a timer, a run's start, a workflow's pause or a source's state.
+pub fn engine_own(kind: &str) -> bool {
+    ["action.", "timer.", "run.", "workflow.", "source."]
         .iter()
         .any(|p| kind.starts_with(p))
 }

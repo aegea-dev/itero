@@ -38,7 +38,13 @@ fn bad_events_are_refused_and_nothing_is_saved() {
         emit(&ws, kind, data, run, NOW).unwrap_err()
     };
     assert!(matches!(bad("Foto Eklendi", None, None), EmitError::Bad(_)));
-    for own in ["action.finished", "timer.fired", "run.started"] {
+    for own in [
+        "action.finished",
+        "timer.fired",
+        "run.started",
+        "workflow.paused",
+        "source.paused",
+    ] {
         let e = bad(own, None, None);
         assert!(e.to_string().contains("engine's own"), "{e}");
     }

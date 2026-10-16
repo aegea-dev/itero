@@ -48,6 +48,8 @@ pub enum Cmd {
     Runs,
     /// A workflow's memory, as JSON
     Memory { workflow: String },
+    /// Let a paused workflow start runs again
+    Resume { workflow: String },
     /// Start this workspace's daemon at login, kept up by a watchdog
     Service {
         #[command(subcommand)]
@@ -235,6 +237,16 @@ fn dispatch(cli: Cli) -> Result<()> {
             let j = crate::engine::journal::Journal::open(&ws)?;
             let m = j.memory(&workflow)?;
             println!("{}", serde_json::to_string_pretty(&m)?);
+        }
+        Cmd::Resume { workflow } => {
+            let ws = workspace()?;
+            let j = crate::engine::journal::Journal::open(&ws)?;
+            let word = if j.resume(&workflow)? {
+                "resumed"
+            } else {
+                "not paused"
+            };
+            println!("{workflow}: {word}");
         }
         Cmd::Service { cmd } => {
             use crate::engine::service;

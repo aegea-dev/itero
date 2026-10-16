@@ -103,6 +103,28 @@ async fn runs_workflows_and_memory_can_be_read() {
     assert_eq!(flows[0]["name"], "sayac");
     assert_eq!(flows[0]["version"].as_str().unwrap().len(), 64);
     assert_eq!(flows[0]["triggers"], json!([{"on": "say"}]));
+    assert_eq!(flows[0]["paused"], Value::Null);
+    // paused, it says when and why
+    itero::engine::journal::Journal::open(&ws)
+        .unwrap()
+        .handle(itero::engine::journal::Handled {
+            seq: 0,
+            at: "2026-10-15T14:01:00Z",
+            error: None,
+            run: None,
+            timers: None,
+            events: vec![],
+            memory: None,
+            pause: Some(itero::engine::journal::Pause {
+                workflow: "sayac",
+                pin: "sayac@eski",
+                why: "5 failed runs in a row".into(),
+            }),
+        })
+        .unwrap();
+    let (_, flows) = send(&app, get("/workflows")).await;
+    assert_eq!(flows[0]["paused"]["at"], "2026-10-15T14:01:00Z");
+    assert_eq!(flows[0]["paused"]["why"], "5 failed runs in a row");
     let (_, m) = send(&app, get("/workflows/sayac/memory")).await;
     assert_eq!(m, json!({"son": "çay"}));
     assert_eq!(

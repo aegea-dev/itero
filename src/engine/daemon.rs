@@ -431,7 +431,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
             return Ok(Delivered::Deferred);
         }
     };
-    let events = answer
+    let mut events: Vec<Envelope> = answer
         .events
         .iter()
         .map(|e| {
@@ -450,6 +450,35 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
     }
     let state = &answer.runtime.state;
     let ended = answer.runtime.chain.is_none() && (workflow.end.contains(state) || state == FAILED);
+    // the breaker: this failure and those before it, in a row
+    let limit = workflow.pause_after_or_default();
+    let in_a_row = if ended && state == FAILED {
+        j.failed_in_a_row(&run.workflow)? + 1
+    } else {
+        0
+    };
+    let pause = (limit > 0 && in_a_row >= limit).then(|| {
+        let why = format!("{in_a_row} failed runs in a row");
+        eprintln!("{}: paused: {why}", run.workflow);
+        events.push(Envelope::new(
+            "daemon",
+            "workflow.paused",
+            &journal::subject("app"),
+            &stamp(now),
+            Some(r.event.id.clone()),
+            json!({
+                "workflow": run.workflow,
+                "version": crate::workflow::short(crate::workflow::split_pin(&run.pin).1),
+                "failed": in_a_row,
+                "run": id,
+            }),
+        ));
+        journal::Pause {
+            workflow: &run.workflow,
+            pin: &run.pin,
+            why,
+        }
+    });
     j.handle(Handled {
         seq: r.seq,
         at: &stamp(now),
@@ -458,7 +487,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
         timers: answer.timers.as_deref(),
         events,
         memory: (!answer.memory.is_empty()).then_some((&run.workflow, &answer.memory)),
-        pause: None,
+        pause,
     })?;
     super::die_at("answer");
     Ok(Delivered::Handled)
