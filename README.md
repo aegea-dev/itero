@@ -71,8 +71,9 @@ actions = ["actions"]
 
 Commands: `itero daemon`, `itero emit <type> [--data JSON] [--run ID]`,
 `itero check` (every workflow, action and source), `itero runs`, `itero
-memory <workflow>`, `itero resume <workflow>` (after a pause), `itero
-service install|status|uninstall`.
+errors` (failed runs, where and why), `itero memory <workflow>`, `itero
+resume <workflow>` (after a pause), `itero service
+install|status|uninstall`.
 
 ### Workspace triggers
 
@@ -106,7 +107,7 @@ whose `Host` is not that address:
 |---|---|
 | `GET /health` | the loop's passes, the last one and its error, and each source |
 | `POST /events` | an event, `{"type", "data"?, "run"?}` as `application/json`; 202 `{"id"}` |
-| `GET /runs` | runs, newest first (`?workflow=`, `?limit=`) |
+| `GET /runs` | runs, newest first (`?workflow=`, `?state=`, `?limit=`) |
 | `GET /runs/{id}` | a run and its events |
 | `GET /workflows` | each workflow's name, version, triggers and pause |
 | `GET /workflows/{name}/memory` | a workflow's memory |
@@ -119,6 +120,13 @@ its type. For example, a workflow with `"triggers": [ { "on":
 curl -s -X POST http://127.0.0.1:8787/events -H 'content-type: application/json' \
   -d '{"type": "photo.added", "data": {"path": "trip/market.jpg"}}'
 ```
+
+It also reaches the runs waiting for it: a run in a state with a
+transition `on` its type and a `match` (`"match": "event.data.path ==
+run.input.path"`) takes it when it is that run's. Workflows publish too,
+with a step `{ "publish": "photo.tagged", "data": {...} }`, and the engine
+publishes `run.failed` and `workflow.paused` for maintenance workflows.
+`"from": "*"` is a transition from any state.
 
 ## The mail check
 
