@@ -724,6 +724,18 @@ restart loses and repeats nothing; a watcher that dies is restarted, and
 one that keeps dying is paused and logged. Tests write to a temporary mbox
 file and stub the notifier, as v1's do.
 
+**Done in iteration 4** (2026-10-16, `docs/plan-4-sources-watch.md`):
+sources (the line protocol, cursors, supervision with a doubling wait and
+giving up, `/health`), `watch@1` on kqueue and inotify behind one
+`Backend`, `sources/` in a workspace, `concurrency`, the breaker
+(`pause_after`, `workflow.paused`, `itero resume`, a new version resumes),
+container actions and container sources, and v2 of the mail check. As
+designed, with these differences: `workflow.paused` carries the last
+failed run's id rather than an error text (a run's failure records where
+it failed, not why; the run's events say why); a source reports once at
+start when it needs the workflow to note where things are (IMAP IDLE); and
+`make test-linux` runs the suite on Linux in Docker.
+
 ### Mail servers, and actions in containers
 
 **Decided** (2026-10-16), from the owner: before going further, a clear

@@ -136,12 +136,43 @@ the job's idempotency key. What it prints is its output (see
 | `executable` | `executable` and `arguments`; a path with `/` is in the action's folder, a bare name is looked up on `PATH` | nothing |
 | `python@3.12` | `module` and `callable`, called with the job (awaited when async) | [uv](https://docs.astral.sh/uv/) |
 | `bun@1` | `file` and `export`, called with the job (awaited) | [Bun](https://bun.sh) |
+| `container` | `executable` and `arguments`, run inside `image` | [Docker](https://docs.docker.com/get-docker/) |
 
 A Python or Bun function returns its result, and that is `output.json`. A
 Python action gets its own virtual environment, made with `uv` the first
 time in `home` (`.venv` unless given), with `requirements` installed again
 whenever that file changes. A Bun action gets `bun install` whenever
 `package.json` or `bun.lock` change.
+
+### In a container
+
+A `container` action runs in a Docker image, so the machine needs Docker
+and nothing the program itself needs:
+
+```json title="actions/imap/action.json"
+{
+  "name": "imap",
+  "version": 1,
+  "type": "container",
+  "image": "python:3.13-alpine",
+  "limits": { "timeout": "120s" },
+  "targets": { "check": { "executable": "python3", "arguments": ["check.py"] } }
+}
+```
+
+- The job comes on stdin and the output is what it prints, as for any
+  action (`docker run --rm -i`).
+- The action's folder is mounted read-only at `/action`, where the program
+  runs.
+- Its `environment` is passed to the container by name only, so no value,
+  and no secret, stands on a command line.
+- `host.docker.internal` is this machine, on Linux too.
+- The container is named after the job's idempotency key: a job run again
+  removes one left by an earlier run, and a job stopped at its time limit
+  has its container removed.
+- An image is pulled the first time it is used; give `limits.timeout` room
+  for that, or pull it beforehand.
+- `limits.heartbeat` does not reach a container yet; use `timeout`.
 
 ### Limits
 

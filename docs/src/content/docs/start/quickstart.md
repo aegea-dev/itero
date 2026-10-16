@@ -110,12 +110,35 @@ Within 5 minutes one notification says `1 new: test`; later runs show none
 until more mail comes. On macOS the first notification asks to be allowed.
 Ctrl-C stops the daemon.
 
-## 5. Look inside
+## 5. As it arrives
+
+Five minutes is a long wait. A [source](/guides/sources/) can tell itero
+the moment the mailbox changes instead. Add one that watches it:
+
+```json title="sources/mailbox.json"
+{ "source": "watch@1", "with": { "path": "/var/mail/${env.USER}" }, "emit": "mail.changed" }
+```
+
+and let the workflow run on its event, one run at a time, keeping a slow
+schedule as a safety net:
+
+```json title="workflows/mail-check.json (its triggers)"
+  "triggers": [
+    { "on": "mail.changed", "args": { "mailbox": "" } },
+    { "schedule": "0 * * * *", "args": { "mailbox": "" } }
+  ],
+  "concurrency": { "max": 1, "then": "queue" },
+```
+
+Start `itero daemon` again and send another mail: the notification comes
+within a second or two.
+
+## 6. Look inside
 
 ```bash
 itero runs                 # the runs, newest first
 itero memory mail-check    # what the workflow remembers
-curl -s http://127.0.0.1:8787/health
+curl -s http://127.0.0.1:8787/health   # the daemon, and its sources
 ```
 
 To keep it running after you close the terminal, and from login on, see

@@ -15,6 +15,7 @@ itero.toml               port, and where workflows and actions are
 workflows/<name>.json    workflows
 actions/<name>/          your own actions: action.json and a program
 triggers/<name>.json     this workspace's triggers for a workflow
+sources/<name>.json      sources: what tells itero that something happened
 .itero/journal.sqlite    every event, run and job, and each workflow's memory
 .itero/daemon.log        the service's log
 ```

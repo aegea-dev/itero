@@ -10,8 +10,9 @@ command's options.
 ## itero daemon
 
 Runs the workspace's workflows: their schedules, events and jobs, pass
-after pass, and serves the [HTTP API](/reference/http/) on
-`127.0.0.1:<port>`. Ctrl-C stops it.
+after pass, starts its [sources](/guides/sources/), and serves the
+[HTTP API](/reference/http/) on `127.0.0.1:<port>`. Ctrl-C stops it. A bad
+source file stops it at start, naming the file.
 
 | Option | Does |
 |---|---|
@@ -25,11 +26,13 @@ run, jobs lost (run again), and events waiting.
 
 ## itero check
 
-Reads every workflow and action, and prints each with its version:
+Reads every workflow, action and source, and prints each, workflows with
+their versions:
 
 ```
 mail-check  e734495fe858
 mail.check@1
+source mailbox  watch@1
 ```
 
 The first problem found is an error naming the file and the transition. A
@@ -57,6 +60,16 @@ itero memory <workflow>
 ```
 
 A workflow's memory, as JSON.
+
+## itero resume
+
+```bash
+itero resume <workflow>
+```
+
+Lets a paused workflow start runs again: one paused after `pause_after`
+failed runs in a row (see [Workflow files](/reference/workflow-file/#paused)).
+Prints `<workflow>: resumed`, or `<workflow>: not paused`.
 
 ## itero service
 

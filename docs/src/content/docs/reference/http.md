@@ -28,8 +28,12 @@ cannot post one without a preflight, which is never granted.
 
 ```json
 { "ok": true, "pid": 4242, "workspace": "/Users/me/home",
-  "started": "...", "passes": 3600, "last_pass": "...", "last_error": null }
+  "started": "...", "passes": 3600, "last_pass": "...", "last_error": null,
+  "sources": { "mailbox": { "state": "running", "restarts": 0, "last_exit": null } } }
 ```
+
+`sources` has each [source](/guides/sources/): `running`, `waiting` (to
+start again) or `gave up`, its restarts, and how it ended last.
 
 ## POST /events
 
@@ -45,7 +49,7 @@ curl -s -X POST http://127.0.0.1:8787/events -H 'content-type: application/json'
 | `run` | the run it is for; without, it is for the workspace |
 
 Answers 202 `{"id": "..."}`. 400 for a bad event (or one of the engine's
-own types, `action.*`, `timer.*`, `run.*`), 404 for a run there is not, 409
+own types, `action.*`, `timer.*`, `run.*`, `workflow.*`, `source.*`), 404 for a run there is not, 409
 for a run that has ended. See [Apps and events](/guides/apps/).
 
 ## GET /runs
@@ -67,11 +71,13 @@ The run as in the list, with its `args` and its `events`: each with `seq`,
 
 ```json
 [ { "name": "mail-check", "version": "3f9a1c0b...",
-    "triggers": [ { "schedule": "*/5 * * * *", "args": { "mailbox": "" } } ] } ]
+    "triggers": [ { "on": "mail.changed", "args": { "mailbox": "" } } ],
+    "paused": null } ]
 ```
 
 The triggers are the workflow's own merged with the workspace's
-`triggers/`.
+`triggers/`. `paused` is null, or the pause: `{workflow, pin, at, why}`
+(see [Workflow files](/reference/workflow-file/#paused)).
 
 ## GET /workflows/\{name\}/memory
 

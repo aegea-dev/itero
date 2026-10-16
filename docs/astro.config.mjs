@@ -62,6 +62,7 @@ export default defineConfig({
 						{ label: 'Writing a workflow', slug: 'guides/workflows' },
 						{ label: 'Actions', slug: 'guides/actions' },
 						{ label: 'Triggers', slug: 'guides/triggers' },
+						{ label: 'Sources', slug: 'guides/sources' },
 						{ label: 'Apps and events', slug: 'guides/apps' },
 						{ label: 'Secrets', slug: 'guides/secrets' },
 						{ label: 'Start at login', slug: 'guides/service' },

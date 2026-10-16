@@ -30,7 +30,12 @@ An event of that type sent to the workspace starts one run per matching
 trigger, and the event's `data` is the run's `input`. Starting runs and
 handling the event happen in one transaction, so an event delivered twice
 starts nothing twice. [Apps and events](/guides/apps/) says how to send
-one.
+one, and a [source](/guides/sources/) sends them as things happen: a file
+changing, mail arriving.
+
+A workflow whose `concurrency` is full queues or skips the start (see
+[Workflow files](/reference/workflow-file/)), and a paused workflow starts
+nothing.
 
 ## A workspace's own triggers
 

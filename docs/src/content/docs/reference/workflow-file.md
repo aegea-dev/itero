@@ -18,6 +18,20 @@ explains how the pieces fit.
 | `end` | the states where a run ends | |
 | `triggers` | what starts a run | |
 | `transitions` | the moves between states | |
+| `concurrency` | `{"max": n, "then": "queue" \| "skip"}`: at most `n` runs under way; a start beyond waits its turn (`queue`, the default) or is dropped (`skip`) | |
+| `pause_after` | failed runs in a row that pause the workflow (5 unless given; 0 never) | |
+
+`concurrency` and `pause_after` are not part of the workflow's version:
+they say how often it runs, not what a run does.
+
+## Paused
+
+When `pause_after` runs in a row have failed, the workflow is paused:
+nothing starts it, the daemon's log says so, and the engine sends
+`workflow.paused` to the workspace, with data `{workflow, version, failed,
+run}` (the last failed run's id), so a maintenance workflow can act on it.
+`itero resume <workflow>` starts it again, and so does a new version of its
+file: the fix. `GET /workflows` shows a workflow's pause.
 
 ## A trigger
 

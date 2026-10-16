@@ -79,6 +79,19 @@ event type. It gives the run its `args`. See [Triggers](/guides/triggers/).
 `triggers/<workflow>.json`: triggers the workspace adds to a workflow's own,
 or uses instead of them. When a workflow runs is the workspace's business.
 
+### concurrency
+
+How many runs of a workflow may be under way at once (`"concurrency":
+{"max": 1}`); a start beyond that waits its turn (`queue`) or is dropped
+(`skip`). It keeps two quick events from running the same check twice.
+
+### pause (the breaker)
+
+After `pause_after` failed runs in a row (5 unless said), a workflow is
+paused: nothing starts it until `itero resume`, or a new version of its
+file. The engine sends `workflow.paused`, which a maintenance workflow can
+act on.
+
 ## What happens in a run
 
 ### action
@@ -88,9 +101,17 @@ One step a transition runs, named with its version, like `notify@1`:
 - **built-in**: `command@1`, `sh@1`, `http.request@1`, `notify@1`,
   `memory.set@1`, `json.pick@1`, `event.emit@1`;
 - **the workspace's own**: a folder with an `action.json` and a program
-  (an executable, Python or Bun), named `<name>.<target>@<version>`.
+  (an executable, Python, Bun, or a program in a container image), named
+  `<name>.<target>@<version>`.
 
 See [Actions](/guides/actions/).
+
+### container action
+
+An action whose program runs in a Docker image (`"type": "container"`):
+the job on stdin, the action's folder at `/action`, its settings passed by
+name so no value stands on a command line. The machine needs Docker, not
+the program's language.
 
 ### chain
 
@@ -155,8 +176,28 @@ stopped) runs again, up to 3 times; an error fails the action at once.
 A typed message, like `photo.added`, with data. Sent to the workspace, it
 starts runs of the workflows with a trigger `on` its type; sent to a run, it
 may take one of the run's transitions. Types starting with `action.`,
-`timer.` or `run.` are the engine's own and refused from outside. See
-[Apps and events](/guides/apps/).
+`timer.`, `run.`, `workflow.` or `source.` are the engine's own and refused
+from outside. See [Apps and events](/guides/apps/).
+
+### source
+
+A long-lived program that tells itero when something happens outside: it
+watches a file, holds a connection to a server (IMAP IDLE), or asks again
+and again, and prints one event per line. The daemon runs each source in
+`sources/`, starts it again when it ends, and gives up on one that keeps
+ending. `watch@1` is built in. See [Sources](/guides/sources/).
+
+### cursor
+
+Where a source stopped, as it said last (`{"cursor": ...}`): kept in the
+journal and given back when it starts again, so it carries on without
+repeating itself.
+
+### connector
+
+Everything for one outside system packaged together: its sources, its
+actions and ready-made workflows, like a mail connector with IMAP IDLE,
+POP3 and the local mailbox. Planned: the unit a marketplace would offer.
 
 ### app
 
