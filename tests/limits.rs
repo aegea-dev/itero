@@ -66,3 +66,14 @@ fn a_transition_from_anywhere_needs_on_and_takes_no_timeout() {
     let e = with_transition(r#"{ "from": "basla", "to": "*", "on": "dur" }"#).unwrap_err();
     assert!(e.to_string().contains("to \"*\" is not a state"), "{e}");
 }
+
+#[test]
+fn match_needs_on_and_compiles() {
+    let e = with_transition(r#"{ "from": "basla", "to": "bitti", "match": "true" }"#).unwrap_err();
+    assert!(e.to_string().contains("match needs on"), "{e}");
+    let e = with_transition(
+        r#"{ "from": "basla", "to": "bitti", "on": "x", "match": "event.data. ==" }"#,
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("bad expression"), "{e}");
+}

@@ -85,6 +85,11 @@ pub struct Transition {
     /// A condition that must hold for it to be taken.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
+    /// For an event for the workspace: whether it is this run's
+    /// (`event.data.thread == run.input.thread`). A transition with a
+    /// `match` hears its type's events for the workspace too.
+    #[serde(default, rename = "match", skip_serializing_if = "Option::is_none")]
+    pub r#match: Option<String>,
     /// The chain of actions, run in order.
     #[serde(default, rename = "do", skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<Action>,

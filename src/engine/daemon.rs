@@ -432,6 +432,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
     run_map.insert("id".into(), json!(run.id));
     run_map.insert("workflow".into(), json!(run.workflow));
     run_map.insert("started".into(), json!(run.started));
+    run_map.insert("input".into(), run.input.clone());
     let input = Input {
         now: stamp(now),
         workflow: workflow.clone(),

@@ -17,13 +17,15 @@ pub const SCHEMA_VERSION: i64 = 1 + MIGRATIONS.len() as i64;
 /// The steps from each version to the next: `MIGRATIONS[0]` takes version 1
 /// to 2, and so on. A step is only ever added, never changed: a journal on
 /// someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 2] = [
+const MIGRATIONS: [&str; 3] = [
     // 2: what handling an event did, when no run shows it
     "ALTER TABLE events ADD COLUMN note TEXT;",
     // 3: starts waiting for a free slot, paused workflows, sources' cursors
     "CREATE TABLE queued (seq INTEGER PRIMARY KEY AUTOINCREMENT, workflow TEXT NOT NULL, args TEXT NOT NULL, input TEXT NOT NULL, at TEXT NOT NULL);
      CREATE TABLE paused (workflow TEXT PRIMARY KEY, pin TEXT NOT NULL, at TEXT NOT NULL, why TEXT NOT NULL);
      CREATE TABLE cursors (source TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    // 4: the input each run started with, for correlation (run.input)
+    "ALTER TABLE runs ADD COLUMN input TEXT;",
 ];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
@@ -118,6 +120,9 @@ pub struct Run {
     pub pin: String,
     pub runtime: Runtime,
     pub args: Map<String, Value>,
+    /// What the run started with: the data of the event that started it
+    /// (null for a run from before journal schema 4).
+    pub input: Value,
     pub started: String,
     pub ended: Option<String>,
 }
@@ -339,10 +344,19 @@ impl Journal {
 
     /// A run by id.
     pub fn run(&self, id: &str) -> Result<Option<Run>> {
-        let r: Option<(String, String, String, String, String, Option<String>)> = self
+        type Row = (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+        );
+        let r: Option<Row> = self
             .db
             .query_row(
-                "SELECT workflow, pin, runtime, args, started, ended FROM runs WHERE id = ?1",
+                "SELECT workflow, pin, runtime, args, input, started, ended FROM runs WHERE id = ?1",
                 params![id],
                 |r| {
                     Ok((
@@ -352,17 +366,22 @@ impl Journal {
                         r.get(3)?,
                         r.get(4)?,
                         r.get(5)?,
+                        r.get(6)?,
                     ))
                 },
             )
             .optional()?;
-        r.map(|(workflow, pin, rt, args, started, ended)| {
+        r.map(|(workflow, pin, rt, args, input, started, ended)| {
             Ok(Run {
                 id: id.to_string(),
                 workflow,
                 pin,
                 runtime: serde_json::from_str(&rt)?,
                 args: serde_json::from_str(&args)?,
+                input: match input {
+                    Some(t) => serde_json::from_str(&t)?,
+                    None => Value::Null,
+                },
                 started,
                 ended,
             })
@@ -753,8 +772,8 @@ fn insert_run(
         params![pin, json(f)?],
     )?;
     db.execute(
-        "INSERT INTO runs (id, workflow, pin, runtime, args, started) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![id, f.name, pin, json(&rt)?, json(args)?, now],
+        "INSERT INTO runs (id, workflow, pin, runtime, args, input, started) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, f.name, pin, json(&rt)?, json(args)?, json(input)?, now],
     )?;
     let e = Envelope::new(
         "daemon",

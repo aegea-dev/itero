@@ -75,6 +75,12 @@ fn check_transition(t: &Transition, states: &[String]) -> Result<(), String> {
     if let Some(w) = &t.when {
         expr::compile(w)?;
     }
+    if let Some(m) = &t.r#match {
+        if t.on.is_none() {
+            return Err("match needs on: it says which events of that type are this run's".into());
+        }
+        expr::compile(m)?;
+    }
     for a in &t.actions {
         actions::check(&a.action, a.with.as_ref())?;
         if let Some(id) = &a.id

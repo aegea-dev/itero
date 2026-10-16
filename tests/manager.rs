@@ -485,3 +485,35 @@ fn a_transition_from_anywhere_is_taken_where_nothing_closer_is() {
         "no transition"
     );
 }
+
+/// Waits for a reply on its own subject; replies on other subjects are not
+/// its business.
+const SOHBET: &str = r#"{ "name": "sohbet", "description": "sohbet", "states": ["bekliyor", "cevaplandi"],
+  "start": "bekliyor", "end": ["cevaplandi"],
+  "transitions": [
+    { "from": "bekliyor", "to": "cevaplandi", "on": "mesaj.geldi",
+      "match": "event.data.konu == run.input.konu" } ] }"#;
+
+fn sohbet(konu: &str) -> Answer {
+    let mut i = input(
+        at("bekliyor"),
+        "mesaj.geldi",
+        "e5",
+        json!({"konu": konu, "metin": "merhaba dünya"}),
+    );
+    i.workflow = itero::workflow::parse(SOHBET).unwrap();
+    i.run.insert("input".into(), json!({"konu": "çay"}));
+    decide(&i).unwrap()
+}
+
+#[test]
+fn match_takes_only_the_events_that_are_this_runs() {
+    assert_eq!(sohbet("çay").runtime.state, "cevaplandi");
+    let other = sohbet("kahve");
+    assert_eq!(other.runtime.state, "bekliyor");
+    assert!(
+        other.log.iter().any(|l| l.contains("no transition")),
+        "{:?}",
+        other.log
+    );
+}
