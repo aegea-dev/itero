@@ -637,10 +637,27 @@ uses the OS's own file events.
 | Debouncing | a separate crate (`notify-debouncer-full`) | ours, in the watch source |
 | Releases | 9.0 is a release candidate; 8 is the stable line | none to follow |
 
-Recommendation: the OS's own events. v2 watches one file, itero runs only
-on macOS and Linux, and the edge cases are few for that scope, so the
-rule holds at a small cost. `notify` stays the fallback if folder watching
-grows into a large part of the sources.
+**Decided** (2026-10-16): the OS's own events. v2 watches one file, itero
+runs only on macOS and Linux, and the edge cases are few for that scope, so
+the rule holds at a small cost.
+
+The owner expects much of the product to rest on these notifications, so
+the watching leaves room to grow:
+
+- **One interface, many backends.** A `Watcher` turns a backend's raw
+  events into one shape, `{path, kind}` with `kind` one of `created`,
+  `changed`, `removed`, `renamed`, `rescan`. kqueue and inotify come first;
+  FSEvents (folder trees on macOS), fanotify (whole mounts on Linux) and a
+  polling backend (network file systems, where kernel events do not reach)
+  plug in behind the same interface.
+- **Never silent.** When a backend may have missed something (a queue
+  overflow, a file replaced under it, a watch that had to be set again),
+  it reports `rescan`, so the consumer reads the state again instead of
+  trusting events it may not have.
+- **Debounced and coalesced** in one place, the watch source, not in each
+  backend.
+- **A safety net.** A slow schedule next to a watch catches anything the
+  kernel never said (section 19).
 
 ### A connector
 
