@@ -88,6 +88,7 @@ async fn health(State(s): State<Shared>) -> Json<Value> {
         "passes": h.passes,
         "last_pass": h.last_pass,
         "last_error": h.last_error,
+        "sources": h.sources,
     }))
 }
 
@@ -211,6 +212,9 @@ async fn run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Json<Val
 async fn workflows(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
     blocking(&s, |ws| {
         let flows = ws.workflows().map_err(internal)?;
+        let paused = Journal::open(ws)
+            .and_then(|j| j.paused())
+            .map_err(internal)?;
         Ok(Value::Array(
             flows
                 .iter()
@@ -219,6 +223,7 @@ async fn workflows(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
                         "name": f.name,
                         "version": crate::workflow::version(f),
                         "triggers": f.triggers,
+                        "paused": paused.iter().find(|p| p.workflow == f.name),
                     })
                 })
                 .collect(),

@@ -136,6 +136,11 @@ pub fn validate(file: &str, f: &File) -> Result<(), WorkflowError> {
     for t in &f.triggers {
         check_trigger(t).map_err(&whole)?;
     }
+    if let Some(c) = &f.concurrency
+        && c.max == 0
+    {
+        return Err(whole("concurrency.max is at least 1".into()));
+    }
     if !f.states.contains(&f.start) {
         return Err(whole(format!("start \"{}\" is not a state", f.start)));
     }

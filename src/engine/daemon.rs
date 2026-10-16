@@ -67,6 +67,19 @@ pub struct Health {
     pub last_pass: Option<String>,
     /// What went wrong in the last pass, if anything.
     pub last_error: Option<String>,
+    /// How each source is doing, by name.
+    pub sources: std::collections::BTreeMap<String, SourceHealth>,
+}
+
+/// How one source is doing.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct SourceHealth {
+    /// `running`, `waiting` (to start again) or `gave up`.
+    pub state: String,
+    /// Starts after the first, within the supervisor's window.
+    pub restarts: usize,
+    /// How it ended last.
+    pub last_exit: Option<String>,
 }
 
 impl Health {
@@ -76,6 +89,7 @@ impl Health {
             passes: 0,
             last_pass: None,
             last_error: None,
+            sources: Default::default(),
         }
     }
 }
@@ -116,7 +130,12 @@ pub fn run_loop(
 pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let mut j = Journal::open(ws)?;
     let mut pass = Pass::default();
-    fire_schedules(ws, &mut j, now)?;
+    let flows: Vec<crate::workflow::File> = ws.workflows()?.into_iter().map(|(_, f)| f).collect();
+    resume_new_versions(&j, &flows)?;
+    fire_schedules(&flows, &mut j, now)?;
+    for id in j.release_queued(&flows, &stamp(now))? {
+        eprintln!("{id}: started from the queue");
+    }
     for (id, run, data) in j.due_timers(&stamp(now))? {
         let e = Envelope::new(
             "daemon",
@@ -215,11 +234,15 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
 
 /// Starts a run of every workflow whose schedule is due. A schedule seen for
 /// the first time only starts counting: it waits for its first slot.
-fn fire_schedules(ws: &Workspace, j: &mut Journal, now: DateTime<Utc>) -> Result<()> {
+fn fire_schedules(
+    flows: &[crate::workflow::File],
+    j: &mut Journal,
+    now: DateTime<Utc>,
+) -> Result<()> {
     // a schedule's key names it, not its place among the triggers: merging
     // or reordering keeps its last slot; the same schedule twice is one
     let mut seen = BTreeSet::new();
-    for (_, f) in ws.workflows()? {
+    for f in flows {
         for t in &f.triggers {
             let Some(schedule) = &t.schedule else {
                 continue;
@@ -236,7 +259,10 @@ fn fire_schedules(ws: &Workspace, j: &mut Journal, now: DateTime<Utc>) -> Result
                 .parse()
                 .map_err(|_| anyhow!("schedule {key}: its last slot is not a time: {last}"))?;
             if super::schedule::due(schedule, last, now).map_err(|e| anyhow!(e))? {
-                j.start_run(&f, &t.args, &stamp(now), Some(&key))?;
+                match j.start_run(f, &t.args, &stamp(now), Some(&key))? {
+                    journal::Started::Run(_) => {}
+                    other => eprintln!("{}: schedule {schedule}: {other:?}", f.name),
+                }
             }
         }
     }
@@ -261,9 +287,25 @@ fn start_triggered(
                 .map(move |t| (f, &t.args))
         })
         .collect();
-    let ids = j.start_runs_for_event(r.seq, &starts, &r.event.data, &stamp(now))?;
-    if ids.is_empty() {
+    let outcomes = j.start_runs_for_event(r.seq, &starts, &r.event.data, &stamp(now))?;
+    if outcomes.is_empty() {
         eprintln!("{}: no workflow starts on it", r.event.kind);
+    }
+    Ok(())
+}
+
+/// A paused workflow whose file is now another version starts again: the
+/// new version is the fix.
+fn resume_new_versions(j: &Journal, flows: &[crate::workflow::File]) -> Result<()> {
+    for p in j.paused()? {
+        let now = flows
+            .iter()
+            .find(|f| f.name == p.workflow)
+            .map(crate::workflow::pin);
+        if now.is_some_and(|pin| pin != p.pin) {
+            j.resume(&p.workflow)?;
+            eprintln!("{}: a new version; resumed", p.workflow);
+        }
     }
     Ok(())
 }
@@ -349,6 +391,7 @@ fn give_up(j: &mut Journal, seq: i64, at: &str, why: String) -> Result<Delivered
         timers: None,
         events: vec![],
         memory: None,
+        pause: None,
     })?;
     Ok(Delivered::Handled)
 }
@@ -402,7 +445,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
             return Ok(Delivered::Deferred);
         }
     };
-    let events = answer
+    let mut events: Vec<Envelope> = answer
         .events
         .iter()
         .map(|e| {
@@ -421,6 +464,35 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
     }
     let state = &answer.runtime.state;
     let ended = answer.runtime.chain.is_none() && (workflow.end.contains(state) || state == FAILED);
+    // the breaker: this failure and those before it, in a row
+    let limit = workflow.pause_after_or_default();
+    let in_a_row = if ended && state == FAILED {
+        j.failed_in_a_row(&run.workflow)? + 1
+    } else {
+        0
+    };
+    let pause = (limit > 0 && in_a_row >= limit).then(|| {
+        let why = format!("{in_a_row} failed runs in a row");
+        eprintln!("{}: paused: {why}", run.workflow);
+        events.push(Envelope::new(
+            "daemon",
+            "workflow.paused",
+            &journal::subject("app"),
+            &stamp(now),
+            Some(r.event.id.clone()),
+            json!({
+                "workflow": run.workflow,
+                "version": crate::workflow::short(crate::workflow::split_pin(&run.pin).1),
+                "failed": in_a_row,
+                "run": id,
+            }),
+        ));
+        journal::Pause {
+            workflow: &run.workflow,
+            pin: &run.pin,
+            why,
+        }
+    });
     j.handle(Handled {
         seq: r.seq,
         at: &stamp(now),
@@ -429,6 +501,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
         timers: answer.timers.as_deref(),
         events,
         memory: (!answer.memory.is_empty()).then_some((&run.workflow, &answer.memory)),
+        pause,
     })?;
     super::die_at("answer");
     Ok(Delivered::Handled)
@@ -439,7 +512,7 @@ const BUILT_IN_TIMEOUT: u64 = crate::workflow::actions::DEFAULT_TIMEOUT;
 
 /// `${env.NAME}` in every string, filled in from the OS secret store, else
 /// the daemon's environment.
-fn fill_secrets(v: &Value) -> Result<Value, String> {
+pub(crate) fn fill_secrets(v: &Value) -> Result<Value, String> {
     Ok(match v {
         Value::String(s) => {
             use super::eval::{Piece, pieces, secret_name};
@@ -536,6 +609,9 @@ fn job(ws: &Workspace, data: &Value) -> Result<Job, String> {
             file: t.file.clone().unwrap_or_default(),
             export: t.export.clone().unwrap_or_default(),
         }),
+        "container" => Some(Interpreter::Container {
+            image: d.image.clone().unwrap_or_default(),
+        }),
         other => return Err(format!("unknown action type {other}")),
     };
     let mut environment = std::collections::BTreeMap::new();
@@ -564,6 +640,18 @@ fn stop(child: &mut std::process::Child) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Removes a stopped container job's container: the container client goes
+/// with the worker's group, the container itself would keep running.
+fn remove_container(job: &Job) {
+    if let Some(Program {
+        interpreter: Some(Interpreter::Container { .. }),
+        ..
+    }) = &job.program
+    {
+        super::worker::remove_container(&job.key);
+    }
 }
 
 /// How long since a job last touched its heartbeat file, or since it
@@ -640,6 +728,7 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
         let left = cap.saturating_sub(started.elapsed());
         if left.is_zero() {
             stop(&mut child);
+            remove_container(job);
             return Err(Failure::Error(format!(
                 "{}: timed out after {}s",
                 job.action, job.timeout
@@ -656,6 +745,7 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
             && quiet(beat, born) > lease
         {
             stop(&mut child);
+            remove_container(job);
             return Err(Failure::Lost(format!(
                 "no heartbeat for {}s",
                 lease.as_secs()
@@ -665,6 +755,7 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
     let Some(code) = status.code() else {
         // killed from outside: whatever it started goes too
         stop(&mut child);
+        remove_container(job);
         return Err(Failure::Lost(format!("the worker was killed ({status})")));
     };
     let (out, err) = (
@@ -715,5 +806,6 @@ fn save_result(
         timers: None,
         events: vec![e],
         memory: None,
+        pause: None,
     })
 }

@@ -38,7 +38,13 @@ fn bad_events_are_refused_and_nothing_is_saved() {
         emit(&ws, kind, data, run, NOW).unwrap_err()
     };
     assert!(matches!(bad("Foto Eklendi", None, None), EmitError::Bad(_)));
-    for own in ["action.finished", "timer.fired", "run.started"] {
+    for own in [
+        "action.finished",
+        "timer.fired",
+        "run.started",
+        "workflow.paused",
+        "source.paused",
+    ] {
         let e = bad(own, None, None);
         assert!(e.to_string().contains("engine's own"), "{e}");
     }
@@ -63,7 +69,11 @@ fn an_event_for_a_run_goes_to_that_run_until_it_ends() {
     )
     .unwrap();
     let mut j = Journal::open(&ws).unwrap();
-    let run = j.start_run(&flow, &Default::default(), NOW, None).unwrap();
+    let itero::engine::journal::Started::Run(run) =
+        j.start_run(&flow, &Default::default(), NOW, None).unwrap()
+    else {
+        panic!("the run did not start")
+    };
     let id = emit(
         &ws,
         "onay.geldi",

@@ -76,13 +76,16 @@ pub fn load_file(path: &Path) -> Result<File, WorkflowError> {
 }
 
 /// A workflow's version: a SHA-256 over its canonical form (JSON with
-/// sorted keys, every description removed). Formatting, descriptions and
-/// triggers never count: when a workflow runs is the workspace's business,
-/// not part of what a run is pinned to.
+/// sorted keys, every description removed). Formatting, descriptions,
+/// triggers, concurrency and pause_after never count: when and how often a
+/// workflow runs is the workspace's business, not part of what a run is
+/// pinned to.
 pub fn version(f: &File) -> String {
     let mut f = f.clone();
     f.description.clear();
     f.triggers.clear();
+    f.concurrency = None;
+    f.pause_after = None;
     for t in &mut f.transitions {
         t.description.clear();
         for a in &mut t.actions {

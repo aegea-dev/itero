@@ -3,6 +3,7 @@
 //! and log, and keeps each run's place, the workflow versions runs are
 //! pinned to, timers, schedules, and each workflow's memory.
 use super::{Runtime, Timer};
+use crate::workflow::format::Then;
 use crate::workflow::{self, File};
 use crate::workspace::Workspace;
 use anyhow::{Context, Result, bail};
@@ -16,9 +17,13 @@ pub const SCHEMA_VERSION: i64 = 1 + MIGRATIONS.len() as i64;
 /// The steps from each version to the next: `MIGRATIONS[0]` takes version 1
 /// to 2, and so on. A step is only ever added, never changed: a journal on
 /// someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 1] = [
+const MIGRATIONS: [&str; 2] = [
     // 2: what handling an event did, when no run shows it
     "ALTER TABLE events ADD COLUMN note TEXT;",
+    // 3: starts waiting for a free slot, paused workflows, sources' cursors
+    "CREATE TABLE queued (seq INTEGER PRIMARY KEY AUTOINCREMENT, workflow TEXT NOT NULL, args TEXT NOT NULL, input TEXT NOT NULL, at TEXT NOT NULL);
+     CREATE TABLE paused (workflow TEXT PRIMARY KEY, pin TEXT NOT NULL, at TEXT NOT NULL, why TEXT NOT NULL);
+     CREATE TABLE cursors (source TEXT PRIMARY KEY, value TEXT NOT NULL);",
 ];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
@@ -117,6 +122,46 @@ pub struct Run {
     pub ended: Option<String>,
 }
 
+/// What asking for a run did.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Started {
+    /// A run started: its id.
+    Run(String),
+    /// The workflow is at its maximum: the start waits its turn.
+    Queued,
+    /// The workflow is at its maximum and skips starts beyond it.
+    Skipped,
+    /// The workflow is paused: nothing starts.
+    Paused,
+}
+
+impl Started {
+    fn word(&self) -> &'static str {
+        match self {
+            Started::Run(_) => "started",
+            Started::Queued => "queued",
+            Started::Skipped => "skipped",
+            Started::Paused => "paused",
+        }
+    }
+}
+
+/// A paused workflow: the version that failed, when, and why.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Paused {
+    pub workflow: String,
+    pub pin: String,
+    pub at: String,
+    pub why: String,
+}
+
+/// A workflow to pause, as part of an answer (the breaker).
+pub struct Pause<'a> {
+    pub workflow: &'a str,
+    pub pin: &'a str,
+    pub why: String,
+}
+
 /// A subject: `itero.run.<id>`, `itero.worker` for jobs, or `itero.app`
 /// for an app's events (which may start runs).
 pub fn subject(target: &str) -> String {
@@ -146,6 +191,8 @@ pub struct Handled<'a> {
     pub events: Vec<Envelope>,
     /// Keys of a workflow's memory to set.
     pub memory: Option<(&'a str, &'a Map<String, Value>)>,
+    /// A workflow to pause (the breaker), in the same transaction.
+    pub pause: Option<Pause<'a>>,
 }
 
 pub struct Journal {
@@ -323,49 +370,159 @@ impl Journal {
         .transpose()
     }
 
-    /// Starts a run of a workflow, pinned at its version: the run, and its
-    /// `run.started` event, in one transaction. With a schedule's key, that
-    /// schedule's last slot becomes `now` in the same transaction, so a slot
-    /// never starts two runs. Returns the run's id.
+    /// Starts a run of a workflow, pinned at its version, unless it is
+    /// paused or at its maximum (`admit`): the run, and its `run.started`
+    /// event, in one transaction. With a schedule's key, that schedule's
+    /// last slot becomes `now` in the same transaction, so a slot never
+    /// starts two runs, whatever became of the start.
     pub fn start_run(
         &mut self,
         f: &File,
         args: &Map<String, Value>,
         now: &str,
         schedule: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<Started> {
         let tx = self.db.transaction()?;
-        let id = insert_run(&tx, f, args, &Value::Object(Map::new()), now)?;
+        let started = admit(&tx, f, args, &Value::Object(Map::new()), now)?;
         if let Some(key) = schedule {
             set_schedule_last(&tx, key, now)?;
         }
         tx.commit()?;
-        Ok(id)
+        Ok(started)
     }
 
     /// Starts a run for each of `starts` on app event `seq`, the event's
     /// data their input, and marks the event handled: one transaction, so
-    /// an event delivered again starts nothing twice. No starts is noted,
-    /// not an error.
+    /// an event delivered again starts nothing twice. No starts, or none
+    /// that became a run, is noted, not an error.
     pub fn start_runs_for_event(
         &mut self,
         seq: i64,
         starts: &[(&File, &Map<String, Value>)],
         input: &Value,
         at: &str,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<Started>> {
         let tx = self.db.transaction()?;
-        let mut ids = vec![];
+        let mut outcomes = vec![];
         for (f, args) in starts {
-            ids.push(insert_run(&tx, f, args, input, at)?);
+            outcomes.push(admit(&tx, f, args, input, at)?);
         }
-        let note = starts.is_empty().then_some("no workflow starts on it");
+        let note = if starts.is_empty() {
+            Some("no workflow starts on it".to_string())
+        } else if outcomes.iter().any(|o| matches!(o, Started::Run(_))) {
+            None
+        } else {
+            Some(
+                starts
+                    .iter()
+                    .zip(&outcomes)
+                    .map(|((f, _), o)| format!("{}: {}", f.name, o.word()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        };
         tx.execute(
             "UPDATE events SET handled = ?2, note = ?3 WHERE seq = ?1 AND handled IS NULL",
             params![seq, at, note],
         )?;
         tx.commit()?;
-        Ok(ids)
+        Ok(outcomes)
+    }
+
+    /// Starts queued runs, oldest first, while their workflow has a free
+    /// slot and is not paused; returns the runs started. A queued start of
+    /// a workflow no longer in `flows` waits.
+    pub fn release_queued(&mut self, flows: &[File], now: &str) -> Result<Vec<String>> {
+        let mut started = vec![];
+        for f in flows.iter().filter(|f| f.concurrency.is_some()) {
+            loop {
+                let tx = self.db.transaction()?;
+                let next: Option<(i64, String, String)> = tx
+                    .query_row(
+                        "SELECT seq, args, input FROM queued WHERE workflow = ?1 ORDER BY seq LIMIT 1",
+                        params![f.name],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    )
+                    .optional()?;
+                let Some((seq, args, input)) = next else {
+                    break;
+                };
+                tx.execute("DELETE FROM queued WHERE seq = ?1", params![seq])?;
+                let args: Map<String, Value> = serde_json::from_str(&args)?;
+                let input: Value = serde_json::from_str(&input)?;
+                // still full or paused: the transaction is dropped, so the
+                // start keeps its place at the front
+                let Started::Run(id) = admit(&tx, f, &args, &input, now)? else {
+                    break;
+                };
+                tx.commit()?;
+                started.push(id);
+            }
+        }
+        Ok(started)
+    }
+
+    /// The paused workflows.
+    pub fn paused(&self) -> Result<Vec<Paused>> {
+        let mut s = self
+            .db
+            .prepare("SELECT workflow, pin, at, why FROM paused ORDER BY workflow")?;
+        let out = s
+            .query_map([], |r| {
+                Ok(Paused {
+                    workflow: r.get(0)?,
+                    pin: r.get(1)?,
+                    at: r.get(2)?,
+                    why: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(out)
+    }
+
+    /// Lets a paused workflow start runs again; false when it was not paused.
+    pub fn resume(&self, workflow: &str) -> Result<bool> {
+        Ok(self
+            .db
+            .execute("DELETE FROM paused WHERE workflow = ?1", params![workflow])?
+            > 0)
+    }
+
+    /// How many of a workflow's newest ended runs failed, in a row.
+    pub fn failed_in_a_row(&self, workflow: &str) -> Result<u32> {
+        let mut s = self.db.prepare(
+            "SELECT json_extract(runtime, '$.state') FROM runs WHERE workflow = ?1 AND ended IS NOT NULL ORDER BY ended DESC, id DESC",
+        )?;
+        let states = s.query_map(params![workflow], |r| r.get::<_, String>(0))?;
+        let mut n = 0;
+        for st in states {
+            if st? != workflow::FAILED {
+                break;
+            }
+            n += 1;
+        }
+        Ok(n)
+    }
+
+    /// Where a source stopped, as it said last.
+    pub fn cursor(&self, source: &str) -> Result<Option<Value>> {
+        let t: Option<String> = self
+            .db
+            .query_row(
+                "SELECT value FROM cursors WHERE source = ?1",
+                params![source],
+                |r| r.get(0),
+            )
+            .optional()?;
+        t.map(|t| Ok(serde_json::from_str(&t)?)).transpose()
+    }
+
+    pub fn set_cursor(&self, source: &str, value: &Value) -> Result<()> {
+        self.db.execute(
+            "INSERT INTO cursors (source, value) VALUES (?1, ?2) ON CONFLICT (source) DO UPDATE SET value = ?2",
+            params![source, json(value)?],
+        )?;
+        Ok(())
     }
 
     /// The newest `limit` runs, of one workflow or all, newest first.
@@ -507,9 +664,64 @@ impl Journal {
                 )?;
             }
         }
+        if let Some(p) = &h.pause {
+            tx.execute(
+                "INSERT INTO paused (workflow, pin, at, why) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (workflow) DO UPDATE SET pin = ?2, at = ?3, why = ?4",
+                params![p.workflow, p.pin, now, p.why],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
+}
+
+/// Starts a run of `f` unless it is paused or at its maximum; then queues
+/// or skips the start as the workflow says. A start that finds others
+/// queued queues behind them, so starts keep their order.
+fn admit(
+    db: &Connection,
+    f: &File,
+    args: &Map<String, Value>,
+    input: &Value,
+    now: &str,
+) -> Result<Started> {
+    let paused = db
+        .query_row(
+            "SELECT 1 FROM paused WHERE workflow = ?1",
+            params![f.name],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if paused {
+        return Ok(Started::Paused);
+    }
+    if let Some(c) = &f.concurrency {
+        let active: i64 = db.query_row(
+            "SELECT COUNT(*) FROM runs WHERE workflow = ?1 AND ended IS NULL",
+            params![f.name],
+            |r| r.get(0),
+        )?;
+        let waiting: i64 = db.query_row(
+            "SELECT COUNT(*) FROM queued WHERE workflow = ?1",
+            params![f.name],
+            |r| r.get(0),
+        )?;
+        if active >= i64::from(c.max) || waiting > 0 {
+            return match c.then {
+                Then::Skip => Ok(Started::Skipped),
+                Then::Queue => {
+                    db.execute(
+                        "INSERT INTO queued (workflow, args, input, at) VALUES (?1, ?2, ?3, ?4)",
+                        params![f.name, json(args)?, json(input)?, now],
+                    )?;
+                    Ok(Started::Queued)
+                }
+            };
+        }
+    }
+    Ok(Started::Run(insert_run(db, f, args, input, now)?))
 }
 
 /// A new run of `f`, pinned at its version, and its `run.started` event

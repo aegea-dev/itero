@@ -11,6 +11,7 @@ port = 8787
 workflows = ["workflows", "~/projects/photos/workflows"]
 actions = ["actions"]
 triggers = "triggers"
+sources = ["sources"]
 ```
 
 | Key | Is | Default |
@@ -19,6 +20,7 @@ triggers = "triggers"
 | `workflows` | the folders with workflows, any number | `["workflows"]` |
 | `actions` | the folders with actions, any number | `["actions"]` |
 | `triggers` | the folder with the workspace's own triggers | `"triggers"` |
+| `sources` | the folders with [sources](/guides/sources/), any number | `["sources"]` |
 
 A folder is relative to the workspace; `~/` is your home folder. A folder
 that is not there holds nothing, and `itero check` notes it.

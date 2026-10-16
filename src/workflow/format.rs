@@ -21,6 +21,40 @@ pub struct File {
     pub end: Vec<String>,
     #[serde(default)]
     pub transitions: Vec<Transition>,
+    /// How many runs may be under way at once, and what happens to a start
+    /// beyond that. Without it, any number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<Concurrency>,
+    /// Failed runs in a row that pause the workflow: 5 unless given, 0 never.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_after: Option<u32>,
+}
+
+/// Failed runs in a row that pause a workflow when it says nothing.
+pub const DEFAULT_PAUSE_AFTER: u32 = 5;
+
+impl File {
+    pub fn pause_after_or_default(&self) -> u32 {
+        self.pause_after.unwrap_or(DEFAULT_PAUSE_AFTER)
+    }
+}
+
+/// At most `max` runs under way; a start beyond waits its turn (`queue`)
+/// or is dropped (`skip`).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Concurrency {
+    pub max: u32,
+    #[serde(default)]
+    pub then: Then,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Then {
+    #[default]
+    Queue,
+    Skip,
 }
 
 /// What starts a run: a schedule (cron, in the machine's local time) or an

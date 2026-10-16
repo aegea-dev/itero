@@ -29,12 +29,13 @@ A workflow names a target `<name>.<target>@<version>`: `photos.resize@2`.
 |---|---|---|
 | `name` | the folder's name; no `.` or `@`, not a built-in's | needed |
 | `version` | a whole number from 1 | needed |
-| `type` | `executable`, `python@<version>` or `bun@<version>` | needed |
+| `type` | `executable`, `python@<version>`, `bun@<version>` or `container` | needed |
+| `image` | `container`: the image its program runs in, like `python:3.13-alpine` | with `container` |
 | `targets` | named entry points, lowercase letters, digits and `-` | needed |
 | `description` | text for people | |
 | `environment` | variables the program gets; values may hold `${env.NAME}` [secrets](/guides/secrets/) | |
 | `limits.timeout` | the most a job may take (60 seconds unless given) | |
-| `limits.heartbeat` | the job's lease, renewed by touching `$ITERO_HEARTBEAT`; not longer than `timeout` | |
+| `limits.heartbeat` | the job's lease, renewed by touching `$ITERO_HEARTBEAT`; not longer than `timeout`; not for `container` yet | |
 | `working_directory` | where the program runs, relative to the action's folder | |
 | `home` | Python: the virtual environment's folder (`.venv`) | |
 | `requirements` | Python: the requirements file | |
@@ -46,3 +47,4 @@ A workflow names a target `<name>.<target>@<version>`: `photos.resize@2`.
 | `executable` | `executable`, and `arguments` (a list) |
 | `python@` | `module` and `callable` |
 | `bun@` | `file` and `export` |
+| `container` | `executable`, and `arguments` (a list), inside the image; the action's folder is `/action` |

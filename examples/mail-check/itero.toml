@@ -1,3 +1,4 @@
-# The mail check: every 5 minutes, a notification for mail not seen before.
-# Run `itero daemon` in this folder.
+# The mail check: a notification for mail not seen before, as soon as it
+# arrives (sources/mailbox.json watches the mailbox), and an hourly check
+# as a safety net. Run `itero daemon` in this folder.
 port = 8787

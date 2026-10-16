@@ -5,9 +5,10 @@ and again, on a schedule or when something happens, on one machine, using
 the command line tools already there. Apps send it events and receive its
 actions; it decides nothing on its own beyond what a workflow says.
 
-itero is young: schedules and app events start workflows with steps, each
-workflow has a memory, actions run commands, shell lines and desktop
-notifications, the daemon has a local HTTP API, and it starts at login.
+itero is young: schedules, app events and sources (a file watched, a mail
+server's IDLE) start workflows with steps, each workflow has a memory,
+actions run commands, shell lines, desktop notifications and programs in
+containers, the daemon has a local HTTP API, and it starts at login.
 
 Documentation: <https://aegea-dev.github.io/itero/>.
 
@@ -29,9 +30,11 @@ are its options (`sh -s -- --help`).
 
 ```bash
 cargo build
-make test        # the test suite
-make lint-check  # clippy, warnings fail
+make test         # the test suite
+make lint-check   # clippy, warnings fail
 make fmt-check
+make test-linux   # the tests and clippy on Linux, in Docker
+make test-docker  # container actions, and the IMAP and POP3 examples against a mail server in Docker
 ```
 
 On macOS, `make notifier` builds `Itero.app` next to the binary (and `make
@@ -53,15 +56,23 @@ actions = ["actions"]
 
 - `workflows/<name>.json`: a workflow: states, transitions, and the actions
   each transition runs in order; `triggers` say when a run starts: a
-  `schedule` (cron) or `on` an app's event, whose data is the run's input.
+  `schedule` (cron) or `on` an event, whose data is the run's input;
+  `concurrency` how many runs at once; `pause_after` how many failed runs
+  in a row pause it (5 unless said).
 - `actions/<name>/action.json`: the workspace's own actions, programs that
-  read a job as JSON on stdin and print their output.
+  read a job as JSON on stdin and print their output: an executable,
+  Python, Bun, or a program in a container image (`"type": "container"`).
+- `sources/<name>.json`: sources, programs the daemon keeps running that
+  tell it when something happens, one event per line: `watch@1` (a file
+  or folder, with the OS's own events), or any program, in a container if
+  it names an image.
 - `.itero/journal.sqlite`: every event, run and job, and each workflow's
   memory. Local, never synced.
 
 Commands: `itero daemon`, `itero emit <type> [--data JSON] [--run ID]`,
-`itero check` (every workflow and action, with its version), `itero runs`,
-`itero memory <workflow>`, `itero service install|status|uninstall`.
+`itero check` (every workflow, action and source), `itero runs`, `itero
+memory <workflow>`, `itero resume <workflow>` (after a pause), `itero
+service install|status|uninstall`.
 
 ### Workspace triggers
 
@@ -93,11 +104,11 @@ whose `Host` is not that address:
 
 | Route | Does |
 |---|---|
-| `GET /health` | the loop's passes, the last one and its error |
+| `GET /health` | the loop's passes, the last one and its error, and each source |
 | `POST /events` | an event, `{"type", "data"?, "run"?}` as `application/json`; 202 `{"id"}` |
 | `GET /runs` | runs, newest first (`?workflow=`, `?limit=`) |
 | `GET /runs/{id}` | a run and its events |
-| `GET /workflows` | each workflow's name, version and triggers |
+| `GET /workflows` | each workflow's name, version, triggers and pause |
 | `GET /workflows/{name}/memory` | a workflow's memory |
 
 An event without `run` may start runs: every workflow with a trigger `on`
@@ -111,8 +122,9 @@ curl -s -X POST http://127.0.0.1:8787/events -H 'content-type: application/json'
 
 ## The mail check
 
-[`examples/mail-check`](examples/mail-check) reads the local mailbox every
-5 minutes and shows a notification for mail it has not seen before:
+[`examples/mail-check`](examples/mail-check) shows a notification for
+mail in the local mailbox it has not seen before, as it arrives: a source
+watches the mailbox, and an hourly check is the safety net.
 
 ```bash
 cd examples/mail-check && cargo run -q -- daemon
@@ -120,12 +132,20 @@ cd examples/mail-check && cargo run -q -- daemon
 echo "merhaba" | mail -s "deneme" "$USER"
 ```
 
-Within 5 minutes one notification says `1 new: deneme`; later runs show
-none until more mail comes. Ctrl-C stops the daemon.
+Within a second or two one notification says `1 new: deneme`. Ctrl-C
+stops the daemon.
+
+## Mail servers
+
+[`examples/mail-servers`](examples/mail-servers) has two workflows, one
+for an IMAP mailbox and one for POP3, each with its server and account in
+its check step and the password a secret (`IMAP_PASSWORD`,
+`POP3_PASSWORD`). The checks run in containers (`python:3.13-alpine`), so
+the machine needs Docker, not Python. IMAP mail is notified as it arrives:
+a source in a container waits in IMAP IDLE; POP3, which has nothing like
+it, is checked every 5 minutes.
 
 ## Design
 
 [`docs/design.md`](docs/design.md) says what itero is made of and what was
-decided; [`docs/plan-1-mail-check.md`](docs/plan-1-mail-check.md) and
-[`docs/plan-2-api-events-install.md`](docs/plan-2-api-events-install.md)
-are the plans the iterations followed.
+decided; the `docs/plan-*.md` files are the plans the iterations followed.

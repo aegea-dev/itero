@@ -62,6 +62,7 @@ export default defineConfig({
 						{ label: 'Writing a workflow', slug: 'guides/workflows' },
 						{ label: 'Actions', slug: 'guides/actions' },
 						{ label: 'Triggers', slug: 'guides/triggers' },
+						{ label: 'Sources', slug: 'guides/sources' },
 						{ label: 'Apps and events', slug: 'guides/apps' },
 						{ label: 'Secrets', slug: 'guides/secrets' },
 						{ label: 'Start at login', slug: 'guides/service' },
@@ -70,6 +71,7 @@ export default defineConfig({
 				{
 					label: 'Reference',
 					items: [
+						{ label: 'Glossary', slug: 'reference/glossary' },
 						{ label: 'Commands', slug: 'reference/commands' },
 						{ label: 'itero.toml', slug: 'reference/itero-toml' },
 						{ label: 'Workflow files', slug: 'reference/workflow-file' },

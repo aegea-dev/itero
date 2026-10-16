@@ -92,6 +92,14 @@ dist: ## Build the release archive and checksum (TAG=vX.Y.Z, TARGET=triple)
 test-install: ## Install from a local release through install.sh, in temp folders
 	sh scripts/test-install.sh
 
+.PHONY: test-linux
+test-linux: ## Run the tests and clippy on Linux, in Docker
+	sh scripts/test-linux.sh
+
+.PHONY: test-docker
+test-docker: ## Run the tests that need Docker: container actions, IMAP and POP3
+	sh scripts/test-docker.sh
+
 .PHONY: test-formula
 test-formula: ## Install the formula from a local tap (macOS; changes Homebrew, undone after)
 	sh scripts/test-formula.sh

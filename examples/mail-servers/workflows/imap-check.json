@@ -1,0 +1,22 @@
+{
+  "name": "imap-check",
+  "description": "Notifies about mail that arrives in an IMAP mailbox: at once, told by the imap-idle source, and every 5 minutes as a safety net.",
+  "triggers": [ { "on": "mail.changed" }, { "schedule": "*/5 * * * *" } ],
+  "concurrency": { "max": 1, "then": "queue" },
+  "states": ["start", "done"],
+  "start": "start",
+  "end": ["done"],
+  "transitions": [
+    { "from": "start", "to": "done",
+      "do": [
+        { "id": "check", "action": "imap.check@1",
+          "with": { "host": "imap.example.com", "port": 993, "tls": true,
+                    "user": "me@example.com", "password": "${env.IMAP_PASSWORD}",
+                    "mailbox": "INBOX",
+                    "seen": "${has(memory.seen) ? memory.seen : null}" } },
+        { "action": "notify@1", "when": "steps.check.json.new > 0",
+          "with": { "title": "Mail", "text": "${steps.check.json.summary}" } },
+        { "action": "memory.set@1", "with": { "seen": "${steps.check.json.seen}" } }
+      ] }
+  ]
+}

@@ -48,6 +48,8 @@ pub enum Cmd {
     Runs,
     /// A workflow's memory, as JSON
     Memory { workflow: String },
+    /// Let a paused workflow start runs again
+    Resume { workflow: String },
     /// Start this workspace's daemon at login, kept up by a watchdog
     Service {
         #[command(subcommand)]
@@ -59,6 +61,9 @@ pub enum Cmd {
     /// A worker: one job, JSON in on stdin, its output as JSON on stdout
     #[command(hide = true)]
     Worker,
+    /// A built-in source: its settings on stdin, its events on stdout
+    #[command(hide = true)]
+    Source { kind: String },
     /// Keeps `itero daemon` running: restarts it when it exits, stops
     /// answering or stops making passes (what the service runs)
     #[command(hide = true)]
@@ -171,6 +176,28 @@ fn dispatch(cli: Cli) -> Result<()> {
                 ))),
                 wake,
             });
+            // a bad source file stops the daemon here, naming the file
+            for (name, folder, def) in ws.sources()? {
+                let (ws, exe, engine) = (ws.clone(), exe.clone(), engine.clone());
+                let wake = engine.wake.clone();
+                eprintln!("itero: source {name}");
+                std::thread::spawn(move || {
+                    let source = crate::sources::supervise::Source {
+                        name: &name,
+                        folder: &folder,
+                        def: &def,
+                    };
+                    let policy = crate::sources::supervise::Policy::default();
+                    crate::sources::supervise::run(
+                        &ws,
+                        &exe,
+                        &source,
+                        &policy,
+                        &wake,
+                        &engine.health,
+                    );
+                });
+            }
             let looping = {
                 let (ws, engine) = (ws.clone(), engine.clone());
                 let interval = std::time::Duration::from_secs(interval);
@@ -215,6 +242,10 @@ fn dispatch(cli: Cli) -> Result<()> {
                     println!("{}.{target}@{}", d.name, d.version);
                 }
             }
+            for (name, _, d) in ws.sources()? {
+                let what = d.source.clone().unwrap_or_else(|| d.program.join(" "));
+                println!("source {name}  {what}");
+            }
         }
         Cmd::Runs => {
             let ws = workspace()?;
@@ -235,6 +266,32 @@ fn dispatch(cli: Cli) -> Result<()> {
             let j = crate::engine::journal::Journal::open(&ws)?;
             let m = j.memory(&workflow)?;
             println!("{}", serde_json::to_string_pretty(&m)?);
+        }
+        Cmd::Source { kind } => {
+            let mut first = String::new();
+            std::io::stdin().read_line(&mut first)?;
+            let s: crate::sources::Settings =
+                serde_json::from_str(&first).map_err(|e| anyhow!("the source's settings: {e}"))?;
+            let source = match kind.as_str() {
+                "watch@1" => crate::sources::Watch::new(&s)?,
+                other => bail!("no built-in source {other}"),
+            };
+            // the daemon going away closes stdin: then this source stops
+            std::thread::spawn(|| {
+                let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
+                std::process::exit(0);
+            });
+            source.run(&mut std::io::stdout().lock())?;
+        }
+        Cmd::Resume { workflow } => {
+            let ws = workspace()?;
+            let j = crate::engine::journal::Journal::open(&ws)?;
+            let word = if j.resume(&workflow)? {
+                "resumed"
+            } else {
+                "not paused"
+            };
+            println!("{workflow}: {word}");
         }
         Cmd::Service { cmd } => {
             use crate::engine::service;

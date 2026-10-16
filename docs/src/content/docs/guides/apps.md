@@ -36,8 +36,12 @@ event's id.
   state with `on` that type is taken, and the event's `data` is its
   `input`.
 
-The engine's own types, starting with `action.`, `timer.` or `run.`, are
-refused.
+The engine's own types, starting with `action.`, `timer.`, `run.`,
+`workflow.` or `source.`, are refused.
+
+Apps are one way events come in. A [source](/guides/sources/) is the other:
+a long-lived program the daemon runs, which watches a file or holds a
+connection and sends events as things happen.
 
 ## Waiting for an app
 
