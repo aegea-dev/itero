@@ -15,6 +15,90 @@ use std::time::Duration;
 
 pub mod supervise;
 
+/// The built-in sources, at their versions.
+pub const BUILT_IN: [&str; 1] = ["watch@1"];
+
+/// A source's file, `sources/<name>.json`: a built-in (`source`) or a
+/// program and its arguments (`program`), which may run in a container
+/// (`image`); its settings (`with`, where `${env.NAME}` is a secret); and
+/// the event type it sends (`emit`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Definition {
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub program: Vec<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub with: Map<String, Value>,
+    #[serde(default)]
+    pub emit: Option<String>,
+}
+
+fn check(d: &Definition) -> std::result::Result<(), String> {
+    use crate::workflow::validate::{check_templates, is_word};
+    match (&d.source, d.program.is_empty()) {
+        (Some(_), true) | (None, false) => {}
+        _ => return Err("a source is a built-in (source) or a program, one of them".into()),
+    }
+    if let Some(s) = &d.source {
+        if !BUILT_IN.contains(&s.as_str()) {
+            return Err(format!("no built-in source {s}"));
+        }
+        if d.image.is_some() {
+            return Err("image is for a program source".into());
+        }
+        if !d.with.get("path").is_some_and(Value::is_string) {
+            return Err("watch@1 needs with.path".into());
+        }
+        if d.emit.is_none() {
+            return Err("watch@1 needs emit".into());
+        }
+    }
+    if let Some(i) = &d.image
+        && (i.trim().is_empty() || i.starts_with('-'))
+    {
+        return Err(format!("image \"{i}\" is not an image name"));
+    }
+    if let Some(e) = &d.emit {
+        if !e.split('.').all(is_word) {
+            return Err(format!("emit \"{e}\" is an event type, like mail.changed"));
+        }
+        if crate::engine::events::engine_own(e) {
+            return Err(format!("emit \"{e}\" is the engine's own"));
+        }
+    }
+    let mut texts = vec![];
+    d.with
+        .values()
+        .for_each(|v| crate::workflow::validate::strings(v, &mut texts));
+    for t in texts {
+        check_templates(t)?;
+    }
+    Ok(())
+}
+
+/// Reads and checks a source's file; its name is the file's stem.
+pub fn load_file(path: &std::path::Path) -> Result<Definition, crate::workflow::WorkflowError> {
+    let err = |message: String| crate::workflow::WorkflowError {
+        file: path.display().to_string(),
+        at: None,
+        message,
+    };
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    if !crate::workflow::validate::is_word(stem) {
+        return Err(err(format!(
+            "a source's name \"{stem}\" is lowercase letters, digits and -"
+        )));
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| err(format!("cannot read it: {e}")))?;
+    let d: Definition = serde_json::from_str(&text).map_err(|e| err(e.to_string()))?;
+    check(&d).map_err(err)?;
+    Ok(d)
+}
+
 /// What a source reads first.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -220,6 +220,10 @@ fn dispatch(cli: Cli) -> Result<()> {
                     println!("{}.{target}@{}", d.name, d.version);
                 }
             }
+            for (name, _, d) in ws.sources()? {
+                let what = d.source.clone().unwrap_or_else(|| d.program.join(" "));
+                println!("source {name}  {what}");
+            }
         }
         Cmd::Runs => {
             let ws = workspace()?;

@@ -16,6 +16,12 @@ struct Settings {
     actions: Vec<String>,
     #[serde(default = "default_triggers")]
     triggers: String,
+    #[serde(default = "default_sources")]
+    sources: Vec<String>,
+}
+
+fn default_sources() -> Vec<String> {
+    vec!["sources".into()]
 }
 
 /// A workspace's `triggers/<workflow>.json`: triggers added to the
@@ -52,6 +58,8 @@ pub struct Workspace {
     pub actions: Vec<PathBuf>,
     /// The workspace's own triggers for its workflows.
     pub triggers: PathBuf,
+    /// The folders with the workspace's sources.
+    pub sources: Vec<PathBuf>,
 }
 
 /// A listed folder: `~/` is the home folder, a relative path is under the
@@ -83,6 +91,7 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
         workflows: s.workflows.iter().map(|w| folder(root, w)).collect(),
         actions: s.actions.iter().map(|a| folder(root, a)).collect(),
         triggers: folder(root, &s.triggers),
+        sources: s.sources.iter().map(|x| folder(root, x)).collect(),
     })
 }
 
@@ -164,6 +173,37 @@ impl Workspace {
             }
         }
         self.merge_triggers(&mut out)?;
+        Ok(out)
+    }
+
+    /// Every source in the sources folders, checked: its name, its folder,
+    /// its definition. A name found twice is an error naming both files.
+    pub fn sources(&self) -> Result<Vec<(String, PathBuf, crate::sources::Definition)>> {
+        let mut out: Vec<(String, PathBuf, crate::sources::Definition)> = vec![];
+        for dir in &self.sources {
+            if !dir.exists() {
+                continue;
+            }
+            let files = listed(dir, |p| {
+                (p.extension().is_some_and(|x| x == "json") && p.is_file()).then(|| p.to_path_buf())
+            })?;
+            for f in files {
+                let d = crate::sources::load_file(&f)?;
+                let name = f
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                if let Some((_, other, _)) = out.iter().find(|(n, _, _)| *n == name) {
+                    bail!(
+                        "two sources named {name}: in {} and {}",
+                        other.display(),
+                        dir.display()
+                    );
+                }
+                out.push((name, dir.clone(), d));
+            }
+        }
         Ok(out)
     }
 
