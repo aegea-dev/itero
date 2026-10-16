@@ -104,6 +104,9 @@ pub struct Failed {
     pub transition: usize,
     pub chain: String,
     pub input: Value,
+    /// Why it failed, as the manager logged it.
+    #[serde(default)]
+    pub why: String,
 }
 
 /// A run's place in its workflow, kept by the daemon.

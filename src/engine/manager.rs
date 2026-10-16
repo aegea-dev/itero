@@ -447,6 +447,7 @@ impl Machine<'_> {
             transition: i,
             chain,
             input,
+            why,
         });
         Ok(())
     }

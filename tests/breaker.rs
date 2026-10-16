@@ -109,6 +109,53 @@ fn a_success_between_failures_starts_the_count_again() {
     assert!(j.paused().unwrap().is_empty());
 }
 
+/// Starts when any workflow fails, and remembers which, and why.
+const BAKIM: &str = r#"{ "name": "bakim", "description": "bakım", "triggers": [ { "on": "run.failed" } ],
+  "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+  "transitions": [ { "from": "basla", "to": "bitti",
+    "do": [ { "action": "memory.set@1",
+              "with": { "son": "${input.workflow}", "neden": "${input.why}" } } ] } ] }"#;
+
+#[test]
+fn a_failed_run_is_published_and_a_maintenance_workflow_hears_it() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path(), BOZUK);
+    std::fs::write(d.path().join("workflows/bakim.json"), BAKIM).unwrap();
+    runs(&ws, 1);
+    run_once(&ws, t("2026-10-16T10:00:30Z"), exe()).unwrap();
+    let j = Journal::open(&ws).unwrap();
+    let said: Vec<_> = j
+        .events(Some("itero.app"))
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.event.kind == "run.failed")
+        .collect();
+    assert_eq!(said.len(), 1);
+    let data = &said[0].event.data;
+    assert_eq!(data["workflow"], "bozuk");
+    assert_eq!(data["from"], "basla");
+    assert!(data["why"].as_str().unwrap().contains("sh@1"), "{data}");
+    let m = j.memory("bakim").unwrap();
+    assert_eq!(m["son"], "bozuk");
+    assert_eq!(m["neden"], data["why"]);
+}
+
+#[test]
+fn a_maintenance_workflow_never_starts_on_its_own_failure() {
+    let d = tempfile::tempdir().unwrap();
+    // fails, and listens to failures: it must not start itself
+    let kendi = BOZUK.replace(
+        r#""triggers": [ { "on": "dene.simdi" } ]"#,
+        r#""triggers": [ { "on": "dene.simdi" }, { "on": "run.failed" } ]"#,
+    );
+    let ws = workspace(d.path(), &kendi);
+    runs(&ws, 1);
+    for s in 10..13 {
+        run_once(&ws, t(&format!("2026-10-16T10:00:{s}Z")), exe()).unwrap();
+    }
+    assert_eq!(Journal::open(&ws).unwrap().runs().unwrap().len(), 1);
+}
+
 #[test]
 fn pause_after_zero_never_pauses() {
     let d = tempfile::tempdir().unwrap();

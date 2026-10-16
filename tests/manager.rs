@@ -181,6 +181,18 @@ fn a_failed_action_fails_the_run() {
 }
 
 #[test]
+fn a_failed_run_keeps_why() {
+    let a = requested();
+    let data = json!({"chain": "e1.2", "index": 0, "error": "bağlantı koptu"});
+    let b = decide(&input(a.runtime, "action.failed", "e2", data)).unwrap();
+    assert_eq!(b.runtime.state, "failed");
+    assert_eq!(
+        b.runtime.failed.unwrap().why,
+        "http.request@1: bağlantı koptu"
+    );
+}
+
+#[test]
 fn on_fail_goes_to_its_state_instead() {
     let a = requested();
     let mut i = input(
