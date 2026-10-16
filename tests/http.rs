@@ -43,6 +43,7 @@ async fn health_says_the_loop_is_alive() {
     assert_eq!(v["ok"], true);
     assert_eq!(v["passes"], 0);
     assert_eq!(v["started"], "2026-10-15T14:00:00Z");
+    assert_eq!(v["sources"], json!({}), "no sources");
     assert_eq!(v["workspace"], json!(d.path().display().to_string()));
 }
 

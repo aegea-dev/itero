@@ -88,6 +88,7 @@ async fn health(State(s): State<Shared>) -> Json<Value> {
         "passes": h.passes,
         "last_pass": h.last_pass,
         "last_error": h.last_error,
+        "sources": h.sources,
     }))
 }
 

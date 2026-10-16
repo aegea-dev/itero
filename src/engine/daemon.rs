@@ -67,6 +67,19 @@ pub struct Health {
     pub last_pass: Option<String>,
     /// What went wrong in the last pass, if anything.
     pub last_error: Option<String>,
+    /// How each source is doing, by name.
+    pub sources: std::collections::BTreeMap<String, SourceHealth>,
+}
+
+/// How one source is doing.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct SourceHealth {
+    /// `running`, `waiting` (to start again) or `gave up`.
+    pub state: String,
+    /// Starts after the first, within the supervisor's window.
+    pub restarts: usize,
+    /// How it ended last.
+    pub last_exit: Option<String>,
 }
 
 impl Health {
@@ -76,6 +89,7 @@ impl Health {
             passes: 0,
             last_pass: None,
             last_error: None,
+            sources: Default::default(),
         }
     }
 }
@@ -498,7 +512,7 @@ const BUILT_IN_TIMEOUT: u64 = crate::workflow::actions::DEFAULT_TIMEOUT;
 
 /// `${env.NAME}` in every string, filled in from the OS secret store, else
 /// the daemon's environment.
-fn fill_secrets(v: &Value) -> Result<Value, String> {
+pub(crate) fn fill_secrets(v: &Value) -> Result<Value, String> {
     Ok(match v {
         Value::String(s) => {
             use super::eval::{Piece, pieces, secret_name};

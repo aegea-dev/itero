@@ -481,7 +481,7 @@ fn notify(job: &Job) -> Result<Value, String> {
 
 /// What runs container actions: the Docker CLI as its user configured it
 /// (`DOCKER_CONTEXT`, `DOCKER_HOST`).
-const CONTAINER_RUNTIME: &str = "docker";
+pub const CONTAINER_RUNTIME: &str = "docker";
 
 /// A job's container: named after its idempotency key, so every run of the
 /// job (and the daemon cleaning up after one) finds the same name.
@@ -491,47 +491,61 @@ pub fn container_name(key: &str) -> String {
 
 /// Removes a job's container, if it is there; quietly, best effort.
 pub fn remove_container(key: &str) {
-    let _ = Command::new(CONTAINER_RUNTIME)
-        .args(["rm", "-f", &container_name(key)])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    remove_named_container(&container_name(key));
 }
 
-/// `docker run` for a container action: the action's folder read-only at
-/// `/action`, its environment passed by name only (`-e NAME`), so values
-/// and secrets come from this process's environment and never stand on a
-/// command line.
-fn container_args(
-    job: &Job,
-    p: &super::Program,
-    image: &str,
-    env: &std::collections::BTreeMap<String, String>,
-) -> Vec<String> {
+/// A program to run in a container.
+pub struct Contained<'a> {
+    /// The container's name.
+    pub name: &'a str,
+    /// What it is, as a label: `dev.aegea.itero.job` or `.source`.
+    pub label: &'a str,
+    /// The folder mounted read-only at `mount`, where the program runs.
+    pub folder: &'a Path,
+    pub mount: &'a str,
+    pub image: &'a str,
+    /// Environment variables passed by name only: their values come from
+    /// the runtime's own environment, never a command line.
+    pub env: Vec<&'a str>,
+    /// The program and its arguments, inside the container.
+    pub program: &'a [String],
+}
+
+/// `docker run --rm -i` for a program in a container: its stdin is the
+/// container's, so a job comes in and a closed stdin reaches it.
+/// `host.docker.internal` is this machine, on Linux too.
+pub fn container_args(c: &Contained) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "run".into(),
         "--rm".into(),
         "-i".into(),
         "--name".into(),
-        container_name(&job.key),
+        c.name.into(),
         "--label".into(),
-        "dev.aegea.itero.job".into(),
-        // this machine, by the name Docker Desktop gives it, on Linux too
+        c.label.into(),
         "--add-host=host.docker.internal:host-gateway".into(),
         "-v".into(),
-        format!("{}:/action:ro", p.folder.display()),
+        format!("{}:{}:ro", c.folder.display(), c.mount),
         "-w".into(),
-        "/action".into(),
+        c.mount.into(),
     ];
-    for name in env.keys() {
+    for name in &c.env {
         args.push("-e".into());
-        args.push(name.clone());
+        args.push(name.to_string());
     }
-    args.push(image.into());
-    args.push(p.executable.clone());
-    args.extend(p.arguments.iter().cloned());
+    args.push(c.image.into());
+    args.extend(c.program.iter().cloned());
     args
+}
+
+/// Removes a container by name, if it is there; quietly, best effort.
+pub fn remove_named_container(name: &str) {
+    let _ = Command::new(CONTAINER_RUNTIME)
+        .args(["rm", "-f", name])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 fn program(job: &Job) -> Result<Value, Failure> {
@@ -541,10 +555,19 @@ fn program(job: &Job) -> Result<Value, Failure> {
         Some(Interpreter::Container { image }) => {
             // a container left by an earlier run of this job goes first
             remove_container(&job.key);
-            (
-                CONTAINER_RUNTIME.into(),
-                container_args(job, p, image, &env),
-            )
+            let program: Vec<String> = std::iter::once(p.executable.clone())
+                .chain(p.arguments.iter().cloned())
+                .collect();
+            let args = container_args(&Contained {
+                name: &container_name(&job.key),
+                label: "dev.aegea.itero.job",
+                folder: &p.folder,
+                mount: "/action",
+                image,
+                env: env.keys().map(String::as_str).collect(),
+                program: &program,
+            });
+            (CONTAINER_RUNTIME.into(), args)
         }
         None => (
             if p.executable.contains('/') {
