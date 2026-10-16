@@ -176,6 +176,28 @@ fn dispatch(cli: Cli) -> Result<()> {
                 ))),
                 wake,
             });
+            // a bad source file stops the daemon here, naming the file
+            for (name, folder, def) in ws.sources()? {
+                let (ws, exe, engine) = (ws.clone(), exe.clone(), engine.clone());
+                let wake = engine.wake.clone();
+                eprintln!("itero: source {name}");
+                std::thread::spawn(move || {
+                    let source = crate::sources::supervise::Source {
+                        name: &name,
+                        folder: &folder,
+                        def: &def,
+                    };
+                    let policy = crate::sources::supervise::Policy::default();
+                    crate::sources::supervise::run(
+                        &ws,
+                        &exe,
+                        &source,
+                        &policy,
+                        &wake,
+                        &engine.health,
+                    );
+                });
+            }
             let looping = {
                 let (ws, engine) = (ws.clone(), engine.clone());
                 let interval = std::time::Duration::from_secs(interval);
