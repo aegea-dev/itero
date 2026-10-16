@@ -1,0 +1,8 @@
+{
+  "name": "imap",
+  "version": 1,
+  "type": "executable",
+  "description": "Reads an IMAP mailbox: what is new since the last check.",
+  "limits": { "timeout": "60s" },
+  "targets": { "check": { "executable": "./check.py" } }
+}

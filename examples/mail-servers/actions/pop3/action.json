@@ -1,0 +1,8 @@
+{
+  "name": "pop3",
+  "version": 1,
+  "type": "executable",
+  "description": "Reads a POP3 mailbox: what is new since the last check.",
+  "limits": { "timeout": "60s" },
+  "targets": { "check": { "executable": "./check.py" } }
+}

@@ -1,0 +1,7 @@
+# Mail servers: two workflows that check a mailbox every 5 minutes and
+# show a notification for mail that arrived since, one over IMAP, one over
+# POP3. Set the server and account in each workflow's check step; keep the
+# password as a secret (IMAP_PASSWORD, POP3_PASSWORD), in the OS secret
+# store under the service "itero" or in the daemon's environment. Run
+# `itero daemon` in this folder.
+port = 8788
