@@ -1,7 +1,11 @@
 {
   "name": "mail-check",
-  "description": "Notifies about mail not seen before.",
-  "triggers": [ { "schedule": "*/5 * * * *", "args": { "mailbox": "" } } ],
+  "description": "Notifies about mail not seen before, as it arrives.",
+  "triggers": [
+    { "on": "mail.changed", "args": { "mailbox": "" } },
+    { "schedule": "0 * * * *", "args": { "mailbox": "" } }
+  ],
+  "concurrency": { "max": 1, "then": "queue" },
   "states": ["start", "done"],
   "start": "start",
   "end": ["done"],
