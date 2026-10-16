@@ -494,6 +494,40 @@ pub fn remove_container(key: &str) {
     remove_named_container(&container_name(key));
 }
 
+/// How long a stopped container job's client may take to end on its own:
+/// longer only while it pulls the image.
+const CLIENT_ENDS: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Stops a container job's worker, which leads its own process group, and
+/// removes its container. Docker finishes a request whose client was
+/// killed, so a client killed just after sending its create would leave a
+/// container that lands after the removal and never starts (and so `--rm`
+/// never removes it). Only the worker is killed, then: the container is
+/// removed until its client, the rest of the group, has ended, as a client
+/// does once its container is gone. With nothing of it left, no request
+/// of it is on its way. A client still pulling after `CLIENT_ENDS` is
+/// killed.
+pub fn stop_contained(worker: &mut std::process::Child, name: &str) {
+    let group = worker.id() as i32;
+    let _ = worker.kill();
+    let _ = worker.wait();
+    // SAFETY: signal 0 only asks whether the group has a process left; the
+    // group's id stays taken while one does.
+    let left = || unsafe { libc::killpg(group, 0) } == 0;
+    let until = std::time::Instant::now() + CLIENT_ENDS;
+    while left() && std::time::Instant::now() < until {
+        remove_named_container(name);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    if left() {
+        // SAFETY: as above; SIGKILL ends what is left of the worker's group.
+        unsafe {
+            libc::killpg(group, libc::SIGKILL);
+        }
+    }
+    remove_named_container(name);
+}
+
 /// A program to run in a container.
 pub struct Contained<'a> {
     /// The container's name.

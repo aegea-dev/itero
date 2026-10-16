@@ -5,7 +5,10 @@
 use chrono::{DateTime, Utc};
 use itero::engine::daemon::run_once;
 use itero::engine::journal::Journal;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 fn docker() -> bool {
     let on = std::env::var_os("ITERO_DOCKER").is_some();
@@ -116,4 +119,66 @@ fn a_container_past_its_time_limit_is_removed() {
         "",
         "no container left running"
     );
+}
+
+#[test]
+fn a_container_job_stopped_at_any_moment_leaves_no_container() {
+    if !docker() {
+        return;
+    }
+    let image = "busybox:1.37";
+    let pulled = Command::new("docker")
+        .args(["pull", "-q", image])
+        .output()
+        .unwrap();
+    assert!(
+        pulled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pulled.stderr)
+    );
+    // stopped before its client has sent the create, while the create is on
+    // its way (Docker would finish it after a removal), and once running
+    for ms in [0, 25, 50, 100, 200, 400, 800] {
+        let name = itero::engine::worker::container_name(&format!("kutu:durdur {ms} ms"));
+        // the worker: leads its own group, its docker client a child in it
+        // (`; exit` keeps sh from becoming the client itself)
+        let mut worker = Command::new("sh")
+            .args([
+                "-c",
+                &format!("docker run --rm -i --name {name} {image} sleep 120; exit"),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(ms));
+        itero::engine::worker::stop_contained(&mut worker, &name);
+        let now = left(&name);
+        std::thread::sleep(Duration::from_secs(1));
+        let later = left(&name);
+        let _ = Command::new("docker").args(["rm", "-f", &name]).output();
+        assert_eq!(
+            (now.as_str(), later.as_str()),
+            ("", ""),
+            "stopped after {ms} ms"
+        );
+    }
+}
+
+/// The status of the container with this name, if there is one.
+fn left(name: &str) -> String {
+    let out = Command::new("docker")
+        .args([
+            "ps",
+            "-a",
+            "--filter",
+            &format!("name=^{name}$"),
+            "--format",
+            "{{.Status}}",
+        ])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
