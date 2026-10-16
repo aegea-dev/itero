@@ -536,6 +536,9 @@ fn job(ws: &Workspace, data: &Value) -> Result<Job, String> {
             file: t.file.clone().unwrap_or_default(),
             export: t.export.clone().unwrap_or_default(),
         }),
+        "container" => Some(Interpreter::Container {
+            image: d.image.clone().unwrap_or_default(),
+        }),
         other => return Err(format!("unknown action type {other}")),
     };
     let mut environment = std::collections::BTreeMap::new();
@@ -564,6 +567,18 @@ fn stop(child: &mut std::process::Child) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Removes a stopped container job's container: the container client goes
+/// with the worker's group, the container itself would keep running.
+fn remove_container(job: &Job) {
+    if let Some(Program {
+        interpreter: Some(Interpreter::Container { .. }),
+        ..
+    }) = &job.program
+    {
+        super::worker::remove_container(&job.key);
+    }
 }
 
 /// How long since a job last touched its heartbeat file, or since it
@@ -640,6 +655,7 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
         let left = cap.saturating_sub(started.elapsed());
         if left.is_zero() {
             stop(&mut child);
+            remove_container(job);
             return Err(Failure::Error(format!(
                 "{}: timed out after {}s",
                 job.action, job.timeout
@@ -656,6 +672,7 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
             && quiet(beat, born) > lease
         {
             stop(&mut child);
+            remove_container(job);
             return Err(Failure::Lost(format!(
                 "no heartbeat for {}s",
                 lease.as_secs()
@@ -665,6 +682,7 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
     let Some(code) = status.code() else {
         // killed from outside: whatever it started goes too
         stop(&mut child);
+        remove_container(job);
         return Err(Failure::Lost(format!("the worker was killed ({status})")));
     };
     let (out, err) = (

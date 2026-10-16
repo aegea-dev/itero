@@ -1,7 +1,10 @@
 //! The mail-servers example against a real mail server: GreenMail, run by
-//! `make test-mail-servers` (Docker), whose address is `ITERO_GREENMAIL`
+//! `make test-docker` (Docker), whose address is `ITERO_GREENMAIL`
 //! (`127.0.0.1`, with SMTP on 13025, POP3 on 13110 and IMAP on 13143).
-//! Without it these tests say so and pass: `make test` needs no Docker.
+//! The example's checks are container actions, so they run in Docker too,
+//! and reach the server as `host.docker.internal`. Without
+//! `ITERO_GREENMAIL` these tests say so and pass: `make test` needs no
+//! Docker.
 #![cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -14,7 +17,7 @@ const IMAP: u16 = 13143;
 fn server() -> Option<String> {
     let s = std::env::var("ITERO_GREENMAIL").ok();
     if s.is_none() {
-        eprintln!("ITERO_GREENMAIL is not set: skipped (make test-mail-servers runs it)");
+        eprintln!("ITERO_GREENMAIL is not set: skipped (make test-docker runs it)");
     }
     s
 }
@@ -165,7 +168,8 @@ fn notifies_new_mail(workflow: &str, port: u16) {
     let d = tempfile::tempdir().unwrap();
     let user = format!("deneme-{}@ornek.test", uuid::Uuid::now_v7());
     let log = d.path().join("bildirim.log");
-    let ws = example(d.path(), workflow, port, &user, &host);
+    // the check runs in a container: this machine is host.docker.internal
+    let ws = example(d.path(), workflow, port, &user, "host.docker.internal");
     send(&host, &user, "Eski posta");
     pass(&ws, "2026-10-16T10:01:00Z", &log); // the schedule is seen
     pass(&ws, "2026-10-16T10:05:10Z", &log); // first check: where the mailbox is

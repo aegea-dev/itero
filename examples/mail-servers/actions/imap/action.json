@@ -1,8 +1,9 @@
 {
   "name": "imap",
   "version": 1,
-  "type": "executable",
-  "description": "Reads an IMAP mailbox: what is new since the last check.",
-  "limits": { "timeout": "60s" },
-  "targets": { "check": { "executable": "./check.py" } }
+  "type": "container",
+  "image": "python:3.13-alpine",
+  "description": "Reads an IMAP mailbox: what is new since the last check. Runs in a container, so this machine needs Docker, not Python.",
+  "limits": { "timeout": "120s" },
+  "targets": { "check": { "executable": "python3", "arguments": ["check.py"] } }
 }

@@ -31,9 +31,13 @@ pub struct Definition {
     pub version: u32,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
-    /// `python@<version>`, `bun@<version>` or `executable`.
+    /// `python@<version>`, `bun@<version>`, `executable` or `container`.
     #[serde(rename = "type")]
     pub kind: String,
+    /// Container: the image its program runs in, like
+    /// `python:3.13-alpine`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -98,8 +102,8 @@ pub fn load_file(path: &Path) -> Result<Definition, WorkflowError> {
 }
 
 fn type_name(kind: &str) -> Option<&str> {
-    if kind == "executable" {
-        return Some("executable");
+    if kind == "executable" || kind == "container" {
+        return Some(kind);
     }
     let (name, version) = kind.split_once('@')?;
     let ok = !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.');
@@ -172,12 +176,26 @@ pub fn validate(path: &Path, d: &Definition) -> Result<(), WorkflowError> {
     }
     let kind = type_name(&d.kind).ok_or_else(|| {
         whole(format!(
-            "type is python@<version>, bun@<version> or executable, not \"{}\"",
+            "type is python@<version>, bun@<version>, executable or container, not \"{}\"",
             d.kind
         ))
     })?;
     if kind != "python" && (d.home.is_some() || d.requirements.is_some()) {
         return Err(whole("home and requirements are for python@ types".into()));
+    }
+    match (kind, &d.image) {
+        ("container", None) => return Err(whole("a container needs image".into())),
+        ("container", Some(i)) if i.trim().is_empty() || i.starts_with('-') => {
+            return Err(whole(format!("image \"{i}\" is not an image name")));
+        }
+        ("container", Some(_)) => {}
+        (_, Some(_)) => return Err(whole("image is for the container type".into())),
+        (_, None) => {}
+    }
+    if kind == "container" && d.limits.as_ref().is_some_and(|l| l.heartbeat.is_some()) {
+        return Err(whole(
+            "heartbeat does not reach a container yet: use timeout".into(),
+        ));
     }
     if d.targets.is_empty() {
         return Err(whole("targets is empty".into()));

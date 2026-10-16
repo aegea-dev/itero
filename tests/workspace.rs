@@ -189,6 +189,48 @@ fn a_trigger_file_for_no_workflow_or_a_bad_trigger_is_an_error_naming_it() {
 }
 
 #[test]
+fn a_container_action_names_its_image_and_nothing_else_does() {
+    let d = tempfile::tempdir().unwrap();
+    write(d.path(), "itero.toml", "");
+    write(
+        d.path(),
+        "actions/posta/action.json",
+        r#"{ "name": "posta", "version": 1, "type": "container", "image": "python:3.13-alpine",
+             "description": "postaya bakış", "environment": { "DİL": "tr" },
+             "targets": { "bak": { "executable": "python3", "arguments": ["bak.py", "--kutu", "Gelen"] } } }"#,
+    );
+    let ws = workspace::find(d.path()).unwrap();
+    let (_, def) = ws.action("posta").unwrap();
+    assert_eq!(def.image.as_deref(), Some("python:3.13-alpine"));
+    for (text, says) in [
+        (
+            r#"{ "name": "posta", "version": 1, "type": "container", "targets": { "bak": { "executable": "python3" } } }"#,
+            "a container needs image",
+        ),
+        (
+            r#"{ "name": "posta", "version": 1, "type": "executable", "image": "python:3.13-alpine", "targets": { "bak": { "executable": "./bak.sh" } } }"#,
+            "image is for the container type",
+        ),
+        (
+            r#"{ "name": "posta", "version": 1, "type": "container", "image": "--privileged", "targets": { "bak": { "executable": "sh" } } }"#,
+            "is not an image name",
+        ),
+        (
+            r#"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "limits": { "heartbeat": "10s" }, "targets": { "bak": { "executable": "sh" } } }"#,
+            "heartbeat does not reach a container",
+        ),
+        (
+            r#"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "targets": { "bak": { "module": "bakış" } } }"#,
+            "an executable target",
+        ),
+    ] {
+        write(d.path(), "actions/posta/action.json", text);
+        let e = format!("{:#}", ws.actions().unwrap_err());
+        assert!(e.contains("action.json") && e.contains(says), "{text}: {e}");
+    }
+}
+
+#[test]
 fn a_workflows_version_leaves_its_triggers_out() {
     let a = itero::workflow::parse(
         r#"{ "name": "akis", "triggers": [ { "schedule": "*/5 * * * *" } ],

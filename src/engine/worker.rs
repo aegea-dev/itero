@@ -479,10 +479,73 @@ fn notify(job: &Job) -> Result<Value, String> {
     ))
 }
 
+/// What runs container actions: the Docker CLI as its user configured it
+/// (`DOCKER_CONTEXT`, `DOCKER_HOST`).
+const CONTAINER_RUNTIME: &str = "docker";
+
+/// A job's container: named after its idempotency key, so every run of the
+/// job (and the daemon cleaning up after one) finds the same name.
+pub fn container_name(key: &str) -> String {
+    format!("itero-{}", &sha(key.as_bytes())[..16])
+}
+
+/// Removes a job's container, if it is there; quietly, best effort.
+pub fn remove_container(key: &str) {
+    let _ = Command::new(CONTAINER_RUNTIME)
+        .args(["rm", "-f", &container_name(key)])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// `docker run` for a container action: the action's folder read-only at
+/// `/action`, its environment passed by name only (`-e NAME`), so values
+/// and secrets come from this process's environment and never stand on a
+/// command line.
+fn container_args(
+    job: &Job,
+    p: &super::Program,
+    image: &str,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "run".into(),
+        "--rm".into(),
+        "-i".into(),
+        "--name".into(),
+        container_name(&job.key),
+        "--label".into(),
+        "dev.aegea.itero.job".into(),
+        // this machine, by the name Docker Desktop gives it, on Linux too
+        "--add-host=host.docker.internal:host-gateway".into(),
+        "-v".into(),
+        format!("{}:/action:ro", p.folder.display()),
+        "-w".into(),
+        "/action".into(),
+    ];
+    for name in env.keys() {
+        args.push("-e".into());
+        args.push(name.clone());
+    }
+    args.push(image.into());
+    args.push(p.executable.clone());
+    args.extend(p.arguments.iter().cloned());
+    args
+}
+
 fn program(job: &Job) -> Result<Value, Failure> {
     let p = job.program.as_ref().expect("checked");
     let mut env = p.environment.clone();
     let (exe, args): (PathBuf, Vec<String>) = match &p.interpreter {
+        Some(Interpreter::Container { image }) => {
+            // a container left by an earlier run of this job goes first
+            remove_container(&job.key);
+            (
+                CONTAINER_RUNTIME.into(),
+                container_args(job, p, image, &env),
+            )
+        }
         None => (
             if p.executable.contains('/') {
                 p.folder.join(&p.executable)
@@ -521,6 +584,9 @@ fn program(job: &Job) -> Result<Value, Failure> {
         .map_err(|e| match (e.kind(), &p.interpreter) {
             (std::io::ErrorKind::NotFound, Some(Interpreter::Bun { .. })) => {
                 format!("bun is not installed: {BUN}")
+            }
+            (std::io::ErrorKind::NotFound, Some(Interpreter::Container { .. })) => {
+                format!("{CONTAINER_RUNTIME} is not installed: container actions need it")
             }
             _ => format!("cannot run {}: {e}", exe.display()),
         })?;

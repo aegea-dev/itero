@@ -217,4 +217,9 @@ pub enum Interpreter {
         file: String,
         export: String,
     },
+    /// A container image: the program runs inside it, the action's folder
+    /// mounted read-only at `/action`.
+    Container {
+        image: String,
+    },
 }
