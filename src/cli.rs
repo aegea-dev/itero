@@ -61,6 +61,9 @@ pub enum Cmd {
     /// A worker: one job, JSON in on stdin, its output as JSON on stdout
     #[command(hide = true)]
     Worker,
+    /// A built-in source: its settings on stdin, its events on stdout
+    #[command(hide = true)]
+    Source { kind: String },
     /// Keeps `itero daemon` running: restarts it when it exits, stops
     /// answering or stops making passes (what the service runs)
     #[command(hide = true)]
@@ -237,6 +240,22 @@ fn dispatch(cli: Cli) -> Result<()> {
             let j = crate::engine::journal::Journal::open(&ws)?;
             let m = j.memory(&workflow)?;
             println!("{}", serde_json::to_string_pretty(&m)?);
+        }
+        Cmd::Source { kind } => {
+            let mut first = String::new();
+            std::io::stdin().read_line(&mut first)?;
+            let s: crate::sources::Settings =
+                serde_json::from_str(&first).map_err(|e| anyhow!("the source's settings: {e}"))?;
+            let source = match kind.as_str() {
+                "watch@1" => crate::sources::Watch::new(&s)?,
+                other => bail!("no built-in source {other}"),
+            };
+            // the daemon going away closes stdin: then this source stops
+            std::thread::spawn(|| {
+                let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
+                std::process::exit(0);
+            });
+            source.run(&mut std::io::stdout().lock())?;
         }
         Cmd::Resume { workflow } => {
             let ws = workspace()?;
