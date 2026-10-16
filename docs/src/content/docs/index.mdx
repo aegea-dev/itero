@@ -1,0 +1,46 @@
+---
+title: itero
+description: Runs workflows again and again, on a schedule or when an app sends an event, with the command line tools already on the machine.
+template: splash
+hero:
+  tagline: Runs workflows again and again, on a schedule or when an app sends an event, with the command line tools already on the machine.
+  actions:
+    - text: Install
+      link: start/install/
+      icon: right-arrow
+    - text: Quickstart
+      link: start/quickstart/
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+itero (Latin: "I repeat") runs workflows: templates of steps that run again
+and again, on one machine. A schedule or an app's event starts a run; the
+run moves through its states and runs actions on the way: a command, a
+shell line, an HTTP request, a desktop notification, or a program of your
+own. itero decides nothing on its own beyond what a workflow says.
+
+<CardGrid>
+	<Card title="Plain files" icon="document">
+		A workspace is a folder: `itero.toml`, workflows as JSON, actions as
+		small programs in any language. Nothing machine-wide.
+	</Card>
+	<Card title="Schedules and events" icon="rocket">
+		Cron schedules in local time, and events that apps send over a local
+		HTTP API or with `itero emit`.
+	</Card>
+	<Card title="The Unix way" icon="seti:shell">
+		Steps lean on the command line tools already there. Values reach a
+		command only as environment variables, never pasted into its text.
+	</Card>
+	<Card title="Kept up" icon="approve-check">
+		Every event and answer is in a SQLite journal. Lost jobs run again;
+		a watchdog restarts the daemon, which starts at login.
+	</Card>
+</CardGrid>
+
+itero is young. What works today: schedules and app events start workflows
+with steps, each workflow has a memory, actions run commands, shell lines,
+HTTP requests and desktop notifications, the daemon has a local HTTP API,
+and it starts at login.
