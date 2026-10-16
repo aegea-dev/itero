@@ -242,9 +242,23 @@ sections are added there when they are built.
 
 ## 11. Identity: names and UUIDs
 
-**Proposed.** The owner leans to giving every entity in a workflow a UUID
-v7, so anything can be found and resolved by its id, and asked whether
-that is a burden. The recommendation splits records from definitions.
+**Decided**: `name@version` is for people, UUIDs are for the machine.
+
+- **People** write and read names: in the files, the command line, the
+  API's paths, logs and errors. A workflow, state, transition or step is
+  `mail-check@e734495fe858/check`.
+- **The machine** executes by UUID. When the daemon first pins a workflow
+  version, it gives every entity in it (the workflow version, each state,
+  transition and step) a UUID v7, stored in the journal with the pinned
+  definition. Runtimes, deliveries, subscriptions and timers refer to
+  entities by UUID; a name path resolves to its UUID through the pin, and
+  back.
+- **The files carry no UUIDs**: people and assistants never write, read or
+  copy them. A version keeps its UUIDs for good (they are assigned once, at
+  pinning); a new version is a new definition with new UUIDs, and the names
+  link one version's entities to the next's.
+
+The reasoning that led here, kept for the record:
 
 **Records get UUID v7 ids.** Everything that happens at a moment: events,
 runs, jobs, and later deliveries and fix proposals. Events and runs have
@@ -264,9 +278,9 @@ UUID there:
 - adds nothing to pinning: a run is already pinned to the workflow's
   version, a hash of exactly what it runs.
 
-So every definition that something refers to has a name (lowercase
-letters, digits and `-`), unique in its scope, and the engine refuses a
-duplicate. Transitions get an optional `id` (today they are found by their
+So in the files every definition that something refers to has a name
+(lowercase letters, digits and `-`), unique in its scope, and the engine
+refuses a duplicate; the UUIDs above live only in the journal. Transitions get an optional `id` (today they are found by their
 position in the file, which an edit can shift; a run is pinned to its
 version, so this is safe today, but nested steps and subscriptions will
 refer to them). A full address is the workflow, its version and the path
@@ -310,8 +324,9 @@ Proposed additions:
 
 ## 13. Steps side by side: groups, race, all
 
-**Decided** in direction: steps can run side by side, a step can wait for
-other steps, and groups nest. The key names are proposed.
+**Decided**: steps can run side by side, a step can wait for other steps,
+and groups nest. The key names `steps`, `all`, `race`, `some` and `join`
+are agreed for now.
 
 The owner's example: three steps start together, one of them asynchronous
 (it waits for something outside), two of them computation; one step waits
@@ -434,7 +449,7 @@ Like `event.emit@1` today, the event is sent only when the chain succeeds.
 ### Explicit keys, not omitted ones
 
 The owner suggested smart configuration: a transition without `to`
-publishes, one without `from` subscribes. **Proposed** instead: explicit
+publishes, one without `from` subscribes. **Decided** instead: explicit
 keys (`publish`, `on` with `match`, `"from": "*"`). itero's files have one
 form and every key is checked; a forgotten key must be an error, never a
 different meaning that runs quietly.
@@ -501,14 +516,23 @@ of the finished steps run in reverse order. Side effects cannot be rolled
 back (a sent mail stays sent); itero's own changes already are: memory
 changes and published events are held until a chain succeeds.
 
-## 16. Self-recovery: the doctor
+## 16. Self-recovery: maintenance workflows
 
-**Proposed**, from the owner's idea: when a workflow fails, ask an AI
-assistant what went wrong and fix the workflow, by another workflow or by
-the workflow itself: the ultimate self-recovery mode.
+From the owner's idea: when a workflow fails, ask an AI assistant what went
+wrong and fix the workflow: the ultimate self-recovery mode.
 
-A **doctor** is a workflow that subscribes to `run.failed` and
-`workflow.paused`:
+**Decided**: recovery is done by **explicit maintenance workflows**. A
+maintenance workflow is an ordinary workflow that a workspace installs on
+purpose; it subscribes to the engine's own events (`run.failed`,
+`workflow.paused`) and does something about them. Nothing happens on a
+failure that no installed workflow says, and how a fix is applied is
+written in the maintenance workflow itself, not set by a default hidden in
+the engine. There will be many kinds, offered on the marketplace next to
+connectors: one that only notifies, one that restarts or pauses, one that
+cleans the journal, and the doctor below.
+
+The **doctor** is the first, a maintenance workflow that asks an AI
+assistant. It subscribes to `run.failed` and `workflow.paused`:
 
 1. **Gather**: the workflow's file and version, the failed step, its error,
    the stderr tail, the last runs.
@@ -517,13 +541,14 @@ A **doctor** is a workflow that subscribes to `run.failed` and
    CLI. The answer is a proposed new workflow file, or a fix to an action.
 3. **Check**: `itero check` on the proposal, then a dry run (`itero daemon
    --once` against a copy of the journal, or the workflow's test fixtures).
-4. **Apply** or **ask**, by the workflow's policy.
+4. **Apply** or **ask**, as the doctor's own transitions say: one doctor
+   shows the proposal and waits in a state for an approval event; another
+   applies it as soon as the check and the dry run pass.
 
 Guards:
 
-- `"recovery": "ask"` (the default) shows the proposal and waits for an
-  approval event; `"recovery": "auto"` applies it when the check and the
-  dry run pass.
+- The choice between asking and applying is explicit, in the maintenance
+  workflow a workspace installs; the engine has no recovery setting.
 - Proposals are files (`.itero/proposals/<workflow>/<id>.json`) and, when
   the workflows folder is a git repository, a commit on a branch: never an
   edit in place that no one can see or undo.
@@ -536,8 +561,9 @@ Guards:
   run again on the new one, and `git revert` undoes it.
 
 A workflow can also handle its own failure (`on_fail` to a state whose
-chain asks the assistant); a separate doctor is the default, since a
-broken workflow is the last thing to trust with its own repair.
+chain asks the assistant); a separate maintenance workflow is the
+recommended way, since a broken workflow is the last thing to trust with
+its own repair.
 
 ## 17. How the outside world reaches itero
 
@@ -600,7 +626,21 @@ A workspace declares its sources in `sources/<name>.json`
 
 **Open**: the file watching crate. `notify` is CC0-1.0, outside the
 MIT-or-Apache-2.0 rule for crates. Either the owner allows it, or itero
-calls FSEvents and inotify itself.
+uses the OS's own file events.
+
+| | `notify` | the OS's own events |
+|---|---|---|
+| Code to write | little: one crate, mature, used widely | a few hundred lines: kqueue (macOS) and inotify (Linux) through `libc`, already a dependency |
+| License | CC0-1.0: a public domain dedication that grants no patent license; an exception to the rule | nothing new |
+| Reach | macOS, Linux, Windows, BSD; recursive folders; a polling fallback | what itero needs: macOS and Linux, a file or a folder; recursive folders on macOS later need FSEvents |
+| Edge cases | handled by the crate (renames, atomic saves, queue overflow) | ours to handle and test on both systems |
+| Debouncing | a separate crate (`notify-debouncer-full`) | ours, in the watch source |
+| Releases | 9.0 is a release candidate; 8 is the stable line | none to follow |
+
+Recommendation: the OS's own events. v2 watches one file, itero runs only
+on macOS and Linux, and the edge cases are few for that scope, so the
+rule holds at a small cost. `notify` stays the fallback if folder watching
+grows into a large part of the sources.
 
 ### A connector
 
@@ -676,17 +716,15 @@ file and stub the notifier, as v1's do.
    `itero errors`.
 3. **Iteration 6, steps side by side**: `wait` steps, `all`, `race`, `some`,
    `join`, nesting.
-4. **Iteration 7, the doctor**: proposals, checks, dry runs, the recovery
-   policy.
+4. **Iteration 7, maintenance workflows**: the doctor, proposals, checks,
+   dry runs.
 5. **Later**: connectors as packages and the marketplace, `poll@1` and
    `hook@1`, NATS, `retry` and `undo`, `at` timers, the inbox, primum as an
    app, journal compaction.
 
-Open questions for the owner:
+Answered on 2026-10-16: names for people and UUIDs for the machine
+(section 11), explicit keys (section 14), the group names for now (section
+13), explicit maintenance workflows (section 16).
 
-- Names in definitions and UUIDs only in records (section 11)?
-- Explicit `publish` and `match` instead of omitted keys (section 14)?
-- The `notify` crate's CC0 license, or FSEvents and inotify directly
-  (section 18)?
-- `all`, `race`, `some` and `join` as the group names (section 13)?
-- `ask` as the default recovery policy (section 16)?
+Open: the `notify` crate's CC0 license, or the OS's own file events
+(section 18).
