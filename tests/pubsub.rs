@@ -118,3 +118,60 @@ fn an_event_nothing_waits_for_is_noted() {
         .collect();
     assert_eq!(notes, ["no workflow starts on it"]);
 }
+
+const RAPOR: &str = r#"{ "name": "rapor", "description": "rapor", "triggers": [ { "on": "ay.bitti" } ],
+  "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+  "transitions": [ { "from": "basla", "to": "bitti",
+    "do": [ { "publish": "rapor.hazir", "data": { "ay": "${input.ay}" } } ] } ] }"#;
+
+const DUYURU: &str = r#"{ "name": "duyuru", "description": "duyuru", "triggers": [ { "on": "rapor.hazir" } ],
+  "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+  "transitions": [ { "from": "basla", "to": "bitti",
+    "do": [ { "action": "memory.set@1", "with": { "ay": "${input.ay}" } } ] } ] }"#;
+
+#[test]
+fn a_published_event_starts_the_workflows_waiting_for_it() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path(), &[("rapor", RAPOR), ("duyuru", DUYURU)]);
+    emit(&ws, "ay.bitti", json!({"ay": "Ekim"}));
+    run_once(&ws, t("2026-10-16T10:00:01Z"), exe()).unwrap();
+    let j = Journal::open(&ws).unwrap();
+    assert_eq!(j.memory("duyuru").unwrap()["ay"], "Ekim");
+    let published = j
+        .events(Some("itero.app"))
+        .unwrap()
+        .into_iter()
+        .find(|e| e.event.kind == "rapor.hazir")
+        .unwrap();
+    assert!(
+        published.event.source.starts_with("manager/"),
+        "{}",
+        published.event.source
+    );
+}
+
+/// Listens to `yanki` and publishes `yanki` again: it must not hear itself.
+const YANKI: &str = r#"{ "name": "yanki", "description": "yankı", "triggers": [ { "on": "yanki.basla" } ],
+  "states": ["dinliyor"], "start": "dinliyor",
+  "transitions": [ { "from": "dinliyor", "to": "dinliyor", "on": "yanki", "match": "true",
+    "do": [ { "publish": "yanki", "data": { "kez": "tekrar" } } ] } ] }"#;
+
+#[test]
+fn a_run_never_hears_what_it_published() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path(), &[("yanki", YANKI)]);
+    emit(&ws, "yanki.basla", json!({}));
+    run_once(&ws, t("2026-10-16T10:00:01Z"), exe()).unwrap();
+    emit(&ws, "yanki", json!({"kez": "ilk"}));
+    for s in 2..6 {
+        run_once(&ws, t(&format!("2026-10-16T10:00:0{s}Z")), exe()).unwrap();
+    }
+    let j = Journal::open(&ws).unwrap();
+    let echoes = j
+        .events(Some("itero.app"))
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.event.kind == "yanki")
+        .count();
+    assert_eq!(echoes, 2, "the first, and one answer to it; no loop");
+}

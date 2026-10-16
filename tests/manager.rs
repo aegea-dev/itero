@@ -321,6 +321,24 @@ fn emitted_events_wait_for_the_chain_to_succeed() {
 }
 
 #[test]
+fn a_published_event_is_for_the_workspace_once_the_chain_succeeds() {
+    let mut i = input(at("yeni"), "run.started", "e1", json!({}));
+    i.workflow.transitions = serde_json::from_value(json!([
+        { "from": "yeni", "to": "bitti",
+          "do": [ { "publish": "rapor.hazir", "data": { "ay": "Ekim", "run": "${run.id}" } } ] }
+    ]))
+    .unwrap();
+    let a = decide(&i).unwrap();
+    assert_eq!(a.runtime.state, "bitti");
+    assert_eq!(a.events.len(), 1);
+    assert_eq!(
+        (a.events[0].kind.as_str(), a.events[0].target.as_str()),
+        ("rapor.hazir", "app")
+    );
+    assert_eq!(a.events[0].data, json!({"ay": "Ekim", "run": "r1"}));
+}
+
+#[test]
 fn a_waiting_state_gets_a_timer_for_each_timed_wait() {
     let mut i = input(at("yeni"), "run.started", "e1", json!({}));
     i.workflow.transitions = serde_json::from_value(json!([

@@ -122,10 +122,20 @@ pub struct Action {
     pub expect: Option<String>,
 }
 
+/// The built-in a `publish` step is.
+pub const PUBLISH: &str = "event.publish@1";
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Call {
-    action: String,
+    #[serde(default)]
+    action: Option<String>,
+    /// A step that publishes an event of this type for the workspace.
+    #[serde(default)]
+    publish: Option<String>,
+    /// What a `publish` step's event carries.
+    #[serde(default)]
+    data: Option<Value>,
     #[serde(default)]
     id: Option<String>,
     #[serde(default)]
@@ -151,12 +161,35 @@ impl<'de> Deserialize<'de> for Action {
             }),
             v @ Value::Object(_) => {
                 let c: Call = serde_json::from_value(v).map_err(serde::de::Error::custom)?;
+                let err = |m: &str| Err(serde::de::Error::custom(m));
+                // `publish` is how a workflow writes event.publish@1
+                let (action, with) = match (c.action, c.publish) {
+                    (Some(a), None) => {
+                        if c.data.is_some() {
+                            return err("data is for publish; an action takes with");
+                        }
+                        (a, c.with)
+                    }
+                    (None, Some(kind)) => {
+                        if c.with.is_some() {
+                            return err("publish takes data, not with");
+                        }
+                        let mut w = Map::new();
+                        w.insert("type".into(), Value::String(kind));
+                        w.insert(
+                            "data".into(),
+                            c.data.unwrap_or_else(|| Value::Object(Map::new())),
+                        );
+                        (PUBLISH.to_string(), Some(w))
+                    }
+                    _ => return err("a step is publish or action, one of them"),
+                };
                 Ok(Action {
-                    action: c.action,
+                    action,
                     id: c.id,
                     when: c.when,
                     description: c.description,
-                    with: c.with,
+                    with,
                     expect: c.expect,
                 })
             }

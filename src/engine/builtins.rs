@@ -3,7 +3,12 @@
 use serde_json::{Map, Value};
 
 /// The built-ins that run inside the manager.
-pub const PURE: [&str; 3] = ["memory.set@1", "json.pick@1", "event.emit@1"];
+pub const PURE: [&str; 4] = [
+    "memory.set@1",
+    "json.pick@1",
+    "event.emit@1",
+    "event.publish@1",
+];
 
 pub fn is_pure(action: &str) -> bool {
     PURE.contains(&action)
@@ -64,6 +69,24 @@ pub fn run(action: &str, with: &Map<String, Value>, prev: &Value) -> Result<Done
                 output: data.clone(),
                 memory: Map::new(),
                 emit: Some((text("type")?, text("target")?, data)),
+            })
+        }
+        // for the workspace: the triggers and the runs waiting for it
+        "event.publish@1" => {
+            let kind = text("type")?;
+            if !kind.split('.').all(crate::workflow::validate::is_word)
+                || crate::engine::events::engine_own(&kind)
+            {
+                return Err(format!("{action}: \"{kind}\" cannot be published"));
+            }
+            let data = with
+                .get("data")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new()));
+            Ok(Done {
+                output: data.clone(),
+                memory: Map::new(),
+                emit: Some((kind, "app".into(), data)),
             })
         }
         other => Err(format!("{other} does not run in the manager")),
