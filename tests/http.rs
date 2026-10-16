@@ -94,6 +94,10 @@ async fn runs_workflows_and_memory_can_be_read() {
     assert_eq!(runs[0]["workflow"], "sayac");
     let (_, none) = send(&app, get("/runs?workflow=baska")).await;
     assert_eq!(none, json!([]));
+    let (_, none) = send(&app, get("/runs?state=failed")).await;
+    assert_eq!(none, json!([]));
+    let (_, done) = send(&app, get("/runs?state=bitti")).await;
+    assert_eq!(done.as_array().unwrap().len(), 1);
     let id = runs[0]["id"].as_str().unwrap();
     let (code, run) = send(&app, get(&format!("/runs/{id}"))).await;
     assert_eq!(code, StatusCode::OK);

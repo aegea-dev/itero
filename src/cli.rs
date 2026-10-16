@@ -50,6 +50,12 @@ pub enum Cmd {
     Memory { workflow: String },
     /// Let a paused workflow start runs again
     Resume { workflow: String },
+    /// Failed runs, newest first: when, the workflow, the run, where and why
+    Errors {
+        /// How many
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Start this workspace's daemon at login, kept up by a watchdog
     Service {
         #[command(subcommand)]
@@ -250,7 +256,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Runs => {
             let ws = workspace()?;
             let j = crate::engine::journal::Journal::open(&ws)?;
-            for r in j.runs_page(None, usize::MAX)? {
+            for r in j.runs_page(None, None, usize::MAX)? {
                 println!(
                     "{}  {:<20} {:<12} {}  {}",
                     r.id,
@@ -282,6 +288,28 @@ fn dispatch(cli: Cli) -> Result<()> {
                 std::process::exit(0);
             });
             source.run(&mut std::io::stdout().lock())?;
+        }
+        Cmd::Errors { limit } => {
+            let ws = workspace()?;
+            let j = crate::engine::journal::Journal::open(&ws)?;
+            for r in j.runs_page(None, Some(crate::workflow::FAILED), limit)? {
+                let (from, to, why) = match &r.runtime.failed {
+                    Some(f) => {
+                        let to = j
+                            .workflow(&r.pin)?
+                            .and_then(|w| w.transitions.get(f.transition).map(|t| t.to.clone()))
+                            .unwrap_or_default();
+                        (f.from.clone(), to, f.why.clone())
+                    }
+                    None => Default::default(),
+                };
+                println!(
+                    "{}  {:<20} {}  {from} -> {to}: {why}",
+                    r.ended.as_deref().unwrap_or(&r.started),
+                    r.workflow,
+                    r.id
+                );
+            }
         }
         Cmd::Resume { workflow } => {
             let ws = workspace()?;

@@ -59,7 +59,7 @@ fn a_workflow_pauses_after_its_failed_runs_in_a_row_and_says_so() {
     assert_eq!(data["workflow"], "bozuk");
     assert_eq!(data["failed"], 2);
     assert_eq!(data["version"].as_str().unwrap().len(), 12);
-    let last = j.runs_page(Some("bozuk"), 1).unwrap().remove(0);
+    let last = j.runs_page(Some("bozuk"), None, 1).unwrap().remove(0);
     assert_eq!(data["run"], last.id.as_str());
     // paused: the next event starts nothing
     runs(&ws, 1);
@@ -154,6 +154,35 @@ fn a_maintenance_workflow_never_starts_on_its_own_failure() {
         run_once(&ws, t(&format!("2026-10-16T10:00:{s}Z")), exe()).unwrap();
     }
     assert_eq!(Journal::open(&ws).unwrap().runs().unwrap().len(), 1);
+}
+
+#[test]
+fn itero_errors_shows_failed_runs_newest_first_with_why() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(
+        d.path(),
+        &BOZUK.replace("\"pause_after\": 2", "\"pause_after\": 0"),
+    );
+    runs(&ws, 2);
+    let o = std::process::Command::new(exe())
+        .args(["errors", "--limit", "5"])
+        .current_dir(d.path())
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{o:?}");
+    let out = String::from_utf8_lossy(&o.stdout);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "{out}");
+    assert!(
+        lines[0].starts_with("2026-10-16T10:00:02Z"),
+        "newest first: {out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|l| l.contains("bozuk") && l.contains("basla -> bitti") && l.contains("sh@1")),
+        "{out}"
+    );
 }
 
 #[test]
