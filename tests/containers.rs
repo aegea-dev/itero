@@ -182,3 +182,113 @@ fn left(name: &str) -> String {
         .unwrap();
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
+
+/// Removes an image, so that a test starts without it.
+fn without(image: &str) {
+    let _ = Command::new("docker").args(["rmi", "-f", image]).output();
+}
+
+fn has(image: &str) -> bool {
+    Command::new("docker")
+        .args(["image", "inspect", image])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn getting_the_image_does_not_count_against_the_time_limit() {
+    if !docker() {
+        return;
+    }
+    // pulling it takes longer than the job's whole time limit
+    let image = "busybox:1.36.1";
+    without(image);
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(
+        d.path(),
+        &format!(
+            r#"{{ "name": "kutu", "version": 1, "type": "container", "image": "{image}",
+                 "limits": {{ "timeout": "1s" }},
+                 "targets": {{ "calis": {{ "executable": "sh",
+                   "arguments": ["-c", "echo '{{\"hazır\": true}}'"] }} }} }}"#
+        ),
+    );
+    run_once(&ws, t("2026-10-16T10:00:01Z"), exe()).unwrap();
+    let j = Journal::open(&ws).unwrap();
+    let runs = j.runs().unwrap();
+    assert_eq!(runs[0].runtime.state, "bitti", "{:?}", runs[0]);
+    assert_eq!(j.memory("kutu").unwrap()["cikti"]["hazır"], true);
+}
+
+#[test]
+fn an_image_that_cannot_be_had_is_tried_again_then_fails() {
+    if !docker() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(
+        d.path(),
+        r#"{ "name": "kutu", "version": 1, "type": "container", "image": "itero-test.invalid/yok:1",
+             "targets": { "calis": { "executable": "true" } } }"#,
+    );
+    let first = run_once(&ws, t("2026-10-16T10:00:01Z"), exe()).unwrap();
+    assert!(
+        first.lost >= 1,
+        "Docker trouble is not the job's fault: {first:?}"
+    );
+    for s in 2..6 {
+        run_once(&ws, t(&format!("2026-10-16T10:00:0{s}Z")), exe()).unwrap();
+    }
+    let runs = Journal::open(&ws).unwrap().runs().unwrap();
+    assert_eq!(runs[0].runtime.state, "failed");
+    let why = serde_json::to_string(&runs[0]).unwrap();
+    assert!(why.contains("lost 3 times"), "{why}");
+    assert!(why.contains("itero-test.invalid/yok:1"), "{why}");
+}
+
+#[test]
+fn the_daemon_gets_container_images_ahead_of_time() {
+    if !docker() {
+        return;
+    }
+    let image = "busybox:1.36.0";
+    without(image);
+    let d = tempfile::tempdir().unwrap();
+    write(d.path(), "itero.toml", "");
+    write(
+        d.path(),
+        "actions/kutu/action.json",
+        &format!(
+            r#"{{ "name": "kutu", "version": 1, "type": "container", "image": "{image}",
+                 "targets": {{ "calis": {{ "executable": "true" }} }} }}"#
+        ),
+    );
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let (wake, woken) = std::sync::mpsc::channel::<()>();
+    let health = std::sync::Mutex::new(itero::engine::daemon::Health::starting("şimdi"));
+    let (ws, health) = (&ws, &health);
+    std::thread::scope(|s| {
+        s.spawn(move || {
+            itero::engine::daemon::run_loop(
+                ws,
+                Duration::from_millis(200),
+                exe(),
+                &woken,
+                health,
+                |_| {},
+            )
+        });
+        let until = std::time::Instant::now() + Duration::from_secs(60);
+        while !has(image) && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        drop(wake);
+    });
+    assert!(
+        has(image),
+        "{image} is on the machine before any job needs it"
+    );
+}

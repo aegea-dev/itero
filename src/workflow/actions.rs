@@ -65,10 +65,18 @@ pub struct Limits {
     /// killed and run again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat: Option<String>,
+    /// Container: how long getting its image may take, apart from
+    /// `timeout`, which starts once the image is here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<String>,
 }
 
 /// Seconds a job may take when its action sets no `limits.timeout`.
 pub const DEFAULT_TIMEOUT: u64 = 60;
+
+/// Seconds getting a container job's image may take when its action sets
+/// no `limits.prepare`.
+pub const DEFAULT_PREPARE: u64 = 600;
 
 /// An entry point: a Python module and callable, a Bun file and export, or
 /// a program and its arguments.
@@ -198,6 +206,9 @@ pub fn validate(path: &Path, d: &Definition) -> Result<(), WorkflowError> {
             "heartbeat does not reach a container yet: use timeout".into(),
         ));
     }
+    if kind != "container" && d.limits.as_ref().is_some_and(|l| l.prepare.is_some()) {
+        return Err(whole("prepare is for the container type".into()));
+    }
     if d.targets.is_empty() {
         return Err(whole("targets is empty".into()));
     }
@@ -221,6 +232,9 @@ pub fn validate(path: &Path, d: &Definition) -> Result<(), WorkflowError> {
             && expr::duration(h).map_err(&whole)? > timeout
         {
             return Err(whole("heartbeat is longer than timeout".into()));
+        }
+        if let Some(p) = l.prepare.as_deref() {
+            expr::duration(p).map_err(&whole)?;
         }
     }
     for v in d.environment.values() {

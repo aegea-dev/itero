@@ -12,7 +12,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Mutex, PoisonError};
@@ -106,7 +106,9 @@ pub fn run_loop(
     health: &Mutex<Health>,
     report: impl Fn(&Result<Pass>),
 ) {
+    let mut prefetch = Prefetch::default();
     loop {
+        prefetch.images(ws);
         let now = Utc::now();
         let pass = run_once(ws, now, exe);
         {
@@ -122,6 +124,35 @@ pub fn run_loop(
         }
         // several wake-ups while a pass ran need only one more pass
         while wake.try_recv().is_ok() {}
+    }
+}
+
+/// The container images the daemon gets ahead of time, in the background,
+/// so that a job finds its image here: each image once while it runs. One
+/// it could not get, a job gets (or fails to) when it runs.
+#[derive(Default)]
+struct Prefetch(std::collections::HashSet<String>);
+
+impl Prefetch {
+    /// Starts getting each container action's image not asked for yet.
+    fn images(&mut self, ws: &Workspace) {
+        // an action file that does not load fails the jobs that use it,
+        // which say why
+        let Ok(actions) = ws.actions() else {
+            return;
+        };
+        for (_, d) in actions {
+            let Some(image) = d.image.filter(|_| d.kind == "container") else {
+                continue;
+            };
+            if self.0.insert(image.clone()) {
+                std::thread::spawn(move || {
+                    if let Err(e) = super::worker::ensure_image(&image) {
+                        eprintln!("could not get image {image} ahead of time: {e}");
+                    }
+                });
+            }
+        }
     }
 }
 
@@ -604,6 +635,7 @@ fn job(ws: &Workspace, data: &Value) -> Result<Job, String> {
         program: None,
         timeout: BUILT_IN_TIMEOUT,
         heartbeat: None,
+        prepare: None,
     };
     if WORKER_BUILT_INS.contains(&action.as_str()) {
         return Ok(job);
@@ -648,9 +680,15 @@ fn job(ws: &Workspace, data: &Value) -> Result<Job, String> {
             file: t.file.clone().unwrap_or_default(),
             export: t.export.clone().unwrap_or_default(),
         }),
-        "container" => Some(Interpreter::Container {
-            image: d.image.clone().unwrap_or_default(),
-        }),
+        "container" => {
+            job.prepare = Some(match d.limits.as_ref().and_then(|l| l.prepare.as_deref()) {
+                Some(p) => secs(p)?,
+                None => crate::workflow::actions::DEFAULT_PREPARE,
+            });
+            Some(Interpreter::Container {
+                image: d.image.clone().unwrap_or_default(),
+            })
+        }
         other => return Err(format!("unknown action type {other}")),
     };
     let mut environment = std::collections::BTreeMap::new();
@@ -704,10 +742,20 @@ fn quiet(beat: &Path, born: std::time::SystemTime) -> std::time::Duration {
         .unwrap_or_default()
 }
 
+/// A file removed when this goes.
+struct Removed(PathBuf);
+
+impl Drop for Removed {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Runs `itero worker` on a job in its own process group. The group is
-/// killed at the job's time limit (an error), or when its lease runs out
-/// without a heartbeat (lost: the job runs again). `beat` is the job's
-/// heartbeat file.
+/// killed at the job's time limit (an error), when its lease runs out
+/// without a heartbeat, or when a container job's image is not here within
+/// `prepare` (both lost: the job runs again). A container job's time limit
+/// starts once its image is here. `beat` is the job's heartbeat file.
 fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
     let mut c = Command::new(exe);
     c.arg("worker")
@@ -723,6 +771,16 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
         // a beat left by an earlier run must not renew this one
         let _ = std::fs::remove_file(beat);
         c.env("ITERO_HEARTBEAT", beat);
+    }
+    // a container job says when its image is here, where its time limit
+    // starts; until then `prepare` is its limit
+    let ready = job.prepare.map(|_| Removed(beat.with_extension("ready")));
+    if let Some(Removed(ready)) = &ready {
+        if let Some(dir) = ready.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let _ = std::fs::remove_file(ready);
+        c.env("ITERO_READY", ready);
     }
     let born = std::time::SystemTime::now();
     let mut child = c
@@ -760,21 +818,34 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
     // whichever comes first. When the group is killed, the readers end as
     // its pipes close; they are not waited for, in case something outside
     // the group holds them.
-    let started = std::time::Instant::now();
+    let mut started = std::time::Instant::now();
     let cap = std::time::Duration::from_secs(job.timeout);
     let lease = job.heartbeat.map(std::time::Duration::from_secs);
+    let mut preparing = job.prepare.map(std::time::Duration::from_secs);
     let status = loop {
-        let left = cap.saturating_sub(started.elapsed());
+        if preparing.is_some()
+            && let Some(Removed(ready)) = &ready
+            && ready.exists()
+        {
+            preparing = None;
+            started = std::time::Instant::now();
+        }
+        let left = preparing.unwrap_or(cap).saturating_sub(started.elapsed());
         if left.is_zero() {
             stop_job(&mut child, job);
-            return Err(Failure::Error(format!(
-                "{}: timed out after {}s",
-                job.action, job.timeout
-            )));
+            return Err(match preparing {
+                // Docker's trouble, not the job's: it runs again
+                Some(p) => Failure::Lost(format!(
+                    "{}: its image was not here after {}s",
+                    job.action,
+                    p.as_secs()
+                )),
+                None => Failure::Error(format!("{}: timed out after {}s", job.action, job.timeout)),
+            });
         }
-        let slice = match lease {
-            Some(_) => left.min(std::time::Duration::from_millis(200)),
-            None => left,
+        let slice = match (lease, preparing) {
+            (None, None) => left,
+            _ => left.min(std::time::Duration::from_millis(200)),
         };
         if let Some(status) = child.wait_timeout(slice).map_err(|e| e.to_string())? {
             break status;

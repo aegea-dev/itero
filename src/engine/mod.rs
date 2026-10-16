@@ -185,6 +185,10 @@ pub struct Job {
     /// or the daemon kills it and runs it again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat: Option<u64>,
+    /// A container job: seconds getting its image may take. `timeout`
+    /// starts once the worker says the image is here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<u64>,
 }
 
 /// A workspace action as a program: given the job on stdin, it prints

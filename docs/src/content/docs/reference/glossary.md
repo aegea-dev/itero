@@ -111,7 +111,9 @@ See [Actions](/guides/actions/).
 An action whose program runs in a Docker image (`"type": "container"`):
 the job on stdin, the action's folder at `/action`, its settings passed by
 name so no value stands on a command line. The machine needs Docker, not
-the program's language.
+the program's language. Getting its image has its own time limit
+(`limits.prepare`), and the job's time limit starts once the image is
+here; the daemon gets images ahead of time.
 
 ### chain
 

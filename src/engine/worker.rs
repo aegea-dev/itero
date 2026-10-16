@@ -146,7 +146,8 @@ fn bun_packages(folder: &Path) -> Result<(), String> {
 pub enum Failure {
     /// It ran and failed, or could not run: the action fails.
     Error(String),
-    /// It ended without an answer (killed by a signal): it runs again.
+    /// It ended without an answer (killed by a signal), or Docker could not
+    /// run it: it runs again.
     Lost(String),
 }
 
@@ -572,6 +573,45 @@ pub fn container_args(c: &Contained) -> Vec<String> {
     args
 }
 
+/// Gets an image onto this machine, unless it is here already. Docker
+/// failing to get it (the network, the registry, Docker itself) is not the
+/// job's fault: lost, so it runs again.
+pub fn ensure_image(image: &str) -> Result<(), Failure> {
+    let quiet = |args: &[&str]| {
+        Command::new(CONTAINER_RUNTIME)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+    };
+    let not_installed = |e: std::io::Error| match e.kind() {
+        std::io::ErrorKind::NotFound => Failure::Error(format!(
+            "{CONTAINER_RUNTIME} is not installed: container actions need it"
+        )),
+        _ => Failure::Lost(format!("cannot run {CONTAINER_RUNTIME}: {e}")),
+    };
+    if quiet(&["image", "inspect", image])
+        .map_err(not_installed)?
+        .status
+        .success()
+    {
+        return Ok(());
+    }
+    let pulled = quiet(&["pull", "--quiet", image]).map_err(not_installed)?;
+    if pulled.status.success() {
+        return Ok(());
+    }
+    Err(Failure::Lost(format!(
+        "cannot get image {image}: {}",
+        String::from_utf8_lossy(&pulled.stderr).trim()
+    )))
+}
+
+/// The exit code of `docker run` when Docker itself failed, before the
+/// program ran.
+const RUNTIME_FAILED: i32 = 125;
+
 /// Removes a container by name, if it is there; quietly, best effort.
 pub fn remove_named_container(name: &str) {
     let _ = Command::new(CONTAINER_RUNTIME)
@@ -589,6 +629,12 @@ fn program(job: &Job) -> Result<Value, Failure> {
         Some(Interpreter::Container { image }) => {
             // a container left by an earlier run of this job goes first
             remove_container(&job.key);
+            ensure_image(image)?;
+            // the job's time limit starts now, with the image here
+            if let Some(ready) = std::env::var_os("ITERO_READY") {
+                std::fs::write(&ready, b"")
+                    .map_err(|e| format!("cannot say the image is ready: {e}"))?;
+            }
             let program: Vec<String> = std::iter::once(p.executable.clone())
                 .chain(p.arguments.iter().cloned())
                 .collect();
@@ -675,11 +721,17 @@ fn program(job: &Job) -> Result<Value, Failure> {
             .into_iter()
             .rev()
             .collect();
-        return Err(Failure::Error(if why.is_empty() {
+        let why = if why.is_empty() {
             format!("exit {exit}")
         } else {
             format!("exit {exit}: {why}")
-        }));
+        };
+        // Docker failed, not the program (which exits 125 itself only
+        // rarely: it then runs again, up to the daemon's limit)
+        if exit == RUNTIME_FAILED && matches!(p.interpreter, Some(Interpreter::Container { .. })) {
+            return Err(Failure::Lost(why));
+        }
+        return Err(Failure::Error(why));
     }
     Ok(output(&out))
 }
