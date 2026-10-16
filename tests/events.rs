@@ -63,7 +63,11 @@ fn an_event_for_a_run_goes_to_that_run_until_it_ends() {
     )
     .unwrap();
     let mut j = Journal::open(&ws).unwrap();
-    let run = j.start_run(&flow, &Default::default(), NOW, None).unwrap();
+    let itero::engine::journal::Started::Run(run) =
+        j.start_run(&flow, &Default::default(), NOW, None).unwrap()
+    else {
+        panic!("the run did not start")
+    };
     let id = emit(
         &ws,
         "onay.geldi",

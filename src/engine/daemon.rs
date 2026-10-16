@@ -349,6 +349,7 @@ fn give_up(j: &mut Journal, seq: i64, at: &str, why: String) -> Result<Delivered
         timers: None,
         events: vec![],
         memory: None,
+        pause: None,
     })?;
     Ok(Delivered::Handled)
 }
@@ -429,6 +430,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
         timers: answer.timers.as_deref(),
         events,
         memory: (!answer.memory.is_empty()).then_some((&run.workflow, &answer.memory)),
+        pause: None,
     })?;
     super::die_at("answer");
     Ok(Delivered::Handled)
@@ -733,5 +735,6 @@ fn save_result(
         timers: None,
         events: vec![e],
         memory: None,
+        pause: None,
     })
 }
