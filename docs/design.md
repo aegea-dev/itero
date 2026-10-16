@@ -724,6 +724,35 @@ restart loses and repeats nothing; a watcher that dies is restarted, and
 one that keeps dying is paused and logged. Tests write to a temporary mbox
 file and stub the notifier, as v1's do.
 
+### Mail servers, and actions in containers
+
+**Decided** (2026-10-16), from the owner: before going further, a clear
+test case with real mail servers, the server and account given in the
+workflow, and Docker containers as workers.
+
+- `examples/mail-servers`: two workflows, `imap-check` and `pop3-check`.
+  Each check step's `with` holds the server (`host`, `port`, `tls`), the
+  account (`user`, `password` as `${env.IMAP_PASSWORD}`, a secret) and,
+  for IMAP, the `mailbox`. The first check notes where the mailbox is;
+  mail after it is new: IMAP by UID within its UIDVALIDITY, POP3 by UIDL.
+  A password with non-ASCII letters logs in (AUTHENTICATE PLAIN, or LOGIN
+  with a UTF-8 literal).
+- **Container actions**: `"type": "container"` with an `image`. The worker
+  runs `docker run --rm -i`: the job on stdin as for any action, the
+  action's folder read-only at `/action`, its environment passed by name
+  (`-e NAME`), so no value stands on a command line. The container is
+  named after the job's key, so a later run of the job, or the daemon
+  stopping a worker at its time limit, removes it. `host.docker.internal`
+  is this machine. A heartbeat does not reach a container yet and is
+  refused. The mail checks run in `python:3.13-alpine`: the machine needs
+  Docker, not Python.
+- `make test-docker` runs them against GreenMail (Apache-2.0) in Docker,
+  with SMTP, POP3 and IMAP on local ports.
+- Next, with the supervisor: **IMAP IDLE as a push source**, so IMAP mail
+  is notified as it arrives rather than every 5 minutes. A source may run
+  in a container too: its `program` is `docker run -i ...`, and the
+  closing of stdin still stops it.
+
 ## 20. The order
 
 1. **Iteration 4, v2**: sources (`watch@1`, program sources, supervision,

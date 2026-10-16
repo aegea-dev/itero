@@ -2420,6 +2420,54 @@ git commit -m "The daemon's sources: supervised, their lines become events, curs
 
 ---
 
+### Task 10b: IMAP IDLE, a push source in a container
+
+Added on 2026-10-16 with the owner's mail-servers example (done before
+Task 2: `examples/mail-servers`, container actions, `make test-docker`).
+
+**Files:**
+- Modify: `src/sources/mod.rs` (`Definition.image`: a program source may run in a container)
+- Modify: `src/sources/supervise.rs` (`command`: `docker run --rm -i` when `image` is set, as the worker does for container actions; reuse `engine::worker::container_name` and a shared argument builder, moved to `engine::worker` as `pub fn container_args(name: &str, folder: &Path, image: &str, env: &[String], program: &[String]) -> Vec<String>`)
+- Create: `examples/mail-servers/sources/imap-idle.json`, `examples/mail-servers/sources/idle.py`
+- Modify: `examples/mail-servers/workflows/imap-check.json` (trigger `on: mail.changed` beside the 5-minute schedule, `concurrency` 1)
+- Test: `tests/mail_servers.rs` (a daemon with the source: mail sent, notified within seconds)
+
+**Interfaces:**
+- Consumes: the supervisor (Task 10), `container_args` (refactored from Task "container actions").
+- Produces: `Definition.image: Option<String>`; a source with `image` must have `program`.
+
+- [ ] **Step 1: The source program.** `idle.py` (standard library only):
+  read the settings line; connect as `check.py` does (same login rules);
+  `SELECT` the mailbox; loop: send `IDLE`, read untagged lines until
+  `* <n> EXISTS` or 25 minutes (RFC 2177 asks to renew within 29), send
+  `DONE`, read the tagged `OK`; on `EXISTS` print
+  `{"type": "mail.changed", "data": {"mailbox": ..., "exists": n}}` and
+  flush. A server without the `IDLE` capability: print nothing and poll
+  `NOOP` every 60 s for `EXISTS` instead. Exit when stdin closes (a
+  thread reading stdin to its end calls `os._exit(0)`). Errors to stderr,
+  exit 1: the supervisor restarts it.
+- [ ] **Step 2: The source file.**
+
+```json
+{ "program": ["python3", "idle.py"], "image": "python:3.13-alpine",
+  "with": { "host": "imap.example.com", "port": 993, "tls": true,
+            "user": "me@example.com", "password": "${env.IMAP_PASSWORD}",
+            "mailbox": "INBOX" },
+  "emit": "mail.changed" }
+```
+
+- [ ] **Step 3: The test.** With GreenMail (it supports IDLE): start
+  `itero daemon` on a free port in a copy of the example (host
+  `host.docker.internal`), wait until `/health` shows the source
+  `running`, send a mail over SMTP, and wait up to 10 s for
+  `Mail\t1 new: ...` in the notification log; the 5-minute schedule never
+  fires in that time, so the source did it. Then kill the daemon and
+  assert no container labelled `dev.aegea.itero.source` is left after 5 s.
+- [ ] **Step 4: Run** `make fmt lint-check test test-docker`.
+- [ ] **Step 5: Commit** "IMAP IDLE: mail is notified as it arrives, from a source in a container".
+
+---
+
 ### Task 11: `itero daemon` runs the workspace's sources
 
 **Files:**
