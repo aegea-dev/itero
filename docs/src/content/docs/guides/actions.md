@@ -182,7 +182,7 @@ image, so a container job has two clocks:
 - **Getting ready**: the image is pulled if it is not on the machine.
   `limits.prepare` is how long that may take (10 minutes unless given).
 - **Running**: `limits.timeout` starts once the image is here, so it
-  measures the program alone.
+  measures starting the container and the program, not the download.
 
 The daemon also gets each container action's image ahead of time, in the
 background, when it first sees the action: by the time a job runs, its

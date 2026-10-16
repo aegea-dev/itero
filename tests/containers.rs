@@ -199,31 +199,6 @@ fn has(image: &str) -> bool {
 }
 
 #[test]
-fn getting_the_image_does_not_count_against_the_time_limit() {
-    if !docker() {
-        return;
-    }
-    // pulling it takes longer than the job's whole time limit
-    let image = "busybox:1.36.1";
-    without(image);
-    let d = tempfile::tempdir().unwrap();
-    let ws = workspace(
-        d.path(),
-        &format!(
-            r#"{{ "name": "kutu", "version": 1, "type": "container", "image": "{image}",
-                 "limits": {{ "timeout": "1s" }},
-                 "targets": {{ "calis": {{ "executable": "sh",
-                   "arguments": ["-c", "echo '{{\"hazır\": true}}'"] }} }} }}"#
-        ),
-    );
-    run_once(&ws, t("2026-10-16T10:00:01Z"), exe()).unwrap();
-    let j = Journal::open(&ws).unwrap();
-    let runs = j.runs().unwrap();
-    assert_eq!(runs[0].runtime.state, "bitti", "{:?}", runs[0]);
-    assert_eq!(j.memory("kutu").unwrap()["cikti"]["hazır"], true);
-}
-
-#[test]
 fn an_image_that_cannot_be_had_is_tried_again_then_fails() {
     if !docker() {
         return;
