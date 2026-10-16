@@ -681,15 +681,15 @@ fn stop(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-/// Removes a stopped container job's container: the container client goes
-/// with the worker's group, the container itself would keep running.
-fn remove_container(job: &Job) {
-    if let Some(Program {
-        interpreter: Some(Interpreter::Container { .. }),
-        ..
-    }) = &job.program
-    {
-        super::worker::remove_container(&job.key);
+/// Stops a job's worker: a container job's with its container, which
+/// would otherwise keep running.
+fn stop_job(child: &mut std::process::Child, job: &Job) {
+    match &job.program {
+        Some(Program {
+            interpreter: Some(Interpreter::Container { .. }),
+            ..
+        }) => super::worker::stop_contained(child, &super::worker::container_name(&job.key)),
+        _ => stop(child),
     }
 }
 
@@ -766,8 +766,7 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
     let status = loop {
         let left = cap.saturating_sub(started.elapsed());
         if left.is_zero() {
-            stop(&mut child);
-            remove_container(job);
+            stop_job(&mut child, job);
             return Err(Failure::Error(format!(
                 "{}: timed out after {}s",
                 job.action, job.timeout
@@ -783,8 +782,7 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
         if let Some(lease) = lease
             && quiet(beat, born) > lease
         {
-            stop(&mut child);
-            remove_container(job);
+            stop_job(&mut child, job);
             return Err(Failure::Lost(format!(
                 "no heartbeat for {}s",
                 lease.as_secs()
@@ -793,8 +791,7 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
     };
     let Some(code) = status.code() else {
         // killed from outside: whatever it started goes too
-        stop(&mut child);
-        remove_container(job);
+        stop_job(&mut child, job);
         return Err(Failure::Lost(format!("the worker was killed ({status})")));
     };
     let (out, err) = (
