@@ -70,6 +70,7 @@ export default defineConfig({
 				{
 					label: 'Reference',
 					items: [
+						{ label: 'Glossary', slug: 'reference/glossary' },
 						{ label: 'Commands', slug: 'reference/commands' },
 						{ label: 'itero.toml', slug: 'reference/itero-toml' },
 						{ label: 'Workflow files', slug: 'reference/workflow-file' },
