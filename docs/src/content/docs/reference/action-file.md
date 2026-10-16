@@ -34,7 +34,8 @@ A workflow names a target `<name>.<target>@<version>`: `photos.resize@2`.
 | `targets` | named entry points, lowercase letters, digits and `-` | needed |
 | `description` | text for people | |
 | `environment` | variables the program gets; values may hold `${env.NAME}` [secrets](/guides/secrets/) | |
-| `limits.timeout` | the most a job may take (60 seconds unless given) | |
+| `limits.timeout` | the most a job may take (60 seconds unless given); for `container`, from when its image is here | |
+| `limits.prepare` | `container`: how long getting its image may take (10 minutes unless given); past it, the job runs again | |
 | `limits.heartbeat` | the job's lease, renewed by touching `$ITERO_HEARTBEAT`; not longer than `timeout`; not for `container` yet | |
 | `working_directory` | where the program runs, relative to the action's folder | |
 | `home` | Python: the virtual environment's folder (`.venv`) | |

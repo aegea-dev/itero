@@ -21,6 +21,7 @@ fn job(action: &str, with: Value, root: PathBuf) -> Job {
         program: None,
         timeout: 10,
         heartbeat: None,
+        prepare: None,
     }
 }
 

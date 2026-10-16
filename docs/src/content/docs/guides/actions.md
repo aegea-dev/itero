@@ -174,14 +174,31 @@ and nothing the program itself needs:
 - The container is named after the job's idempotency key: a job run again
   removes one left by an earlier run, and a job stopped at its time limit
   has its container removed.
-- An image is pulled the first time it is used; give `limits.timeout` room
-  for that, or pull it beforehand.
 - `limits.heartbeat` does not reach a container yet; use `timeout`.
+
+Docker can take minutes before the program even starts, to download an
+image, so a container job has two clocks:
+
+- **Getting ready**: the image is pulled if it is not on the machine.
+  `limits.prepare` is how long that may take (10 minutes unless given).
+- **Running**: `limits.timeout` starts once the image is here, so it
+  measures starting the container and the program, not the download.
+
+The daemon also gets each container action's image ahead of time, in the
+background, when it first sees the action: by the time a job runs, its
+image is usually here.
+
+Trouble with Docker is not the job's fault, so the job runs again (up to 3
+times in all, like a lost job): an image that cannot be pulled, one not
+here within `limits.prepare`, or `docker run` failing before the program
+ran (exit 125). The program's own failure, or its running past `timeout`,
+fails the action as usual.
 
 ### Limits
 
 `limits.timeout` is the most a job may take (60 seconds unless given).
 `limits.heartbeat` makes it a lease: a long job renews it by touching the
-file `$ITERO_HEARTBEAT`, or is killed and run again.
+file `$ITERO_HEARTBEAT`, or is killed and run again. `limits.prepare` is a
+container's time to get its image, apart from `timeout`.
 
 All keys: [Action files](/reference/action-file/).

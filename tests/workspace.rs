@@ -197,11 +197,13 @@ fn a_container_action_names_its_image_and_nothing_else_does() {
         "actions/posta/action.json",
         r#"{ "name": "posta", "version": 1, "type": "container", "image": "python:3.13-alpine",
              "description": "postaya bakış", "environment": { "DİL": "tr" },
+             "limits": { "timeout": "30s", "prepare": "15m" },
              "targets": { "bak": { "executable": "python3", "arguments": ["bak.py", "--kutu", "Gelen"] } } }"#,
     );
     let ws = workspace::find(d.path()).unwrap();
     let (_, def) = ws.action("posta").unwrap();
     assert_eq!(def.image.as_deref(), Some("python:3.13-alpine"));
+    assert_eq!(def.limits.unwrap().prepare.as_deref(), Some("15m"));
     for (text, says) in [
         (
             r#"{ "name": "posta", "version": 1, "type": "container", "targets": { "bak": { "executable": "python3" } } }"#,
@@ -218,6 +220,14 @@ fn a_container_action_names_its_image_and_nothing_else_does() {
         (
             r#"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "limits": { "heartbeat": "10s" }, "targets": { "bak": { "executable": "sh" } } }"#,
             "heartbeat does not reach a container",
+        ),
+        (
+            r#"{ "name": "posta", "version": 1, "type": "executable", "limits": { "prepare": "5m" }, "targets": { "bak": { "executable": "./bak.sh" } } }"#,
+            "prepare is for the container type",
+        ),
+        (
+            r#"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "limits": { "prepare": "bir saat" }, "targets": { "bak": { "executable": "sh" } } }"#,
+            "bir saat",
         ),
         (
             r#"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "targets": { "bak": { "module": "bakış" } } }"#,
