@@ -11,10 +11,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 /// The built-in actions at their versions.
-pub const BUILT_IN: [&str; 7] = [
+pub const BUILT_IN: [&str; 8] = [
     "memory.set@1",
     "json.pick@1",
     "event.emit@1",
+    "event.publish@1",
     "http.request@1",
     "command@1",
     "sh@1",
@@ -269,6 +270,28 @@ pub fn check(name: &str, with: Option<&Map<String, Value>>) -> Result<(), String
             only(&["type", "target", "data"])?;
             if !text("type") || !text("target") {
                 return Err("event.emit@1 needs with.type and with.target".into());
+            }
+        }
+        "event.publish@1" => {
+            only(&["type", "data"])?;
+            if !text("type") {
+                return Err("publish needs an event type".into());
+            }
+            // a type written out is checked now; one from a template when
+            // the step runs
+            let kind = with.get("type").and_then(Value::as_str).unwrap_or("");
+            if !kind.contains("${") {
+                if !kind.split('.').all(is_word) {
+                    return Err(format!(
+                        "publish \"{kind}\" is an event type, like report.ready"
+                    ));
+                }
+                if crate::engine::events::engine_own(kind) {
+                    return Err(format!("publish \"{kind}\" is the engine's own"));
+                }
+            }
+            if !with.get("data").is_none_or(Value::is_object) {
+                return Err("publish's data is an object".into());
             }
         }
         "http.request@1" => {

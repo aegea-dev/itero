@@ -278,8 +278,10 @@ fn start_triggered(
     now: DateTime<Utc>,
 ) -> Result<()> {
     let flows = ws.workflows()?;
+    let about = about(&r.event);
     let starts: Vec<(&crate::workflow::File, &Map<String, Value>)> = flows
         .iter()
+        .filter(|(_, f)| Some(f.name.as_str()) != about)
         .flat_map(|(_, f)| {
             f.triggers
                 .iter()
@@ -287,11 +289,29 @@ fn start_triggered(
                 .map(move |t| (f, &t.args))
         })
         .collect();
-    let outcomes = j.start_runs_for_event(r.seq, &starts, &r.event.data, &stamp(now))?;
-    if outcomes.is_empty() {
+    // the runs waiting for it: never the run that published it, nor runs of
+    // the workflow an engine event is about
+    let publisher = r.event.source.strip_prefix("manager/");
+    let forward: Vec<String> = j
+        .listeners(&r.event.kind)?
+        .into_iter()
+        .filter(|(id, wf)| Some(id.as_str()) != publisher && Some(wf.as_str()) != about)
+        .map(|(id, _)| id)
+        .collect();
+    let outcomes = j.start_runs_for_event(r, &starts, &forward, &stamp(now))?;
+    if outcomes.is_empty() && forward.is_empty() {
         eprintln!("{}: no workflow starts on it", r.event.kind);
     }
     Ok(())
+}
+
+/// The workflow an engine event (`run.failed`, `workflow.paused`) is
+/// about: its own runs never hear it, so a broken workflow never starts
+/// itself to repair itself.
+fn about(e: &Envelope) -> Option<&str> {
+    matches!(e.kind.as_str(), "run.failed" | "workflow.paused")
+        .then(|| e.data.get("workflow").and_then(Value::as_str))
+        .flatten()
 }
 
 /// A paused workflow whose file is now another version starts again: the
@@ -421,6 +441,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
     run_map.insert("id".into(), json!(run.id));
     run_map.insert("workflow".into(), json!(run.workflow));
     run_map.insert("started".into(), json!(run.started));
+    run_map.insert("input".into(), run.input.clone());
     let input = Input {
         now: stamp(now),
         workflow: workflow.clone(),
@@ -464,6 +485,24 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
     }
     let state = &answer.runtime.state;
     let ended = answer.runtime.chain.is_none() && (workflow.end.contains(state) || state == FAILED);
+    // a failure is said, for maintenance workflows to hear
+    if ended && state == FAILED {
+        let f = answer.runtime.failed.as_ref();
+        events.push(Envelope::new(
+            "daemon",
+            "run.failed",
+            &journal::subject("app"),
+            &stamp(now),
+            Some(r.event.id.clone()),
+            json!({
+                "workflow": run.workflow,
+                "version": crate::workflow::short(crate::workflow::split_pin(&run.pin).1),
+                "run": id,
+                "from": f.map(|f| f.from.as_str()),
+                "why": f.map(|f| f.why.as_str()),
+            }),
+        ));
+    }
     // the breaker: this failure and those before it, in a row
     let limit = workflow.pause_after_or_default();
     let in_a_row = if ended && state == FAILED {

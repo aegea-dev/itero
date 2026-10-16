@@ -388,6 +388,25 @@ Rules:
 **Decided**: publish and subscribe, built on the journal. The key names and
 the delivery table are proposed.
 
+**Done in iteration 5** (2026-10-16, `docs/plan-5-publish-subscribe.md`):
+`match`, the `publish` step, `"from": "*"`, long-lived runs, `run.failed`
+and `workflow.paused` for subscribers, `itero errors` and `GET
+/runs?state=`. Built differently from below in three ways:
+
+- **Copies, not a deliveries table.** An event for the workspace is copied,
+  in the transaction that handles it, to each run under way whose current
+  state (or `*`) has a transition `on` its type with a `match`; the copy's
+  `cause` is the original. The existing per-run delivery then gives each
+  subscriber the event once. The daemon routes by type only; each run's
+  manager decides `match` and `when`, and one that is not the event's
+  stays where it is.
+- **`run.input`**: correlation needs a value per run, which `args` (per
+  trigger) and `memory` (per workflow) are not. Each run keeps the data of
+  the event that started it (journal schema 4), as `run.input`.
+- **No feedback, no self-repair**: an event never goes back to the run that
+  published it, and `run.failed` and `workflow.paused` never reach runs of
+  the workflow they are about. A failed run keeps why (`Failed.why`).
+
 ### Where it lives
 
 The journal is already a durable event log and the daemon already routes

@@ -54,7 +54,8 @@ for a run that has ended. See [Apps and events](/guides/apps/).
 
 ## GET /runs
 
-`?workflow=<name>` keeps one workflow's runs; `?limit=N` (50 unless given)
+`?workflow=<name>` keeps one workflow's runs, `?state=<state>` the runs in
+one state (`?state=failed` the failed ones); `?limit=N` (50 unless given)
 caps them.
 
 ```json

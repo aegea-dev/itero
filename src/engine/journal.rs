@@ -17,13 +17,15 @@ pub const SCHEMA_VERSION: i64 = 1 + MIGRATIONS.len() as i64;
 /// The steps from each version to the next: `MIGRATIONS[0]` takes version 1
 /// to 2, and so on. A step is only ever added, never changed: a journal on
 /// someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 2] = [
+const MIGRATIONS: [&str; 3] = [
     // 2: what handling an event did, when no run shows it
     "ALTER TABLE events ADD COLUMN note TEXT;",
     // 3: starts waiting for a free slot, paused workflows, sources' cursors
     "CREATE TABLE queued (seq INTEGER PRIMARY KEY AUTOINCREMENT, workflow TEXT NOT NULL, args TEXT NOT NULL, input TEXT NOT NULL, at TEXT NOT NULL);
      CREATE TABLE paused (workflow TEXT PRIMARY KEY, pin TEXT NOT NULL, at TEXT NOT NULL, why TEXT NOT NULL);
      CREATE TABLE cursors (source TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    // 4: the input each run started with, for correlation (run.input)
+    "ALTER TABLE runs ADD COLUMN input TEXT;",
 ];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
@@ -118,6 +120,9 @@ pub struct Run {
     pub pin: String,
     pub runtime: Runtime,
     pub args: Map<String, Value>,
+    /// What the run started with: the data of the event that started it
+    /// (null for a run from before journal schema 4).
+    pub input: Value,
     pub started: String,
     pub ended: Option<String>,
 }
@@ -339,10 +344,19 @@ impl Journal {
 
     /// A run by id.
     pub fn run(&self, id: &str) -> Result<Option<Run>> {
-        let r: Option<(String, String, String, String, String, Option<String>)> = self
+        type Row = (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+        );
+        let r: Option<Row> = self
             .db
             .query_row(
-                "SELECT workflow, pin, runtime, args, started, ended FROM runs WHERE id = ?1",
+                "SELECT workflow, pin, runtime, args, input, started, ended FROM runs WHERE id = ?1",
                 params![id],
                 |r| {
                     Ok((
@@ -352,17 +366,22 @@ impl Journal {
                         r.get(3)?,
                         r.get(4)?,
                         r.get(5)?,
+                        r.get(6)?,
                     ))
                 },
             )
             .optional()?;
-        r.map(|(workflow, pin, rt, args, started, ended)| {
+        r.map(|(workflow, pin, rt, args, input, started, ended)| {
             Ok(Run {
                 id: id.to_string(),
                 workflow,
                 pin,
                 runtime: serde_json::from_str(&rt)?,
                 args: serde_json::from_str(&args)?,
+                input: match input {
+                    Some(t) => serde_json::from_str(&t)?,
+                    None => Value::Null,
+                },
                 started,
                 ended,
             })
@@ -391,25 +410,39 @@ impl Journal {
         Ok(started)
     }
 
-    /// Starts a run for each of `starts` on app event `seq`, the event's
-    /// data their input, and marks the event handled: one transaction, so
-    /// an event delivered again starts nothing twice. No starts, or none
-    /// that became a run, is noted, not an error.
+    /// Handles an event for the workspace, `r`: starts a run for each of
+    /// `starts`, the event's data their input, copies the event to each run
+    /// in `forward` (its cause the original), and marks it handled. One
+    /// transaction, so an event delivered again starts and copies nothing
+    /// twice. No starts and no copies, or no start that became a run, is
+    /// noted, not an error.
     pub fn start_runs_for_event(
         &mut self,
-        seq: i64,
+        r: &Recorded,
         starts: &[(&File, &Map<String, Value>)],
-        input: &Value,
+        forward: &[String],
         at: &str,
     ) -> Result<Vec<Started>> {
+        let e = &r.event;
         let tx = self.db.transaction()?;
         let mut outcomes = vec![];
         for (f, args) in starts {
-            outcomes.push(admit(&tx, f, args, input, at)?);
+            outcomes.push(admit(&tx, f, args, &e.data, at)?);
         }
-        let note = if starts.is_empty() {
+        for id in forward {
+            let copy = Envelope::new(
+                &e.source,
+                &e.kind,
+                &subject(id),
+                at,
+                Some(e.id.clone()),
+                e.data.clone(),
+            );
+            publish(&tx, &copy)?;
+        }
+        let note = if starts.is_empty() && forward.is_empty() {
             Some("no workflow starts on it".to_string())
-        } else if outcomes.iter().any(|o| matches!(o, Started::Run(_))) {
+        } else if starts.is_empty() || outcomes.iter().any(|o| matches!(o, Started::Run(_))) {
             None
         } else {
             Some(
@@ -423,10 +456,43 @@ impl Journal {
         };
         tx.execute(
             "UPDATE events SET handled = ?2, note = ?3 WHERE seq = ?1 AND handled IS NULL",
-            params![seq, at, note],
+            params![r.seq, at, note],
         )?;
         tx.commit()?;
         Ok(outcomes)
+    }
+
+    /// The runs under way that may want an event of type `kind`: their
+    /// current state, or `*`, has a transition `on` it with a `match`. Their
+    /// managers decide; this only routes. The id and workflow of each.
+    pub fn listeners(&self, kind: &str) -> Result<Vec<(String, String)>> {
+        let mut s = self.db.prepare(
+            "SELECT id, workflow, pin, json_extract(runtime, '$.state') FROM runs
+             WHERE ended IS NULL ORDER BY started, id",
+        )?;
+        let rows: Vec<(String, String, String, String)> = s
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut pinned: std::collections::BTreeMap<String, Option<File>> = Default::default();
+        let mut out = vec![];
+        for (id, wf, pin, state) in rows {
+            if !pinned.contains_key(&pin) {
+                let f = self.workflow(&pin)?;
+                pinned.insert(pin.clone(), f);
+            }
+            let Some(Some(f)) = pinned.get(&pin) else {
+                continue;
+            };
+            let wants = f.transitions.iter().any(|t| {
+                (t.from == state || t.from == workflow::ANY)
+                    && t.on.as_deref() == Some(kind)
+                    && t.r#match.is_some()
+            });
+            if wants {
+                out.push((id, wf));
+            }
+        }
+        Ok(out)
     }
 
     /// Starts queued runs, oldest first, while their workflow has a free
@@ -525,14 +591,22 @@ impl Journal {
         Ok(())
     }
 
-    /// The newest `limit` runs, of one workflow or all, newest first.
-    pub fn runs_page(&self, workflow: Option<&str>, limit: usize) -> Result<Vec<Run>> {
+    /// The newest `limit` runs, of one workflow or all, in one state or any,
+    /// newest first.
+    pub fn runs_page(
+        &self,
+        workflow: Option<&str>,
+        state: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Run>> {
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let mut s = self.db.prepare(
-            "SELECT id FROM runs WHERE ?1 IS NULL OR workflow = ?1 ORDER BY started DESC, id DESC LIMIT ?2",
+            "SELECT id FROM runs WHERE (?1 IS NULL OR workflow = ?1)
+               AND (?2 IS NULL OR json_extract(runtime, '$.state') = ?2)
+             ORDER BY started DESC, id DESC LIMIT ?3",
         )?;
         let ids: Vec<String> = s
-            .query_map(params![workflow, limit], |r| r.get(0))?
+            .query_map(params![workflow, state, limit], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         let mut out = vec![];
         for id in ids {
@@ -745,8 +819,8 @@ fn insert_run(
         params![pin, json(f)?],
     )?;
     db.execute(
-        "INSERT INTO runs (id, workflow, pin, runtime, args, started) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![id, f.name, pin, json(&rt)?, json(args)?, now],
+        "INSERT INTO runs (id, workflow, pin, runtime, args, input, started) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, f.name, pin, json(&rt)?, json(args)?, json(input)?, now],
     )?;
     let e = Envelope::new(
         "daemon",

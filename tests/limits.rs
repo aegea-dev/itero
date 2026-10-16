@@ -44,3 +44,67 @@ fn limits_are_not_part_of_the_version() {
     let b = workflow::parse(&flow(r#""concurrency": { "max": 1 }, "pause_after": 0,"#)).unwrap();
     assert_eq!(workflow::version(&a), workflow::version(&b));
 }
+
+/// A workflow with one transition, `tr`.
+fn with_transition(tr: &str) -> Result<workflow::File, workflow::WorkflowError> {
+    workflow::parse(&format!(
+        r#"{{ "name": "a", "description": "ağ", "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+             "transitions": [ {tr} ] }}"#
+    ))
+}
+
+#[test]
+fn a_transition_from_anywhere_needs_on_and_takes_no_timeout() {
+    assert!(with_transition(r#"{ "from": "*", "to": "bitti", "on": "dur" }"#).is_ok());
+    let e = with_transition(r#"{ "from": "*", "to": "bitti" }"#).unwrap_err();
+    assert!(e.to_string().contains("from \"*\" needs on"), "{e}");
+    let e = with_transition(
+        r#"{ "from": "*", "to": "bitti", "on": "dur", "timeout": "5m", "on_timeout": "bitti" }"#,
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("from \"*\" takes no timeout"), "{e}");
+    let e = with_transition(r#"{ "from": "basla", "to": "*", "on": "dur" }"#).unwrap_err();
+    assert!(e.to_string().contains("to \"*\" is not a state"), "{e}");
+}
+
+#[test]
+fn match_needs_on_and_compiles() {
+    let e = with_transition(r#"{ "from": "basla", "to": "bitti", "match": "true" }"#).unwrap_err();
+    assert!(e.to_string().contains("match needs on"), "{e}");
+    let e = with_transition(
+        r#"{ "from": "basla", "to": "bitti", "on": "x", "match": "event.data. ==" }"#,
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("bad expression"), "{e}");
+}
+
+#[test]
+fn a_publish_step_is_read_and_checked() {
+    let step = |s: &str| {
+        with_transition(&format!(
+            r#"{{ "from": "basla", "to": "bitti", "do": [ {s} ] }}"#
+        ))
+    };
+    let f = step(r#"{ "publish": "rapor.hazir", "data": { "ad": "çeyrek" } }"#).unwrap();
+    let a = &f.transitions[0].actions[0];
+    assert_eq!(a.action, "event.publish@1");
+    assert_eq!(a.with.as_ref().unwrap()["type"], "rapor.hazir");
+    assert_eq!(a.with.as_ref().unwrap()["data"]["ad"], "çeyrek");
+    for (s, says) in [
+        (r#"{ "publish": "run.failed" }"#, "the engine's own"),
+        (r#"{ "publish": "Rapor" }"#, "an event type"),
+        (
+            r#"{ "publish": "a.b", "action": "notify@1" }"#,
+            "publish or action",
+        ),
+        (r#"{ "publish": "a.b", "with": {} }"#, "data, not with"),
+        (
+            r#"{ "action": "notify@1", "data": {} }"#,
+            "data is for publish",
+        ),
+        (r#"{ "publish": "a.b", "data": [1] }"#, "data is an object"),
+    ] {
+        let e = step(s).unwrap_err();
+        assert!(e.to_string().contains(says), "{s}: {e}");
+    }
+}

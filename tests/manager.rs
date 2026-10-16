@@ -181,6 +181,18 @@ fn a_failed_action_fails_the_run() {
 }
 
 #[test]
+fn a_failed_run_keeps_why() {
+    let a = requested();
+    let data = json!({"chain": "e1.2", "index": 0, "error": "bağlantı koptu"});
+    let b = decide(&input(a.runtime, "action.failed", "e2", data)).unwrap();
+    assert_eq!(b.runtime.state, "failed");
+    assert_eq!(
+        b.runtime.failed.unwrap().why,
+        "http.request@1: bağlantı koptu"
+    );
+}
+
+#[test]
 fn on_fail_goes_to_its_state_instead() {
     let a = requested();
     let mut i = input(
@@ -306,6 +318,24 @@ fn emitted_events_wait_for_the_chain_to_succeed() {
         ("iş.bitti", "r2")
     );
     assert_eq!(a.events[0].data, json!({"id": "r1"}));
+}
+
+#[test]
+fn a_published_event_is_for_the_workspace_once_the_chain_succeeds() {
+    let mut i = input(at("yeni"), "run.started", "e1", json!({}));
+    i.workflow.transitions = serde_json::from_value(json!([
+        { "from": "yeni", "to": "bitti",
+          "do": [ { "publish": "rapor.hazir", "data": { "ay": "Ekim", "run": "${run.id}" } } ] }
+    ]))
+    .unwrap();
+    let a = decide(&i).unwrap();
+    assert_eq!(a.runtime.state, "bitti");
+    assert_eq!(a.events.len(), 1);
+    assert_eq!(
+        (a.events[0].kind.as_str(), a.events[0].target.as_str()),
+        ("rapor.hazir", "app")
+    );
+    assert_eq!(a.events[0].data, json!({"ay": "Ekim", "run": "r1"}));
 }
 
 #[test]
@@ -440,4 +470,68 @@ fn a_bad_id_or_when_is_refused() {
         .unwrap_err()
         .to_string();
     assert!(e.contains("bad expression"), "{e}");
+}
+
+/// An order that can be cancelled from wherever it is, except that
+/// `odeme` has its own answer to the same event.
+const IPTAL: &str = r#"{ "name": "siparis", "description": "sipariş",
+  "states": ["yeni", "odeme", "iptal", "geri-odeme", "bitti"],
+  "start": "yeni", "end": ["iptal", "geri-odeme", "bitti"],
+  "transitions": [
+    { "from": "yeni", "to": "odeme", "on": "odendi" },
+    { "from": "odeme", "to": "bitti", "on": "gonderildi" },
+    { "from": "odeme", "to": "geri-odeme", "on": "iptal.istendi" },
+    { "from": "*", "to": "iptal", "on": "iptal.istendi" } ] }"#;
+
+fn on(state: &str, kind: &str) -> Answer {
+    let mut i = input(at(state), kind, "e9", json!({"neden": "vazgeçti"}));
+    i.workflow = itero::workflow::parse(IPTAL).unwrap();
+    decide(&i).unwrap()
+}
+
+#[test]
+fn a_transition_from_anywhere_is_taken_where_nothing_closer_is() {
+    assert_eq!(on("yeni", "iptal.istendi").runtime.state, "iptal");
+    assert_eq!(
+        on("odeme", "iptal.istendi").runtime.state,
+        "geri-odeme",
+        "the state's own wins"
+    );
+    assert_eq!(
+        on("yeni", "gonderildi").runtime.state,
+        "yeni",
+        "no transition"
+    );
+}
+
+/// Waits for a reply on its own subject; replies on other subjects are not
+/// its business.
+const SOHBET: &str = r#"{ "name": "sohbet", "description": "sohbet", "states": ["bekliyor", "cevaplandi"],
+  "start": "bekliyor", "end": ["cevaplandi"],
+  "transitions": [
+    { "from": "bekliyor", "to": "cevaplandi", "on": "mesaj.geldi",
+      "match": "event.data.konu == run.input.konu" } ] }"#;
+
+fn sohbet(konu: &str) -> Answer {
+    let mut i = input(
+        at("bekliyor"),
+        "mesaj.geldi",
+        "e5",
+        json!({"konu": konu, "metin": "merhaba dünya"}),
+    );
+    i.workflow = itero::workflow::parse(SOHBET).unwrap();
+    i.run.insert("input".into(), json!({"konu": "çay"}));
+    decide(&i).unwrap()
+}
+
+#[test]
+fn match_takes_only_the_events_that_are_this_runs() {
+    assert_eq!(sohbet("çay").runtime.state, "cevaplandi");
+    let other = sohbet("kahve");
+    assert_eq!(other.runtime.state, "bekliyor");
+    assert!(
+        other.log.iter().any(|l| l.contains("no transition")),
+        "{:?}",
+        other.log
+    );
 }

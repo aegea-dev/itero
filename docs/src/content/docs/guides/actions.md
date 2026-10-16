@@ -17,6 +17,7 @@ working the same way when a newer version comes.
 | `memory.set@1` | sets keys in the workflow's memory |
 | `json.pick@1` | picks a value out of the previous output |
 | `event.emit@1` | sends an event to a run |
+| `event.publish@1` | publishes an event for the workspace: written as a `publish` step |
 
 ### command@1
 
@@ -95,6 +96,9 @@ These run inside the manager and touch nothing outside the decision.
   of the previous output.
 - `event.emit@1` takes `type`, `target` (a run's id) and `data`, and sends
   the event when the chain succeeds.
+- `event.publish@1` is what a `{ "publish": "<type>", "data": {...} }` step
+  is: the event goes to the workspace when the chain succeeds (see
+  [Publish and subscribe](/guides/apps/#publish-and-subscribe)).
 
 ## Your own actions
 

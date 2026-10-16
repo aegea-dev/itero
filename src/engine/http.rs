@@ -165,6 +165,7 @@ fn run_row(r: &super::journal::Run) -> Value {
 #[derive(serde::Deserialize)]
 struct RunsQuery {
     workflow: Option<String>,
+    state: Option<String>,
     limit: Option<usize>,
 }
 
@@ -172,7 +173,11 @@ async fn runs(State(s): State<Shared>, Query(q): Query<RunsQuery>) -> Result<Jso
     blocking(&s, move |ws| {
         let j = Journal::open(ws).map_err(internal)?;
         let runs = j
-            .runs_page(q.workflow.as_deref(), q.limit.unwrap_or(50))
+            .runs_page(
+                q.workflow.as_deref(),
+                q.state.as_deref(),
+                q.limit.unwrap_or(50),
+            )
             .map_err(internal)?;
         Ok(Value::Array(runs.iter().map(run_row).collect()))
     })

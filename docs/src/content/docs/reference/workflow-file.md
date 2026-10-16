@@ -47,9 +47,10 @@ One of `schedule` and `on`. See [Triggers](/guides/triggers/).
 
 | Key | Is | |
 |---|---|---|
-| `from` | the state it leaves | needed |
+| `from` | the state it leaves, or `"*"`: any state (it needs `on` and takes no timeout; one from the run's own state wins) | needed |
 | `to` | the state it enters | needed |
 | `on` | the event type that takes it; without, it is taken on entering `from` | |
+| `match` | with `on`: whether an event for the workspace is this run's; it then hears them too (`event.data.x == run.input.x`) | |
 | `when` | a condition that must hold for it to be taken | |
 | `do` | the chain of actions, run in order | |
 | `timeout` | a duration: `30s`, `5m`, `2h`, `7d`, `1h 30m` | with `on_timeout` |
@@ -72,8 +73,18 @@ A name, like `"notify@1"`, or an object:
 | `expect` | a condition over `output`: false means it failed | |
 | `description` | text for people | |
 
+Or a step that publishes an event for the workspace, when the chain
+succeeds:
+
+| Key | Is | |
+|---|---|---|
+| `publish` | its type, like `report.ready`; not one of the engine's own | needed |
+| `data` | an object, the event's data; may hold templates | |
+| `id`, `when`, `description` | as for an action | |
+
 ## Expressions
 
 Conditions and templates are [CEL](https://cel.dev). They see `args`,
-`input`, `prev`, `steps`, `memory` and `run`, and `expect` also sees
-`output`. `${env.NAME}` is a [secret](/guides/secrets/), not an expression.
+`input`, `prev`, `steps`, `memory` and `run` (with `run.input`, what the
+run started with); `expect` also sees `output`, and `match` sees `event`.
+`${env.NAME}` is a [secret](/guides/secrets/), not an expression.

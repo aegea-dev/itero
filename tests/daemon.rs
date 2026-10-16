@@ -222,6 +222,16 @@ fn arrives(ws: &itero::workspace::Workspace) {
 }
 
 #[test]
+fn a_run_keeps_the_input_it_started_with() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path(), "yavas", &yavas("queue"));
+    arrives(&ws);
+    run_once(&ws, t("2026-10-16T10:00:01Z"), exe()).unwrap();
+    let runs = Journal::open(&ws).unwrap().runs().unwrap();
+    assert_eq!(runs[0].input, serde_json::json!({"ad": "ağaç.txt"}));
+}
+
+#[test]
 fn starts_beyond_the_maximum_wait_and_run_in_turn() {
     let d = tempfile::tempdir().unwrap();
     let ws = workspace(d.path(), "yavas", &yavas("queue"));

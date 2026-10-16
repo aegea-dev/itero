@@ -53,6 +53,19 @@ journal directly, so it works while the daemon is stopped. See
 
 The runs, newest first: id, workflow, state, started, ended.
 
+## itero errors
+
+```bash
+itero errors [--limit N]
+```
+
+The failed runs, newest first (20 unless `--limit` says): when, the
+workflow, the run, the transition that failed and why:
+
+```
+2026-10-16T10:00:02Z  backup               01a144c5-...  start -> done: sh@1: expect failed: output.exit == 0
+```
+
 ## itero memory
 
 ```bash

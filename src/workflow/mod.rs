@@ -16,6 +16,9 @@ pub use format::File;
 /// The engine's own state: a transition failed. Never declared.
 pub const FAILED: &str = "failed";
 
+/// The `from` of a transition from any state.
+pub const ANY: &str = "*";
+
 /// A problem with a workflow or action file, naming the file (when there is
 /// one) and, when it is about one part, that part (`transition "a -> b"`).
 #[derive(Debug, Clone, PartialEq)]

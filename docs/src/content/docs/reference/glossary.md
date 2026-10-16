@@ -174,10 +174,41 @@ stopped) runs again, up to 3 times; an error fails the action at once.
 ### event
 
 A typed message, like `photo.added`, with data. Sent to the workspace, it
-starts runs of the workflows with a trigger `on` its type; sent to a run, it
-may take one of the run's transitions. Types starting with `action.`,
-`timer.`, `run.`, `workflow.` or `source.` are the engine's own and refused
-from outside. See [Apps and events](/guides/apps/).
+starts runs of the workflows with a trigger `on` its type and reaches the
+runs waiting for it with a `match`; sent to a run, it may take one of the
+run's transitions. Types starting with `action.`, `timer.`, `run.`,
+`workflow.` or `source.` are the engine's own and refused from outside.
+See [Apps and events](/guides/apps/).
+
+### publish and subscribe
+
+Events for the workspace are a bus. Apps, sources and workflows (a
+`publish` step) publish; workflows with a trigger `on` a type and runs
+waiting with a `match` subscribe. Each subscriber gets an event once, and
+a run never hears what it published itself.
+
+### match
+
+A condition on a transition with `on`: whether an event for the workspace
+is this run's (`event.data.thread == run.input.thread`). With it, a run can
+be reached without anyone knowing its id.
+
+### run.input
+
+What a run started with: the data of the event that started it. What
+`match` correlates on.
+
+### long-lived run
+
+A run that does not end: a state that loops to itself on an event, with a
+`match`, reacting to every event that is its own. For things with a
+lifecycle: a conversation, an approval, a device.
+
+### run.failed
+
+What the engine publishes when a run fails: the workflow, its version, the
+run, where and why. A maintenance workflow hears it, except about itself.
+`itero errors` lists the failed runs.
 
 ### source
 

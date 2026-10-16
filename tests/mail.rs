@@ -172,7 +172,15 @@ fn mail_is_notified_as_it_arrives_and_never_twice() {
             .spawn()
             .unwrap(),
     );
-    std::thread::sleep(std::time::Duration::from_secs(1)); // the watch is set
+    // the source is up (a busy machine can take a while), then a moment
+    // for it to set its watch
+    let running = || {
+        reqwest::blocking::get(format!("http://127.0.0.1:{port}/health"))
+            .and_then(|r| r.json::<serde_json::Value>())
+            .is_ok_and(|h| h["sources"]["mailbox"]["state"] == "running")
+    };
+    assert!(wait_for(20, running), "the source did not start");
+    std::thread::sleep(std::time::Duration::from_millis(500));
     mail(
         &mbox,
         "ayse@örnek.test",

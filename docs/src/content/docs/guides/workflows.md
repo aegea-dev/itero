@@ -31,7 +31,12 @@ ignored. `itero check` reads every workflow and reports the first problem.
   state; when several could be taken, the first in the file whose `when`
   holds wins.
 - A transition with `on` waits for an event of that type sent to the run
-  (see [Apps and events](/guides/apps/)).
+  (see [Apps and events](/guides/apps/)). With a `match`, it also hears
+  the type's events for the workspace, and takes those the condition says
+  are its run's ([without the run's id](/guides/apps/#without-the-runs-id-match)).
+- `"from": "*"` is a transition from any state, like a `cancel`: it needs
+  `on`, takes no timeout, and a transition from the run's own state on the
+  same event wins.
 
 ## A chain of actions
 
@@ -54,13 +59,18 @@ an object:
 | `expect` | a condition over `output`: false means the action failed |
 | `description` | text for people |
 
+A step may publish an event for the workspace instead:
+`{ "publish": "report.ready", "data": {...} }` (see
+[Publish and subscribe](/guides/apps/#publish-and-subscribe)); it goes out
+when the chain succeeds.
+
 The chain moves to the transition's `to` state once every action is done.
 If an action fails, the run goes to the transition's `on_fail` state, or
-to `failed`.
+to `failed`, and the engine publishes `run.failed` with why.
 
 ## Conditions and templates
 
-Conditions (`when`, `expect`) are [CEL](https://cel.dev) expressions. A
+Conditions (`when`, `match`, `expect`) are [CEL](https://cel.dev) expressions. A
 string in `with` may hold `${...}` templates, CEL expressions too. A string
 that is one template keeps the value's type (a number stays a number);
 otherwise the values are written into the text.
@@ -74,8 +84,9 @@ What expressions see:
 | `prev` | the previous action's output in this chain (at first, `input`) |
 | `steps` | the outputs of this chain's actions with an `id` |
 | `memory` | the workflow's memory |
-| `run` | the run's `id`, `workflow` and `started` |
+| `run` | the run's `id`, `workflow`, `started`, and `input`: what it started with |
 | `output` | the action's own output, in `expect` only |
+| `event` | the event offered, `{id, type, data}`, in `match` only |
 
 `has(memory.seen) ? memory.seen : ''` reads a key that may not be there
 yet. `${env.NAME}` is not an expression: it stands for a

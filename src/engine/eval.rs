@@ -15,6 +15,8 @@ pub struct Vars<'a> {
     pub steps: &'a Map<String, Value>,
     /// The action's output, for `expect`.
     pub output: Option<&'a Value>,
+    /// The event a transition is offered, `{id, type, data}`, for `match`.
+    pub event: Option<&'a Value>,
 }
 
 /// A JSON value as CEL sees it. Whole numbers are signed integers (CEL's
@@ -55,6 +57,9 @@ pub fn value(src: &str, v: &Vars) -> Result<Value, String> {
     c.add_variable_from_value("steps", object(v.steps));
     if let Some(o) = v.output {
         c.add_variable_from_value("output", cel(o));
+    }
+    if let Some(e) = v.event {
+        c.add_variable_from_value("event", cel(e));
     }
     let result = program.execute(&c).map_err(|e| format!("`{src}`: {e}"))?;
     result
