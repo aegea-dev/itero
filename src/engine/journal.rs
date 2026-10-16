@@ -410,25 +410,39 @@ impl Journal {
         Ok(started)
     }
 
-    /// Starts a run for each of `starts` on app event `seq`, the event's
-    /// data their input, and marks the event handled: one transaction, so
-    /// an event delivered again starts nothing twice. No starts, or none
-    /// that became a run, is noted, not an error.
+    /// Handles an event for the workspace, `r`: starts a run for each of
+    /// `starts`, the event's data their input, copies the event to each run
+    /// in `forward` (its cause the original), and marks it handled. One
+    /// transaction, so an event delivered again starts and copies nothing
+    /// twice. No starts and no copies, or no start that became a run, is
+    /// noted, not an error.
     pub fn start_runs_for_event(
         &mut self,
-        seq: i64,
+        r: &Recorded,
         starts: &[(&File, &Map<String, Value>)],
-        input: &Value,
+        forward: &[String],
         at: &str,
     ) -> Result<Vec<Started>> {
+        let e = &r.event;
         let tx = self.db.transaction()?;
         let mut outcomes = vec![];
         for (f, args) in starts {
-            outcomes.push(admit(&tx, f, args, input, at)?);
+            outcomes.push(admit(&tx, f, args, &e.data, at)?);
         }
-        let note = if starts.is_empty() {
+        for id in forward {
+            let copy = Envelope::new(
+                &e.source,
+                &e.kind,
+                &subject(id),
+                at,
+                Some(e.id.clone()),
+                e.data.clone(),
+            );
+            publish(&tx, &copy)?;
+        }
+        let note = if starts.is_empty() && forward.is_empty() {
             Some("no workflow starts on it".to_string())
-        } else if outcomes.iter().any(|o| matches!(o, Started::Run(_))) {
+        } else if starts.is_empty() || outcomes.iter().any(|o| matches!(o, Started::Run(_))) {
             None
         } else {
             Some(
@@ -442,10 +456,43 @@ impl Journal {
         };
         tx.execute(
             "UPDATE events SET handled = ?2, note = ?3 WHERE seq = ?1 AND handled IS NULL",
-            params![seq, at, note],
+            params![r.seq, at, note],
         )?;
         tx.commit()?;
         Ok(outcomes)
+    }
+
+    /// The runs under way that may want an event of type `kind`: their
+    /// current state, or `*`, has a transition `on` it with a `match`. Their
+    /// managers decide; this only routes. The id and workflow of each.
+    pub fn listeners(&self, kind: &str) -> Result<Vec<(String, String)>> {
+        let mut s = self.db.prepare(
+            "SELECT id, workflow, pin, json_extract(runtime, '$.state') FROM runs
+             WHERE ended IS NULL ORDER BY started, id",
+        )?;
+        let rows: Vec<(String, String, String, String)> = s
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut pinned: std::collections::BTreeMap<String, Option<File>> = Default::default();
+        let mut out = vec![];
+        for (id, wf, pin, state) in rows {
+            if !pinned.contains_key(&pin) {
+                let f = self.workflow(&pin)?;
+                pinned.insert(pin.clone(), f);
+            }
+            let Some(Some(f)) = pinned.get(&pin) else {
+                continue;
+            };
+            let wants = f.transitions.iter().any(|t| {
+                (t.from == state || t.from == workflow::ANY)
+                    && t.on.as_deref() == Some(kind)
+                    && t.r#match.is_some()
+            });
+            if wants {
+                out.push((id, wf));
+            }
+        }
+        Ok(out)
     }
 
     /// Starts queued runs, oldest first, while their workflow has a free

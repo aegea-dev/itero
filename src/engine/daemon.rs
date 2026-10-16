@@ -289,8 +289,17 @@ fn start_triggered(
                 .map(move |t| (f, &t.args))
         })
         .collect();
-    let outcomes = j.start_runs_for_event(r.seq, &starts, &r.event.data, &stamp(now))?;
-    if outcomes.is_empty() {
+    // the runs waiting for it: never the run that published it, nor runs of
+    // the workflow an engine event is about
+    let publisher = r.event.source.strip_prefix("manager/");
+    let forward: Vec<String> = j
+        .listeners(&r.event.kind)?
+        .into_iter()
+        .filter(|(id, wf)| Some(id.as_str()) != publisher && Some(wf.as_str()) != about)
+        .map(|(id, _)| id)
+        .collect();
+    let outcomes = j.start_runs_for_event(r, &starts, &forward, &stamp(now))?;
+    if outcomes.is_empty() && forward.is_empty() {
         eprintln!("{}: no workflow starts on it", r.event.kind);
     }
     Ok(())
