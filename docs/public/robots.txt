@@ -1,0 +1,7 @@
+# Documentation for itero, which runs workflows again and again.
+# https://github.com/aegea-dev/itero
+
+User-agent: *
+Allow: /
+
+Sitemap: https://aegea-dev.github.io/itero/sitemap-index.xml

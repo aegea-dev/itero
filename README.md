@@ -9,6 +9,8 @@ itero is young: schedules and app events start workflows with steps, each
 workflow has a memory, actions run commands, shell lines and desktop
 notifications, the daemon has a local HTTP API, and it starts at login.
 
+Documentation: <https://aegea-dev.github.io/itero/>.
+
 ## Install
 
 ```bash
