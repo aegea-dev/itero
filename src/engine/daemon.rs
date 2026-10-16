@@ -116,7 +116,12 @@ pub fn run_loop(
 pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let mut j = Journal::open(ws)?;
     let mut pass = Pass::default();
-    fire_schedules(ws, &mut j, now)?;
+    let flows: Vec<crate::workflow::File> = ws.workflows()?.into_iter().map(|(_, f)| f).collect();
+    resume_new_versions(&j, &flows)?;
+    fire_schedules(&flows, &mut j, now)?;
+    for id in j.release_queued(&flows, &stamp(now))? {
+        eprintln!("{id}: started from the queue");
+    }
     for (id, run, data) in j.due_timers(&stamp(now))? {
         let e = Envelope::new(
             "daemon",
@@ -215,11 +220,15 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
 
 /// Starts a run of every workflow whose schedule is due. A schedule seen for
 /// the first time only starts counting: it waits for its first slot.
-fn fire_schedules(ws: &Workspace, j: &mut Journal, now: DateTime<Utc>) -> Result<()> {
+fn fire_schedules(
+    flows: &[crate::workflow::File],
+    j: &mut Journal,
+    now: DateTime<Utc>,
+) -> Result<()> {
     // a schedule's key names it, not its place among the triggers: merging
     // or reordering keeps its last slot; the same schedule twice is one
     let mut seen = BTreeSet::new();
-    for (_, f) in ws.workflows()? {
+    for f in flows {
         for t in &f.triggers {
             let Some(schedule) = &t.schedule else {
                 continue;
@@ -236,7 +245,10 @@ fn fire_schedules(ws: &Workspace, j: &mut Journal, now: DateTime<Utc>) -> Result
                 .parse()
                 .map_err(|_| anyhow!("schedule {key}: its last slot is not a time: {last}"))?;
             if super::schedule::due(schedule, last, now).map_err(|e| anyhow!(e))? {
-                j.start_run(&f, &t.args, &stamp(now), Some(&key))?;
+                match j.start_run(f, &t.args, &stamp(now), Some(&key))? {
+                    journal::Started::Run(_) => {}
+                    other => eprintln!("{}: schedule {schedule}: {other:?}", f.name),
+                }
             }
         }
     }
@@ -261,9 +273,25 @@ fn start_triggered(
                 .map(move |t| (f, &t.args))
         })
         .collect();
-    let ids = j.start_runs_for_event(r.seq, &starts, &r.event.data, &stamp(now))?;
-    if ids.is_empty() {
+    let outcomes = j.start_runs_for_event(r.seq, &starts, &r.event.data, &stamp(now))?;
+    if outcomes.is_empty() {
         eprintln!("{}: no workflow starts on it", r.event.kind);
+    }
+    Ok(())
+}
+
+/// A paused workflow whose file is now another version starts again: the
+/// new version is the fix.
+fn resume_new_versions(j: &Journal, flows: &[crate::workflow::File]) -> Result<()> {
+    for p in j.paused()? {
+        let now = flows
+            .iter()
+            .find(|f| f.name == p.workflow)
+            .map(crate::workflow::pin);
+        if now.is_some_and(|pin| pin != p.pin) {
+            j.resume(&p.workflow)?;
+            eprintln!("{}: a new version; resumed", p.workflow);
+        }
     }
     Ok(())
 }

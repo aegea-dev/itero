@@ -197,3 +197,118 @@ fn a_schedule_keeps_its_last_slot_when_triggers_are_reordered() {
         "the 14:05 slot ran"
     );
 }
+
+/// A workflow started by `dosya.geldi` that runs a shell line, at most one
+/// run at a time.
+fn yavas(then: &str) -> String {
+    format!(
+        r#"{{ "name": "yavas", "description": "yavaş iş", "triggers": [ {{ "on": "dosya.geldi" }} ],
+             "concurrency": {{ "max": 1, "then": "{then}" }},
+             "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+             "transitions": [ {{ "from": "basla", "to": "bitti",
+               "do": [ {{ "action": "sh@1", "with": {{ "run": "true" }} }} ] }} ] }}"#
+    )
+}
+
+fn arrives(ws: &itero::workspace::Workspace) {
+    itero::engine::events::emit(
+        ws,
+        "dosya.geldi",
+        Some(serde_json::json!({"ad": "ağaç.txt"})),
+        None,
+        "2026-10-16T10:00:00Z",
+    )
+    .unwrap();
+}
+
+#[test]
+fn starts_beyond_the_maximum_wait_and_run_in_turn() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path(), "yavas", &yavas("queue"));
+    arrives(&ws);
+    arrives(&ws);
+    // the first run starts and finishes; the second came while the first
+    // was under way, so it waits for the next pass
+    run_once(&ws, t("2026-10-16T10:00:01Z"), exe()).unwrap();
+    let j = Journal::open(&ws).unwrap();
+    assert_eq!(j.runs().unwrap().len(), 1);
+    run_once(&ws, t("2026-10-16T10:00:02Z"), exe()).unwrap();
+    let runs = j.runs().unwrap();
+    assert_eq!(runs.len(), 2, "{runs:?}");
+    assert!(runs.iter().all(|r| r.runtime.state == "bitti"), "{runs:?}");
+    assert_eq!(runs[1].started, "2026-10-16T10:00:02Z");
+}
+
+#[test]
+fn starts_beyond_the_maximum_are_dropped_when_the_workflow_skips() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path(), "yavas", &yavas("skip"));
+    arrives(&ws);
+    arrives(&ws);
+    run_once(&ws, t("2026-10-16T10:00:01Z"), exe()).unwrap();
+    run_once(&ws, t("2026-10-16T10:00:02Z"), exe()).unwrap();
+    let j = Journal::open(&ws).unwrap();
+    assert_eq!(j.runs().unwrap().len(), 1);
+    let notes: Vec<String> = j
+        .events(Some("itero.app"))
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| e.note)
+        .collect();
+    assert_eq!(notes, ["yavas: skipped"]);
+}
+
+#[test]
+fn a_new_version_of_a_paused_workflow_resumes_it() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path(), "yavas", &yavas("queue"));
+    let mut j = Journal::open(&ws).unwrap();
+    j.handle(itero::engine::journal::Handled {
+        seq: 0,
+        at: "2026-10-16T10:00:00Z",
+        error: None,
+        run: None,
+        timers: None,
+        events: vec![],
+        memory: None,
+        pause: Some(itero::engine::journal::Pause {
+            workflow: "yavas",
+            pin: "yavas@eski-sürüm",
+            why: "deneme".into(),
+        }),
+    })
+    .unwrap();
+    run_once(&ws, t("2026-10-16T10:00:01Z"), exe()).unwrap();
+    assert!(
+        j.paused().unwrap().is_empty(),
+        "the workflow now is not the version that failed"
+    );
+}
+
+#[test]
+fn the_same_version_stays_paused() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path(), "yavas", &yavas("queue"));
+    let f = ws.workflows().unwrap().remove(0).1;
+    let pin = itero::workflow::pin(&f);
+    let mut j = Journal::open(&ws).unwrap();
+    j.handle(itero::engine::journal::Handled {
+        seq: 0,
+        at: "2026-10-16T10:00:00Z",
+        error: None,
+        run: None,
+        timers: None,
+        events: vec![],
+        memory: None,
+        pause: Some(itero::engine::journal::Pause {
+            workflow: "yavas",
+            pin: &pin,
+            why: "deneme".into(),
+        }),
+    })
+    .unwrap();
+    arrives(&ws);
+    run_once(&ws, t("2026-10-16T10:00:01Z"), exe()).unwrap();
+    assert_eq!(j.paused().unwrap().len(), 1);
+    assert!(j.runs().unwrap().is_empty(), "paused: nothing starts");
+}
