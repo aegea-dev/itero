@@ -1,0 +1,5 @@
+{ "program": ["python3", "idle.py"], "image": "python:3.13-alpine",
+  "with": { "host": "imap.example.com", "port": 993, "tls": true,
+            "user": "me@example.com", "password": "${env.IMAP_PASSWORD}",
+            "mailbox": "INBOX" },
+  "emit": "mail.changed" }

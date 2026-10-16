@@ -1,7 +1,8 @@
 {
   "name": "imap-check",
-  "description": "Notifies about mail that arrives in an IMAP mailbox.",
-  "triggers": [ { "schedule": "*/5 * * * *" } ],
+  "description": "Notifies about mail that arrives in an IMAP mailbox: at once, told by the imap-idle source, and every 5 minutes as a safety net.",
+  "triggers": [ { "on": "mail.changed" }, { "schedule": "*/5 * * * *" } ],
+  "concurrency": { "max": 1, "then": "queue" },
   "states": ["start", "done"],
   "start": "start",
   "end": ["done"],

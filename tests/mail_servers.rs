@@ -220,3 +220,95 @@ fn a_server_that_cannot_be_reached_fails_the_run_and_says_why() {
     assert!(!failed_runs(&ws).is_empty(), "the run failed");
     assert_eq!(shown(&log), "");
 }
+
+fn wait_for(secs: u64, mut ok: impl FnMut() -> bool) -> bool {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    while std::time::Instant::now() < end {
+        if ok() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    false
+}
+
+/// A daemon in `ws`, killed when dropped.
+struct Daemon(std::process::Child);
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn leftover_sources() -> String {
+    let o = std::process::Command::new("docker")
+        .args(["ps", "-aq", "--filter", "label=dev.aegea.itero.source"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
+#[test]
+fn imap_idle_notifies_mail_as_it_arrives() {
+    let Some(host) = server() else { return };
+    let d = tempfile::tempdir().unwrap();
+    let user = format!("idle-{}@ornek.test", uuid::Uuid::now_v7());
+    let log = d.path().join("bildirim.log");
+    let ws = example(d.path(), "imap-check", IMAP, &user, "host.docker.internal");
+    // the source, in its container, pointed at the test server too
+    let src = ws.join("sources/imap-idle.json");
+    let mut s: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&src).unwrap()).unwrap();
+    s["with"]["host"] = "host.docker.internal".into();
+    s["with"]["port"] = IMAP.into();
+    s["with"]["tls"] = false.into();
+    s["with"]["user"] = user.as_str().into();
+    std::fs::write(&src, serde_json::to_string(&s).unwrap()).unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    std::fs::write(ws.join("itero.toml"), format!("port = {port}\n")).unwrap();
+    let daemon = Daemon(
+        std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .arg("daemon")
+            .current_dir(&ws)
+            .env("ITERO_NOTIFY_LOG", &log)
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .env("IMAP_PASSWORD", "gizli-şifre")
+            .spawn()
+            .unwrap(),
+    );
+    // the source's first event runs a check, which notes where the mailbox is
+    let done = || {
+        let o = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .arg("runs")
+            .current_dir(&ws)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter(|l| l.contains(" done "))
+            .count()
+    };
+    assert!(wait_for(60, || done() >= 1), "{}", state(&ws, "imap-check"));
+    send(&host, &user, "Toplantı notları");
+    // the 5-minute schedule has not come yet: the source told the daemon
+    assert!(
+        wait_for(20, || shown(&log).contains("1 new: Toplantı notları")),
+        "{}{}",
+        shown(&log),
+        state(&ws, "imap-check")
+    );
+    assert_eq!(failed_runs(&ws), "", "no run failed");
+    drop(daemon);
+    // the daemon gone, its source's container goes too
+    assert!(
+        wait_for(15, || leftover_sources().is_empty()),
+        "left: {}",
+        leftover_sources()
+    );
+}
