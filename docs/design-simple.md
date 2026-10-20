@@ -23,7 +23,7 @@ args/imap-check.json          data for an action, written by `itero args`
 
 ## A workflow
 
-Two fixed words: `on` and `steps`.
+Two fixed words, `on` and `steps`, and one optional, `timeout`.
 
 ```json
 {
@@ -42,6 +42,9 @@ Two fixed words: `on` and `steps`.
   { "imap-check": { "host": "imap.example.com" } }
   ```
 
+- **`timeout`**, optional: the longest a run may wait for data (see exit
+  75 below), like `"2d"` or `"30m"`. Unless given, 7 days. A run still
+  waiting then fails, and `itero errors` lists it.
 - **Versions**: `imap-check` is its latest version; `imap-check@0.5` pins
   one. Data is never keyed by version: `imap-check` is `imap-check` at
   every version.
@@ -70,7 +73,8 @@ An executable file in `actions/`, in any language its first line names
     printed on stderr.
 - **What it keeps between runs** (like "the last mail seen") goes in the
   file `$ITERO_MEMORY`, which it may read and write. itero keeps one per
-  workflow and action.
+  workflow, shared by its steps. With a list of args, the items run one
+  after another, so they never write it at the same time.
 
 Example, `actions/check-payment`:
 
@@ -172,7 +176,9 @@ What a message does:
   shares at least one field with the run's state, and agrees with it on
   every field they share. `{"order": 43, "amount": 120}` matches the run
   whose state has `"order": 43`, not the one with `"order": 42`. Its data
-  joins the state, and the waiting step runs again.
+  joins the state, and the waiting step runs again. Every run it matches
+  gets it: `stock.arrived` with `{"product": "çay"}` reaches each order
+  waiting for çay.
 - Messages wait in the journal until the daemon takes them: none is lost
   when the daemon stops.
 
@@ -182,6 +188,8 @@ None of these are written in files:
 
 - **One run at a time per workflow.** Others wait their turn.
 - **A step may take 10 minutes**, then the run fails.
+- **A run may wait 7 days** for data, unless its workflow's `timeout` says
+  otherwise.
 - **A lost step** (the daemon or the machine stopped) runs again, up to 3
   times.
 - **5 failed runs in a row pause a workflow** until `itero resume
@@ -279,12 +287,3 @@ From the files people write:
 
 They stay in git history, to come back only when a real workflow needs
 one.
-
-## Open questions
-
-- **Waiting forever.** Should a run that waits (exit 75) give up after some
-  time, by default?
-- **One message, several waiting runs.** If a message matches more than
-  one waiting run, does each get it, or only the oldest?
-- **Memory with a list of args.** One `$ITERO_MEMORY` per item (per
-  account), or one shared by all?
