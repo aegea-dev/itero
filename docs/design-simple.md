@@ -15,9 +15,9 @@ The rule is KISS:
 ```
 itero.toml                    the port
 workflows/mail-alert.json     a workflow; its name is the file name
-actions/imap-check.sh         an action; its name is the file name
-actions/notify@0.2.sh         a version, in the name
-sources/mail.changed.sh       a source; the messages it sends are of this type
+actions/imap-check            an action; its name is the file name
+actions/notify@0.2            a version, in the name
+sources/mail.changed          a source; the messages it sends are of this type
 args/imap-check.json          data for an action, written by `itero args`
 ```
 
@@ -51,9 +51,9 @@ Two fixed words: `on` and `steps`.
 An executable file in `actions/`, in any language its first line names
 (`#!/bin/sh`, `#!/usr/bin/env python3`). There is no description file.
 
-- **Its name** is the file name without the extension; a version, if any,
-  is part of it: `notify@0.2.sh`. With several versions, the highest is the
-  latest.
+- **Its name** is its file name, with no extension: its first line says
+  what runs it. A version, if any, is part of the name: `notify@0.2`. With
+  several versions, the highest is the latest.
 - **It reads** each value it needs as an environment variable named after
   it (`$host`, `$user`, `$password`), and the run's whole state as JSON on
   stdin. A value that is not a string arrives as JSON text.
@@ -72,7 +72,7 @@ An executable file in `actions/`, in any language its first line names
   file `$ITERO_MEMORY`, which it may read and write. itero keeps one per
   workflow and action.
 
-Example, `actions/check-payment.sh`:
+Example, `actions/check-payment`:
 
 ```sh
 #!/bin/sh
@@ -154,7 +154,7 @@ POST /events   {"type": "payment.received", "data": {"order": 43, "amount": 120}
 
 A source is an executable in `sources/` that keeps running and prints the
 data of one message per line; the messages' type is its file name.
-`sources/mail.changed.sh` could be:
+`sources/mail.changed` could be:
 
 ```sh
 #!/bin/sh
@@ -222,7 +222,7 @@ Otherwise it prints `{"text": "2 new: …"}`, which `notify` shows.
 }
 ```
 
-`actions/imap-check.sh` is a few lines of shell around `curl`, which speaks
+`actions/imap-check` is a few lines of shell around `curl`, which speaks
 IMAP, POP3 and SMTP: no Docker, no Python. It asks the server for mail
 newer than the last one in `$ITERO_MEMORY`, and passes the password to
 `curl` on stdin, never on its command line. A POP3 check is the same with
