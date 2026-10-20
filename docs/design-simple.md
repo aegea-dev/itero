@@ -287,3 +287,18 @@ From the files people write:
 
 They stay in git history, to come back only when a real workflow needs
 one.
+
+## Later, when needed
+
+Not planned now: KISS says files written by hand, or by any program, are
+enough. If apps come to need it, commands to create and change things
+without knowing the folder layout:
+
+```
+itero workflows new dynamic --json '{...}'
+itero workflows update mail-alert --json '{"steps": [...]}'
+itero actions new check-url --file curl-url.sh
+itero sources new ...
+```
+
+Each writes the same file a person would, so nothing else changes.
