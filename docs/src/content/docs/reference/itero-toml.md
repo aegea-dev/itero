@@ -24,5 +24,44 @@ A folder is relative to the workspace; `~/` is your home folder. A folder
 that is not there holds nothing, and `itero check` notes it. Two workflows
 with one name, in any of the folders, is an error.
 
-Args live in `args/`, the journal and each workflow's memory in `.itero/`.
-Two workspaces on one machine need two ports.
+Args live in `args/`; the journal, the log and each workflow's memory in
+`.itero/`. Two workspaces on one machine need two ports.
+
+## `[meta]`
+
+What you say about the workspace, any keys: `itero info` and the log's
+`daemon.started` line show them.
+
+```toml
+[meta]
+description = "Home: mail and orders"
+owner = "ayşe"
+```
+
+`id`, `name`, `created`, `path` and `version` are given by itero; setting
+one is an error.
+
+## `[limits]`
+
+```toml
+[limits]
+workflows = 100
+runs = 1000
+steps = 8
+space = "1GB"
+keep = "1d"
+log = "10MB"
+logs = 3
+```
+
+| Key | Is | Default |
+|---|---|---|
+| `workflows` | workflows, the internal ones apart; more is an error | `100` |
+| `runs` | runs under way at once, the internal ones apart; past it, messages wait their turn | `1000` |
+| `steps` | steps running at once | `8` |
+| `space` | what `.itero/` may take (`KB`, `MB`, `GB`) | `"1GB"` |
+| `keep` | how long ended runs and their messages are kept | `"1d"` |
+| `log` | the log's size before it is rolled | `"10MB"` |
+| `logs` | rolled logs kept | `3` |
+
+What happens at each: [The daemon's own workflows](/guides/maintenance/#limits).

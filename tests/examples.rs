@@ -74,6 +74,6 @@ fn the_order_example_waits_for_its_payment_then_ships() {
     );
     itero(&ws, &["daemon", "--once"]);
     let read = |f: &str| std::fs::read_to_string(ws.join(f)).unwrap_or_default();
-    assert_eq!(read("sent.log"), "to ayşe@örnek.test: order 43, TR-43\n");
-    assert_eq!(read("results.log"), "order 43: done\n");
+    assert_eq!(read(".itero/sent.log"), "to ayşe@örnek.test: order 43, TR-43\n");
+    assert_eq!(read(".itero/results.log"), "order 43: done\n");
 }

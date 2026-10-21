@@ -6,7 +6,7 @@ small executable files in any language, leaning on the command line tools
 already there (`sh`, `curl`, `jq`).
 
 ```json
-{ "on": ["order.placed"], "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"] }
+{ "on": [{ "event": "order.placed" }], "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"] }
 ```
 
 Documentation: <https://aegea-dev.github.io/itero/>.
@@ -66,8 +66,9 @@ args/check-payment.json    data for an action (itero args)
   runs waiting for it that it matches by their data.
 
 Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero args`,
-`itero secret`, `itero check`, `itero runs`, `itero errors`, `itero watch`,
-`itero service install|status|uninstall`.
+`itero secret`, `itero check`, `itero info`, `itero runs [<run>]`,
+`itero errors`, `itero watch`, `itero service install|status|uninstall`.
+What the daemon does is in `.itero/itero.log`, one JSON line each.
 
 ## Examples
 
@@ -79,6 +80,8 @@ Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero args`,
   payment waiting for its provider, then shipping and a mail.
 - [`examples/page-digest`](examples/page-digest): a page, summarized by an
   AI assistant, by mail.
+- [`examples/photos`](examples/photos): a thumbnail for each photo dropped
+  into a folder the daemon watches.
 
 ## Design
 

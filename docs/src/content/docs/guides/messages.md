@@ -18,8 +18,21 @@ Content-Type: application/json
 ```
 
 It is written to the journal at once, so one sent while the daemon is
-stopped waits for it. Types starting with `action.`, `timer.`, `run.`,
-`workflow.` or `source.` are the engine's own and refused.
+stopped waits for it. Types starting with `itero.`, `action.`, `timer.`,
+`run.`, `workflow.` or `source.` are the engine's own and refused.
+
+`itero emit` prints the message's id, then says what it will do, from the
+workflows on disk:
+
+```
+$ itero emit order.places '{"order": 43}'
+01a15f2c-…
+nothing starts on order.places: did you mean order.placed?
+no daemon is running: it waits for itero daemon
+```
+
+It names the workflows the message starts (`starts: order`), and the runs
+it may reach when some are waiting.
 
 ## What a message does
 
@@ -41,9 +54,32 @@ Messages are kept until their runs end, then a day more.
 
 - **Push**: an app or a webhook posts to `/events`, or a source holds a
   connection open and prints a line when told something.
-- **Pull**: a workflow on a schedule asks (`"on": ["* * * * *"]`), or a
-  source that polls.
-- **Watch**: a source runs `itero watch <path>`.
+- **Pull**: a workflow on a schedule asks
+  (`"on": [{ "schedule": "* * * * *" }]`), or a source that polls.
+- **Watch**: a `path` in a workflow's `on`, below.
+
+## Watching files
+
+```json
+{ "on": [{ "path": "~/Pictures/inbox" }], "steps": ["#make-thumbnails"] }
+```
+
+The daemon watches every `path` of every workflow itself, with the OS's
+own file events (kqueue on macOS, inotify on Linux), all in one thread: a
+path costs a file descriptor and no CPU until something changes.
+
+- Each change starts a run with `{"path": "...", "kind": "changed"}`
+  (`created`, `removed`); a burst of changes is one, once the path has
+  been quiet for half a second.
+- A path that is not there yet is watched for when it comes; its folder
+  must be there.
+- `~/` is your home folder, `$$NAME` an environment variable (never a
+  secret: the path is in the run's data and the log), and a relative path
+  is in the workspace.
+- Editing a workflow moves its watch within a second.
+
+`examples/photos` makes a thumbnail of each photo dropped into its
+`inbox/`.
 
 ## Sources
 
@@ -59,11 +95,13 @@ exec itero watch "$HOME/notes.txt"
 
 It runs in the workspace, with the daemon's `itero` first on its `PATH`.
 Its stdin closes when the daemon goes; its stderr goes to the daemon's
-log. The daemon starts it again when it ends, waiting longer each time,
-and gives up on one that keeps ending; `/health` shows each source.
+stderr. The daemon starts it again when it ends, waiting longer each time,
+and gives up on one that keeps ending (`itero.source.gave-up`); the log
+and `/health` show each source.
 
 `itero watch <path>` prints `{"path", "kind"}` each time a file or folder
-changes, from the OS's own file events, calm for half a second.
+changes, from the OS's own file events, calm for half a second: for a
+source that wants the same events as a `path` in `on`.
 
 A source that keeps its own "last seen" sends one message per new thing,
 so each run has its own: `examples/mail-alert` prints one line per new

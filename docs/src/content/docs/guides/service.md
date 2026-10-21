@@ -18,8 +18,10 @@ The watchdog runs `itero daemon` and restarts it when it:
 - stops answering `/health` (3 checks in a row, 10 seconds apart);
 - stops making passes (none for 10 minutes).
 
-One service per workspace, each on its workspace's port. It logs to
-`.itero/daemon.log` in the workspace.
+One service per workspace, each on its workspace's port. What happens is
+in `.itero/itero.log` ([The log, IDs and names](/guides/log/));
+`.itero/daemon.log` keeps only what the daemon printed itself, such as
+what a crash leaves.
 
 The service keeps the `PATH` of the shell that installed it, so actions find
 the same programs you do. After changing your `PATH`, install it again.

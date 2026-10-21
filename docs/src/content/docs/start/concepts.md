@@ -12,13 +12,13 @@ workflows/order.json       a workflow: its name is its file name
 actions/check-payment      an action: an executable, its name its file name
 sources/mail.received      a source: its messages are of this type
 args/check-payment.json    data for an action (itero args)
-.itero/                    the journal and each workflow's memory
+.itero/                    the journal, the log and each workflow's memory
 ```
 
 **A workflow** says when it runs (`on`) and what it does (`steps`):
 
 ```json
-{ "on": ["order.placed"], "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"] }
+{ "on": [{ "event": "order.placed" }], "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"] }
 ```
 
 **An action** (`#check-payment`) is a small program. It reads its values
@@ -36,9 +36,35 @@ not ready yet (exit 75) makes the run **wait** until a message for it
 arrives. A run ends as `done`, `failed` (the state says
 `"success": false`) or `error` (something broke).
 
-**The daemon** takes the messages, asks the **manager** what each run
-does next, and runs steps in **workers**. Everything is written to the
-journal first, so a daemon that stops carries on where it was.
+**The daemon** runs the workspace, one per workspace. When something
+happens (a message arrives, a schedule comes due, a watched path changes,
+a waiting run's timer fires) it makes a pass, at once or within a second:
+
+```
+itero daemon  (one per workspace)
+│
+├─ sources and watched paths: beside it, feeding messages in
+│
+└─ every pass:
+     1. messages   → start new runs, wake waiting runs
+     2. runs       → decide each run's next steps
+     3. steps      → run each step's action, side by side (up to 8 at a time),
+                     each as its own process
+     4. results    → saved; they are the next pass's input
+```
+
+A run moves through its workflow's steps:
+
+```
+run:  started ─► step ─► step ─► … ─► success / failure / error list ─► ended
+                   │
+                   └─ exit 75: waiting ─► (a matching message, or the hourly retry) ─► the step again
+```
+
+Every arrow is written to the journal (`.itero/journal.sqlite`) before it
+happens, so a daemon that stops carries on where it was, with nothing
+lost and nothing done twice. What it did is in the log,
+`.itero/itero.log` ([The log, IDs and names](/guides/log/)).
 
 Names at a glance:
 
@@ -46,7 +72,8 @@ Names at a glance:
 |---|---|
 | `#check-payment` | an action |
 | `order-process` | a workflow |
-| `order.placed` | a message type |
-| `0 9 * * *` | a schedule (it has spaces) |
+| `{"event": "order.placed"}` | a message type in `on` |
+| `{"schedule": "0 9 * * *"}` | a schedule in `on` |
+| `{"path": "inbox"}` | a watched file or folder in `on` |
 | `$order` | a value in the run's state |
 | `$$API_KEY` | an environment variable or a secret |

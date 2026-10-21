@@ -20,7 +20,7 @@ few lines of JSON: what starts it, and the steps it takes. A step is an
 action, a small executable file in any language, or another workflow.
 
 ```json
-{ "on": ["mail.received"], "steps": ["#notify"] }
+{ "on": [{ "event": "mail.received" }], "steps": ["#notify"] }
 ```
 
 <CardGrid>

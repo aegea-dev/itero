@@ -1,4 +1,4 @@
 #!/bin/sh
 # Tells the customer; a real one sends with curl smtps://, as
-# examples/page-digest does. This one writes the mail to sent.log.
-echo "to $email: order $order, ${tracking:-not shipped}" >> sent.log
+# examples/page-digest does. This one writes the mail to .itero/sent.log.
+echo "to $email: order $order, ${tracking:-not shipped}" >> .itero/sent.log

@@ -1,0 +1,14 @@
+#!/bin/sh
+# A 256-pixel thumbnail of each photo in $path (the folder) that has none
+# yet: sips on macOS, ImageMagick's magick elsewhere.
+mkdir -p thumbnails
+for f in "$path"/*.jpg "$path"/*.jpeg "$path"/*.png; do
+  [ -f "$f" ] || continue
+  t="thumbnails/$(basename "$f")"
+  [ -f "$t" ] && continue
+  if command -v sips >/dev/null; then
+    sips -Z 256 "$f" --out "$t" >/dev/null
+  else
+    magick "$f" -resize 256x256 "$t"
+  fi
+done

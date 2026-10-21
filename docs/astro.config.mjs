@@ -63,6 +63,8 @@ export default defineConfig({
 						{ label: 'Actions', slug: 'guides/actions' },
 						{ label: 'Messages and sources', slug: 'guides/messages' },
 						{ label: 'Args and secrets', slug: 'guides/secrets' },
+						{ label: 'The log, IDs and names', slug: 'guides/log' },
+						{ label: "The daemon's own workflows", slug: 'guides/maintenance' },
 						{ label: 'Start at login', slug: 'guides/service' },
 					],
 				},
