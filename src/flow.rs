@@ -63,11 +63,16 @@ pub enum Name {
 /// Reads a workflow file's text.
 pub fn parse(text: &str) -> Result<Flow, String> {
     let v: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    from_value(&v)
+}
+
+/// Reads a workflow already read as JSON: what the manager is given.
+pub fn from_value(v: &Value) -> Result<Flow, String> {
     let Value::Object(top) = v else {
         return Err("a workflow is an object: { \"on\": [...], \"steps\": [...] }".into());
     };
     let mut f = Flow::default();
-    for (k, v) in &top {
+    for (k, v) in top {
         match k.as_str() {
             "on" => f.on = on(v)?,
             "steps" => f.steps = steps(k, v)?,

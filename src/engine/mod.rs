@@ -11,6 +11,7 @@ pub mod manager;
 pub mod schedule;
 pub mod secrets;
 pub mod service;
+pub mod steps;
 pub mod watchdog;
 pub mod worker;
 
