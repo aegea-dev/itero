@@ -355,12 +355,19 @@ it, which nobody edits, and a few settings a person may give it.
 
 ### Set by a person
 
+Metadata is the read-only part above, plus what a person adds: a few keys
+itero knows, and any others they like.
+
 **A workflow:** an optional `meta` object, so the top level stays `on`
 and `steps`:
 
 ```json
 {
-  "meta": { "description": "Orders from the shop", "from": "2026-11-01", "until": "2026-12-31", "off": false },
+  "meta": {
+    "description": "Orders from the shop",
+    "from": "2026-11-01", "until": "2026-12-31", "off": false,
+    "owner": "ayşe", "team": "shop", "tags": ["orders", "payments"]
+  },
   "on": [{ "event": "order.placed" }],
   "steps": ["#check-payment", "#ship"]
 }
@@ -371,12 +378,20 @@ and `steps`:
 | `description` | text for people |
 | `from`, `until` | dates, or times in RFC 3339: outside them nothing starts it; runs under way finish |
 | `off` | `true`: nothing starts it, without deleting it |
+| any other | the person's own: text, a number, a list or an object; itero keeps it and shows it, and does nothing with it |
 
-**The workspace:** `itero.toml`:
+The read-only names (`id`, `name`, `created`, `path`, `version`) cannot be
+set: `itero check` refuses them, naming the file.
+
+**The workspace:** `itero.toml`, its `[meta]` the same way:
 
 ```toml
 port = 8787
+
+[meta]
 description = "Home: mail and orders"
+owner = "ayşe"
+machine = "the mini in the hall"
 
 [limits]
 workflows = 100     # more is refused by itero check and at the daemon's start
@@ -393,8 +408,8 @@ it starts no new run and logs an `error` line until there is room.
 
 ### Where to see them
 
-- `itero info`: the workspace and the daemon running it, if any.
-- `itero check`: each workflow's `id`, `version` and `meta`.
+- `itero info`: the workspace (its read-only part and its `[meta]`) and the daemon running it, if any.
+- `itero check`: each workflow's read-only part and its `meta`, the person's keys included.
 - `/health`: the workspace and the daemon.
 - The log: `daemon.started` carries every field of the workspace and the
   daemon; other lines carry their IDs, and their names too.
