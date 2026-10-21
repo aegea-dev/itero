@@ -177,20 +177,29 @@ pub notes: Vec<Value>,   // {"event": "step.skipped", "step": "#ship"}, {"event"
 ### Task 5: the daemon's own messages and workflows
 
 **Files:** `src/engine/daemon.rs`, `src/engine/events.rs`,
-`src/engine/worker.rs`, `src/workspace.rs`; create `src/builtin/`
-(`itero-keep.json`, `itero-logs.json`, embedded with `include_str!`);
-tests `tests/daemon.rs`, `tests/log.rs`.
+`src/engine/worker.rs`, `src/workspace.rs`, `src/flow.rs`, `src/cli.rs`,
+`src/engine/http.rs`; create `src/builtin/` (`keep.json`, `logs.json`,
+both `"meta": {"internal": true}`, embedded with `include_str!`); tests
+`tests/daemon.rs`, `tests/log.rs`, `tests/cli.rs`.
 
 **Interfaces (produces):**
 ```rust
 pub const OWN: &str = "itero.";                   // events.rs: types only the daemon sends
 pub fn builtin_flows() -> Vec<(String, Value)>;    // workspace.rs: merged unless a file has the name
+// flow.rs: Meta gains
+pub internal: bool,
 // worker.rs: built-in actions beside NOTIFY
-pub const FORGET: &str = "itero-forget";           // the journal's prune, by keep and space
-pub const ROLL_LOG: &str = "itero-roll-log";       // itero.log -> .1 -> … keeping limits.logs
+pub const FORGET: &str = "forget";           // the journal's prune, by keep and space
+pub const ROLL_LOG: &str = "roll-log";       // itero.log -> .1 -> … keeping limits.logs
 ```
+No name says a workflow is internal: only its `meta` does.
 
 - [ ] Tests first:
+  - any workflow with `"meta": {"internal": true}`: listed apart by
+    `itero check`; its runs left out of `itero runs` and `GET /runs`
+    unless `--all` / `?all=true`, but in `itero errors`; not counted
+    against `limits.runs` or `limits.workflows`; its log lines carry
+    `"internal": true`;
   - `itero.daemon.started`, `itero.run.error`, `itero.run.failed`,
     `itero.source.gave-up`, `itero.space.full`, `itero.log.full` are sent
     when their spec says, with their data;
@@ -198,15 +207,15 @@ pub const ROLL_LOG: &str = "itero-roll-log";       // itero.log -> .1 -> … kee
     type are refused;
   - a workflow on `itero.run.error` runs when another workflow's run ends
     in error, and never for its own runs;
-  - `itero-keep` runs hourly and forgets ended runs past `keep`, with
+  - `keep` runs hourly and forgets ended runs past `keep`, with
     their messages; `itero.space.full` makes it forget sooner; still past
     `space` after that, the daemon starts no new run and logs an `error`
     line until there is room;
-  - past `limits.log`, `itero.log.full` is sent once, and `itero-logs`
-    rolls the log keeping `limits.logs`; `workflows/itero-logs.json`
+  - past `limits.log`, `itero.log.full` is sent once, and `logs`
+    rolls the log keeping `limits.logs`; `workflows/logs.json`
     replaces it; `"meta": {"off": true}` there turns it off.
 - [ ] Run, fail, implement, pass. The prune at the end of each pass goes:
-  `itero-keep` does it.
+  `keep` does it.
 - [ ] Commit: "The daemon's own messages and built-in workflows".
 
 ### Task 6: watching files in the daemon

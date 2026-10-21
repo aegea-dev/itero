@@ -253,7 +253,7 @@ What a message does:
   missed by arriving early.
 - **It is handled once**: the daemon marks it handled in the same
   transaction as the runs it starts and the copies it sends.
-- **It is kept** until its runs end, then for `keep` (1 day unless set), then `itero-keep` forgets it.
+- **It is kept** until its runs end, then for `keep` (1 day unless set), then `keep` forgets it.
 
 ## Watching files
 
@@ -378,6 +378,7 @@ and `steps`:
 | `description` | text for people |
 | `from`, `until` | dates, or times in RFC 3339: outside them nothing starts it; runs under way finish |
 | `off` | `true`: nothing starts it, without deleting it |
+| `internal` | `true`: it looks after the workspace; listed apart, its runs hidden unless asked, outside the limits (see The daemon's own workflows) |
 | any other | the person's own: text, a number, a list or an object; itero keeps it and shows it, and does nothing with it |
 
 The read-only names (`id`, `name`, `created`, `path`, `version`) cannot be
@@ -404,7 +405,7 @@ logs = 3            # rolled logs kept: itero.log.1 to itero.log.3
 ```
 
 Each limit has the default shown. Past `space`, the daemon sends
-`itero.space.full`, and its `itero-keep` workflow forgets ended runs
+`itero.space.full`, and its `keep` workflow forgets ended runs
 sooner than `keep`, oldest first (see The daemon's own workflows); if
 `.itero/` is still too big, it starts no new run and logs an `error` line
 until there is room.
@@ -447,7 +448,7 @@ depends on the event:
 - **It holds no secrets:** only what steps printed, never their
   environment.
 - **It does not grow for ever:** past its `log` limit (10 MB) the daemon
-  sends `itero.log.full`, and the `itero-logs` workflow rolls it:
+  sends `itero.log.full`, and the `logs` workflow rolls it:
   `itero.log` becomes `itero.log.1`, `.1` becomes `.2`, and so on, keeping
   `logs` of them (3). A workspace can roll its own way instead: compress
   them, send them somewhere. The daemon opens the log for each line, so a
@@ -494,24 +495,43 @@ A message about a workflow's run never starts a run of that same workflow
 (when it is about an error there), so a broken workflow cannot set itself
 off again and again.
 
-**Built-in workflows.** itero carries a few, named with the `itero-`
-prefix, and runs them as if they were in `workflows/`:
+**Internal workflows.** A workflow with `"meta": {"internal": true}` looks
+after the workspace rather than doing its work. Nothing in its name says
+so: any workflow can be internal. Being internal:
+
+- `itero check` lists it apart, as internal;
+- `itero runs` and `GET /runs` leave its runs out unless asked
+  (`itero runs --all`, `?all=true`); `itero errors` shows its errors like
+  any other's;
+- its runs do not count against `limits.runs`, nor itself against
+  `limits.workflows`;
+- its lines in the log carry `"internal": true`.
+
+**Built-in workflows.** itero carries two, internal, and runs them as if
+they were in `workflows/`:
+
+```json
+{ "meta": { "internal": true, "description": "Forgets what ended long enough ago" },
+  "on": [{ "schedule": "0 * * * *" }, { "event": "itero.space.full" }],
+  "steps": ["#forget"] }
+```
 
 | Workflow | On | Does |
 |---|---|---|
-| `itero-keep` | every hour, and `itero.space.full` | `#itero-forget`: forgets ended runs past `keep` (sooner, when space is short) |
-| `itero-logs` | `itero.log.full` | `#itero-roll-log`: rolls the log, keeping `logs` of them |
+| `keep` | every hour, and `itero.space.full` | `#forget`: forgets ended runs past `keep` (sooner, when space is short) |
+| `logs` | `itero.log.full` | `#roll-log`: rolls the log, keeping `logs` of them |
 
-Their steps are built-in actions, like `#notify`: `#itero-forget` and
-`#itero-roll-log`.
+Their steps are built-in actions, like `#notify`: `#forget` and
+`#roll-log`.
 
 A workspace's own maintenance is the same thing: for example, rolling the
 log and then compressing and sending away the oldest, with its own
-`workflows/itero-logs.json`:
+`workflows/logs.json`:
 
 ```json
-{ "on": [{ "event": "itero.log.full" }],
-  "steps": ["#itero-roll-log", "#compress-old-logs", "#upload-old-logs"] }
+{ "meta": { "internal": true },
+  "on": [{ "event": "itero.log.full" }],
+  "steps": ["#roll-log", "#compress-old-logs", "#upload-old-logs"] }
 ```
 
 **A workspace's own**, for what it wants done: a workflow on the daemon's
@@ -523,7 +543,7 @@ messages, written like any other:
 ```
 
 - **Changing a built-in workflow:** a file of its name in `workflows/`
-  (`workflows/itero-keep.json`) is used instead.
+  (`workflows/keep.json`) is used instead.
 - **Turning one off:** that file with `"meta": {"off": true}`.
 
 Later, more of them, as real needs come: a doctor that asks an AI
