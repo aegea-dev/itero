@@ -274,3 +274,42 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
         assert!(check.contains(says), "{says}: {check}");
     }
 }
+
+#[test]
+fn emit_says_what_a_message_starts() {
+    let d = workspace();
+    file(d.path(), "itero.toml", "port = 8798\n");
+    file(
+        d.path(),
+        "workflows/sipariş.json",
+        r##"{ "on": [{ "event": "order.placed" }], "steps": ["#gönder"] }"##,
+    );
+    file(
+        d.path(),
+        "workflows/kayıt.json",
+        r##"{ "on": [{ "event": "order.placed" }], "steps": ["#gönder"] }"##,
+    );
+    file(d.path(), "actions/gönder", "#!/bin/sh\n");
+    let o = itero(d.path(), &["emit", "order.placed", r#"{"sipariş": 1}"#]);
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(out(&o).trim().len(), 36, "the message's id on stdout");
+    let said = err(&o);
+    assert!(said.contains("starts: kayıt, sipariş"), "{said}");
+    assert!(
+        said.contains("no daemon is running: it waits for itero daemon"),
+        "{said}"
+    );
+    let o = itero(d.path(), &["emit", "order.places", "{}"]);
+    assert!(o.status.success(), "{o:?}");
+    let said = err(&o);
+    assert!(
+        said.contains("nothing starts on order.places: did you mean order.placed?"),
+        "{said}"
+    );
+    let o = itero(d.path(), &["emit", "çok.başka.bir.şey", "{}"]);
+    assert!(!err(&o).contains("did you mean"), "{}", err(&o));
+    // every one is saved all the same
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let j = itero::engine::journal::Journal::open(&ws).unwrap();
+    assert_eq!(j.events(Some("itero.app")).unwrap().len(), 3);
+}

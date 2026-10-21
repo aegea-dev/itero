@@ -408,8 +408,32 @@ fn dispatch(cli: Cli) -> Result<()> {
                 .map(|d| serde_json::from_str(&d).map_err(|_| anyhow!("the data is a JSON object")))
                 .transpose()?;
             let now = crate::engine::daemon::stamp(chrono::Utc::now());
+            let fields = data
+                .as_ref()
+                .and_then(|d: &serde_json::Value| d.as_object().cloned())
+                .unwrap_or_default();
             let id = crate::engine::events::emit(&ws, &kind, data, &now)?;
             println!("{id}");
+            // what it will do, on stderr: stdout stays the id for scripts
+            let fate = crate::engine::events::fate(&ws, &kind, &fields)?;
+            if !fate.starts.is_empty() {
+                eprintln!("starts: {}", fate.starts.join(", "));
+            }
+            if fate.waiting > 0 {
+                eprintln!("may reach {} waiting run(s)", fate.waiting);
+            }
+            if fate.starts.is_empty() {
+                match &fate.nearest {
+                    Some(n) => eprintln!("nothing starts on {kind}: did you mean {n}?"),
+                    None => eprintln!("nothing starts on {kind}"),
+                }
+            }
+            let me = crate::engine::journal::Journal::open(&ws)?.workspace()?;
+            let running =
+                daemon_health(ws.port).is_some_and(|h| h["workspace"]["id"] == me.id.as_str());
+            if !running {
+                eprintln!("no daemon is running: it waits for itero daemon");
+            }
         }
         Cmd::Args { action, data, file } => {
             let ws = workspace()?;
