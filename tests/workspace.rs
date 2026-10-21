@@ -2,12 +2,12 @@ use itero::workspace;
 use std::path::Path;
 
 /// An action that runs in the manager and needs nothing from outside.
-const SET: &str = r#"{ "action": "memory.set@1", "with": { "son": "ölçüm" } }"#;
+const SET: &str = r##"{ "action": "memory.set@1", "with": { "son": "ölçüm" } }"##;
 
 fn flow(name: &str, action: &str) -> String {
     format!(
-        r#"{{ "name": "{name}", "description": "ölçüm", "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
-             "transitions": [ {{ "from": "basla", "to": "bitti", "do": [ {action} ] }} ] }}"#
+        r##"{{ "name": "{name}", "description": "ölçüm", "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
+             "transitions": [ {{ "from": "basla", "to": "bitti", "do": [ {action} ] }} ] }}"##
     )
 }
 
@@ -90,8 +90,8 @@ fn workspace_actions_are_found_by_name_and_checked_against_workflows() {
     write(
         d.path(),
         "actions/posta/action.json",
-        r#"{ "name": "posta", "version": 2, "type": "executable",
-             "targets": { "kontrol": { "executable": "./kontrol.sh" } } }"#,
+        r##"{ "name": "posta", "version": 2, "type": "executable",
+             "targets": { "kontrol": { "executable": "./kontrol.sh" } } }"##,
     );
     write(
         d.path(),
@@ -132,9 +132,9 @@ fn two_workflows_with_one_name_are_an_error_naming_both() {
 fn workspace_triggers_add_to_or_replace_a_workflows_own() {
     let d = tempfile::tempdir().unwrap();
     write(d.path(), "itero.toml", "");
-    let own = r#"{ "name": "posta", "triggers": [ { "schedule": "*/5 * * * *" } ],
+    let own = r##"{ "name": "posta", "triggers": [ { "schedule": "*/5 * * * *" } ],
       "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
-      "transitions": [ { "from": "basla", "to": "bitti" } ] }"#;
+      "transitions": [ { "from": "basla", "to": "bitti" } ] }"##;
     write(d.path(), "workflows/posta.json", own);
     let ws = workspace::find(d.path()).unwrap();
     assert_eq!(ws.triggers, d.path().join("triggers"));
@@ -143,7 +143,7 @@ fn workspace_triggers_add_to_or_replace_a_workflows_own() {
     write(
         d.path(),
         "triggers/posta.json",
-        r#"{ "triggers": [ { "on": "posta.geldi", "args": { "kutu": "gelen kutusu" } } ] }"#,
+        r##"{ "triggers": [ { "on": "posta.geldi", "args": { "kutu": "gelen kutusu" } } ] }"##,
     );
     let t = triggers(&ws);
     assert_eq!(t.len(), 2, "added");
@@ -151,7 +151,7 @@ fn workspace_triggers_add_to_or_replace_a_workflows_own() {
     write(
         d.path(),
         "triggers/posta.json",
-        r#"{ "replace": true, "triggers": [ { "schedule": "0 9 * * *", "args": { "kutu": "iş" } } ] }"#,
+        r##"{ "replace": true, "triggers": [ { "schedule": "0 9 * * *", "args": { "kutu": "iş" } } ] }"##,
     );
     let t = triggers(&ws);
     assert_eq!(t.len(), 1, "replaced");
@@ -167,7 +167,7 @@ fn a_trigger_file_for_no_workflow_or_a_bad_trigger_is_an_error_naming_it() {
     write(
         d.path(),
         "triggers/yok.json",
-        r#"{ "triggers": [ { "on": "x" } ] }"#,
+        r##"{ "triggers": [ { "on": "x" } ] }"##,
     );
     let ws = workspace::find(d.path()).unwrap();
     let e = format!("{:#}", ws.workflows().err().unwrap());
@@ -179,7 +179,7 @@ fn a_trigger_file_for_no_workflow_or_a_bad_trigger_is_an_error_naming_it() {
     write(
         d.path(),
         "triggers/posta.json",
-        r#"{ "triggers": [ { "schedule": "her gün" } ] }"#,
+        r##"{ "triggers": [ { "schedule": "her gün" } ] }"##,
     );
     let e = format!("{:#}", ws.workflows().err().unwrap());
     assert!(
@@ -195,10 +195,10 @@ fn a_container_action_names_its_image_and_nothing_else_does() {
     write(
         d.path(),
         "actions/posta/action.json",
-        r#"{ "name": "posta", "version": 1, "type": "container", "image": "python:3.13-alpine",
+        r##"{ "name": "posta", "version": 1, "type": "container", "image": "python:3.13-alpine",
              "description": "postaya bakış", "environment": { "DİL": "tr" },
              "limits": { "timeout": "30s", "prepare": "15m" },
-             "targets": { "bak": { "executable": "python3", "arguments": ["bak.py", "--kutu", "Gelen"] } } }"#,
+             "targets": { "bak": { "executable": "python3", "arguments": ["bak.py", "--kutu", "Gelen"] } } }"##,
     );
     let ws = workspace::find(d.path()).unwrap();
     let (_, def) = ws.action("posta").unwrap();
@@ -206,31 +206,31 @@ fn a_container_action_names_its_image_and_nothing_else_does() {
     assert_eq!(def.limits.unwrap().prepare.as_deref(), Some("15m"));
     for (text, says) in [
         (
-            r#"{ "name": "posta", "version": 1, "type": "container", "targets": { "bak": { "executable": "python3" } } }"#,
+            r##"{ "name": "posta", "version": 1, "type": "container", "targets": { "bak": { "executable": "python3" } } }"##,
             "a container needs image",
         ),
         (
-            r#"{ "name": "posta", "version": 1, "type": "executable", "image": "python:3.13-alpine", "targets": { "bak": { "executable": "./bak.sh" } } }"#,
+            r##"{ "name": "posta", "version": 1, "type": "executable", "image": "python:3.13-alpine", "targets": { "bak": { "executable": "./bak.sh" } } }"##,
             "image is for the container type",
         ),
         (
-            r#"{ "name": "posta", "version": 1, "type": "container", "image": "--privileged", "targets": { "bak": { "executable": "sh" } } }"#,
+            r##"{ "name": "posta", "version": 1, "type": "container", "image": "--privileged", "targets": { "bak": { "executable": "sh" } } }"##,
             "is not an image name",
         ),
         (
-            r#"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "limits": { "heartbeat": "10s" }, "targets": { "bak": { "executable": "sh" } } }"#,
+            r##"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "limits": { "heartbeat": "10s" }, "targets": { "bak": { "executable": "sh" } } }"##,
             "heartbeat does not reach a container",
         ),
         (
-            r#"{ "name": "posta", "version": 1, "type": "executable", "limits": { "prepare": "5m" }, "targets": { "bak": { "executable": "./bak.sh" } } }"#,
+            r##"{ "name": "posta", "version": 1, "type": "executable", "limits": { "prepare": "5m" }, "targets": { "bak": { "executable": "./bak.sh" } } }"##,
             "prepare is for the container type",
         ),
         (
-            r#"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "limits": { "prepare": "bir saat" }, "targets": { "bak": { "executable": "sh" } } }"#,
+            r##"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "limits": { "prepare": "bir saat" }, "targets": { "bak": { "executable": "sh" } } }"##,
             "bir saat",
         ),
         (
-            r#"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "targets": { "bak": { "module": "bakış" } } }"#,
+            r##"{ "name": "posta", "version": 1, "type": "container", "image": "alpine:3.22", "targets": { "bak": { "module": "bakış" } } }"##,
             "an executable target",
         ),
     ] {
@@ -247,18 +247,18 @@ fn a_workspace_reads_its_sources() {
     write(
         d.path(),
         "sources/posta.json",
-        r#"{ "source": "watch@1", "with": { "path": "/var/mail/ayşe" }, "emit": "posta.degisti" }"#,
+        r##"{ "source": "watch@1", "with": { "path": "/var/mail/ayşe" }, "emit": "posta.degisti" }"##,
     );
     write(
         d.path(),
         "sources/takvim.json",
-        r#"{ "program": ["./takvim.sh", "--gün", "bugün"], "with": { "hesap": "iş" } }"#,
+        r##"{ "program": ["./takvim.sh", "--gün", "bugün"], "with": { "hesap": "iş" } }"##,
     );
     write(
         d.path(),
         "sources/kutu.json",
-        r#"{ "program": ["python3", "bekle.py"], "image": "python:3.13-alpine", "emit": "posta.geldi",
-             "with": { "parola": "${env.IMAP_PAROLA}" } }"#,
+        r##"{ "program": ["python3", "bekle.py"], "image": "python:3.13-alpine", "emit": "posta.geldi",
+             "with": { "parola": "${env.IMAP_PAROLA}" } }"##,
     );
     let ws = workspace::find(d.path()).unwrap();
     let all = ws.sources().unwrap();
@@ -273,46 +273,46 @@ fn a_workspace_reads_its_sources() {
 fn a_bad_source_file_is_an_error_naming_it() {
     for (text, says) in [
         (
-            r#"{ "source": "watch@1", "emit": "a.b" }"#,
+            r##"{ "source": "watch@1", "emit": "a.b" }"##,
             "watch@1 needs with.path",
         ),
         (
-            r#"{ "source": "watch@1", "with": { "path": "/x" } }"#,
+            r##"{ "source": "watch@1", "with": { "path": "/x" } }"##,
             "watch@1 needs emit",
         ),
         (
-            r#"{ "source": "izle@1", "with": {}, "emit": "a.b" }"#,
+            r##"{ "source": "izle@1", "with": {}, "emit": "a.b" }"##,
             "no built-in source izle@1",
         ),
         (
-            r#"{ "program": [], "emit": "a.b" }"#,
+            r##"{ "program": [], "emit": "a.b" }"##,
             "a source is a built-in (source) or a program",
         ),
         (
-            r#"{ "source": "watch@1", "program": ["x"], "with": { "path": "/x" }, "emit": "a.b" }"#,
+            r##"{ "source": "watch@1", "program": ["x"], "with": { "path": "/x" }, "emit": "a.b" }"##,
             "a source is a built-in (source) or a program",
         ),
         (
-            r#"{ "source": "watch@1", "image": "alpine:3.22", "with": { "path": "/x" }, "emit": "a.b" }"#,
+            r##"{ "source": "watch@1", "image": "alpine:3.22", "with": { "path": "/x" }, "emit": "a.b" }"##,
             "image is for a program",
         ),
         (
-            r#"{ "program": ["sh"], "image": "-v", "emit": "a.b" }"#,
+            r##"{ "program": ["sh"], "image": "-v", "emit": "a.b" }"##,
             "is not an image name",
         ),
         (
-            r#"{ "program": ["x"], "emit": "workflow.paused" }"#,
+            r##"{ "program": ["x"], "emit": "workflow.paused" }"##,
             "the engine's own",
         ),
         (
-            r#"{ "program": ["x"], "emit": "Büyük.Harf" }"#,
+            r##"{ "program": ["x"], "emit": "Büyük.Harf" }"##,
             "an event type",
         ),
         (
-            r#"{ "program": ["x"], "with": { "s": "${env.}" } }"#,
+            r##"{ "program": ["x"], "with": { "s": "${env.}" } }"##,
             "bad expression",
         ),
-        (r#"{ "program": ["x"], "renk": "mavi" }"#, "unknown field"),
+        (r##"{ "program": ["x"], "renk": "mavi" }"##, "unknown field"),
     ] {
         let d = tempfile::tempdir().unwrap();
         write(d.path(), "itero.toml", "");
@@ -325,7 +325,11 @@ fn a_bad_source_file_is_an_error_naming_it() {
     }
     let d = tempfile::tempdir().unwrap();
     write(d.path(), "itero.toml", "");
-    write(d.path(), "sources/Kötü Ad.json", r#"{ "program": ["x"] }"#);
+    write(
+        d.path(),
+        "sources/Kötü Ad.json",
+        r##"{ "program": ["x"] }"##,
+    );
     let e = format!(
         "{:#}",
         workspace::find(d.path()).unwrap().sources().unwrap_err()
@@ -336,12 +340,119 @@ fn a_bad_source_file_is_an_error_naming_it() {
 #[test]
 fn a_workflows_version_leaves_its_triggers_out() {
     let a = itero::workflow::parse(
-        r#"{ "name": "akis", "triggers": [ { "schedule": "*/5 * * * *" } ],
+        r##"{ "name": "akis", "triggers": [ { "schedule": "*/5 * * * *" } ],
       "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
-      "transitions": [ { "from": "basla", "to": "bitti" } ] }"#,
+      "transitions": [ { "from": "basla", "to": "bitti" } ] }"##,
     )
     .unwrap();
     let mut b = a.clone();
     b.triggers.clear();
     assert_eq!(itero::workflow::version(&a), itero::workflow::version(&b));
+}
+
+// The simple form: workflows, action files, source files, args.
+
+fn executable(root: &Path, rel: &str, text: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    write(root, rel, text);
+    std::fs::set_permissions(root.join(rel), std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn simple(d: &Path) -> workspace::Workspace {
+    write(d, "itero.toml", "");
+    workspace::find(d).unwrap()
+}
+
+#[test]
+fn workflows_are_named_after_their_files() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = simple(d.path());
+    write(
+        d.path(),
+        "workflows/posta-uyarısı.json",
+        r##"{ "on": ["mail.received"], "steps": ["#notify"] }"##,
+    );
+    write(
+        d.path(),
+        "workflows/sipariş.json",
+        r##"{ "steps": ["#ship"] }"##,
+    );
+    let flows = ws.flows().unwrap();
+    let names: Vec<&str> = flows.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, vec!["posta-uyarısı", "sipariş"]);
+    write(d.path(), "workflows/bozuk.json", r##"{ "steps": [] }"##);
+    let e = format!("{:#}", ws.flows().unwrap_err());
+    assert!(
+        e.contains("bozuk.json") && e.contains("steps is empty"),
+        "{e}"
+    );
+}
+
+#[test]
+fn an_action_is_its_latest_version_unless_pinned() {
+    #[cfg(unix)]
+    {
+        let d = tempfile::tempdir().unwrap();
+        let ws = simple(d.path());
+        executable(d.path(), "actions/notify@0.2", "#!/bin/sh\n");
+        executable(d.path(), "actions/notify@0.10", "#!/bin/sh\n");
+        executable(d.path(), "actions/kargola", "#!/bin/sh\n");
+        let file = |n: &str, v: Option<&str>| {
+            ws.action_file(n, v)
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        };
+        assert_eq!(file("notify", None).unwrap(), "notify@0.10");
+        assert_eq!(file("notify", Some("0.2")).unwrap(), "notify@0.2");
+        assert_eq!(file("kargola", None).unwrap(), "kargola");
+        let e = format!("{:#}", file("notify", Some("0.3")).unwrap_err());
+        assert!(e.contains("notify@0.3"), "{e}");
+        let e = format!("{:#}", file("yok", None).unwrap_err());
+        assert!(e.contains("no action yok"), "{e}");
+        write(d.path(), "actions/çalışmaz", "#!/bin/sh\n");
+        let e = format!("{:#}", file("çalışmaz", None).unwrap_err());
+        assert!(e.contains("not executable"), "{e}");
+    }
+}
+
+#[test]
+fn a_source_sends_messages_of_its_file_name() {
+    #[cfg(unix)]
+    {
+        let d = tempfile::tempdir().unwrap();
+        let ws = simple(d.path());
+        executable(d.path(), "sources/mail.received", "#!/bin/sh\n");
+        let s = ws.source_files().unwrap();
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].0, "mail.received");
+        executable(d.path(), "sources/posta", "#!/bin/sh\n");
+        let e = format!("{:#}", ws.source_files().unwrap_err());
+        assert!(e.contains("posta") && e.contains("message type"), "{e}");
+    }
+}
+
+#[test]
+fn args_are_an_object_or_a_list_of_objects() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = simple(d.path());
+    assert_eq!(ws.args("kargola").unwrap(), None);
+    write(
+        d.path(),
+        "args/kargola.json",
+        r##"{ "firma": "PTT Kargo" }"##,
+    );
+    assert_eq!(
+        ws.args("kargola").unwrap(),
+        Some(serde_json::json!({"firma": "PTT Kargo"}))
+    );
+    write(
+        d.path(),
+        "args/posta.json",
+        r##"[ { "user": "ayşe@örnek.test" }, { "user": "can@örnek.test" } ]"##,
+    );
+    assert!(ws.args("posta").unwrap().unwrap().is_array());
+    for (text, name) in [("[1, 2]", "bir"), (r#""çay""#, "iki"), ("{", "üç")] {
+        write(d.path(), &format!("args/{name}.json"), text);
+        let e = format!("{:#}", ws.args(name).unwrap_err());
+        assert!(e.contains(&format!("{name}.json")), "{text}: {e}");
+    }
 }
