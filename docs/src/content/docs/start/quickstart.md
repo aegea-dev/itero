@@ -32,20 +32,29 @@ chmod +x actions/hello
 itero check
 ```
 
-`itero check` reads every file and says what is wrong. Now send a message
-and run one pass of the daemon:
+`itero check` reads every file and says what is wrong. Start the daemon
+and leave it running; it takes each message as it comes:
+
+```sh
+itero daemon
+```
+
+In another terminal, in the same folder, send a message:
 
 ```sh
 itero emit greet.someone '{"name": "Ayşe"}'
-itero daemon --once
-itero runs
 ```
 
-A notification says "Merhaba, Ayşe!", and `itero runs` shows the run as
-`done`, with its name: `itero runs <name>` tells it step by step, and
-`.itero/itero.log` has a line for each step. Without `--once`, `itero
-daemon` keeps running and takes each message as it comes; `itero service
-install` starts it at login.
+Within a second a notification says "Merhaba, Ayşe!". Then:
+
+```sh
+itero workflows        # each workflow, its runs, and whether the daemon runs
+itero runs             # the run, done, with its name
+itero runs <name>      # the run step by step
+```
+
+`.itero/itero.log` has a line for each step. Ctrl-C stops the daemon;
+`itero service install` runs it from login on.
 
 ## Next
 

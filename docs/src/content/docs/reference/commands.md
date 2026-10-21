@@ -19,8 +19,6 @@ What it does goes to `.itero/itero.log` ([The log](/guides/log/)).
 |---|---|
 | `--interval N` | seconds between passes (1) |
 | `--no-serve` | the passes only, no HTTP API |
-| `--once` | one pass, then stop (sources and watched paths do not run) |
-| `--now TIME` | with `--once`: the time to run at, RFC 3339 (for tests) |
 
 In a terminal, it prints a line for each pass that did something.
 
