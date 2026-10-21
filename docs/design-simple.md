@@ -399,7 +399,8 @@ runs = 1000         # runs under way at once; past it, messages wait their turn
 steps = 8           # steps running at once
 space = "1GB"       # .itero/: the journal, the log, memory
 keep = "1d"         # how long ended runs and their messages are kept
-log = "10MB"        # then the log is rotated
+log = "10MB"        # past it, the log is rolled (see The daemon's own workflows)
+logs = 3            # rolled logs kept: itero.log.1 to itero.log.3
 ```
 
 Each limit has the default shown. Past `space`, the daemon sends
@@ -445,8 +446,12 @@ depends on the event:
 
 - **It holds no secrets:** only what steps printed, never their
   environment.
-- **It does not grow for ever:** past 10 MB it becomes `itero.log.1`, and
-  the one before goes.
+- **It does not grow for ever:** past its `log` limit (10 MB) the daemon
+  sends `itero.log.full`, and the `itero-logs` workflow rolls it:
+  `itero.log` becomes `itero.log.1`, `.1` becomes `.2`, and so on, keeping
+  `logs` of them (3). A workspace can roll its own way instead: compress
+  them, send them somewhere. The daemon opens the log for each line, so a
+  file renamed under it is no trouble.
 - **Reading it is `jq`'s job:**
   ```sh
   jq 'select(.run == "01a15eb3…")' .itero/itero.log            # one run
@@ -483,6 +488,7 @@ the daemon may send (refused from `itero emit`, `/events` and sources):
 | `itero.run.failed` | a run ended as failed | `workflow`, `run`, `why` |
 | `itero.source.gave-up` | a source kept ending and was given up on | `source`, `why` |
 | `itero.space.full` | `.itero/` is past its `space` limit | `used`, `limit` |
+| `itero.log.full` | the log is past its `log` limit | `path`, `size`, `limit` |
 
 A message about a workflow's run never starts a run of that same workflow
 (when it is about an error there), so a broken workflow cannot set itself
@@ -493,9 +499,20 @@ prefix, and runs them as if they were in `workflows/`:
 
 | Workflow | On | Does |
 |---|---|---|
-| `itero-keep` | every hour, and `itero.space.full` | `#itero-forget`: forgets ended runs past `keep` (sooner, when space is short), and rotates the log past its size |
+| `itero-keep` | every hour, and `itero.space.full` | `#itero-forget`: forgets ended runs past `keep` (sooner, when space is short) |
+| `itero-logs` | `itero.log.full` | `#itero-roll-log`: rolls the log, keeping `logs` of them |
 
-Its steps are built-in actions, like `#notify`: `#itero-forget`.
+Their steps are built-in actions, like `#notify`: `#itero-forget` and
+`#itero-roll-log`.
+
+A workspace's own maintenance is the same thing: for example, rolling the
+log and then compressing and sending away the oldest, with its own
+`workflows/itero-logs.json`:
+
+```json
+{ "on": [{ "event": "itero.log.full" }],
+  "steps": ["#itero-roll-log", "#compress-old-logs", "#upload-old-logs"] }
+```
 
 **A workspace's own**, for what it wants done: a workflow on the daemon's
 messages, written like any other:
