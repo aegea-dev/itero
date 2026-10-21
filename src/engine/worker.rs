@@ -439,6 +439,11 @@ fn notifiers(title: &str, body: &str) -> Vec<(PathBuf, Vec<String>)> {
 fn notify(job: &Job) -> Result<Value, String> {
     let title = text(job, "title").ok_or("needs with.title")?;
     let body = text(job, "text").ok_or("needs with.text")?;
+    show(&title, &body)
+}
+
+/// Shows a notification: see `notify`.
+fn show(title: &str, body: &str) -> Result<Value, String> {
     if let Some(log) = std::env::var_os("ITERO_NOTIFY_LOG") {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
@@ -449,7 +454,7 @@ fn notify(job: &Job) -> Result<Value, String> {
         return Ok(json!({"shown": true}));
     }
     let mut tried = vec![];
-    for (program, args) in notifiers(&title, &body) {
+    for (program, args) in notifiers(title, body) {
         let out = match Command::new(&program)
             .args(&args)
             .stdin(Stdio::null())
@@ -711,21 +716,7 @@ fn program(job: &Job) -> Result<Value, Failure> {
         return Err(Failure::Lost(format!("killed ({})", out.status)));
     };
     if exit != 0 {
-        // the end of stderr: where a traceback says what went wrong
-        let all = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        let why: String = all
-            .chars()
-            .rev()
-            .take(500)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        let why = if why.is_empty() {
-            format!("exit {exit}")
-        } else {
-            format!("exit {exit}: {why}")
-        };
+        let why = exit_why(exit, &out.stderr);
         // Docker failed, not the program (which exits 125 itself only
         // rarely: it then runs again, up to the daemon's limit)
         if exit == RUNTIME_FAILED && matches!(p.interpreter, Some(Interpreter::Container { .. })) {
@@ -734,4 +725,127 @@ fn program(job: &Job) -> Result<Value, Failure> {
         return Err(Failure::Error(why));
     }
     Ok(output(&out))
+}
+
+/// Why a program failed: its exit code, and the end of its stderr, where a
+/// traceback says what went wrong.
+fn exit_why(exit: i32, stderr: &[u8]) -> String {
+    let all = String::from_utf8_lossy(stderr).trim().to_string();
+    let tail: String = all
+        .chars()
+        .rev()
+        .take(500)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if tail.is_empty() {
+        format!("exit {exit}")
+    } else {
+        format!("exit {exit}: {tail}")
+    }
+}
+
+/// The built-in `#notify`, when the workspace has no action of that name.
+pub const NOTIFY: &str = "notify";
+
+/// What `itero worker` reads for one step (`docs/design-simple.md`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StepRun {
+    /// The action's file, or `NOTIFY` for the built-in.
+    pub file: PathBuf,
+    /// The workspace: where the action runs.
+    pub root: PathBuf,
+    /// Its values, as environment variables.
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+    /// The run's state, given on stdin.
+    #[serde(default)]
+    pub state: Map<String, Value>,
+    /// `$ITERO_MEMORY`: the workflow's file to keep things in between runs.
+    pub memory: PathBuf,
+    /// `$ITERO_WAITING_SINCE`, when it runs again after waiting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_since: Option<String>,
+    /// Seconds it may take (the daemon stops it after that).
+    pub timeout: u64,
+}
+
+/// How a step went, as `itero worker` prints it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Outcome {
+    /// Exit 0: what it printed, to join the state.
+    Done(Map<String, Value>),
+    /// Exit 75: not yet; what it printed joins the state all the same.
+    NotYet(Map<String, Value>),
+}
+
+/// The exit code with which an action says "not yet" (`EX_TEMPFAIL`). The
+/// worker reads it from the action and never passes it on: its own exit
+/// 75, `LOST_EXIT`, means a lost job.
+pub const NOT_YET: i32 = 75;
+
+/// Runs one step: the action with its values in its environment and the
+/// state on stdin; or the built-in `#notify`.
+pub fn run_step(r: &StepRun) -> Result<Outcome, Failure> {
+    if r.file == Path::new(NOTIFY) {
+        let body = r
+            .env
+            .get("text")
+            .ok_or_else(|| Failure::Error("#notify needs $text".into()))?;
+        let title = r.env.get("title").map_or("itero", String::as_str);
+        show(title, body)?;
+        return Ok(Outcome::Done(Map::new()));
+    }
+    if let Some(dir) = r.memory.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+    }
+    let mut c = Command::new(&r.file);
+    c.current_dir(&r.root)
+        .envs(&r.env)
+        .env("ITERO_MEMORY", &r.memory)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(since) = &r.waiting_since {
+        c.env("ITERO_WAITING_SINCE", since);
+    }
+    let mut child = c.spawn().map_err(|e| match e.kind() {
+        std::io::ErrorKind::PermissionDenied => {
+            format!("{} is not executable: chmod +x it", r.file.display())
+        }
+        _ => format!("cannot run {}: {e}", r.file.display()),
+    })?;
+    let mut stdin = child.stdin.take().expect("piped");
+    // an action that reads nothing closes its end early: not an error
+    let _ = writeln!(stdin, "{}", Value::Object(r.state.clone()));
+    drop(stdin);
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let Some(exit) = out.status.code() else {
+        return Err(Failure::Lost(format!("killed ({})", out.status)));
+    };
+    match exit {
+        0 => Ok(Outcome::Done(printed(&out.stdout)?)),
+        NOT_YET => Ok(Outcome::NotYet(printed(&out.stdout)?)),
+        _ => Err(Failure::Error(exit_why(exit, &out.stderr))),
+    }
+}
+
+/// What an action printed: nothing, or one JSON object.
+fn printed(stdout: &[u8]) -> Result<Map<String, Value>, Failure> {
+    let text = String::from_utf8_lossy(stdout);
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(Map::new());
+    }
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(m)) => Ok(m),
+        _ => {
+            let start: String = text.chars().take(80).collect();
+            Err(Failure::Error(format!(
+                "it printed something that is not a JSON object: {start}"
+            )))
+        }
+    }
 }
