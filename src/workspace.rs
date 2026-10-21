@@ -202,37 +202,6 @@ impl Workspace {
         Ok(out)
     }
 
-    /// Every source in the sources folders, checked: its name, its folder,
-    /// its definition. A name found twice is an error naming both files.
-    pub fn sources(&self) -> Result<Vec<(String, PathBuf, crate::sources::Definition)>> {
-        let mut out: Vec<(String, PathBuf, crate::sources::Definition)> = vec![];
-        for dir in &self.sources {
-            if !dir.exists() {
-                continue;
-            }
-            let files = listed(dir, |p| {
-                (p.extension().is_some_and(|x| x == "json") && p.is_file()).then(|| p.to_path_buf())
-            })?;
-            for f in files {
-                let d = crate::sources::load_file(&f)?;
-                let name = f
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                if let Some((_, other, _)) = out.iter().find(|(n, _, _)| *n == name) {
-                    bail!(
-                        "two sources named {name}: in {} and {}",
-                        other.display(),
-                        dir.display()
-                    );
-                }
-                out.push((name, dir.clone(), d));
-            }
-        }
-        Ok(out)
-    }
-
     /// Every workflow in the simple form (`docs/design-simple.md`), named
     /// after its file. Two with one name is an error naming both.
     pub fn flows(&self) -> Result<Vec<(String, crate::flow::Flow)>> {
@@ -297,7 +266,8 @@ impl Workspace {
         for dir in self.sources.iter().filter(|d| d.exists()) {
             for f in listed(dir, |p| p.is_file().then(|| p.to_path_buf()))? {
                 let kind = stem_with_ext(&f);
-                if !crate::flow::is_message_type(&kind) {
+                if !crate::flow::is_message_type(&kind) || crate::engine::events::engine_own(&kind)
+                {
                     bail!(
                         "{}: a source's name is the message type it sends, two or more words joined by . (like mail.received)",
                         f.display()

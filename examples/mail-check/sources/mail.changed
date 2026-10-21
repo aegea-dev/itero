@@ -1,0 +1,3 @@
+#!/bin/sh
+# tells itero each time the local mailbox changes
+exec itero watch "/var/mail/$USER"

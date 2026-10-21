@@ -1,1 +1,0 @@
-{ "source": "watch@1", "with": { "path": "/var/mail/${env.USER}" }, "emit": "mail.changed" }

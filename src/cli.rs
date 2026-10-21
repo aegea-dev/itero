@@ -67,9 +67,8 @@ pub enum Cmd {
     /// A worker: one job, JSON in on stdin, its output as JSON on stdout
     #[command(hide = true)]
     Worker,
-    /// A built-in source: its settings on stdin, its events on stdout
-    #[command(hide = true)]
-    Source { kind: String },
+    /// For sources: print a line each time a file or folder changes
+    Watch { path: std::path::PathBuf },
     /// Keeps `itero daemon` running: restarts it when it exits, stops
     /// answering or stops making passes (what the service runs)
     #[command(hide = true)]
@@ -183,15 +182,14 @@ fn dispatch(cli: Cli) -> Result<()> {
                 wake,
             });
             // a bad source file stops the daemon here, naming the file
-            for (name, folder, def) in ws.sources()? {
+            for (kind, file) in ws.source_files()? {
                 let (ws, exe, engine) = (ws.clone(), exe.clone(), engine.clone());
                 let wake = engine.wake.clone();
-                eprintln!("itero: source {name}");
+                eprintln!("itero: source {kind}");
                 std::thread::spawn(move || {
                     let source = crate::sources::supervise::Source {
-                        name: &name,
-                        folder: &folder,
-                        def: &def,
+                        kind: &kind,
+                        file: &file,
                     };
                     let policy = crate::sources::supervise::Policy::default();
                     crate::sources::supervise::run(
@@ -248,9 +246,8 @@ fn dispatch(cli: Cli) -> Result<()> {
                     println!("{}.{target}@{}", d.name, d.version);
                 }
             }
-            for (name, _, d) in ws.sources()? {
-                let what = d.source.clone().unwrap_or_else(|| d.program.join(" "));
-                println!("source {name}  {what}");
+            for (kind, file) in ws.source_files()? {
+                println!("source {kind}  {}", file.display());
             }
         }
         Cmd::Runs => {
@@ -273,15 +270,8 @@ fn dispatch(cli: Cli) -> Result<()> {
             let m = j.memory(&workflow)?;
             println!("{}", serde_json::to_string_pretty(&m)?);
         }
-        Cmd::Source { kind } => {
-            let mut first = String::new();
-            std::io::stdin().read_line(&mut first)?;
-            let s: crate::sources::Settings =
-                serde_json::from_str(&first).map_err(|e| anyhow!("the source's settings: {e}"))?;
-            let source = match kind.as_str() {
-                "watch@1" => crate::sources::Watch::new(&s)?,
-                other => bail!("no built-in source {other}"),
-            };
+        Cmd::Watch { path } => {
+            let source = crate::sources::Watch::new(&path)?;
             // the daemon going away closes stdin: then this source stops
             std::thread::spawn(|| {
                 let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());

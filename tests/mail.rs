@@ -21,10 +21,10 @@ fn example(d: &Path, mbox: &Path) -> PathBuf {
     );
     std::fs::write(&flow, text).unwrap();
     // the source watches the same mailbox
-    let src = ws.join("sources/mailbox.json");
+    let src = ws.join("sources/mail.changed");
     let text = std::fs::read_to_string(&src)
         .unwrap()
-        .replace("/var/mail/${env.USER}", mbox.to_str().unwrap());
+        .replace("/var/mail/$USER", mbox.to_str().unwrap());
     std::fs::write(&src, text).unwrap();
     ws
 }
@@ -127,7 +127,7 @@ fn check_lists_the_workflows_and_their_versions() {
     let line = out.lines().find(|l| l.starts_with("mail-check ")).unwrap();
     assert_eq!(line.split_whitespace().nth(1).unwrap().len(), 12, "{out}");
     assert!(out.contains("mail.check@1"), "{out}");
-    assert!(out.contains("source mailbox  watch@1"), "{out}");
+    assert!(out.contains("source mail.changed  "), "{out}");
 }
 
 fn wait_for(secs: u64, mut ok: impl FnMut() -> bool) -> bool {
@@ -177,7 +177,7 @@ fn mail_is_notified_as_it_arrives_and_never_twice() {
     let running = || {
         reqwest::blocking::get(format!("http://127.0.0.1:{port}/health"))
             .and_then(|r| r.json::<serde_json::Value>())
-            .is_ok_and(|h| h["sources"]["mailbox"]["state"] == "running")
+            .is_ok_and(|h| h["sources"]["mail.changed"]["state"] == "running")
     };
     assert!(wait_for(20, running), "the source did not start");
     std::thread::sleep(std::time::Duration::from_millis(500));
