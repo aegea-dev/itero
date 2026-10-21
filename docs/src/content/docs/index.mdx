@@ -20,8 +20,19 @@ few lines of JSON: what starts it, and the steps it takes. A step is an
 action, a small executable file in any language, or another workflow.
 
 ```json
-{ "on": [{ "event": "mail.received" }], "steps": ["#notify"] }
+{
+  "on": [{ "event": "mail.received" }],
+  "steps": [
+    { "#ai": { "ask": "Summarize this mail in one line. Is it important, or spam and ads?" } },
+    { "#notify": { "on": [{ "$important": true }], "title": "$from", "text": "$summary" } }
+  ]
+}
 ```
+
+A mail arrives; `#ai`, a few lines of shell around `curl`, asks an AI
+assistant for a summary and whether it matters, and prints
+`{"summary": "...", "important": true}`. You hear only about the mails
+that are worth it; the spam and the ads pass quietly.
 
 <CardGrid>
 	<Card title="Small files" icon="document">
