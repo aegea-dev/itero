@@ -66,6 +66,21 @@ apart. Anything wrong is an error naming the file: a key it does not
 know, a message type of one word, an action or a workflow that is not
 there.
 
+## itero workflows
+
+Each workflow on a line: what starts it, its runs so far, how the last
+one went and when, and whether it is `off` or internal. The last line
+says whether this workspace's daemon is running, and how many messages
+wait for one:
+
+```
+$ itero workflows
+page-digest   on website.requested   runs 0   last: none
+order         on order.placed        runs 3   last: done 2m ago
+keep          at 0 * * * *           runs 1   last: done 40m ago   internal
+daemon: not running, 1 message waiting
+```
+
 ## itero info
 
 The workspace: its id, name, when it was made, its folder, the itero that

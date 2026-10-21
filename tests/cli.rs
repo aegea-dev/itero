@@ -276,6 +276,60 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
 }
 
 #[test]
+fn workflows_lists_each_workflow_and_what_waits_for_a_daemon() {
+    let d = workspace();
+    file(d.path(), "itero.toml", "port = 8799\n");
+    file(
+        d.path(),
+        "workflows/sipariş.json",
+        r##"{ "on": [{ "event": "order.placed" }], "steps": ["#gönder"] }"##,
+    );
+    file(
+        d.path(),
+        "workflows/özet.json",
+        r##"{ "meta": { "off": true }, "on": [{ "schedule": "0 9 * * *" }, { "path": "gelen" }], "steps": ["#gönder"] }"##,
+    );
+    file(
+        d.path(),
+        "workflows/adım.json",
+        r##"{ "steps": ["#gönder"] }"##,
+    );
+    file(d.path(), "actions/gönder", "#!/bin/sh\n");
+    itero(d.path(), &["emit", "order.placed", r#"{"sipariş": 1}"#]);
+    let before = out(&itero(d.path(), &["workflows"]));
+    let line = |text: &str, name: &str| {
+        text.lines()
+            .find(|l| l.starts_with(&format!("{name} ")))
+            .unwrap_or_else(|| panic!("{name}: {text}"))
+            .to_string()
+    };
+    let s = line(&before, "sipariş");
+    assert!(
+        s.contains("on order.placed") && s.contains("runs 0") && s.contains("last: none"),
+        "{before}"
+    );
+    let o = line(&before, "özet");
+    assert!(
+        o.contains("at 0 9 * * *") && o.contains("path gelen") && o.contains("off"),
+        "{before}"
+    );
+    assert!(line(&before, "adım").contains("a step only"), "{before}");
+    assert!(line(&before, "keep").contains("internal"), "{before}");
+    assert!(
+        before.lines().last().unwrap() == "daemon: not running, 1 message waiting",
+        "{before}"
+    );
+    itero(d.path(), &["daemon", "--once"]);
+    let after = out(&itero(d.path(), &["workflows"]));
+    let s = line(&after, "sipariş");
+    assert!(s.contains("runs 1") && s.contains("last: done"), "{after}");
+    assert_eq!(
+        after.lines().last().unwrap(),
+        "daemon: not running, no message waiting"
+    );
+}
+
+#[test]
 fn emit_says_what_a_message_starts() {
     let d = workspace();
     file(d.path(), "itero.toml", "port = 8798\n");

@@ -573,6 +573,7 @@ itero secret <NAME>          set a secret (asks; or --file)
 itero runs                   runs, newest first, and how each ended
 itero errors                 runs that ended in error: which step and why
 itero check                  read every file; say what is wrong
+itero workflows              each workflow, its runs and the last; whether a daemon runs
 itero info                   the workspace and its daemon: IDs, names, limits
 itero watch <path>           for sources: a line per change
 ```
