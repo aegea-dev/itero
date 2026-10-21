@@ -116,9 +116,17 @@ fn each_new_mail_is_shown_once_as_it_arrives_and_old_mail_never() {
     );
     std::thread::sleep(std::time::Duration::from_secs(1));
     drop(daemon);
+    // each its own run, side by side: in any order, each once
+    let all = shown(&log);
+    let mut lines: Vec<&str> = all.lines().collect();
+    lines.sort();
     assert_eq!(
-        shown(&log),
-        "Mail\tayşe@örnek.test: Toplantı\nMail\tcan@örnek.test: Çay\nMail\telif@örnek.test: Kahve\n"
+        lines,
+        vec![
+            "Mail\tayşe@örnek.test: Toplantı",
+            "Mail\tcan@örnek.test: Çay",
+            "Mail\telif@örnek.test: Kahve"
+        ]
     );
 }
 

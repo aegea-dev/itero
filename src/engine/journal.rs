@@ -433,7 +433,9 @@ impl Journal {
     /// becomes `now` in the same transaction, so a slot never starts two
     /// runs, whatever became of the start.
     pub fn start_run(&mut self, s: &Start, now: &str, schedule: Option<&str>) -> Result<String> {
-        let tx = self.db.transaction()?;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let pin = pin(&tx, &s.workflow, &s.flows)?;
         let id = insert_run(
             &tx,
@@ -462,7 +464,9 @@ impl Journal {
         waiting: &[String],
         at: &str,
     ) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         for s in starts {
             let pin = pin(&tx, &s.workflow, &s.flows)?;
             insert_run(
@@ -525,7 +529,9 @@ impl Journal {
 
     /// Turns a due timer into its event, in one transaction.
     pub fn fire_timer(&mut self, id: i64, e: &Envelope) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         publish(&tx, e)?;
         tx.execute("DELETE FROM timers WHERE id = ?1", params![id])?;
         tx.commit()?;
@@ -535,7 +541,9 @@ impl Journal {
     /// Saves an answer: all of it, or (on any error) none of it.
     pub fn handle(&mut self, h: Handled) -> Result<()> {
         let now = h.at;
-        let tx = self.db.transaction()?;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute(
             "UPDATE events SET handled = ?2, error = ?3 WHERE seq = ?1",
             params![h.seq, now, h.error],
@@ -570,7 +578,7 @@ impl Journal {
     /// and messages handled before it that no run under way may still
     /// want (one newer than the oldest run under way's start is kept).
     pub fn prune(&self, cutoff: &str) -> Result<()> {
-        self.db.execute_batch("BEGIN")?;
+        self.db.execute_batch("BEGIN IMMEDIATE")?;
         let r = (|| -> Result<()> {
             let ended = "SELECT id FROM runs WHERE ended IS NOT NULL AND ended < ?1";
             self.db.execute(

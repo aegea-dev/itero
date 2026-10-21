@@ -692,6 +692,7 @@ fn spawn_worker(exe: &Path, step: &StepRun) -> Result<Outcome, Failure> {
     // are not waited for, in case something outside the group holds them
     let limit = std::time::Duration::from_secs(step.timeout);
     let Some(status) = child.wait_timeout(limit).map_err(|e| e.to_string())? else {
+        // still running, not yet reaped: its group's id is still its own
         stop(&mut child);
         return Err(Failure::Lost(format!(
             "took longer than {}",
@@ -699,8 +700,8 @@ fn spawn_worker(exe: &Path, step: &StepRun) -> Result<Outcome, Failure> {
         )));
     };
     let Some(code) = status.code() else {
-        // killed from outside: whatever it started goes too
-        stop(&mut child);
+        // killed from outside, and already reaped: its group is not killed,
+        // since its id may be another process's by now
         return Err(Failure::Lost(format!("the worker was killed ({status})")));
     };
     let (out, err) = (

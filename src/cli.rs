@@ -161,8 +161,27 @@ fn report(pass: &Result<crate::engine::daemon::Pass>) {
     }
 }
 
+/// Ignores SIGPIPE again, for the commands that write to other processes
+/// (the daemon to its manager and workers, a worker to its action, the
+/// watchdog to the daemon): one that has gone is a write error, already
+/// handled, not a reason to die. `main` restores the default for the
+/// rest, so `itero runs | head` ends quietly.
+fn ignore_sigpipe() {
+    #[cfg(unix)]
+    // SAFETY: before this command starts any thread or child
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+}
+
 fn dispatch(cli: Cli) -> Result<()> {
     let workspace = || crate::workspace::find(&std::env::current_dir()?);
+    if matches!(
+        cli.cmd,
+        Cmd::Daemon { .. } | Cmd::Manager | Cmd::Worker | Cmd::Watchdog { .. }
+    ) {
+        ignore_sigpipe();
+    }
     match cli.cmd {
         Cmd::Daemon {
             once,

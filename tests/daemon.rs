@@ -296,6 +296,19 @@ fn a_schedule_starts_a_run_once_per_slot() {
 }
 
 #[test]
+fn an_action_that_reads_nothing_runs_once() {
+    let ws = Ws::new();
+    ws.flow("say", json!({"on": ["say.bir"], "steps": ["#say"]}));
+    // it never reads its stdin, and the state is more than a pipe holds:
+    // the worker's write to it fails, which is no reason to stop
+    ws.action("say", "echo x >> sayı.log");
+    ws.emit("say.bir", json!({"büyük": "ç".repeat(200_000)}));
+    ws.pass(NOW);
+    assert_eq!(ws.read("sayı.log"), "x\n");
+    assert_eq!(ws.statuses(), vec!["done"]);
+}
+
+#[test]
 fn a_message_nothing_wants_is_noted() {
     let ws = Ws::new();
     ws.emit("kimse.istemez", json!({}));

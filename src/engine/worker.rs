@@ -152,7 +152,9 @@ fn show(title: &str, body: &str) -> Result<(), String> {
             .append(true)
             .open(&log)
             .map_err(|e| format!("cannot open {}: {e}", PathBuf::from(&log).display()))?;
-        writeln!(f, "{title}\t{body}").map_err(|e| e.to_string())?;
+        // one write: lines from steps side by side never interleave
+        f.write_all(format!("{title}\t{body}\n").as_bytes())
+            .map_err(|e| e.to_string())?;
         return Ok(());
     }
     let mut tried = vec![];
