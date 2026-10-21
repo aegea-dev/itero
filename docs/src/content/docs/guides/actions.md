@@ -20,8 +20,10 @@ curl -fsS "https://carrier.example.com/ship?order=$order" | jq '{tracking: .id}'
 - **Its values, as environment variables**: `$order`, `$host`. A value is
   the first found in the step's data, the action's args, then the run's
   state ([Args and secrets](/guides/secrets/)). A value that is not text
-  arrives as JSON text; a name that cannot be an environment variable is
-  on stdin only.
+  arrives as JSON text. A name that cannot be an environment variable,
+  and a state value over 64 KB (a whole web page, say), are on stdin
+  only: the system would refuse to start the action with them. A value
+  that big in a step's data or args is an error naming it.
 - **The run's whole state, as JSON on stdin.**
 - **`$ITERO_MEMORY`**: a file it may read and write, kept between runs, one
   per workflow (for "the last mail seen").

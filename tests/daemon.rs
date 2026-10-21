@@ -290,6 +290,44 @@ fn a_run_that_waits_past_its_timeout_ends_in_error() {
 }
 
 #[test]
+fn a_value_too_big_for_the_environment_is_on_stdin_only() {
+    let w = Ws::new();
+    w.action(
+        "ölç",
+        "echo \"${sayfa:-yok}\" > ortam.txt; jq -r '.sayfa | length' > uzunluk.txt",
+    );
+    w.flow(
+        "büyük",
+        json!({ "on": [{ "event": "sayfa.geldi" }], "steps": ["#ölç"] }),
+    );
+    // 2 MB: past every system's limit for one environment variable
+    w.emit("sayfa.geldi", json!({ "sayfa": "ş".repeat(1_000_000) }));
+    w.pass(NOW);
+    assert_eq!(w.statuses(), ["done"]);
+    assert_eq!(w.read("ortam.txt"), "yok\n", "not in the environment");
+    assert_eq!(w.read("uzunluk.txt"), "1000000\n", "whole on stdin");
+}
+
+#[test]
+fn a_big_value_only_a_step_gives_is_an_error_naming_it() {
+    let w = Ws::new();
+    w.action("ölç", "true");
+    w.flow(
+        "büyük",
+        json!({ "on": [{ "event": "sayfa.geldi" }],
+                "steps": [{ "#ölç": { "sayfa": "ş".repeat(1_000_000) } }] }),
+    );
+    w.emit("sayfa.geldi", json!({}));
+    w.pass(NOW);
+    assert_eq!(w.statuses(), ["error"]);
+    let why = w.runs()[0].runtime.state["why"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(why.contains("sayfa") && why.contains("too big"), "{why}");
+}
+
+#[test]
 fn a_list_of_args_runs_the_rest_once_per_item() {
     let ws = Ws::new();
     ws.flow(

@@ -17,11 +17,11 @@ pub struct Cli {
 pub enum Cmd {
     /// Run the workspace's workflows: their schedules, events and jobs, pass after pass
     Daemon {
-        /// One pass, then stop
-        #[arg(long)]
+        /// One pass, then stop: for tests and scripts, so hidden
+        #[arg(long, hide = true)]
         once: bool,
         /// The time to run at, with --once (RFC 3339; for tests)
-        #[arg(long, requires = "once")]
+        #[arg(long, requires = "once", hide = true)]
         now: Option<String>,
         /// Seconds between passes
         #[arg(long, default_value_t = 1)]
