@@ -1,8 +1,8 @@
 # itero, simple
 
 This replaces the file formats in `design.md`. The engine underneath
-stays: the journal, the daemon, workers, and runs that survive a restart.
-What people write becomes as small as it can be.
+stays: the journal, the daemon, and runs that survive a restart. What
+people write becomes as small as it can be.
 
 The rule is KISS:
 - as few fixed words as possible;
@@ -17,9 +17,13 @@ itero.toml                    the daemon's settings (the port)
 workflows/order.json          a workflow; its name is the file name
 actions/check-payment         an action: an executable; its name is the file name
 actions/notify@0.2            a version, in the name
-sources/mail.received         a source: an executable; its messages are of this type
+sources/imap-idle             a source: an executable holding a connection open
 args/check-payment.json       data for an action, written by `itero args`
+.itero/                       what itero keeps: the journal, the log, memory
 ```
+
+Everything a workspace's programs write goes in `.itero/`; the rest of
+the folder is what people write.
 
 ## Names at a glance
 
@@ -28,7 +32,6 @@ args/check-payment.json       data for an action, written by `itero args`
 | `#check-payment` | an action |
 | `order-process` | a workflow |
 | `order.placed` | a message type: two or more words joined by `.` |
-| `0 9 * * *` | a schedule, in cron form (it has spaces) |
 | `$order` | a value in the run's state |
 | `$$API_KEY` | an environment variable or a secret |
 
@@ -36,7 +39,7 @@ args/check-payment.json       data for an action, written by `itero args`
 
 ```json
 {
-  "on": ["order.placed"],
+  "on": [{ "event": "order.placed" }],
   "steps": [
     ["#check-payment", "#check-stock"],
     "order-process",
@@ -53,22 +56,37 @@ and `timeout`.
 
 ### `on`: when it runs
 
-A list:
-- **message types and schedules** are alternatives: any one of them starts
-  a run (`["mail.received", "0 * * * *"]`);
-- **`$name`** means that value is in the run's state;
-- **`$$NAME`** means that environment variable or secret is defined.
+A list of objects. Each says what it is with its key:
 
-The `$` and `$$` entries are conditions that must all hold:
-`["order.received", "$$API"]` starts a run on `order.received`, only if
-`API` is defined.
+```json
+"on": [
+  { "event": "order.placed" },
+  { "schedule": "0 9 * * *" },
+  { "path": "/var/mail/$$USER" },
+  { "$paid": true },
+  { "has": "$order" },
+  { "has": ["$total", "$$API"] }
+]
+```
 
-An object means exact values: `{"$order": 43}` holds when the state has
-`order` equal to `43`.
+| Entry | Means |
+|---|---|
+| `{"event": "order.placed"}` | a message of this type starts a run |
+| `{"schedule": "0 9 * * *"}` | the schedule starts a run (cron, local time) |
+| `{"path": "/var/mail/$$USER"}` | a change to this file or folder starts a run (see Watching files) |
+| `{"$paid": true}` | only if the state's `paid` is exactly `true` |
+| `{"has": "$order"}` | only if the state has `order` |
+| `{"has": "$$API"}` | only if `API` is defined, as an environment variable or a secret |
 
-A workflow whose `on` has no message type or schedule never starts by
-itself: it runs only as a step of another workflow, and only if its `on`
-holds there.
+**One rule:** `event`, `schedule` and `path` entries each start a run,
+any one of them. Every other entry is a condition, and they must all
+hold. In one object, every value must hold: `{"$paid": true, "$stock":
+true}`. `has` takes one name or a list. Values compare exactly: `0` is not
+`false`.
+
+A workflow with no `event`, `schedule` or `path` in its `on` never starts
+by itself: it runs only as a step of another workflow, and only if its
+conditions hold there.
 
 ### `steps`: what it does
 
@@ -80,15 +98,15 @@ They run in order. A step is:
   side, and the next step waits for all of them. A list can hold actions
   and workflows: `["#check-payment", "stock-check"]`;
 - **an object**, an action or workflow with data for it and an optional
-  condition:
+  `on`, its conditions:
 
   ```json
-  { "#ship": { "carrier": "PTT", "on": { "$paid": true, "$stock": true } } }
+  { "#ship": { "carrier": "PTT", "on": [{ "$paid": true, "$stock": true }] } }
   ```
 
-  `on` is the condition, as above; the step runs only if it holds, and is
-  skipped otherwise. The other keys are data for the action. A value that
-  is exactly `"$name"` or `"$$NAME"` is replaced by that value:
+  The step runs only if its conditions hold, and is skipped otherwise. The
+  other keys are data for the action. A value that is exactly `"$name"` or
+  `"$$NAME"` is replaced by that value:
   `{ "#ask-ai": { "key": "$$ANTHROPIC_KEY" } }`.
 
 ### `success`, `failure`, `error`: how it ended
@@ -133,9 +151,12 @@ description file.
     `$ITERO_WAITING_SINCE` set so it can decide to give up;
   - anything else: an error; why is the end of what it printed on stderr.
 - **What it keeps between runs** (like "the last mail seen", for a
-  workflow that polls) goes in the file `$ITERO_MEMORY`, one per workflow.
-  Two runs of a polling workflow overlap only if one takes longer than its
-  schedule's interval; itero does not guard against that.
+  workflow that polls) goes in the file `$ITERO_MEMORY`, one per workflow,
+  in `.itero/`. Two runs of a polling workflow overlap only if one takes
+  longer than its schedule's interval; itero does not guard against that.
+- **It runs in the workspace,** and a file it writes there belongs to the
+  person; output of its own goes in `.itero/` (the examples write theirs
+  there).
 
 `#notify` is built in: it shows `$text` (and `$title`) as a desktop
 notification. A workspace action named `notify` replaces it.
@@ -171,10 +192,10 @@ found wins):
 3. **the run's state.**
 
 Secrets and environment variables enter only by name, with `$$`, in a
-step's data or in args. A secret is looked up in the OS secret store (the
-macOS Keychain, the Secret Service on Linux), then in the daemon's
-environment. It is never written into the state, the journal, a log or a
-command line.
+step's data, in args, or in a `path`. A secret is looked up in the OS
+secret store (the macOS Keychain, the Secret Service on Linux), then in
+the daemon's environment. It is never written into the state, the
+journal, the log or a command line.
 
 ```sh
 itero args check-payment '{"provider": "pay.example.com"}'
@@ -202,24 +223,29 @@ itero emit order.placed '{"order": 43, "total": 120}'
 POST /events   {"type": "order.placed", "data": {"order": 43, "total": 120}}
 ```
 
-They come from three kinds of source:
+`itero emit` says at once what the message will do, from the workflows on
+disk: which workflows it starts, that it may reach waiting runs, or that
+nothing starts on its type, with the nearest type that does
+(`order.places`: did you mean `order.placed`?). If no daemon is running,
+it says the message waits for one.
+
+Messages come from:
 - **push**: an app or a webhook calls `POST /events`, or a source holds a
   connection open and prints a line when told something;
-- **pull**: a workflow on a schedule asks, or a source that polls;
-- **watch**: a source runs `itero watch <path>`, which prints a line each
-  time a file changes, from the OS's own file events.
+- **pull**: a workflow on a schedule asks;
+- **watch**: a `path` in a workflow's `on` (see Watching files).
 
-A **source** is an executable in `sources/` that keeps running; each line
-it prints is the data of one message, of its file name's type. The daemon
-starts it again when it stops. A source that keeps its own "last seen"
-sends one message per new thing, so each run has its own:
-`sources/mail.received` prints one line per new mail, with its sender and
-subject.
+A **source** is an executable in `sources/` that keeps running, for what
+needs a connection held open: a mail server's IDLE, a queue
+subscription. Each line it prints is the data of one message, of its file
+name's type. The daemon starts it again when it stops. A source that
+keeps its own "last seen" sends one message per new thing, so each run has
+its own: one line per new mail, with its sender and subject.
 
 What a message does:
-- **It starts a run** of every workflow whose `on` lists its type (and
-  whose conditions hold), all in parallel. Its data is the run's first
-  state.
+- **It starts a run** of every workflow with its type in an `event` entry
+  (and whose conditions hold), all in parallel. Its data is the run's
+  first state.
 - **It reaches waiting runs** that it matches: it shares at least one
   field with the run's state, and agrees with it on every field they
   share. Every run it matches gets it. A run that starts waiting also gets
@@ -228,6 +254,121 @@ What a message does:
 - **It is handled once**: the daemon marks it handled in the same
   transaction as the runs it starts and the copies it sends.
 - **It is kept** until its runs end, then 1 day more, then deleted.
+
+## Watching files
+
+A `path` entry is watched by the daemon itself, with the OS's own file
+events: kqueue on macOS, inotify on Linux. One watcher holds every path of
+every workflow, in one thread: a path costs a file descriptor, and no CPU
+until something changes. No process per watch.
+
+- Each change starts a run with `{"path": "...", "kind": "changed"}`
+  (`created`, `removed`); a burst of changes is one, once the path has
+  been quiet for half a second.
+- A path that is not there yet is watched for when it comes.
+- `$$NAME` in a path is an environment variable, like `$$USER`, filled in
+  when the daemon reads the workflow. The path, filled in, is in the run's
+  data and in the log, so a secret never goes in one.
+
+`itero watch <path>` stays, for a source that wants the same events.
+
+## How it runs
+
+One program per workspace, the daemon, on this machine. What it knows is
+in `.itero/journal.sqlite`, so it can stop and start without losing
+anything.
+
+Something happens: a message arrives, a schedule comes due, a watched
+path changes, or a waiting run's timer fires. Then the daemon makes a
+pass, at once or within a second:
+
+```
+itero daemon  (one per workspace)
+│
+├─ sources and watched paths: beside it, feeding messages in
+│
+└─ every pass:
+     1. messages   → start new runs, wake waiting runs
+     2. runs       → decide each run's next steps
+     3. steps      → run each step's action, side by side (up to 8 at a time),
+                     each as its own process
+     4. results    → saved; they are the next pass's input
+```
+
+A run moves through its workflow's steps:
+
+```
+run:  started ─► step ─► step ─► … ─► success / failure / error list ─► ended
+                   │
+                   └─ exit 75: waiting ─► (a matching message, or the hourly retry) ─► the step again
+```
+
+Every arrow is written to the journal before it happens, so a crash at any
+point resumes there, with nothing lost and nothing done twice.
+
+The docs explain itero with this picture: workspace, workflows, runs,
+steps, the daemon and its passes. How a pass decides and runs steps
+inside (separate short programs) is for `design.md`, not for people
+writing workflows.
+
+## IDs
+
+Everything gets a UUIDv7, so it can be found and followed:
+
+| ID | Of | Made |
+|---|---|---|
+| `workspace` | the workspace: its journal and history | once, when its journal is made; kept in it |
+| `daemon` | one life of the daemon | each time it starts |
+| `run` | one run | when it starts |
+| `version` | the workflows a run is pinned to | the first time those files are seen |
+| `message` | one message | when it is sent |
+
+A new daemon carries on with the same journal: the runs, messages and
+timers are the workspace's, and only the `daemon` ID is new. Deleting
+`.itero/` starts a new history with a new `workspace` ID; copying a folder
+with its `.itero/` copies its ID too, since it is the same history.
+`/health` shows the `workspace` and `daemon` IDs.
+
+## The log
+
+`.itero/itero.log`: one JSON object per line, written by the daemon,
+everything that happens:
+
+```json
+{"time":"2026-10-21T13:43:24Z","workspace":"01a0f3…","daemon":"01a15f2c…","event":"run.started","workflow":"order","run":"01a15eb3…","message":"01a15eb2…"}
+{"time":"2026-10-21T13:43:25Z","workspace":"01a0f3…","daemon":"01a15f2c…","event":"step.waiting","workflow":"order","run":"01a15eb3…","step":"#check-payment","output":{"payment_ref":"pay-1"}}
+{"time":"2026-10-21T13:45:02Z","workspace":"01a0f3…","daemon":"01a15f2c…","event":"step.done","workflow":"order","run":"01a15eb3…","step":"#ship","output":{"tracking":"TR-1"}}
+```
+
+Every line has `time`, `workspace`, `daemon` and `event`; the rest
+depends on the event:
+
+| `event` | Also |
+|---|---|
+| `daemon.started`, `daemon.stopped` | `itero` (its version) |
+| `message` | `message`, `type`, `data`, and what it did: `started` (runs), `reached` (runs), or `nothing` |
+| `run.started` | `workflow`, `run`, `message` or `schedule` or `path` |
+| `step.started` | `workflow`, `run`, `step` |
+| `step.done`, `step.waiting` | `workflow`, `run`, `step`, `output` |
+| `step.failed` | `workflow`, `run`, `step`, `why` |
+| `step.skipped` | `workflow`, `run`, `step` (its conditions did not hold) |
+| `run.ended` | `workflow`, `run`, `status` (`done`, `failed`, `error`), `why` |
+| `source.started`, `source.ended`, `source.gave-up` | `source`, `why` |
+| `error` | `why`: what went wrong in the daemon itself |
+
+- **It holds no secrets:** only what steps printed, never their
+  environment.
+- **It does not grow for ever:** past 10 MB it becomes `itero.log.1`, and
+  the one before goes.
+- **Reading it is `jq`'s job:**
+  ```sh
+  jq 'select(.run == "01a15eb3…")' .itero/itero.log            # one run
+  jq 'select(.event == "step.failed")' .itero/itero.log         # what broke
+  jq -r '"\(.time) \(.event) \(.workflow // "") \(.step // "")"' .itero/itero.log
+  tail -f .itero/itero.log | jq .                              # live
+  ```
+- `.itero/daemon.log` stays only for what the service catches when the
+  daemon itself crashes.
 
 ## Runs
 
@@ -241,7 +382,7 @@ What a message does:
 
 ```
 itero daemon                 run the workspace (itero service install: at login)
-itero emit <type> '<data>'   send a message
+itero emit <type> '<data>'   send a message, and say what it starts
 itero args <action> '<data>' set an action's data (or --file)
 itero secret <NAME>          set a secret (asks; or --file)
 itero runs                   runs, newest first, and how each ended
@@ -252,23 +393,29 @@ itero watch <path>           for sources: a line per change
 
 ## Examples
 
-**New mail, as it arrives.** `sources/mail.received` watches the mailbox
-(`itero watch`) and prints one line per new mail. `workflows/mail-alert.json`:
+**New mail, as it arrives.** A source prints one line per new mail, with
+its sender and subject. `workflows/mail-alert.json`:
 
 ```json
-{ "on": ["mail.received"], "steps": ["#notify"] }
+{ "on": [{ "event": "mail.received" }], "steps": ["#notify"] }
 ```
 
 (`#notify` shows `$text`; the source prints `{"text": "Ayşe: Toplantı"}`.)
+
+**Photos added to a folder.** No source needed:
+
+```json
+{ "on": [{ "path": "~/Pictures/inbox" }], "steps": ["#make-thumbnails"] }
+```
 
 **An IMAP mailbox, every minute** (pull). `workflows/imap-alert.json`:
 
 ```json
 {
-  "on": ["* * * * *"],
+  "on": [{ "schedule": "* * * * *" }],
   "steps": [
     { "#imap-check": { "host": "imap.example.com", "user": "me@example.com", "password": "$$IMAP_PASS" } },
-    { "#notify": { "on": ["$text"] } }
+    { "#notify": { "on": [{ "has": "$text" }] } }
   ]
 }
 ```
@@ -283,12 +430,12 @@ stdin, never on its command line.
 
 ```json
 {
-  "on": ["$paid", "$stock"],
+  "on": [{ "has": ["$paid", "$stock"] }],
   "steps": [
-    { "#ship":           { "on": { "$paid": true,  "$stock": true } } },
-    { "#remind-payment": { "on": { "$paid": false, "$stock": true } } },
-    { "#remind-stock":   { "on": { "$paid": true,  "$stock": false } } },
-    { "#cancel":         { "on": { "$paid": false, "$stock": false } } }
+    { "#ship":           { "on": [{ "$paid": true,  "$stock": true }] } },
+    { "#remind-payment": { "on": [{ "$paid": false, "$stock": true }] } },
+    { "#remind-stock":   { "on": [{ "$paid": true,  "$stock": false }] } },
+    { "#cancel":         { "on": [{ "$paid": false, "$stock": false }] } }
   ]
 }
 ```
@@ -310,7 +457,7 @@ stdin, never on its command line.
 
 ```json
 {
-  "on": ["0 9 * * *"],
+  "on": [{ "schedule": "0 9 * * *" }],
   "steps": [
     { "#fetch": { "url": "https://example.com/news" } },
     { "#ask-ai": { "prompt": "Summarize this page in 5 bullets.", "key": "$$ANTHROPIC_KEY" } },
@@ -334,7 +481,9 @@ sends `$text` with `curl smtps://…`.
   languages; a script can run `docker` itself);
 - built-in actions other than `#notify`;
 - `match`, `publish`, `"from": "*"`;
-- `itero memory` and `itero resume` (no pausing, for now).
+- `itero memory` and `itero resume` (no pausing, for now);
+- the string forms of `on` (`"order.placed"`, `"$order"`) and its object
+  of exact values: every entry is an object now.
 
 They stay in git history, to come back only when a real workflow needs
 one.
@@ -352,3 +501,4 @@ one.
   the graph once branches are drawn.
 - **`itero sub <type>`** for apps to follow messages, and NATS when one
   machine is not enough.
+- **A viewer for the log** (`itero log`), if `jq` is ever not enough.
