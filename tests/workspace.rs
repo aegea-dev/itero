@@ -64,7 +64,7 @@ fn workflows_are_named_after_their_files() {
     write(
         d.path(),
         "workflows/posta-uyarısı.json",
-        r##"{ "on": ["mail.received"], "steps": ["#notify"] }"##,
+        r##"{ "on": [{ "event": "mail.received" }], "steps": ["#notify"] }"##,
     );
     write(
         d.path(),

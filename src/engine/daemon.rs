@@ -329,7 +329,7 @@ fn route(flows: &Flows, j: &mut Journal, r: &Recorded, now: DateTime<Utc>) -> Re
     let data = r.event.data.as_object().cloned().unwrap_or_default();
     let mut starts = vec![];
     for (name, f) in &flows.read {
-        if !f.on.messages.contains(&r.event.kind) || !flow::holds(&f.on, &data, &defined) {
+        if !f.on.events.contains(&r.event.kind) || !flow::holds(&f.on, &data, &defined) {
             continue;
         }
         match flows.pinned(name) {

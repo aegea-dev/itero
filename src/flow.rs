@@ -23,16 +23,16 @@ pub struct Flow {
 /// hold.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct On {
-    /// Message types: `order.placed`.
-    pub messages: Vec<String>,
-    /// Cron lines: `0 9 * * *`.
+    /// `{"event": "order.placed"}`: message types.
+    pub events: Vec<String>,
+    /// `{"schedule": "0 9 * * *"}`: cron lines.
     pub schedules: Vec<String>,
-    /// State values that must be there: `$order` is `order`.
-    pub present: Vec<String>,
-    /// Environment variables or secrets that must be defined: `$$API` is
-    /// `API`.
-    pub defined: Vec<String>,
-    /// State values that must be exactly these: `{"$order": 43}`.
+    /// `{"path": "/var/mail/$$USER"}`: files or folders, as written.
+    pub paths: Vec<String>,
+    /// `{"has": ...}`: `$order` must be in the state, `$$API` defined (an
+    /// environment variable or a secret); kept as written.
+    pub has: Vec<String>,
+    /// `{"$paid": true}`: state values that must be exactly these, by name.
     pub equal: Map<String, Value>,
 }
 
@@ -105,9 +105,16 @@ pub fn from_value(v: &Value) -> Result<Flow, String> {
 /// which environment variables and secrets are. Its messages and
 /// schedules are not conditions: they say what starts a run.
 pub fn holds(on: &On, state: &Map<String, Value>, defined: &dyn Fn(&str) -> bool) -> bool {
-    on.present.iter().all(|k| state.contains_key(k))
-        && on.defined.iter().all(|k| defined(k))
-        && on.equal.iter().all(|(k, v)| state.get(k) == Some(v))
+    on.has.iter().all(|h| match h.strip_prefix("$$") {
+        Some(n) => defined(n),
+        None => state.contains_key(h.trim_start_matches('$')),
+    }) && on.equal.iter().all(|(k, v)| state.get(k) == Some(v))
+}
+
+/// Whether anything in `on` starts a run: an event, a schedule or a path.
+/// A workflow with none runs only as a step of another.
+pub fn starts(on: &On) -> bool {
+    !(on.events.is_empty() && on.schedules.is_empty() && on.paths.is_empty())
 }
 
 /// Two or more words joined by `.`: `order.placed`.
@@ -121,45 +128,78 @@ pub fn is_message_type(s: &str) -> bool {
         })
 }
 
+/// `on`: a list of objects, each saying what it is with its key.
 fn on(v: &Value) -> Result<On, String> {
+    const FORMS: &str = "{\"event\": ...}, {\"schedule\": ...}, {\"path\": ...}, {\"$name\": value} or {\"has\": ...}";
+    let Value::Array(items) = v else {
+        return Err(format!("on is a list of objects: {FORMS}"));
+    };
     let mut o = On::default();
-    match v {
-        Value::Array(items) => {
-            for item in items {
-                let s = item
-                    .as_str()
-                    .ok_or("on lists message types, schedules, $names and $$NAMES, as text")?;
-                if let Some(n) = s.strip_prefix("$$") {
-                    o.defined.push(word(n, s)?);
-                } else if let Some(n) = s.strip_prefix('$') {
-                    o.present.push(word(n, s)?);
-                } else if s.contains(' ') {
+    for item in items {
+        let Value::Object(m) = item else {
+            return Err(format!("on: {item} is not an object; an entry is {FORMS}"));
+        };
+        let trigger = ["event", "schedule", "path"]
+            .iter()
+            .any(|k| m.contains_key(*k));
+        if trigger && m.len() > 1 {
+            return Err(format!(
+                "on: {item} says more than one thing: an event, a schedule or a path is an entry of its own"
+            ));
+        }
+        for (k, v) in m {
+            match k.as_str() {
+                "event" => {
+                    let s = v.as_str().unwrap_or("");
+                    if !is_message_type(s) {
+                        return Err(format!(
+                            "on: event {v} is not a message type (two or more words joined by .)"
+                        ));
+                    }
+                    o.events.push(s.to_string());
+                }
+                "schedule" => {
+                    let s = v.as_str().ok_or("on: a schedule is a cron line, as text")?;
                     crate::engine::schedule::check(s)?;
                     o.schedules.push(s.to_string());
-                } else if is_message_type(s) {
-                    o.messages.push(s.to_string());
-                } else {
-                    return Err(format!(
-                        "on: \"{s}\" is not a message type (two or more words joined by .), a schedule, a $name or a $$NAME"
-                    ));
                 }
-            }
-        }
-        Value::Object(m) => {
-            for (k, v) in m {
-                match k.strip_prefix('$') {
+                "path" => match v.as_str() {
+                    Some(s) if !s.trim().is_empty() => o.paths.push(s.to_string()),
+                    _ => return Err(format!("on: path {v} is not a file or folder's path")),
+                },
+                "has" => {
+                    let names: Vec<&Value> = match v {
+                        Value::Array(a) => a.iter().collect(),
+                        one => vec![one],
+                    };
+                    for n in names {
+                        let s = n.as_str().ok_or(format!(
+                            "on: has takes \"$name\", \"$$NAME\" or a list of them, not {v}"
+                        ))?;
+                        let bare = s.strip_prefix("$$").or_else(|| s.strip_prefix('$'));
+                        match bare {
+                            Some(b) => {
+                                word(b, s)?;
+                                o.has.push(s.to_string());
+                            }
+                            None => {
+                                return Err(format!("on: has \"{s}\" is not a $name or a $$NAME"));
+                            }
+                        }
+                    }
+                }
+                _ => match k.strip_prefix('$') {
                     Some(n) if !n.starts_with('$') => {
                         o.equal.insert(word(n, k)?, v.clone());
                     }
                     _ => {
                         return Err(format!(
-                            "on: \"{k}\" is not a $name: an object compares state values"
+                            "on: \"{k}\" is not one of event, schedule, path, has or a $name"
                         ));
                     }
-                }
+                },
             }
         }
-        _ => return Err("on is a list, or an object of $names and their values".into()),
     }
     Ok(o)
 }
@@ -284,10 +324,16 @@ impl Flow {
 
     /// The `$$` names its conditions check: in its `on` and its steps'.
     pub fn defined_names(&self) -> Vec<String> {
-        let mut out = self.on.defined.clone();
+        let names = |on: &On| -> Vec<String> {
+            on.has
+                .iter()
+                .filter_map(|h| h.strip_prefix("$$").map(str::to_string))
+                .collect()
+        };
+        let mut out = names(&self.on);
         for s in self.all_steps() {
             if let Step::One { on: Some(on), .. } = s {
-                out.extend(on.defined.iter().cloned());
+                out.extend(names(on));
             }
         }
         out.sort();

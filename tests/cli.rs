@@ -105,7 +105,7 @@ fn check_says_what_each_workflow_uses_and_what_is_not_there() {
     file(
         d.path(),
         "workflows/sipariş.json",
-        r##"{ "on": ["order.placed"], "steps": [["#ödeme", "stok"], "#notify"] }"##,
+        r##"{ "on": [{ "event": "order.placed" }], "steps": [["#ödeme", "stok"], "#notify"] }"##,
     );
     file(
         d.path(),
@@ -137,12 +137,12 @@ fn runs_and_errors_say_how_each_run_is_doing() {
     file(
         d.path(),
         "workflows/iyi.json",
-        r##"{ "on": ["a.b"], "steps": ["#tamam"] }"##,
+        r##"{ "on": [{ "event": "a.b" }], "steps": ["#tamam"] }"##,
     );
     file(
         d.path(),
         "workflows/kötü.json",
-        r##"{ "on": ["a.b"], "steps": ["#bozuk"] }"##,
+        r##"{ "on": [{ "event": "a.b" }], "steps": ["#bozuk"] }"##,
     );
     file(d.path(), "actions/tamam", "#!/bin/sh\n");
     file(

@@ -74,7 +74,7 @@ async fn runs_and_workflows_can_be_read() {
     std::fs::create_dir_all(d.path().join("actions")).unwrap();
     std::fs::write(
         d.path().join("workflows/sayaç.json"),
-        r##"{ "on": ["say.bir"], "steps": ["#yaz"] }"##,
+        r##"{ "on": [{ "event": "say.bir" }], "steps": ["#yaz"] }"##,
     )
     .unwrap();
     let action = d.path().join("actions/yaz");
@@ -114,7 +114,7 @@ async fn runs_and_workflows_can_be_read() {
     assert_eq!(send(&app, get("/runs/yok")).await.0, StatusCode::NOT_FOUND);
     let (_, flows) = send(&app, get("/workflows")).await;
     assert_eq!(flows[0]["name"], "sayaç");
-    assert_eq!(flows[0]["on"]["messages"], json!(["say.bir"]));
+    assert_eq!(flows[0]["on"]["events"], json!(["say.bir"]));
 }
 
 fn post(path: &str, body: &str) -> Request<Body> {

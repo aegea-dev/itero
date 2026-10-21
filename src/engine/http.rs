@@ -228,7 +228,7 @@ async fn workflows(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
                     json!({
                         "name": name,
                         "on": {
-                            "messages": f.on.messages,
+                            "events": f.on.events,
                             "schedules": f.on.schedules,
                         },
                     })

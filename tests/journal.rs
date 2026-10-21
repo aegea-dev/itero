@@ -127,7 +127,7 @@ fn start(workflow: &str, flows: Value) -> Start {
 fn a_version_of_a_runs_workflows_is_pinned_once() {
     let d = tempfile::tempdir().unwrap();
     let mut j = Journal::open(&ws(d.path())).unwrap();
-    let flows = json!({"sipariş": {"on": ["order.placed"], "steps": ["#gönder"]}});
+    let flows = json!({"sipariş": {"on": [{ "event": "order.placed" }], "steps": ["#gönder"]}});
     let a = j
         .start_run(&start("sipariş", flows.clone()), NOW, None)
         .unwrap();

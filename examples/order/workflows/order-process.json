@@ -1,9 +1,9 @@
 {
-  "on": ["$paid", "$stock"],
+  "on": [{ "has": ["$paid", "$stock"] }],
   "steps": [
-    { "#ship":           { "on": { "$paid": true,  "$stock": true } } },
-    { "#remind-payment": { "on": { "$paid": false, "$stock": true } } },
-    { "#remind-stock":   { "on": { "$paid": true,  "$stock": false } } },
-    { "#cancel":         { "on": { "$paid": false, "$stock": false } } }
+    { "#ship":           { "on": [{ "$paid": true,  "$stock": true }] } },
+    { "#remind-payment": { "on": [{ "$paid": false, "$stock": true }] } },
+    { "#remind-stock":   { "on": [{ "$paid": true,  "$stock": false }] } },
+    { "#cancel":         { "on": [{ "$paid": false, "$stock": false }] } }
   ]
 }

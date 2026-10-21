@@ -81,7 +81,7 @@ fn order(ws: &Ws) {
     ws.flow(
         "order",
         json!({
-            "on": ["order.placed"],
+            "on": [{ "event": "order.placed" }],
             "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"],
             "success": ["#log-result"],
             "failure": ["#log-result"],
@@ -91,10 +91,10 @@ fn order(ws: &Ws) {
     ws.flow(
         "order-process",
         json!({
-            "on": ["$paid", "$stock"],
+            "on": [{ "has": ["$paid", "$stock"] }],
             "steps": [
-                {"#ship": {"on": {"$paid": true, "$stock": true}}},
-                {"#remind-stock": {"on": {"$paid": true, "$stock": false}}}
+                {"#ship": {"on": [{"$paid": true, "$stock": true}]}},
+                {"#remind-stock": {"on": [{"$paid": true, "$stock": false}]}}
             ]
         }),
     );
@@ -183,7 +183,7 @@ fn a_message_reaches_every_waiting_run_it_matches() {
     let ws = Ws::new();
     ws.flow(
         "bekle",
-        json!({"on": ["order.placed"], "steps": ["#stok-bekle", "#bitir"]}),
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#stok-bekle", "#bitir"]}),
     );
     ws.action("stok-bekle", r#"[ -n "$arrived" ] || exit 75"#);
     ws.action("bitir", r#"echo "$order" >> biten.log"#);
@@ -203,7 +203,10 @@ fn a_message_reaches_every_waiting_run_it_matches() {
 fn every_workflow_on_a_message_starts_a_run() {
     let ws = Ws::new();
     for n in ["bir", "iki", "üç", "dört", "beş"] {
-        ws.flow(n, json!({"on": ["çay.demlendi"], "steps": ["#hiç"]}));
+        ws.flow(
+            n,
+            json!({"on": [{ "event": "çay.demlendi" }], "steps": ["#hiç"]}),
+        );
     }
     ws.action("hiç", "true");
     ws.emit("çay.demlendi", json!({}));
@@ -217,12 +220,15 @@ fn a_value_comes_from_the_step_then_args_then_the_state() {
     ws.action("renk", r#"echo "$renk" >> renkler.log"#);
     ws.flow(
         "adım",
-        json!({"on": ["renk.sor"], "steps": [{"#renk": {"renk": "adımın"}}]}),
+        json!({"on": [{ "event": "renk.sor" }], "steps": [{"#renk": {"renk": "adımın"}}]}),
     );
     ws.emit("renk.sor", json!({"renk": "durumun"}));
     ws.pass(NOW);
     ws.args("renk", json!({"renk": "args'ın"}));
-    ws.flow("adım", json!({"on": ["renk.sor"], "steps": ["#renk"]}));
+    ws.flow(
+        "adım",
+        json!({"on": [{ "event": "renk.sor" }], "steps": ["#renk"]}),
+    );
     ws.emit("renk.sor", json!({"renk": "durumun"}));
     ws.pass(NOW);
     std::fs::remove_file(ws.d.path().join("args/renk.json")).unwrap();
@@ -237,7 +243,7 @@ fn a_state_value_can_be_named_in_a_steps_data() {
     ws.action("selam", r#"echo "$kime" >> selam.log"#);
     ws.flow(
         "selam",
-        json!({"on": ["selam.ver"], "steps": [{"#selam": {"kime": "$müşteri"}}]}),
+        json!({"on": [{ "event": "selam.ver" }], "steps": [{"#selam": {"kime": "$müşteri"}}]}),
     );
     ws.emit("selam.ver", json!({"müşteri": "Ayşe"}));
     ws.pass(NOW);
@@ -249,7 +255,7 @@ fn a_run_that_waits_past_its_timeout_ends_in_error() {
     let ws = Ws::new();
     ws.flow(
         "bekle",
-        json!({"on": ["order.placed"], "steps": ["#bekle"], "timeout": "1m"}),
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#bekle"], "timeout": "1m"}),
     );
     ws.action("bekle", "exit 75");
     ws.emit("order.placed", json!({"order": 1}));
@@ -265,7 +271,7 @@ fn a_list_of_args_runs_the_rest_once_per_item() {
     let ws = Ws::new();
     ws.flow(
         "posta",
-        json!({"on": ["posta.bak"], "steps": ["#kutu", "#yaz"]}),
+        json!({"on": [{ "event": "posta.bak" }], "steps": ["#kutu", "#yaz"]}),
     );
     ws.args(
         "kutu",
@@ -286,7 +292,10 @@ fn a_list_of_args_runs_the_rest_once_per_item() {
 #[test]
 fn a_schedule_starts_a_run_once_per_slot() {
     let ws = Ws::new();
-    ws.flow("saatlik", json!({"on": ["0 * * * *"], "steps": ["#say"]}));
+    ws.flow(
+        "saatlik",
+        json!({"on": [{ "schedule": "0 * * * *" }], "steps": ["#say"]}),
+    );
     ws.action("say", "echo x >> sayaç.log");
     ws.pass("2026-10-21T14:01:00Z"); // seen: counting starts
     ws.pass("2026-10-21T15:00:10Z");
@@ -298,7 +307,10 @@ fn a_schedule_starts_a_run_once_per_slot() {
 #[test]
 fn an_action_that_reads_nothing_runs_once() {
     let ws = Ws::new();
-    ws.flow("say", json!({"on": ["say.bir"], "steps": ["#say"]}));
+    ws.flow(
+        "say",
+        json!({"on": [{ "event": "say.bir" }], "steps": ["#say"]}),
+    );
     // it never reads its stdin, and the state is more than a pipe holds:
     // the worker's write to it fails, which is no reason to stop
     ws.action("say", "echo x >> sayı.log");
@@ -325,7 +337,10 @@ fn a_message_nothing_wants_is_noted() {
 fn a_daemon_killed_anywhere_carries_on_with_nothing_lost_or_repeated() {
     for point in ["manager", "answer", "job-started", "worker", "result"] {
         let ws = Ws::new();
-        ws.flow("say", json!({"on": ["say.bir"], "steps": ["#bir", "#iki"]}));
+        ws.flow(
+            "say",
+            json!({"on": [{ "event": "say.bir" }], "steps": ["#bir", "#iki"]}),
+        );
         ws.action("bir", "echo bir >> sayı.log");
         ws.action("iki", "echo iki >> sayı.log");
         ws.emit("say.bir", json!({}));

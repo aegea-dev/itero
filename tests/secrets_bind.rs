@@ -19,7 +19,7 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
     std::fs::write(
         d.path().join("workflows/kapı.json"),
         json!({
-            "on": ["kapı.çal", "$$ITERO_TEST_ANAHTAR"],
+            "on": [{ "event": "kapı.çal" }, { "has": "$$ITERO_TEST_ANAHTAR" }],
             "steps": [{"#aç": {"anahtar": "$$ITERO_TEST_ANAHTAR"}}]
         })
         .to_string(),
