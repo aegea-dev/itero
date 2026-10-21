@@ -298,16 +298,25 @@ fn dispatch(cli: Cli) -> Result<()> {
                     eprintln!("note: no folder {}", dir.display());
                 }
             }
-            for (name, f) in ws.flows()? {
+            let flows = ws.flows()?;
+            for (name, f) in &flows {
                 println!("{name}");
                 for u in f.uses() {
-                    if let crate::flow::Name::Action { name, version } = u {
-                        match ws.action_file(&name, version.as_deref()) {
-                            Ok(file) => println!("  #{name}  {}", file.display()),
-                            Err(_) if name == "notify" && version.is_none() => {
-                                println!("  #notify  built in")
+                    match u {
+                        crate::flow::Name::Action { name: a, version } => {
+                            match ws.action_file(&a, version.as_deref()) {
+                                Ok(file) => println!("  #{a}  {}", file.display()),
+                                Err(_) if a == "notify" && version.is_none() => {
+                                    println!("  #notify  built in")
+                                }
+                                Err(e) => bail!("{name}: {e:#}"),
                             }
-                            Err(e) => bail!("{e:#}"),
+                        }
+                        crate::flow::Name::Workflow(w) => {
+                            if !flows.iter().any(|(n, _)| *n == w) {
+                                bail!("{name} uses workflow {w}, which is not there");
+                            }
+                            println!("  {w}  workflow");
                         }
                     }
                 }
