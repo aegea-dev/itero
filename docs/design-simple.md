@@ -253,7 +253,7 @@ What a message does:
   missed by arriving early.
 - **It is handled once**: the daemon marks it handled in the same
   transaction as the runs it starts and the copies it sends.
-- **It is kept** until its runs end, then 1 day more, then deleted.
+- **It is kept** until its runs end, then for `keep` (1 day unless set), then `itero-keep` forgets it.
 
 ## Watching files
 
@@ -402,9 +402,11 @@ keep = "1d"         # how long ended runs and their messages are kept
 log = "10MB"        # then the log is rotated
 ```
 
-Each limit has the default shown. Past `space`, the daemon first forgets
-ended runs sooner than `keep`, oldest first; if `.itero/` is still too big,
-it starts no new run and logs an `error` line until there is room.
+Each limit has the default shown. Past `space`, the daemon sends
+`itero.space.full`, and its `itero-keep` workflow forgets ended runs
+sooner than `keep`, oldest first (see The daemon's own workflows); if
+`.itero/` is still too big, it starts no new run and logs an `error` line
+until there is room.
 
 ### Where to see them
 
@@ -462,6 +464,54 @@ depends on the event:
 - Everything runs in parallel: every run, every workflow.
 - A step may take 10 minutes. Past that, or when the daemon stops while it
   runs, it is tried again, up to 3 times; then it is an error.
+
+## The daemon's own workflows
+
+The daemon looks after itself with the same parts as everything else:
+messages about what it notices, and workflows that handle them. Nothing
+is hidden in it: its own workflows show in `itero check`, `itero runs`
+and the log like any other, and a workspace changes or turns them off the
+same way.
+
+**Messages from the daemon.** Their types start with `itero.`, which only
+the daemon may send (refused from `itero emit`, `/events` and sources):
+
+| Type | When | Data |
+|---|---|---|
+| `itero.daemon.started` | the daemon starts | `daemon`, `name`, `itero` (its version) |
+| `itero.run.error` | a run ended in error | `workflow`, `run`, `failed_step`, `why` |
+| `itero.run.failed` | a run ended as failed | `workflow`, `run`, `why` |
+| `itero.source.gave-up` | a source kept ending and was given up on | `source`, `why` |
+| `itero.space.full` | `.itero/` is past its `space` limit | `used`, `limit` |
+
+A message about a workflow's run never starts a run of that same workflow
+(when it is about an error there), so a broken workflow cannot set itself
+off again and again.
+
+**Built-in workflows.** itero carries a few, named with the `itero-`
+prefix, and runs them as if they were in `workflows/`:
+
+| Workflow | On | Does |
+|---|---|---|
+| `itero-keep` | every hour, and `itero.space.full` | `#itero-forget`: forgets ended runs past `keep` (sooner, when space is short), and rotates the log past its size |
+
+Its steps are built-in actions, like `#notify`: `#itero-forget`.
+
+**A workspace's own**, for what it wants done: a workflow on the daemon's
+messages, written like any other:
+
+```json
+{ "on": [{ "event": "itero.run.error" }],
+  "steps": [{ "#notify": { "title": "itero", "text": "$why" } }] }
+```
+
+- **Changing a built-in workflow:** a file of its name in `workflows/`
+  (`workflows/itero-keep.json`) is used instead.
+- **Turning one off:** that file with `"meta": {"off": true}`.
+
+Later, more of them, as real needs come: a doctor that asks an AI
+assistant what went wrong in a failed run and proposes a fix, as the
+earlier design describes.
 
 ## Commands
 
