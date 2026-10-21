@@ -69,10 +69,27 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Commands',
+					items: [
+						{ label: 'Overview', slug: 'commands' },
+						{ label: 'itero daemon', slug: 'commands/daemon' },
+						{ label: 'itero emit', slug: 'commands/emit' },
+						{ label: 'itero workflows', slug: 'commands/workflows' },
+						{ label: 'itero runs', slug: 'commands/runs' },
+						{ label: 'itero errors', slug: 'commands/errors' },
+						{ label: 'itero check', slug: 'commands/check' },
+						{ label: 'itero info', slug: 'commands/info' },
+						{ label: 'itero args', slug: 'commands/args' },
+						{ label: 'itero secret', slug: 'commands/secret' },
+						{ label: 'itero service', slug: 'commands/service' },
+						{ label: 'itero watch', slug: 'commands/watch' },
+						{ label: 'itero help', slug: 'commands/help' },
+					],
+				},
+				{
 					label: 'Reference',
 					items: [
 						{ label: 'Glossary', slug: 'reference/glossary' },
-						{ label: 'Commands', slug: 'reference/commands' },
 						{ label: 'itero.toml', slug: 'reference/itero-toml' },
 						{ label: 'Workflow files', slug: 'reference/workflow-file' },
 						{ label: 'Actions', slug: 'reference/action-file' },
