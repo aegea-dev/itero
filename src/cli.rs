@@ -74,6 +74,8 @@ pub enum Cmd {
     },
     /// The workspace: its identity, meta and limits, and the daemon running it
     Info,
+    /// Each workflow: what starts it, its runs and the last; and whether a daemon takes the messages
+    Workflows,
     /// Runs that ended in error, newest first: when, the workflow, the run, the step and why
     Errors {
         /// How many
@@ -227,6 +229,29 @@ fn daemon_health(port: u16) -> Option<serde_json::Value> {
         .send()
         .and_then(|r| r.json())
         .ok()
+}
+
+/// Whether this workspace's own daemon answers on its port.
+fn daemon_running(
+    ws: &crate::workspace::Workspace,
+    j: &crate::engine::journal::Journal,
+) -> Result<bool> {
+    let me = j.workspace()?;
+    Ok(daemon_health(ws.port).is_some_and(|h| h["workspace"]["id"] == me.id.as_str()))
+}
+
+/// How long before `now` an RFC 3339 time was: `2m ago`, `3h ago`.
+fn ago(at: &str, now: chrono::DateTime<chrono::Utc>) -> String {
+    let Ok(t) = at.parse::<chrono::DateTime<chrono::Utc>>() else {
+        return at.to_string();
+    };
+    let s = (now - t).num_seconds().max(0);
+    match s {
+        0..60 => format!("{s}s ago"),
+        60..3600 => format!("{}m ago", s / 60),
+        3600..86400 => format!("{}h ago", s / 3600),
+        _ => format!("{}d ago", s / 86400),
+    }
 }
 
 /// A run, from the journal: how it started, each step and how it went,
@@ -428,10 +453,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                     None => eprintln!("nothing starts on {kind}"),
                 }
             }
-            let me = crate::engine::journal::Journal::open(&ws)?.workspace()?;
-            let running =
-                daemon_health(ws.port).is_some_and(|h| h["workspace"]["id"] == me.id.as_str());
-            if !running {
+            if !daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)? {
                 eprintln!("no daemon is running: it waits for itero daemon");
             }
         }
@@ -571,6 +593,70 @@ fn dispatch(cli: Cli) -> Result<()> {
                 );
             }
             story(&j, r)?;
+        }
+        Cmd::Workflows => {
+            let ws = workspace()?;
+            let j = crate::engine::journal::Journal::open(&ws)?;
+            let now = chrono::Utc::now();
+            let mut flows = ws.flows()?;
+            flows.sort_by_key(|(_, f)| f.meta.internal);
+            // the columns: name, what starts it, runs, the last, notes
+            let mut rows: Vec<[String; 5]> = vec![];
+            for (name, f) in &flows {
+                let on = &f.on;
+                let mut starts: Vec<String> = on.events.iter().map(|e| format!("on {e}")).collect();
+                starts.extend(on.schedules.iter().map(|s| format!("at {s}")));
+                starts.extend(on.paths.iter().map(|p| format!("path {p}")));
+                if starts.is_empty() {
+                    starts.push("a step only".into());
+                }
+                let mut notes = vec![];
+                if f.meta.off {
+                    notes.push("off");
+                } else if !crate::flow::active(&f.meta, now) {
+                    notes.push("not now (from/until)");
+                }
+                if f.meta.internal {
+                    notes.push("internal");
+                }
+                let runs = j.runs_page(Some(name), None, &[], usize::MAX)?;
+                let last = match runs.first() {
+                    Some(r) => {
+                        let at = r.ended.as_deref().unwrap_or(&r.started);
+                        let status = crate::engine::steps::status(&r.runtime);
+                        format!("last: {status} {}", ago(at, now))
+                    }
+                    None => "last: none".into(),
+                };
+                rows.push([
+                    name.clone(),
+                    starts.join(", "),
+                    format!("runs {}", runs.len()),
+                    last,
+                    notes.join(", "),
+                ]);
+            }
+            let width = |c: usize| rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0);
+            let widths: Vec<usize> = (0..4).map(width).collect();
+            for r in &rows {
+                let mut line = String::new();
+                for (c, w) in widths.iter().enumerate() {
+                    line += &format!("{:<w$}   ", r[c]);
+                }
+                line += &r[4];
+                println!("{}", line.trim_end());
+            }
+            let waiting = match j.waiting_messages()? {
+                0 => "no message waiting".to_string(),
+                1 => "1 message waiting".to_string(),
+                n => format!("{n} messages waiting"),
+            };
+            let daemon = if daemon_running(&ws, &j)? {
+                "running"
+            } else {
+                "not running"
+            };
+            println!("daemon: {daemon}, {waiting}");
         }
         Cmd::Info => {
             let ws = workspace()?;

@@ -440,6 +440,16 @@ impl Journal {
         Ok(())
     }
 
+    /// How many messages for the workspace no daemon has taken yet.
+    pub fn waiting_messages(&self) -> Result<usize> {
+        let n: i64 = self.db.query_row(
+            "SELECT COUNT(*) FROM events WHERE subject = 'itero.app' AND handled IS NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
     /// How many runs are under way, those of the workflows in `apart` left
     /// out.
     pub fn active_count(&self, apart: &[String]) -> Result<usize> {
