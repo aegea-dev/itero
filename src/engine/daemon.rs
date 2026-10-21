@@ -948,7 +948,8 @@ fn resolve(v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
 
 /// An action's environment: each value found first in the step's data,
 /// then its args (its item, after a split), then the run's state. Names
-/// that cannot be environment variables are on stdin only.
+/// that cannot be environment variables, and state values past `ENV_MAX`,
+/// are on stdin only; a bigger value from the data or args is an error.
 pub fn bind(
     state: &Map<String, Value>,
     args: Option<&Value>,
@@ -970,18 +971,29 @@ pub fn bind(
         if !env_name(&k) {
             continue;
         }
-        match v {
-            Value::Null => {}
-            Value::String(s) => {
-                env.insert(k, s);
+        let text = match &v {
+            Value::Null => continue,
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        // the system refuses to start a program with a value this big
+        if text.len() > ENV_MAX {
+            if state.get(&k) == Some(&v) {
+                continue;
             }
-            other => {
-                env.insert(k, other.to_string());
-            }
+            return Err(format!(
+                "{k} is {} bytes, too big for an environment variable: only the run's state goes on stdin",
+                text.len()
+            ));
         }
+        env.insert(k, text);
     }
     Ok(env)
 }
+
+/// The biggest value given as an environment variable; a bigger one from
+/// the state is on stdin only. Linux takes 128 KB for one.
+const ENV_MAX: usize = 64 * 1024;
 
 /// What a worker is given for an `action.requested` event: the action's
 /// file, its values bound, the run's state.

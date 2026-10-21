@@ -8,7 +8,7 @@ extension, in any language its first line names.
 
 | It gets | |
 |---|---|
-| environment variables | its values: the step's data, then its args, then the run's state |
+| environment variables | its values: the step's data, then its args, then the run's state; a state value over 64 KB is on stdin only |
 | stdin | the run's whole state, as JSON |
 | `$ITERO_MEMORY` | a file it may keep things in, one per workflow |
 | `$ITERO_WAITING_SINCE` | when it runs again after waiting |
