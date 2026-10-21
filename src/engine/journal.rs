@@ -567,19 +567,21 @@ impl Journal {
     /// copies the message to each run in `waiting`, and marks it handled.
     /// One transaction, so a message taken again starts and copies nothing
     /// twice. Nothing started and nothing copied is noted, not an error.
+    /// Returns the runs started.
     pub fn route(
         &mut self,
         r: &Recorded,
         starts: &[Start],
         waiting: &[String],
         at: &str,
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         let tx = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut started = vec![];
         for s in starts {
             let pin = pin(&tx, &s.workflow, &s.flows)?;
-            insert_run(
+            started.push(insert_run(
                 &tx,
                 &s.workflow,
                 &pin,
@@ -587,7 +589,7 @@ impl Journal {
                 &s.input,
                 at,
                 s.cause.clone(),
-            )?;
+            )?);
         }
         for id in waiting {
             publish(&tx, &copy(&r.event, id, at))?;
@@ -599,7 +601,7 @@ impl Journal {
             params![r.seq, at, note],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(started)
     }
 
     /// When a schedule (`<workflow>#<cron>`) last started a run, or was

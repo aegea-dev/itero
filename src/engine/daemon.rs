@@ -5,6 +5,7 @@
 //! one comes from a manager's answer.
 use super::Event;
 use super::journal::{self, Envelope, Handled, Journal, Recorded, Split, Start};
+use super::log::Log;
 use super::steps::{self, StepAnswer, StepInput, StepJob};
 use super::worker::{Failure, LOST_EXIT, NOTIFY, Outcome, StepRun};
 use crate::flow::{self, Flow, Name};
@@ -72,15 +73,17 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    pub fn starting(at: &str) -> Daemon {
-        Daemon {
+    /// This process's life, made the first time it is asked for.
+    pub fn current() -> &'static Daemon {
+        static LIFE: std::sync::OnceLock<Daemon> = std::sync::OnceLock::new();
+        LIFE.get_or_init(|| Daemon {
             id: uuid::Uuid::now_v7().to_string(),
             name: crate::names::random(),
-            started: at.into(),
+            started: stamp(Utc::now()),
             pid: std::process::id(),
             host: host(),
             itero: journal::ITERO.into(),
-        }
+        })
     }
 }
 
@@ -126,7 +129,7 @@ pub struct SourceHealth {
 impl Health {
     pub fn starting(at: &str) -> Health {
         Health {
-            daemon: Daemon::starting(at),
+            daemon: Daemon::current().clone(),
             started: at.to_string(),
             passes: 0,
             last_pass: None,
@@ -218,10 +221,11 @@ fn defined(name: &str) -> bool {
 /// manager` and `itero worker`.
 pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let mut j = Journal::open(ws)?;
+    let log = Log::new(ws, &j.workspace()?.id);
     let mut pass = Pass::default();
     let flows = Flows::load(ws)?;
     j.see_workflows(flows.read.keys(), &stamp(now))?;
-    fire_schedules(&flows, &mut j, now)?;
+    fire_schedules(&flows, &mut j, now, &log)?;
     for (id, run, data) in j.due_timers(&stamp(now))? {
         let e = Envelope::new(
             "daemon",
@@ -240,14 +244,14 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
     loop {
         while let Some(r) = j.next(&held)? {
             if r.event.subject == journal::subject("app") {
-                if route(ws, &flows, &mut j, &r, now)? {
+                if route(ws, &flows, &mut j, &r, now, &log)? {
                     pass.delivered += 1;
                 } else {
                     held.push(r.seq);
                 }
                 continue;
             }
-            if let Delivered::Deferred = deliver(ws, &mut j, &r, now, exe)? {
+            if let Delivered::Deferred = deliver(ws, &mut j, &r, now, exe, &log)? {
                 // events are delivered in order: the rest waits with it
                 pass.deferred += 1;
                 return Ok(pass);
@@ -327,7 +331,7 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
 /// Starts a run of every workflow whose schedule is due, when its
 /// conditions hold. A schedule seen for the first time only starts
 /// counting: it waits for its first slot.
-fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>) -> Result<()> {
+fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log) -> Result<()> {
     for (name, f) in &flows.read {
         for cron in &f.on.schedules {
             let key = format!("{name}#{cron}");
@@ -358,11 +362,17 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>) -> Result<
                     j.start_run(&start, &stamp(now), Some(&key))?;
                 }
                 Ok(_) => {
-                    eprintln!("{name}: schedule {cron}: its on does not hold");
+                    log.write(
+                        "run.skipped",
+                        json!({ "workflow": name, "schedule": cron, "why": "its on does not hold" }),
+                    );
                     j.set_schedule_last(&key, &stamp(now))?;
                 }
                 Err(why) => {
-                    eprintln!("{name}: schedule {cron}: {why}");
+                    log.write(
+                        "error",
+                        json!({ "workflow": name, "schedule": cron, "why": why }),
+                    );
                     j.set_schedule_last(&key, &stamp(now))?;
                 }
             }
@@ -381,6 +391,7 @@ fn route(
     j: &mut Journal,
     r: &Recorded,
     now: DateTime<Utc>,
+    log: &Log,
 ) -> Result<bool> {
     let data = r.event.data.as_object().cloned().unwrap_or_default();
     let mut starts = vec![];
@@ -398,7 +409,10 @@ fn route(
                 input: Value::Object(data.clone()),
                 cause: Some(r.event.id.clone()),
             }),
-            Err(why) => eprintln!("{}: {name}: {why}", r.event.kind),
+            Err(why) => log.write(
+                "error",
+                json!({ "workflow": name, "message": r.event.id, "why": why }),
+            ),
         }
     }
     if !starts.is_empty() && j.active_count()? >= ws.limits.runs {
@@ -410,13 +424,15 @@ fn route(
         .filter(|run| steps::is_waiting(&run.runtime))
         .map(|run| run.id)
         .collect();
-    if starts.is_empty() && waiting.is_empty() {
-        eprintln!(
-            "{}: no workflow starts on it, and no run waits for it",
-            r.event.kind
-        );
+    let started = j.route(r, &starts, &waiting, &stamp(now))?;
+    let mut line = json!({ "message": r.event.id, "type": r.event.kind, "data": r.event.data });
+    if started.is_empty() && waiting.is_empty() {
+        line["nothing"] = json!(true);
+    } else {
+        line["started"] = json!(started);
+        line["reached"] = json!(waiting);
     }
-    j.route(r, &starts, &waiting, &stamp(now))?;
+    log.write("message", line);
     Ok(true)
 }
 
@@ -471,7 +487,8 @@ fn ask(exe: &Path, input: &StepInput) -> Result<StepAnswer, Failure> {
 }
 
 /// Marks an event handled with the reason it could not be delivered.
-fn give_up(j: &mut Journal, seq: i64, at: &str, why: String) -> Result<Delivered> {
+fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Result<Delivered> {
+    log.write("error", json!({ "why": why }));
     j.handle(Handled {
         seq,
         at,
@@ -491,16 +508,18 @@ fn deliver(
     r: &Recorded,
     now: DateTime<Utc>,
     exe: &Path,
+    log: &Log,
 ) -> Result<Delivered> {
     let at = stamp(now);
     let Some(id) = journal::run_of(&r.event.subject).map(str::to_string) else {
-        return give_up(j, r.seq, &at, format!("no run in {}", r.event.subject));
+        return give_up(log, j, r.seq, &at, format!("no run in {}", r.event.subject));
     };
     let Some(run) = j.run(&id)? else {
-        return give_up(j, r.seq, &at, format!("no run {id}"));
+        return give_up(log, j, r.seq, &at, format!("no run {id}"));
     };
     let Some((root, values)) = j.pinned(&run.pin)? else {
         return give_up(
+            log,
             j,
             r.seq,
             &at,
@@ -514,7 +533,7 @@ fn deliver(
     for (n, v) in &values {
         let f = match flow::from_value(v) {
             Ok(f) => f,
-            Err(e) => return give_up(j, r.seq, &at, format!("{n}: {e}")),
+            Err(e) => return give_up(log, j, r.seq, &at, format!("{n}: {e}")),
         };
         for u in f.uses() {
             if let Name::Action { name, .. } = u
@@ -525,7 +544,7 @@ fn deliver(
                         args.insert(name, a);
                     }
                     Ok(None) => {}
-                    Err(e) => return give_up(j, r.seq, &at, format!("{e:#}")),
+                    Err(e) => return give_up(log, j, r.seq, &at, format!("{e:#}")),
                 }
             }
         }
@@ -548,21 +567,18 @@ fn deliver(
     };
     let answer = match ask_again(exe, &input) {
         Ok(a) => a,
-        Err(Failure::Error(why)) => return give_up(j, r.seq, &at, why),
+        Err(Failure::Error(why)) => return give_up(log, j, r.seq, &at, why),
         Err(Failure::Lost(why)) => {
-            eprintln!(
-                "{}: {id}: {why}; {} waits for the next pass",
-                run.workflow, r.event.kind
+            log.write(
+                "error",
+                about(
+                    &run,
+                    json!({ "why": format!("{why}; {} waits for the next pass", r.event.kind) }),
+                ),
             );
             return Ok(Delivered::Deferred);
         }
     };
-    for line in &answer.log {
-        eprintln!("{}: {id}: {line}", run.workflow);
-    }
-    if let Some(steps::Ended::Error { why }) = &answer.runtime.ended {
-        eprintln!("{}: {id}: error: {why}", run.workflow);
-    }
     let mut events: Vec<Envelope> = answer
         .jobs
         .iter()
@@ -603,8 +619,81 @@ fn deliver(
         events,
         splits,
     })?;
+    tell(log, &run, r, &answer);
     super::die_at("answer");
     Ok(Delivered::Handled)
+}
+
+/// A run's lines: `fields` and which run it is.
+fn about(run: &journal::Run, mut fields: Value) -> Value {
+    fields["workflow"] = json!(run.workflow);
+    fields["run"] = json!(run.id);
+    fields["run_name"] = json!(run.name);
+    fields
+}
+
+/// Logs what an answer, saved, did to a run: the event it answered, the
+/// steps it starts, what the manager noted, and the run's end.
+fn tell(log: &Log, run: &journal::Run, r: &Recorded, answer: &StepAnswer) {
+    let d = &r.event.data;
+    match r.event.kind.as_str() {
+        "run.started" => log.write(
+            "run.started",
+            about(
+                run,
+                match &r.event.cause {
+                    Some(m) => json!({ "message": m }),
+                    None => json!({ "schedule": true }),
+                },
+            ),
+        ),
+        "action.finished" | "action.waiting" => log.write(
+            if r.event.kind == "action.finished" {
+                "step.done"
+            } else {
+                "step.waiting"
+            },
+            about(run, json!({ "step": d["step"], "output": d["output"] })),
+        ),
+        "action.failed" => log.write(
+            "step.failed",
+            about(run, json!({ "step": d["step"], "why": d["error"] })),
+        ),
+        _ => {}
+    }
+    for note in &answer.notes {
+        let event = note["event"].as_str().unwrap_or("run.note");
+        log.write(event, about(run, note.clone()));
+    }
+    for line in &answer.log {
+        log.write("run.note", about(run, json!({ "note": line })));
+    }
+    for job in &answer.jobs {
+        log.write(
+            "step.started",
+            about(run, json!({ "step": format!("#{}", job.action) })),
+        );
+    }
+    if run.runtime.ended.is_none()
+        && let Some(ended) = &answer.runtime.ended
+    {
+        let why = match ended {
+            steps::Ended::Error { why } => json!(why),
+            _ => answer
+                .runtime
+                .state
+                .get("why")
+                .cloned()
+                .unwrap_or(Value::Null),
+        };
+        log.write(
+            "run.ended",
+            about(
+                run,
+                json!({ "status": steps::status(&answer.runtime), "why": why }),
+            ),
+        );
+    }
 }
 
 /// Whether a name can be an environment variable: a letter or `_`, then
@@ -790,10 +879,20 @@ fn save_result(
 ) -> Result<()> {
     let data = &r.event.data;
     let path = data.pointer("/job/path").cloned().unwrap_or(Value::Null);
+    let step = format!("#{}", data["job"]["action"].as_str().unwrap_or("?"));
     let (kind, result) = match outcome {
-        Ok(Outcome::Done(m)) => ("action.finished", json!({"path": path, "output": m})),
-        Ok(Outcome::NotYet(m)) => ("action.waiting", json!({"path": path, "output": m})),
-        Err(why) => ("action.failed", json!({"path": path, "error": why})),
+        Ok(Outcome::Done(m)) => (
+            "action.finished",
+            json!({"path": path, "step": step, "output": m}),
+        ),
+        Ok(Outcome::NotYet(m)) => (
+            "action.waiting",
+            json!({"path": path, "step": step, "output": m}),
+        ),
+        Err(why) => (
+            "action.failed",
+            json!({"path": path, "step": step, "error": why}),
+        ),
     };
     let run = data["run"].as_str().unwrap_or("");
     let e = Envelope::new(

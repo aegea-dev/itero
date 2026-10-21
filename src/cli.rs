@@ -154,8 +154,16 @@ pub fn run(args: Vec<String>) -> i32 {
     }
 }
 
-/// What a pass did, on stderr: only when it did something, or failed.
-fn report(pass: &Result<crate::engine::daemon::Pass>) {
+/// What a pass did, on stderr when it is a terminal: only when it did
+/// something, or failed. A pass that failed is in the log too.
+fn report(pass: &Result<crate::engine::daemon::Pass>, log: Option<&crate::engine::log::Log>) {
+    use std::io::IsTerminal;
+    if let (Err(e), Some(log)) = (pass, log) {
+        log.write("error", serde_json::json!({ "why": format!("{e:#}") }));
+    }
+    if !std::io::stderr().is_terminal() {
+        return;
+    }
     match pass {
         Ok(p) if p.delivered + p.worked + p.lost + p.deferred > 0 => eprintln!(
             "{} events, {} jobs, {} lost (run again), {} waiting",
@@ -164,6 +172,33 @@ fn report(pass: &Result<crate::engine::daemon::Pass>) {
         Ok(_) => {}
         Err(e) => eprintln!("error: {e:#}"),
     }
+}
+
+/// Set by SIGINT or SIGTERM: the daemon is asked to stop.
+static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn on_stop(_: libc::c_int) {
+    STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// When the daemon is asked to stop (SIGINT, SIGTERM), logs
+/// `daemon.stopped` and ends the process.
+fn stop_on_signal(log: crate::engine::log::Log) {
+    #[cfg(unix)]
+    // SAFETY: the handler only stores to an atomic
+    unsafe {
+        let handler = on_stop as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        libc::signal(libc::SIGINT, handler);
+        libc::signal(libc::SIGTERM, handler);
+    }
+    std::thread::spawn(move || {
+        while !STOP.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        log.write("daemon.stopped", serde_json::json!({}));
+        std::process::exit(0);
+    });
 }
 
 /// Ignores SIGPIPE again, for the commands that write to other processes
@@ -279,12 +314,31 @@ fn dispatch(cli: Cli) -> Result<()> {
                     None => chrono::Utc::now(),
                 };
                 let pass = daemon::run_once(&ws, at, &exe);
-                report(&pass);
+                report(&pass, None);
                 pass?;
                 return Ok(());
             }
+            let workspace = crate::engine::journal::Journal::open(&ws)?.workspace()?;
+            let log = crate::engine::log::Log::new(&ws, &workspace.id);
+            let me = daemon::Daemon::current();
+            log.write(
+                "daemon.started",
+                serde_json::json!({
+                    "workspace_name": workspace.name,
+                    "workspace_created": workspace.created,
+                    "workspace_itero": workspace.itero,
+                    "path": ws.root.display().to_string(),
+                    "meta": ws.meta,
+                    "daemon_name": me.name,
+                    "started": me.started,
+                    "pid": me.pid,
+                    "host": me.host,
+                    "itero": me.itero,
+                }),
+            );
+            stop_on_signal(log.clone());
             eprintln!(
-                "itero: running the workflows in {}, a pass every {interval}s (Ctrl-C stops)",
+                "itero: running the workflows in {}, a pass every {interval}s (Ctrl-C stops); log: .itero/itero.log",
                 ws.root.display()
             );
             use crate::engine::http::{self, Engine};
@@ -297,9 +351,8 @@ fn dispatch(cli: Cli) -> Result<()> {
             });
             // a bad source file stops the daemon here, naming the file
             for (kind, file) in ws.source_files()? {
-                let (ws, exe, engine) = (ws.clone(), exe.clone(), engine.clone());
+                let (ws, exe, engine, log) = (ws.clone(), exe.clone(), engine.clone(), log.clone());
                 let wake = engine.wake.clone();
-                eprintln!("itero: source {kind}");
                 std::thread::spawn(move || {
                     let source = crate::sources::supervise::Source {
                         kind: &kind,
@@ -313,6 +366,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                         &policy,
                         &wake,
                         &engine.health,
+                        &log,
                     );
                 });
             }
@@ -320,7 +374,9 @@ fn dispatch(cli: Cli) -> Result<()> {
                 let (ws, engine) = (ws.clone(), engine.clone());
                 let interval = std::time::Duration::from_secs(interval);
                 std::thread::spawn(move || {
-                    daemon::run_loop(&ws, interval, &exe, &woken, &engine.health, report)
+                    daemon::run_loop(&ws, interval, &exe, &woken, &engine.health, |p| {
+                        report(p, Some(&log))
+                    })
                 })
             };
             if no_serve {

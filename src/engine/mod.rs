@@ -5,6 +5,7 @@ pub mod daemon;
 pub mod events;
 pub mod http;
 pub mod journal;
+pub mod log;
 pub mod schedule;
 pub mod secrets;
 pub mod service;

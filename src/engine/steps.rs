@@ -152,6 +152,10 @@ pub struct StepAnswer {
     pub timers: Vec<Timer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub log: Vec<String>,
+    /// Lines for the daemon's log, each with its `event`:
+    /// `{"event": "step.skipped", "step": "#ship"}`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Value>,
 }
 
 /// One action to run.
@@ -220,6 +224,7 @@ pub fn decide(input: &StepInput) -> Result<StepAnswer, String> {
         jobs: vec![],
         split: None,
         log: vec![],
+        notes: vec![],
     };
     if m.rt.ended.is_some() {
         m.log
@@ -247,6 +252,7 @@ pub fn decide(input: &StepInput) -> Result<StepAnswer, String> {
         split,
         timers,
         log: m.log,
+        notes: m.notes,
     })
 }
 
@@ -259,6 +265,7 @@ struct Machine<'a> {
     /// An action with a list of args was reached: its name and the items.
     split: Option<(String, Vec<Value>)>,
     log: Vec<String>,
+    notes: Vec<Value>,
 }
 
 impl Machine<'_> {
@@ -347,6 +354,15 @@ impl Machine<'_> {
     }
 
     /// Something broke at `step`: the error list, or the end.
+    /// A step whose `on` does not hold: it is passed by.
+    fn skipped(&mut self, step: &str) {
+        self.notes.push(serde_json::json!({
+            "event": "step.skipped",
+            "step": step,
+            "why": "its on does not hold",
+        }));
+    }
+
     fn fail(&mut self, why: &str, step: &str) -> Result<(), String> {
         self.rt.state.insert("why".into(), why.into());
         self.rt.state.insert("failed_step".into(), step.into());
@@ -410,8 +426,7 @@ impl Machine<'_> {
                 if let Some(on) = on
                     && !self.holds(on)
                 {
-                    self.log
-                        .push(format!("{} skipped: its on does not hold", label(name)));
+                    self.skipped(&label(name));
                     return Ok(None);
                 }
                 self.start_name(name, data, path, false)
@@ -474,7 +489,7 @@ impl Machine<'_> {
                     return Err(format!("no workflow {w}"));
                 };
                 if !self.holds(&f.on.clone()) {
-                    self.log.push(format!("{w} skipped: its on does not hold"));
+                    self.skipped(w);
                     return Ok(None);
                 }
                 self.start_list(w, false, 0, path)

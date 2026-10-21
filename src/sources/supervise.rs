@@ -4,8 +4,9 @@
 //! log and `/health` say so.
 use crate::engine::daemon::{Health, SourceHealth, stamp};
 use crate::engine::journal::{self, Envelope, Journal};
+use crate::engine::log::Log;
 use crate::workspace::Workspace;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -75,7 +76,13 @@ pub fn path_with(exe: &Path) -> std::ffi::OsString {
 }
 
 /// One start of the source, until it ends: how it ended.
-fn once(ws: &Workspace, exe: &Path, s: &Source, wake: &Sender<()>) -> anyhow::Result<String> {
+fn once(
+    ws: &Workspace,
+    exe: &Path,
+    s: &Source,
+    wake: &Sender<()>,
+    log: &Log,
+) -> anyhow::Result<String> {
     let j = Journal::open(ws)?;
     let mut child = Command::new(s.file)
         .current_dir(&ws.root)
@@ -106,7 +113,7 @@ fn once(ws: &Workspace, exe: &Path, s: &Source, wake: &Sender<()>) -> anyhow::Re
                 j.publish(&e)?;
                 let _ = wake.send(());
             }
-            Err(why) => eprintln!("source {}: {why}", s.kind),
+            Err(why) => log.write("error", json!({ "source": s.kind, "why": why })),
         }
     }
     drop(stdin);
@@ -121,6 +128,7 @@ pub fn run(
     policy: &Policy,
     wake: &Sender<()>,
     health: &Mutex<Health>,
+    log: &Log,
 ) {
     let mut ends: Vec<Instant> = vec![];
     let mut pause = Duration::ZERO;
@@ -130,24 +138,26 @@ pub fn run(
             h.state = "running".into();
             h.restarts = ends.len();
         });
-        let ended = match once(ws, exe, s, wake) {
+        log.write("source.started", json!({ "source": s.kind }));
+        let ended = match once(ws, exe, s, wake, log) {
             Ok(status) => status,
             Err(e) => format!("error: {e:#}"),
         };
         let ran = began.elapsed();
-        eprintln!(
-            "source {}: ended ({ended}) after {}s",
-            s.kind,
-            ran.as_secs()
+        log.write(
+            "source.ended",
+            json!({ "source": s.kind, "why": ended, "seconds": ran.as_secs() }),
         );
         ends.retain(|t| t.elapsed() < policy.window);
         ends.push(Instant::now());
         let restarts = ends.len() - 1;
         if restarts >= policy.give_up_after {
-            eprintln!(
-                "source {}: gave up: started again {restarts} times in {}s",
-                s.kind,
-                policy.window.as_secs()
+            log.write(
+                "source.gave-up",
+                json!({
+                    "source": s.kind,
+                    "why": format!("started again {restarts} times in {}s", policy.window.as_secs()),
+                }),
             );
             set(health, s.kind, |h| {
                 h.state = "gave up".into();

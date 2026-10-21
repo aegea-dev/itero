@@ -52,9 +52,11 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
         std::fs::read_to_string(d.path().join("açıldı.txt")).unwrap(),
         "gizli-şifre-123\n"
     );
-    // nowhere in the journal, nor in its write-ahead log
+    // nowhere in the journal, its write-ahead log, nor the log
     let wal = ws.journal().with_extension("sqlite-wal");
-    for f in [ws.journal(), wal] {
+    let log = d.path().join(".itero/itero.log");
+    assert!(log.exists());
+    for f in [ws.journal(), wal, log] {
         let bytes = std::fs::read(&f).unwrap_or_default();
         assert!(
             !String::from_utf8_lossy(&bytes).contains("gizli-şifre-123"),

@@ -70,6 +70,11 @@ fn ws_with_source(d: &std::path::Path, script: &str) -> itero::workspace::Worksp
     itero::workspace::find(d).unwrap()
 }
 
+fn log(ws: &itero::workspace::Workspace) -> itero::engine::log::Log {
+    let w = Journal::open(ws).unwrap().workspace().unwrap();
+    itero::engine::log::Log::new(ws, &w.id)
+}
+
 /// Runs the workspace's source until it is given up on.
 fn run_it(ws: &itero::workspace::Workspace) -> Health {
     let (kind, file) = ws.source_files().unwrap().remove(0);
@@ -80,7 +85,7 @@ fn run_it(ws: &itero::workspace::Workspace) -> Health {
         kind: &kind,
         file: &file,
     };
-    supervise::run(ws, exe, &source, &quick(), &wake, &health);
+    supervise::run(ws, exe, &source, &quick(), &wake, &health, &log(ws));
     health.into_inner().unwrap()
 }
 
@@ -129,7 +134,7 @@ fn a_source_that_cannot_start_is_given_up_on_with_why() {
         kind: &kind,
         file: &file,
     };
-    supervise::run(&ws, exe, &source, &quick(), &wake, &health);
+    supervise::run(&ws, exe, &source, &quick(), &wake, &health, &log(&ws));
     let h = health.into_inner().unwrap();
     let s = &h.sources["deneme.başladı"];
     assert_eq!(s.state, "gave up");
@@ -137,4 +142,8 @@ fn a_source_that_cannot_start_is_given_up_on_with_why() {
         s.last_exit.as_deref().unwrap().starts_with("error: "),
         "{s:?}"
     );
+    let log = std::fs::read_to_string(d.path().join(".itero/itero.log")).unwrap();
+    let last: serde_json::Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+    assert_eq!(last["event"], "source.gave-up");
+    assert_eq!(last["source"], "deneme.başladı");
 }
