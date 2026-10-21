@@ -41,6 +41,29 @@ pub enum Cmd {
         #[arg(value_name = "DATA")]
         data: Option<String>,
     },
+    /// Set an action's args: a JSON object, or a list of objects (its step runs once per item)
+    Args {
+        /// The action, without # or a version
+        action: String,
+        /// The args, as JSON
+        #[arg(
+            value_name = "DATA",
+            required_unless_present = "file",
+            conflicts_with = "file"
+        )]
+        data: Option<String>,
+        /// Read the args from this file
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+    /// Keep a secret in the OS secret store, for $$NAME (asks for it, without echo)
+    Secret {
+        /// Its name: a letter or _, then letters, digits or _
+        name: String,
+        /// Read it from this file (its last newline left out)
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
     /// The runs, newest first: id, workflow, where it is or how it ended, started, ended
     Runs,
     /// Runs that ended in error, newest first: when, the workflow, the run, the step and why
@@ -220,6 +243,53 @@ fn dispatch(cli: Cli) -> Result<()> {
             let now = crate::engine::daemon::stamp(chrono::Utc::now());
             let id = crate::engine::events::emit(&ws, &kind, data, &now)?;
             println!("{id}");
+        }
+        Cmd::Args { action, data, file } => {
+            let ws = workspace()?;
+            let text = match (data, file) {
+                (Some(d), _) => d,
+                (None, Some(f)) => std::fs::read_to_string(&f)
+                    .map_err(|e| anyhow!("cannot read {}: {e}", f.display()))?,
+                (None, None) => bail!("give the args as JSON, or --file"),
+            };
+            let bad_name = action.is_empty()
+                || action.contains(['/', '\\', '#', '@', '$'])
+                || action.starts_with('.');
+            if bad_name {
+                bail!("{action} is not an action's name");
+            }
+            let v: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|_| anyhow!("args are an object, or a list of objects, as JSON"))?;
+            let ok = match &v {
+                serde_json::Value::Object(_) => true,
+                serde_json::Value::Array(items) => items.iter().all(|i| i.is_object()),
+                _ => false,
+            };
+            if !ok {
+                bail!("args are an object, or a list of objects, as JSON");
+            }
+            let dir = ws.root.join("args");
+            std::fs::create_dir_all(&dir)?;
+            let f = dir.join(format!("{action}.json"));
+            std::fs::write(&f, serde_json::to_string_pretty(&v)? + "\n")?;
+            println!("{}", f.display());
+        }
+        Cmd::Secret { name, file } => {
+            crate::engine::secrets::ready(&name)?;
+            let value = match file {
+                Some(f) => {
+                    let t = std::fs::read_to_string(&f)
+                        .map_err(|e| anyhow!("cannot read {}: {e}", f.display()))?;
+                    let t = t.strip_suffix('\n').unwrap_or(&t);
+                    t.strip_suffix('\r').unwrap_or(t).to_string()
+                }
+                None => rpassword::prompt_password(format!("{name}: "))?,
+            };
+            if value.is_empty() {
+                bail!("{name}: an empty secret is not kept");
+            }
+            crate::engine::secrets::set(&name, &value)?;
+            println!("{name}: kept in the OS secret store");
         }
         Cmd::Check => {
             let ws = workspace()?;

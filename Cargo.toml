@@ -21,6 +21,7 @@ uuid = { version = "~1.28.0", features = ["v7"] }
 reqwest = { version = "~0.13.5", default-features = false, features = ["blocking", "json", "native-tls", "http2"] }
 wait-timeout = "~0.2.1"
 keyring = "~4.2.0"
+rpassword = "~7.5.4"
 croner = "~4.0.1"
 service-manager = "~0.11.0"
 axum = "~0.8.9"
