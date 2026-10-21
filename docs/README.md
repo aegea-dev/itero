@@ -25,7 +25,8 @@ src/content/docs/
   index.mdx          landing page
   start/             install, quickstart, concepts
   guides/            workflows, actions, messages, secrets, the log, the daemon's own workflows, the service
-  reference/         commands, file formats, the HTTP API
+  commands/          an overview, and a page per command
+  reference/         the glossary, file formats, the HTTP API
 astro.config.mjs     sidebar, theme
 ```
 
@@ -41,7 +42,7 @@ The site is served by GitHub Pages at <https://aegea-dev.github.io/itero/>.
 
 Under Pages the site lives at `/itero/`: `base` in `astro.config.mjs` says
 so, and a small remark plugin there prefixes it onto root links written in
-pages, so pages keep writing `[commands](/reference/commands/)`. Links in
+pages, so pages keep writing `[commands](/commands/)`. Links in
 front matter (the landing page's hero) are relative instead. To move to a
 domain of its own, set `SITE` and `BASE` in `astro.config.mjs`, the base
 argument of the build check in `package.json`, and the `Sitemap:` line in
