@@ -173,6 +173,32 @@ pub struct StepJob {
     pub waiting_since: Option<String>,
 }
 
+/// Where a run is, or how it ended, in a word: `running`, `waiting`,
+/// `done`, `failed`, `error` or `split`.
+pub fn status(rt: &Runtime) -> &'static str {
+    match &rt.ended {
+        Some(Ended::Done) => "done",
+        Some(Ended::Failed) => "failed",
+        Some(Ended::Error { .. }) => "error",
+        Some(Ended::Split) => "split",
+        None if is_waiting(rt) => "waiting",
+        None => "running",
+    }
+}
+
+/// Whether a step of the run waits for data (exited 75): the runs messages
+/// for the workspace are copied to.
+pub fn is_waiting(rt: &Runtime) -> bool {
+    let mut any = false;
+    let mut at = rt.at.clone();
+    if let Some(a) = at.as_mut() {
+        leaves(a, &mut vec![], &mut |leaf, _| {
+            any |= matches!(leaf, At::Action { waiting: true, .. });
+        });
+    }
+    any
+}
+
 pub fn decide(input: &StepInput) -> Result<StepAnswer, String> {
     let now = DateTime::parse_from_rfc3339(&input.now)
         .map_err(|_| format!("now must be an RFC 3339 time, not `{}`", input.now))?;

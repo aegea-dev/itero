@@ -1,15 +1,15 @@
 //! The engine's journal: one SQLite file per workspace,
-//! `.itero/journal.sqlite`, local and never synced. It is the event queue
+//! `.itero/journal.sqlite`, local and never synced. It is the message queue
 //! and log, and keeps each run's place, the workflow versions runs are
-//! pinned to, timers, schedules, and each workflow's memory.
-use super::{Runtime, Timer};
-use crate::workflow::format::Then;
-use crate::workflow::{self, File};
+//! pinned to, timers and schedules.
+use super::Timer;
+use super::steps::Runtime;
 use crate::workspace::Workspace;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 /// The journal's schema version, kept in its `meta` table.
 pub const SCHEMA_VERSION: i64 = 1 + MIGRATIONS.len() as i64;
@@ -17,7 +17,7 @@ pub const SCHEMA_VERSION: i64 = 1 + MIGRATIONS.len() as i64;
 /// The steps from each version to the next: `MIGRATIONS[0]` takes version 1
 /// to 2, and so on. A step is only ever added, never changed: a journal on
 /// someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 3] = [
+const MIGRATIONS: [&str; 4] = [
     // 2: what handling an event did, when no run shows it
     "ALTER TABLE events ADD COLUMN note TEXT;",
     // 3: starts waiting for a free slot, paused workflows, sources' cursors
@@ -26,6 +26,13 @@ const MIGRATIONS: [&str; 3] = [
      CREATE TABLE cursors (source TEXT PRIMARY KEY, value TEXT NOT NULL);",
     // 4: the input each run started with, for correlation (run.input)
     "ALTER TABLE runs ADD COLUMN input TEXT;",
+    // 5: the simple form (docs/design-simple.md). The runs of the old form
+    // end here, with what was waiting for them; their events stay, as
+    // history, and so do messages not yet taken.
+    "DELETE FROM timers; DELETE FROM queued; DELETE FROM paused; DELETE FROM memory; DELETE FROM jobs;
+     UPDATE events SET handled = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), note = 'a run of the old form'
+       WHERE handled IS NULL AND subject != 'itero.app';
+     DELETE FROM runs; DELETE FROM workflows;",
 ];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
@@ -117,58 +124,35 @@ pub struct Recorded {
 pub struct Run {
     pub id: String,
     pub workflow: String,
+    /// The version of its workflows it is pinned to: a UUIDv7.
     pub pin: String,
     pub runtime: Runtime,
-    pub args: Map<String, Value>,
-    /// What the run started with: the data of the event that started it
-    /// (null for a run from before journal schema 4).
+    /// The data of the message that started it.
     pub input: Value,
     pub started: String,
     pub ended: Option<String>,
 }
 
-/// What asking for a run did.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Started {
-    /// A run started: its id.
-    Run(String),
-    /// The workflow is at its maximum: the start waits its turn.
-    Queued,
-    /// The workflow is at its maximum and skips starts beyond it.
-    Skipped,
-    /// The workflow is paused: nothing starts.
-    Paused,
-}
-
-impl Started {
-    fn word(&self) -> &'static str {
-        match self {
-            Started::Run(_) => "started",
-            Started::Queued => "queued",
-            Started::Skipped => "skipped",
-            Started::Paused => "paused",
-        }
-    }
-}
-
-/// A paused workflow: the version that failed, when, and why.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Paused {
+/// A run to start: its workflow, the workflows pinned with it (its own and
+/// those it uses as steps), the message's data, and the message.
+pub struct Start {
     pub workflow: String,
-    pub pin: String,
-    pub at: String,
-    pub why: String,
+    pub flows: BTreeMap<String, Value>,
+    pub input: Value,
+    pub cause: Option<String>,
 }
 
-/// A workflow to pause, as part of an answer (the breaker).
-pub struct Pause<'a> {
+/// A run split from another: its own copy of the runtime, from the same
+/// place.
+pub struct Split<'a> {
     pub workflow: &'a str,
     pub pin: &'a str,
-    pub why: String,
+    pub runtime: &'a Runtime,
+    pub input: &'a Value,
 }
 
 /// A subject: `itero.run.<id>`, `itero.worker` for jobs, or `itero.app`
-/// for an app's events (which may start runs).
+/// for messages for the workspace (which may start runs).
 pub fn subject(target: &str) -> String {
     match target {
         "worker" => "itero.worker".into(),
@@ -189,15 +173,13 @@ pub struct Handled<'a> {
     /// When: the daemon's pass time (RFC 3339), never the clock's.
     pub at: &'a str,
     pub error: Option<String>,
-    /// The run's runtime state after it, and whether the run has ended.
+    /// The run's runtime after it, and whether the run has ended.
     pub run: Option<(&'a str, &'a Runtime, bool)>,
     /// The run's timers from now on; `None` leaves them.
     pub timers: Option<&'a [Timer]>,
     pub events: Vec<Envelope>,
-    /// Keys of a workflow's memory to set.
-    pub memory: Option<(&'a str, &'a Map<String, Value>)>,
-    /// A workflow to pause (the breaker), in the same transaction.
-    pub pause: Option<Pause<'a>>,
+    /// Runs split from this one.
+    pub splits: Vec<Split<'a>>,
 }
 
 pub struct Journal {
@@ -342,295 +324,171 @@ impl Journal {
         Ok(out)
     }
 
-    /// A run by id.
-    pub fn run(&self, id: &str) -> Result<Option<Run>> {
-        type Row = (
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-            String,
-            Option<String>,
+    /// The messages for the workspace since `time`, apart from `except`
+    /// (the one that started a run): what a run starting to wait may have
+    /// missed.
+    pub fn messages_since(&self, time: &str, except: Option<&str>) -> Result<Vec<Recorded>> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM events WHERE subject = 'itero.app' AND time >= ?1
+               AND (?2 IS NULL OR id != ?2) ORDER BY seq"
         );
-        let r: Option<Row> = self
-            .db
-            .query_row(
-                "SELECT workflow, pin, runtime, args, input, started, ended FROM runs WHERE id = ?1",
-                params![id],
-                |r| {
-                    Ok((
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get(5)?,
-                        r.get(6)?,
-                    ))
-                },
-            )
-            .optional()?;
-        r.map(|(workflow, pin, rt, args, input, started, ended)| {
-            Ok(Run {
-                id: id.to_string(),
-                workflow,
-                pin,
-                runtime: serde_json::from_str(&rt)?,
-                args: serde_json::from_str(&args)?,
-                input: match input {
-                    Some(t) => serde_json::from_str(&t)?,
-                    None => Value::Null,
-                },
-                started,
-                ended,
-            })
-        })
-        .transpose()
+        let mut s = self.db.prepare(&sql)?;
+        let out = s
+            .query_map(params![time, except], row)?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(out)
     }
 
-    /// Starts a run of a workflow, pinned at its version, unless it is
-    /// paused or at its maximum (`admit`): the run, and its `run.started`
-    /// event, in one transaction. With a schedule's key, that schedule's
-    /// last slot becomes `now` in the same transaction, so a slot never
-    /// starts two runs, whatever became of the start.
-    pub fn start_run(
-        &mut self,
-        f: &File,
-        args: &Map<String, Value>,
-        now: &str,
-        schedule: Option<&str>,
-    ) -> Result<Started> {
+    /// The message that started a run, if one did.
+    pub fn started_by(&self, run: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT cause FROM events WHERE subject = ?1 AND type = 'run.started' ORDER BY seq LIMIT 1",
+                params![subject(run)],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// A run by id.
+    pub fn run(&self, id: &str) -> Result<Option<Run>> {
+        self.db
+            .query_row(
+                "SELECT id, workflow, pin, runtime, input, started, ended FROM runs WHERE id = ?1",
+                params![id],
+                run_row,
+            )
+            .optional()?
+            .transpose()
+    }
+
+    /// The runs not ended, oldest first.
+    pub fn active_runs(&self) -> Result<Vec<Run>> {
+        let mut s = self.db.prepare(
+            "SELECT id, workflow, pin, runtime, input, started, ended FROM runs
+             WHERE ended IS NULL ORDER BY started, id",
+        )?;
+        let rows: Vec<Result<Run>> = s.query_map([], run_row)?.collect::<rusqlite::Result<_>>()?;
+        rows.into_iter().collect()
+    }
+
+    /// The newest `limit` runs, of one workflow or all, ended one way (the
+    /// kind of `ended`: done, failed, error, split) or any, newest first.
+    pub fn runs_page(
+        &self,
+        workflow: Option<&str>,
+        ended: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Run>> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut s = self.db.prepare(
+            "SELECT id, workflow, pin, runtime, input, started, ended FROM runs
+             WHERE (?1 IS NULL OR workflow = ?1)
+               AND (?2 IS NULL OR json_extract(runtime, '$.ended.kind') = ?2)
+             ORDER BY started DESC, id DESC LIMIT ?3",
+        )?;
+        let rows: Vec<Result<Run>> = s
+            .query_map(params![workflow, ended, limit], run_row)?
+            .collect::<rusqlite::Result<_>>()?;
+        rows.into_iter().collect()
+    }
+
+    /// Every run, oldest first.
+    pub fn runs(&self) -> Result<Vec<Run>> {
+        let mut out = self.runs_page(None, None, usize::MAX)?;
+        out.reverse();
+        Ok(out)
+    }
+
+    /// The pin of a version of a run's workflows, made the first time that
+    /// version is seen: a UUIDv7.
+    pub fn pin(&self, workflow: &str, flows: &BTreeMap<String, Value>) -> Result<String> {
+        pin(&self.db, workflow, flows)
+    }
+
+    /// The workflows pinned under `pin`: the run's own name, and all of
+    /// them by name.
+    pub fn pinned(&self, pin: &str) -> Result<Option<(String, BTreeMap<String, Value>)>> {
+        let t: Option<String> = self
+            .db
+            .query_row(
+                "SELECT definition FROM workflows WHERE pin = ?1",
+                params![pin],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(t) = t else {
+            return Ok(None);
+        };
+        let v: Value = serde_json::from_str(&t)?;
+        let name = v["workflow"].as_str().unwrap_or("").to_string();
+        let flows: BTreeMap<String, Value> = serde_json::from_value(v["flows"].clone())?;
+        Ok(Some((name, flows)))
+    }
+
+    /// Starts a run, its `run.started` event carrying the message's data,
+    /// in one transaction. With a schedule's key, that schedule's last slot
+    /// becomes `now` in the same transaction, so a slot never starts two
+    /// runs, whatever became of the start.
+    pub fn start_run(&mut self, s: &Start, now: &str, schedule: Option<&str>) -> Result<String> {
         let tx = self.db.transaction()?;
-        let started = admit(&tx, f, args, &Value::Object(Map::new()), now)?;
+        let pin = pin(&tx, &s.workflow, &s.flows)?;
+        let id = insert_run(
+            &tx,
+            &s.workflow,
+            &pin,
+            &Runtime::default(),
+            &s.input,
+            now,
+            s.cause.clone(),
+        )?;
         if let Some(key) = schedule {
             set_schedule_last(&tx, key, now)?;
         }
         tx.commit()?;
-        Ok(started)
+        Ok(id)
     }
 
-    /// Handles an event for the workspace, `r`: starts a run for each of
-    /// `starts`, the event's data their input, copies the event to each run
-    /// in `forward` (its cause the original), and marks it handled. One
-    /// transaction, so an event delivered again starts and copies nothing
-    /// twice. No starts and no copies, or no start that became a run, is
-    /// noted, not an error.
-    pub fn start_runs_for_event(
+    /// Handles a message for the workspace, `r`: starts each of `starts`,
+    /// copies the message to each run in `waiting`, and marks it handled.
+    /// One transaction, so a message taken again starts and copies nothing
+    /// twice. Nothing started and nothing copied is noted, not an error.
+    pub fn route(
         &mut self,
         r: &Recorded,
-        starts: &[(&File, &Map<String, Value>)],
-        forward: &[String],
+        starts: &[Start],
+        waiting: &[String],
         at: &str,
-    ) -> Result<Vec<Started>> {
-        let e = &r.event;
+    ) -> Result<()> {
         let tx = self.db.transaction()?;
-        let mut outcomes = vec![];
-        for (f, args) in starts {
-            outcomes.push(admit(&tx, f, args, &e.data, at)?);
-        }
-        for id in forward {
-            let copy = Envelope::new(
-                &e.source,
-                &e.kind,
-                &subject(id),
+        for s in starts {
+            let pin = pin(&tx, &s.workflow, &s.flows)?;
+            insert_run(
+                &tx,
+                &s.workflow,
+                &pin,
+                &Runtime::default(),
+                &s.input,
                 at,
-                Some(e.id.clone()),
-                e.data.clone(),
-            );
-            publish(&tx, &copy)?;
+                s.cause.clone(),
+            )?;
         }
-        let note = if starts.is_empty() && forward.is_empty() {
-            Some("no workflow starts on it".to_string())
-        } else if starts.is_empty() || outcomes.iter().any(|o| matches!(o, Started::Run(_))) {
-            None
-        } else {
-            Some(
-                starts
-                    .iter()
-                    .zip(&outcomes)
-                    .map(|((f, _), o)| format!("{}: {}", f.name, o.word()))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            )
-        };
+        for id in waiting {
+            publish(&tx, &copy(&r.event, id, at))?;
+        }
+        let note = (starts.is_empty() && waiting.is_empty())
+            .then_some("no workflow starts on it, and no run waits for it");
         tx.execute(
             "UPDATE events SET handled = ?2, note = ?3 WHERE seq = ?1 AND handled IS NULL",
             params![r.seq, at, note],
         )?;
         tx.commit()?;
-        Ok(outcomes)
-    }
-
-    /// The runs under way that may want an event of type `kind`: their
-    /// current state, or `*`, has a transition `on` it with a `match`. Their
-    /// managers decide; this only routes. The id and workflow of each.
-    pub fn listeners(&self, kind: &str) -> Result<Vec<(String, String)>> {
-        let mut s = self.db.prepare(
-            "SELECT id, workflow, pin, json_extract(runtime, '$.state') FROM runs
-             WHERE ended IS NULL ORDER BY started, id",
-        )?;
-        let rows: Vec<(String, String, String, String)> = s
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-            .collect::<rusqlite::Result<_>>()?;
-        let mut pinned: std::collections::BTreeMap<String, Option<File>> = Default::default();
-        let mut out = vec![];
-        for (id, wf, pin, state) in rows {
-            if !pinned.contains_key(&pin) {
-                let f = self.workflow(&pin)?;
-                pinned.insert(pin.clone(), f);
-            }
-            let Some(Some(f)) = pinned.get(&pin) else {
-                continue;
-            };
-            let wants = f.transitions.iter().any(|t| {
-                (t.from == state || t.from == workflow::ANY)
-                    && t.on.as_deref() == Some(kind)
-                    && t.r#match.is_some()
-            });
-            if wants {
-                out.push((id, wf));
-            }
-        }
-        Ok(out)
-    }
-
-    /// Starts queued runs, oldest first, while their workflow has a free
-    /// slot and is not paused; returns the runs started. A queued start of
-    /// a workflow no longer in `flows` waits.
-    pub fn release_queued(&mut self, flows: &[File], now: &str) -> Result<Vec<String>> {
-        let mut started = vec![];
-        for f in flows.iter().filter(|f| f.concurrency.is_some()) {
-            loop {
-                let tx = self.db.transaction()?;
-                let next: Option<(i64, String, String)> = tx
-                    .query_row(
-                        "SELECT seq, args, input FROM queued WHERE workflow = ?1 ORDER BY seq LIMIT 1",
-                        params![f.name],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                    )
-                    .optional()?;
-                let Some((seq, args, input)) = next else {
-                    break;
-                };
-                tx.execute("DELETE FROM queued WHERE seq = ?1", params![seq])?;
-                let args: Map<String, Value> = serde_json::from_str(&args)?;
-                let input: Value = serde_json::from_str(&input)?;
-                // still full or paused: the transaction is dropped, so the
-                // start keeps its place at the front
-                let Started::Run(id) = admit(&tx, f, &args, &input, now)? else {
-                    break;
-                };
-                tx.commit()?;
-                started.push(id);
-            }
-        }
-        Ok(started)
-    }
-
-    /// The paused workflows.
-    pub fn paused(&self) -> Result<Vec<Paused>> {
-        let mut s = self
-            .db
-            .prepare("SELECT workflow, pin, at, why FROM paused ORDER BY workflow")?;
-        let out = s
-            .query_map([], |r| {
-                Ok(Paused {
-                    workflow: r.get(0)?,
-                    pin: r.get(1)?,
-                    at: r.get(2)?,
-                    why: r.get(3)?,
-                })
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        Ok(out)
-    }
-
-    /// Lets a paused workflow start runs again; false when it was not paused.
-    pub fn resume(&self, workflow: &str) -> Result<bool> {
-        Ok(self
-            .db
-            .execute("DELETE FROM paused WHERE workflow = ?1", params![workflow])?
-            > 0)
-    }
-
-    /// How many of a workflow's newest ended runs failed, in a row.
-    pub fn failed_in_a_row(&self, workflow: &str) -> Result<u32> {
-        let mut s = self.db.prepare(
-            "SELECT json_extract(runtime, '$.state') FROM runs WHERE workflow = ?1 AND ended IS NOT NULL ORDER BY ended DESC, id DESC",
-        )?;
-        let states = s.query_map(params![workflow], |r| r.get::<_, String>(0))?;
-        let mut n = 0;
-        for st in states {
-            if st? != workflow::FAILED {
-                break;
-            }
-            n += 1;
-        }
-        Ok(n)
-    }
-
-    /// Where a source stopped, as it said last.
-    pub fn cursor(&self, source: &str) -> Result<Option<Value>> {
-        let t: Option<String> = self
-            .db
-            .query_row(
-                "SELECT value FROM cursors WHERE source = ?1",
-                params![source],
-                |r| r.get(0),
-            )
-            .optional()?;
-        t.map(|t| Ok(serde_json::from_str(&t)?)).transpose()
-    }
-
-    pub fn set_cursor(&self, source: &str, value: &Value) -> Result<()> {
-        self.db.execute(
-            "INSERT INTO cursors (source, value) VALUES (?1, ?2) ON CONFLICT (source) DO UPDATE SET value = ?2",
-            params![source, json(value)?],
-        )?;
         Ok(())
     }
 
-    /// The newest `limit` runs, of one workflow or all, in one state or any,
-    /// newest first.
-    pub fn runs_page(
-        &self,
-        workflow: Option<&str>,
-        state: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<Run>> {
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let mut s = self.db.prepare(
-            "SELECT id FROM runs WHERE (?1 IS NULL OR workflow = ?1)
-               AND (?2 IS NULL OR json_extract(runtime, '$.state') = ?2)
-             ORDER BY started DESC, id DESC LIMIT ?3",
-        )?;
-        let ids: Vec<String> = s
-            .query_map(params![workflow, state, limit], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        let mut out = vec![];
-        for id in ids {
-            out.extend(self.run(&id)?);
-        }
-        Ok(out)
-    }
-
-    /// Every run, oldest first.
-    pub fn runs(&self) -> Result<Vec<Run>> {
-        let mut s = self
-            .db
-            .prepare("SELECT id FROM runs ORDER BY started, id")?;
-        let ids: Vec<String> = s
-            .query_map([], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        let mut out = vec![];
-        for id in ids {
-            out.extend(self.run(&id)?);
-        }
-        Ok(out)
-    }
-
-    /// When a schedule (`<workflow>#<trigger>`) last started a run, or was
+    /// When a schedule (`<workflow>#<cron>`) last started a run, or was
     /// first seen.
     pub fn schedule_last(&self, key: &str) -> Result<Option<String>> {
         Ok(self
@@ -645,35 +503,6 @@ impl Journal {
 
     pub fn set_schedule_last(&self, key: &str, at: &str) -> Result<()> {
         set_schedule_last(&self.db, key, at)
-    }
-
-    /// A workflow's memory: every key its runs have set.
-    pub fn memory(&self, workflow: &str) -> Result<Map<String, Value>> {
-        let mut s = self
-            .db
-            .prepare("SELECT key, value FROM memory WHERE workflow = ?1 ORDER BY key")?;
-        let rows = s.query_map(params![workflow], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?;
-        let mut out = Map::new();
-        for r in rows {
-            let (k, v) = r?;
-            out.insert(k, serde_json::from_str(&v)?);
-        }
-        Ok(out)
-    }
-
-    /// The definition of a pinned workflow version.
-    pub fn workflow(&self, pin: &str) -> Result<Option<File>> {
-        let t: Option<String> = self
-            .db
-            .query_row(
-                "SELECT definition FROM workflows WHERE pin = ?1",
-                params![pin],
-                |r| r.get(0),
-            )
-            .optional()?;
-        t.map(|t| Ok(serde_json::from_str(&t)?)).transpose()
     }
 
     /// Timers due at `now` (RFC 3339, UTC): id, run, data.
@@ -729,105 +558,146 @@ impl Journal {
         for e in &h.events {
             publish(&tx, e)?;
         }
-        if let Some((workflow, m)) = h.memory {
-            for (k, v) in m {
-                tx.execute(
-                    "INSERT INTO memory (workflow, key, value) VALUES (?1, ?2, ?3)
-                     ON CONFLICT (workflow, key) DO UPDATE SET value = ?3",
-                    params![workflow, k, json(v)?],
-                )?;
-            }
-        }
-        if let Some(p) = &h.pause {
-            tx.execute(
-                "INSERT INTO paused (workflow, pin, at, why) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT (workflow) DO UPDATE SET pin = ?2, at = ?3, why = ?4",
-                params![p.workflow, p.pin, now, p.why],
-            )?;
+        for s in &h.splits {
+            insert_run(&tx, s.workflow, s.pin, s.runtime, s.input, now, None)?;
         }
         tx.commit()?;
         Ok(())
     }
-}
 
-/// Starts a run of `f` unless it is paused or at its maximum; then queues
-/// or skips the start as the workflow says. A start that finds others
-/// queued queues behind them, so starts keep their order.
-fn admit(
-    db: &Connection,
-    f: &File,
-    args: &Map<String, Value>,
-    input: &Value,
-    now: &str,
-) -> Result<Started> {
-    let paused = db
-        .query_row(
-            "SELECT 1 FROM paused WHERE workflow = ?1",
-            params![f.name],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some();
-    if paused {
-        return Ok(Started::Paused);
-    }
-    if let Some(c) = &f.concurrency {
-        let active: i64 = db.query_row(
-            "SELECT COUNT(*) FROM runs WHERE workflow = ?1 AND ended IS NULL",
-            params![f.name],
-            |r| r.get(0),
-        )?;
-        let waiting: i64 = db.query_row(
-            "SELECT COUNT(*) FROM queued WHERE workflow = ?1",
-            params![f.name],
-            |r| r.get(0),
-        )?;
-        if active >= i64::from(c.max) || waiting > 0 {
-            return match c.then {
-                Then::Skip => Ok(Started::Skipped),
-                Then::Queue => {
-                    db.execute(
-                        "INSERT INTO queued (workflow, args, input, at) VALUES (?1, ?2, ?3, ?4)",
-                        params![f.name, json(args)?, json(input)?, now],
-                    )?;
-                    Ok(Started::Queued)
-                }
-            };
+    /// Forgets what ended more than a day before `cutoff` says: runs that
+    /// ended before it, with their events and timers; jobs done before it;
+    /// and messages handled before it that no run under way may still
+    /// want (one newer than the oldest run under way's start is kept).
+    pub fn prune(&self, cutoff: &str) -> Result<()> {
+        self.db.execute_batch("BEGIN")?;
+        let r = (|| -> Result<()> {
+            let ended = "SELECT id FROM runs WHERE ended IS NOT NULL AND ended < ?1";
+            self.db.execute(
+                &format!("DELETE FROM timers WHERE run IN ({ended})"),
+                params![cutoff],
+            )?;
+            self.db.execute(
+                &format!(
+                    "DELETE FROM events WHERE subject IN (SELECT 'itero.run.' || id FROM ({ended}))"
+                ),
+                params![cutoff],
+            )?;
+            self.db.execute(
+                "DELETE FROM runs WHERE ended IS NOT NULL AND ended < ?1",
+                params![cutoff],
+            )?;
+            self.db.execute(
+                "DELETE FROM jobs WHERE seq IN (SELECT seq FROM events WHERE subject = 'itero.worker' AND handled IS NOT NULL AND handled < ?1)",
+                params![cutoff],
+            )?;
+            self.db.execute(
+                "DELETE FROM events WHERE subject = 'itero.worker' AND handled IS NOT NULL AND handled < ?1",
+                params![cutoff],
+            )?;
+            self.db.execute(
+                "DELETE FROM events WHERE subject = 'itero.app' AND handled IS NOT NULL AND handled < ?1
+                   AND time < COALESCE((SELECT MIN(started) FROM runs WHERE ended IS NULL), '9999')",
+                params![cutoff],
+            )?;
+            Ok(())
+        })();
+        match r {
+            Ok(()) => self.db.execute_batch("COMMIT")?,
+            Err(_) => self.db.execute_batch("ROLLBACK")?,
         }
+        r
     }
-    Ok(Started::Run(insert_run(db, f, args, input, now)?))
 }
 
-/// A new run of `f`, pinned at its version, and its `run.started` event
-/// carrying `input`; returns its id.
+fn run_row(r: &rusqlite::Row) -> rusqlite::Result<Result<Run>> {
+    let (id, workflow, pin, rt, input, started, ended): (
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+    ) = (
+        r.get(0)?,
+        r.get(1)?,
+        r.get(2)?,
+        r.get(3)?,
+        r.get(4)?,
+        r.get(5)?,
+        r.get(6)?,
+    );
+    Ok((|| {
+        Ok(Run {
+            id,
+            workflow,
+            pin,
+            runtime: serde_json::from_str(&rt)?,
+            input: match input {
+                Some(t) => serde_json::from_str(&t)?,
+                None => Value::Null,
+            },
+            started,
+            ended,
+        })
+    })())
+}
+
+/// A message copied to a run: the manager decides whether it is the run's.
+pub fn copy(e: &Envelope, run: &str, at: &str) -> Envelope {
+    Envelope::new(
+        &e.source,
+        "message",
+        &subject(run),
+        at,
+        Some(e.id.clone()),
+        json!({"id": e.id, "type": e.kind, "data": e.data}),
+    )
+}
+
+fn pin(db: &Connection, workflow: &str, flows: &BTreeMap<String, Value>) -> Result<String> {
+    let definition = json(&json!({"workflow": workflow, "flows": flows}))?;
+    let known: Option<String> = db
+        .query_row(
+            "SELECT pin FROM workflows WHERE definition = ?1",
+            params![definition],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(p) = known {
+        return Ok(p);
+    }
+    let p = uuid::Uuid::now_v7().to_string();
+    db.execute(
+        "INSERT INTO workflows (pin, definition) VALUES (?1, ?2)",
+        params![p, definition],
+    )?;
+    Ok(p)
+}
+
+/// A new run, and its `run.started` event carrying `input`, caused by the
+/// message that started it; returns its id.
 fn insert_run(
     db: &Connection,
-    f: &File,
-    args: &Map<String, Value>,
+    workflow: &str,
+    pin: &str,
+    rt: &Runtime,
     input: &Value,
     now: &str,
+    cause: Option<String>,
 ) -> Result<String> {
     let id = uuid::Uuid::now_v7().to_string();
-    let pin = workflow::pin(f);
-    let rt = Runtime {
-        state: f.start.clone(),
-        chain: None,
-        failed: None,
-    };
     db.execute(
-        "INSERT OR IGNORE INTO workflows (pin, definition) VALUES (?1, ?2)",
-        params![pin, json(f)?],
-    )?;
-    db.execute(
-        "INSERT INTO runs (id, workflow, pin, runtime, args, input, started) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![id, f.name, pin, json(&rt)?, json(args)?, json(input)?, now],
+        "INSERT INTO runs (id, workflow, pin, runtime, args, input, started) VALUES (?1, ?2, ?3, ?4, '{}', ?5, ?6)",
+        params![id, workflow, pin, json(rt)?, json(input)?, now],
     )?;
     let e = Envelope::new(
         "daemon",
         "run.started",
         &subject(&id),
         now,
-        None,
+        cause,
         input.clone(),
     );
     publish(db, &e)?;

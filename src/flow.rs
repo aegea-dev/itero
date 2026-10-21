@@ -254,3 +254,71 @@ fn name(s: &str) -> Result<Name, String> {
 pub fn version_key(v: &str) -> Vec<u64> {
     v.split('.').map(|p| p.parse().unwrap_or(0)).collect()
 }
+
+impl Flow {
+    /// Every step of every list: steps, success, failure, error.
+    fn all_steps(&self) -> impl Iterator<Item = &Step> {
+        self.steps
+            .iter()
+            .chain(&self.success)
+            .chain(&self.failure)
+            .chain(&self.error)
+    }
+
+    /// The actions and workflows it names, each once, in order.
+    pub fn uses(&self) -> Vec<Name> {
+        let mut out: Vec<Name> = vec![];
+        for s in self.all_steps() {
+            let names: Vec<&Name> = match s {
+                Step::One { name, .. } => vec![name],
+                Step::Side(names) => names.iter().collect(),
+            };
+            for n in names {
+                if !out.contains(n) {
+                    out.push(n.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// The `$$` names its conditions check: in its `on` and its steps'.
+    pub fn defined_names(&self) -> Vec<String> {
+        let mut out = self.on.defined.clone();
+        for s in self.all_steps() {
+            if let Step::One { on: Some(on), .. } = s {
+                out.extend(on.defined.iter().cloned());
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// The `$$` names in its steps' data: the secrets its actions get.
+    pub fn secret_names(&self) -> Vec<String> {
+        let mut out = vec![];
+        for s in self.all_steps() {
+            if let Step::One { data, .. } = s {
+                out.extend(data.values().filter_map(secret_ref).map(str::to_string));
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+}
+
+/// `"$$NAME"`: the name of the environment variable or secret it stands for.
+pub fn secret_ref(v: &Value) -> Option<&str> {
+    v.as_str()?.strip_prefix("$$").filter(|n| !n.is_empty())
+}
+
+/// `"$name"`: the state value it stands for.
+pub fn state_ref(v: &Value) -> Option<&str> {
+    let s = v.as_str()?;
+    if s.starts_with("$$") {
+        return None;
+    }
+    s.strip_prefix('$').filter(|n| !n.is_empty())
+}

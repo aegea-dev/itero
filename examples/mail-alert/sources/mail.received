@@ -1,0 +1,42 @@
+#!/bin/sh
+# Tells itero about each new mail in the local mailbox, as it arrives: one
+# line per mail, with its sender and subject. It notes the last mail it
+# told about, so a restart tells nothing twice; on its first start it only
+# notes where the mailbox is.
+mailbox="/var/mail/$USER"
+seen=".itero/mail.received.seen"
+all=".itero/mail.received.all"
+mkdir -p .itero
+
+esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+check() {
+  [ -s "$mailbox" ] || return 0
+  # each mail: its "From " line, From: and Subject:, tab separated
+  awk '
+    /^From / { if (id != "") print id "\t" from "\t" subj; id = $0; from = ""; subj = ""; next }
+    /^From: / && from == "" { from = substr($0, 7) }
+    /^Subject: / && subj == "" { subj = substr($0, 10) }
+    END { if (id != "") print id "\t" from "\t" subj }
+  ' "$mailbox" > "$all"
+  last=$(cat "$seen" 2>/dev/null)
+  if [ -z "$last" ]; then
+    tail -n 1 "$all" | cut -f 1 > "$seen"
+    return 0
+  fi
+  # the mails after the last one told about; all of them, if it is gone
+  if cut -f 1 "$all" | grep -qxF "$last"; then
+    new=$(awk -F '\t' -v seen="$last" 'told { print } $1 == seen { told = 1 }' "$all")
+  else
+    new=$(cat "$all")
+  fi
+  [ -n "$new" ] || return 0
+  printf '%s\n' "$new" | while IFS="$(printf '\t')" read -r id from subj; do
+    printf '{"title": "Mail", "text": "%s: %s", "from": "%s", "subject": "%s"}\n' \
+      "$(esc "$from")" "$(esc "$subj")" "$(esc "$from")" "$(esc "$subj")"
+  done
+  tail -n 1 "$all" | cut -f 1 > "$seen"
+}
+
+check
+itero watch "$mailbox" | while read -r _; do check; done

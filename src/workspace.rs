@@ -1,8 +1,9 @@
 //! The workspace: the folder with itero.toml, and the folders it lists for
-//! workflows and actions. One daemon runs one workspace.
-use crate::workflow::{self, actions};
+//! workflows, actions and sources. One daemon runs one workspace.
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Deserialize)]
@@ -14,24 +15,12 @@ struct Settings {
     workflows: Vec<String>,
     #[serde(default = "default_actions")]
     actions: Vec<String>,
-    #[serde(default = "default_triggers")]
-    triggers: String,
     #[serde(default = "default_sources")]
     sources: Vec<String>,
 }
 
 fn default_sources() -> Vec<String> {
     vec!["sources".into()]
-}
-
-/// A workspace's `triggers/<workflow>.json`: triggers added to the
-/// workflow's own, or (`replace`) used instead of them.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TriggerFile {
-    #[serde(default)]
-    replace: bool,
-    triggers: Vec<workflow::format::Trigger>,
 }
 
 fn default_port() -> u16 {
@@ -46,18 +35,12 @@ fn default_actions() -> Vec<String> {
     vec!["actions".into()]
 }
 
-fn default_triggers() -> String {
-    "triggers".into()
-}
-
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub root: PathBuf,
     pub port: u16,
     pub workflows: Vec<PathBuf>,
     pub actions: Vec<PathBuf>,
-    /// The workspace's own triggers for its workflows.
-    pub triggers: PathBuf,
     /// The folders with the workspace's sources.
     pub sources: Vec<PathBuf>,
 }
@@ -90,7 +73,6 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
         port: s.port,
         workflows: s.workflows.iter().map(|w| folder(root, w)).collect(),
         actions: s.actions.iter().map(|a| folder(root, a)).collect(),
-        triggers: folder(root, &s.triggers),
         sources: s.sources.iter().map(|x| folder(root, x)).collect(),
     })
 }
@@ -142,70 +124,10 @@ impl Workspace {
         self.root.join(".itero").join("journal.sqlite")
     }
 
-    /// Every action in the actions folders: each folder in them with an
-    /// `action.json`. A name found twice is the first folder's.
-    pub fn actions(&self) -> Result<Vec<(PathBuf, actions::Definition)>> {
-        let mut out: Vec<(PathBuf, actions::Definition)> = vec![];
-        for dir in &self.actions {
-            if !dir.exists() {
-                continue;
-            }
-            let files = listed(dir, |p| Some(p.join("action.json")).filter(|f| f.is_file()))?;
-            for f in files {
-                let d = actions::load_file(&f)?;
-                if !out.iter().any(|(_, o)| o.name == d.name) {
-                    let folder = f.parent().expect("a folder").to_path_buf();
-                    out.push((folder, d));
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    /// A workspace action by name, and its folder.
-    pub fn action(&self, name: &str) -> Result<(PathBuf, actions::Definition)> {
-        self.actions()?
-            .into_iter()
-            .find(|(_, d)| d.name == name)
-            .ok_or_else(|| anyhow!("no action {name} in the actions folders"))
-    }
-
-    /// Every workflow in the workflows folders, checked, and the actions
-    /// it names found. Two workflows with one name is an error naming both.
-    /// A folder that is not there holds none: a workspace without
-    /// workflows is idle (`itero check` says which folders are missing).
-    pub fn workflows(&self) -> Result<Vec<(PathBuf, workflow::File)>> {
-        let defs: Vec<actions::Definition> = self.actions()?.into_iter().map(|(_, d)| d).collect();
-        let mut out: Vec<(PathBuf, workflow::File)> = vec![];
-        for dir in &self.workflows {
-            if !dir.exists() {
-                continue;
-            }
-            let files = listed(dir, |p| {
-                (p.extension().is_some_and(|x| x == "json") && p.is_file()).then(|| p.to_path_buf())
-            })?;
-            for f in files {
-                let w = workflow::load_file(&f)?;
-                workflow::validate::actions(&f.display().to_string(), &w, &defs)?;
-                if let Some((other, _)) = out.iter().find(|(_, o)| o.name == w.name) {
-                    bail!(
-                        "two workflows named {}: {} and {}",
-                        w.name,
-                        other.display(),
-                        f.display()
-                    );
-                }
-                out.push((f, w));
-            }
-        }
-        self.merge_triggers(&mut out)?;
-        Ok(out)
-    }
-
-    /// Every workflow in the simple form (`docs/design-simple.md`), named
-    /// after its file. Two with one name is an error naming both.
-    pub fn flows(&self) -> Result<Vec<(String, crate::flow::Flow)>> {
-        let mut out: Vec<(String, crate::flow::Flow)> = vec![];
+    /// Every workflow, as its file's JSON, by name (its file name), each
+    /// checked. Two with one name is an error naming the second.
+    pub fn flow_values(&self) -> Result<BTreeMap<String, Value>> {
+        let mut out = BTreeMap::new();
         for dir in &self.workflows {
             if !dir.exists() {
                 continue;
@@ -216,16 +138,28 @@ impl Workspace {
             for f in files {
                 let text = std::fs::read_to_string(&f)
                     .with_context(|| format!("cannot read {}", f.display()))?;
-                let flow =
-                    crate::flow::parse(&text).map_err(|e| anyhow!("{}: {e}", f.display()))?;
+                let v: Value =
+                    serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", f.display()))?;
+                crate::flow::from_value(&v).map_err(|e| anyhow!("{}: {e}", f.display()))?;
                 let name = stem(&f);
-                if out.iter().any(|(n, _)| *n == name) {
+                if out.contains_key(&name) {
                     bail!("two workflows named {name}: the second is {}", f.display());
                 }
-                out.push((name, flow));
+                out.insert(name, v);
             }
         }
         Ok(out)
+    }
+
+    /// Every workflow, read, by name (its file name).
+    pub fn flows(&self) -> Result<Vec<(String, crate::flow::Flow)>> {
+        self.flow_values()?
+            .into_iter()
+            .map(|(n, v)| {
+                let f = crate::flow::from_value(&v).map_err(|e| anyhow!("{n}: {e}"))?;
+                Ok((n, f))
+            })
+            .collect()
     }
 
     /// An action's file: `name@version` when pinned, else the highest
@@ -305,36 +239,5 @@ impl Workspace {
             bail!("{}: args are an object, or a list of objects", f.display());
         }
         Ok(Some(v))
-    }
-
-    /// Applies each `triggers/<workflow>.json` to its workflow. A folder
-    /// that is not there holds none.
-    fn merge_triggers(&self, flows: &mut [(PathBuf, workflow::File)]) -> Result<()> {
-        if !self.triggers.exists() {
-            return Ok(());
-        }
-        let files = listed(&self.triggers, |p| {
-            (p.extension().is_some_and(|x| x == "json") && p.is_file()).then(|| p.to_path_buf())
-        })?;
-        for f in files {
-            let name = f.display();
-            let text =
-                std::fs::read_to_string(&f).with_context(|| format!("cannot read {name}"))?;
-            let tf: TriggerFile =
-                serde_json::from_str(&text).map_err(|e| anyhow!("{name}: {e}"))?;
-            let stem = f.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            let Some((_, w)) = flows.iter_mut().find(|(_, w)| w.name == stem) else {
-                bail!("{name}: no workflow {stem}");
-            };
-            for t in &tf.triggers {
-                workflow::validate::check_trigger(t).map_err(|e| anyhow!("{name}: {e}"))?;
-            }
-            if tf.replace {
-                w.triggers = tf.triggers;
-            } else {
-                w.triggers.extend(tf.triggers);
-            }
-        }
-        Ok(())
     }
 }

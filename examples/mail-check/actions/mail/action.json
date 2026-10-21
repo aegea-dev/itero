@@ -1,8 +1,0 @@
-{
-  "name": "mail",
-  "version": 1,
-  "type": "executable",
-  "description": "Reads a mailbox (mbox): what is new since the last message seen.",
-  "limits": { "timeout": "30s" },
-  "targets": { "check": { "executable": "./check.sh" } }
-}
