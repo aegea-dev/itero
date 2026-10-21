@@ -31,24 +31,38 @@ pub struct Change {
     pub kind: Kind,
 }
 
-/// One system's file events.
+/// One system's file events, for any number of paths.
 pub trait Backend: Send {
     /// Waits up to `timeout` for changes; none when it ran out.
     fn wait(&mut self, timeout: Duration) -> std::io::Result<Vec<Change>>;
+    /// Watches these paths from now on: new ones are added, the others
+    /// dropped.
+    fn set(&mut self, paths: &[PathBuf]) -> std::io::Result<()>;
 }
 
-/// This system's backend, watching one file or folder. A file that is not
-/// there yet is watched for: its creation is a change.
-pub fn open(path: &Path) -> std::io::Result<Box<dyn Backend>> {
+/// This system's backend, watching files and folders, one descriptor for
+/// all. A file that is not there yet is watched for: its creation is a
+/// change.
+pub fn open_many(paths: &[PathBuf]) -> std::io::Result<Box<dyn Backend>> {
     #[cfg(target_os = "macos")]
-    return Ok(Box::new(kqueue::Kqueue::new(path)?));
+    return Ok(Box::new(kqueue::Kqueue::new(paths)?));
     #[cfg(target_os = "linux")]
-    return Ok(Box::new(inotify::Inotify::new(path)?));
+    return Ok(Box::new(inotify::Inotify::new(paths)?));
     #[allow(unreachable_code)]
     Err(std::io::Error::other(format!(
-        "watching {} needs macOS or Linux",
-        path.display()
+        "watching {paths:?} needs macOS or Linux"
     )))
+}
+
+/// An error about watching `p`, naming it.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn naming(p: &Path, e: std::io::Error) -> std::io::Error {
+    std::io::Error::new(e.kind(), format!("{}: {e}", p.display()))
+}
+
+/// This system's backend, watching one file or folder.
+pub fn open(path: &Path) -> std::io::Result<Box<dyn Backend>> {
+    open_many(&[path.to_path_buf()])
 }
 
 /// Two changes to one path, as one: what a reader needs to know.
@@ -214,6 +228,10 @@ mod tests {
             self.0
                 .pop_front()
                 .ok_or_else(|| std::io::Error::other("bitti"))
+        }
+
+        fn set(&mut self, _: &[PathBuf]) -> std::io::Result<()> {
+            Ok(())
         }
     }
 

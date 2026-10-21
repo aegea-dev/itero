@@ -35,6 +35,10 @@ pub fn engine_own(kind: &str) -> bool {
         .any(|p| kind.starts_with(p))
 }
 
+/// A watched path changed: `{"path", "kind"}`. It starts the workflows
+/// whose `on` names the path.
+pub const PATH_CHANGED: &str = "itero.path.changed";
+
 /// One of the daemon's own messages, for the workspace.
 pub fn own(kind: &str, data: Value, now: &str) -> Envelope {
     debug_assert!(kind.starts_with(OWN));

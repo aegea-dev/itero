@@ -378,6 +378,11 @@ fn dispatch(cli: Cli) -> Result<()> {
                     );
                 });
             }
+            {
+                // one thread watches every path the workflows name
+                let (ws, wake, log) = (ws.clone(), engine.wake.clone(), log.clone());
+                std::thread::spawn(move || daemon::watch_paths(&ws, &wake, &log));
+            }
             let looping = {
                 let (ws, engine) = (ws.clone(), engine.clone());
                 let interval = std::time::Duration::from_secs(interval);

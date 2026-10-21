@@ -109,3 +109,56 @@ fn a_neighbour_changing_is_no_change() {
     let seen = until(&mut b, Kind::Changed, 1);
     assert!(seen.is_empty(), "{seen:?}");
 }
+
+/// The paths changes were seen for within `secs`, until all of `want`
+/// (none: all of `secs`).
+fn paths_until(
+    b: &mut Box<dyn watch::Backend>,
+    want: &[std::path::PathBuf],
+    secs: u64,
+) -> std::collections::BTreeSet<std::path::PathBuf> {
+    let end = Instant::now() + Duration::from_secs(secs);
+    let mut seen = std::collections::BTreeSet::new();
+    while Instant::now() < end && (want.is_empty() || !want.iter().all(|p| seen.contains(p))) {
+        for c in b.wait(Duration::from_millis(200)).unwrap() {
+            seen.insert(c.path);
+        }
+    }
+    seen
+}
+
+#[test]
+fn one_backend_watches_many_paths_and_takes_new_ones() {
+    let d = tempfile::tempdir().unwrap();
+    let a = d.path().join("bir.txt");
+    let sub = d.path().join("klasör");
+    std::fs::create_dir(&sub).unwrap();
+    let b2 = sub.join("iki.txt");
+    let c = d.path().join("üç.txt");
+    for f in [&a, &b2, &c] {
+        append(f, "ş");
+    }
+    let mut b = watch::open_many(&[a.clone(), b2.clone(), c.clone()]).unwrap();
+    for f in [&a, &b2, &c] {
+        append(f, "ğ");
+    }
+    let all = [a.clone(), b2.clone(), c.clone()];
+    let seen = paths_until(&mut b, &all, 3);
+    assert_eq!(
+        seen,
+        all.iter().cloned().collect(),
+        "each path, by its own name"
+    );
+    // a path set later is watched; one dropped is not
+    let later = d.path().join("sonra.txt");
+    b.set(&[a.clone(), later.clone()]).unwrap();
+    append(&later, "é");
+    append(&c, "ü");
+    let seen = paths_until(&mut b, std::slice::from_ref(&later), 3);
+    assert!(seen.contains(&later), "{seen:?}");
+    let seen = paths_until(&mut b, &[], 1);
+    assert!(!seen.contains(&c), "{seen:?}");
+    append(&a, "ı");
+    let seen = paths_until(&mut b, std::slice::from_ref(&a), 3);
+    assert!(seen.contains(&a), "the one kept is still watched: {seen:?}");
+}

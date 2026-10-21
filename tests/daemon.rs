@@ -6,6 +6,7 @@ use itero::engine::daemon::{Pass, run_once};
 use itero::engine::journal::{Journal, Run};
 use itero::engine::steps;
 use serde_json::{Value, json};
+use std::io::Write;
 use std::path::Path;
 
 const NOW: &str = "2026-10-21T10:00:00Z";
@@ -574,4 +575,119 @@ fn a_built_in_workflow_is_replaced_or_turned_off_by_a_file_of_its_name() {
         w.pass(NOW);
     }
     assert!(!w.d.path().join(".itero/itero.log.1").exists());
+}
+
+/// A daemon process, killed however the test ends.
+struct Running(std::process::Child);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Waits up to 20 seconds for `ok`.
+fn soon(mut ok: impl FnMut() -> bool) -> bool {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::time::Instant::now() < end {
+        if ok() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    false
+}
+
+/// The threads of process `pid`.
+fn threads(pid: u32) -> usize {
+    #[cfg(target_os = "linux")]
+    return std::fs::read_dir(format!("/proc/{pid}/task"))
+        .unwrap()
+        .count();
+    #[cfg(target_os = "macos")]
+    {
+        let o = std::process::Command::new("ps")
+            .args(["-M", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        // a header line, then one line per thread
+        String::from_utf8_lossy(&o.stdout).lines().count() - 1
+    }
+}
+
+#[test]
+fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
+    let w = Ws::new();
+    let root = w.d.path().to_path_buf();
+    let inbox = root.join("gelen kutusu");
+    w.action("say", "echo \"$path $kind\" >> görülen.txt");
+    let on = |paths: Vec<String>| {
+        let on: Vec<Value> = paths.into_iter().map(|p| json!({ "path": p })).collect();
+        json!({ "on": on, "steps": ["#say"] })
+    };
+    w.flow("posta", on(vec![inbox.display().to_string()]));
+    let daemon = Running(
+        std::process::Command::new(exe())
+            .args(["daemon", "--no-serve"])
+            .current_dir(&root)
+            .env("ITERO_TEST_YER", "ikinci yer")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let watching = |p: &std::path::Path| {
+        let p = p.display().to_string();
+        soon(|| {
+            w.log()
+                .iter()
+                .any(|l| l["event"] == "paths.watched" && l["paths"].to_string().contains(&p))
+        })
+    };
+    assert!(watching(&inbox), "{:#?}", w.log());
+    for i in 0..5 {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&inbox)
+            .unwrap()
+            .write_all(format!("From ayşe {i}\n").as_bytes())
+            .unwrap();
+    }
+    assert!(soon(|| !w.read("görülen.txt").is_empty()));
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let seen = w.read("görülen.txt");
+    assert_eq!(seen.lines().count(), 1, "one run for the burst: {seen}");
+    assert!(seen.starts_with(&inbox.display().to_string()), "{seen}");
+
+    // the workflow moves to another path, with $$ from the environment
+    let second = root.join("ikinci yer");
+    w.flow(
+        "posta",
+        on(vec![format!("{}/$$ITERO_TEST_YER", root.display())]),
+    );
+    assert!(watching(&second), "{:#?}", w.log());
+    std::fs::write(&inbox, "artık izlenmiyor").unwrap();
+    std::fs::write(&second, "ğ").unwrap();
+    assert!(soon(|| w.read("görülen.txt").lines().count() == 2));
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let seen = w.read("görülen.txt");
+    assert_eq!(seen.lines().count(), 2, "{seen}");
+    assert!(
+        seen.lines()
+            .nth(1)
+            .unwrap()
+            .starts_with(&second.display().to_string())
+    );
+
+    // ten paths: still one watching thread
+    let before = threads(daemon.0.id());
+    let many: Vec<String> = (0..10)
+        .map(|i| root.join(format!("dosya-{i}")).display().to_string())
+        .collect();
+    w.flow("posta", on(many));
+    assert!(watching(&root.join("dosya-9")));
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert_eq!(threads(daemon.0.id()), before);
 }

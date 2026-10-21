@@ -227,6 +227,127 @@ impl Flows {
     }
 }
 
+/// A `path` entry as a path: `~/` is the home folder, `$$NAME` an
+/// environment variable (never a secret: the path is in runs and the
+/// log), and a relative path is under the workspace.
+pub fn expand(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let (mut out, mut rest) = match path.strip_prefix("~/") {
+        Some(r) => (
+            std::env::var("HOME").map_err(|_| format!("{path}: HOME is not set"))? + "/",
+            r,
+        ),
+        None => (String::new(), path),
+    };
+    while let Some(i) = rest.find("$$") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        let n = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        let name = &after[..n];
+        let v = std::env::var(name)
+            .ok()
+            .filter(|_| env_name(name))
+            .ok_or_else(|| format!("{path}: no environment variable {name}"))?;
+        out.push_str(&v);
+        rest = &after[n..];
+    }
+    out.push_str(rest);
+    Ok(root.join(out))
+}
+
+/// Every path the workflows' `on` names, filled in, and what could not
+/// be.
+fn wanted_paths(ws: &Workspace) -> (Vec<PathBuf>, Vec<String>) {
+    let (mut paths, mut errors) = (vec![], vec![]);
+    match ws.flows() {
+        Ok(flows) => {
+            for (name, f) in flows {
+                for p in &f.on.paths {
+                    match expand(&ws.root, p) {
+                        Ok(p) if !paths.contains(&p) => paths.push(p),
+                        Ok(_) => {}
+                        Err(e) => errors.push(format!("{name}: {e}")),
+                    }
+                }
+            }
+        }
+        Err(e) => errors.push(format!("{e:#}")),
+    }
+    paths.sort();
+    (paths, errors)
+}
+
+/// Watches every path a workflow's `on` names, all in this one thread,
+/// and sends `itero.path.changed` for each change once the path has been
+/// quiet for half a second. The paths are read again every second, so
+/// editing a workflow moves its watch. Runs for good.
+pub fn watch_paths(ws: &Workspace, wake: &std::sync::mpsc::Sender<()>, log: &Log) {
+    use crate::watch::{Debouncer, Kind};
+    use std::time::{Duration, Instant};
+    let mut backend = match crate::watch::open_many(&[]) {
+        Ok(b) => b,
+        Err(e) => {
+            log.write(
+                "error",
+                json!({ "why": format!("cannot watch files: {e}") }),
+            );
+            return;
+        }
+    };
+    let mut d = Debouncer::new(Duration::from_millis(500), Duration::from_secs(5));
+    let mut watched: Option<Vec<PathBuf>> = None;
+    let mut said = vec![];
+    loop {
+        let (paths, mut errors) = wanted_paths(ws);
+        if watched.as_ref() != Some(&paths) {
+            match backend.set(&paths) {
+                Ok(()) => {
+                    log.write("paths.watched", json!({ "paths": paths }));
+                    watched = Some(paths);
+                }
+                // tried again next time: a folder may come
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+        if errors != said {
+            for why in &errors {
+                log.write("error", json!({ "why": why }));
+            }
+            said = errors;
+        }
+        let timeout = d.due().map_or(Duration::from_secs(1), |at| {
+            at.saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(1))
+        });
+        match backend.wait(timeout) {
+            Ok(changes) => d.add(changes, Instant::now()),
+            Err(e) => {
+                log.write("error", json!({ "why": format!("watching files: {e}") }));
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        }
+        for c in d.take(Instant::now()) {
+            let kind = match c.kind {
+                Kind::Created => "created",
+                Kind::Removed | Kind::Renamed => "removed",
+                Kind::Changed | Kind::Rescan => "changed",
+            };
+            let m = events::own(
+                events::PATH_CHANGED,
+                json!({ "path": c.path.display().to_string(), "kind": kind }),
+                &stamp(Utc::now()),
+            );
+            match Journal::open(ws).and_then(|j| j.publish(&m)) {
+                Ok(()) => {
+                    let _ = wake.send(());
+                }
+                Err(e) => log.write("error", json!({ "why": format!("{e:#}") })),
+            }
+        }
+    }
+}
+
 /// Whether an environment variable or a secret is defined.
 fn defined(name: &str) -> bool {
     super::secrets::get(name).is_some()
@@ -447,9 +568,21 @@ fn route(
 ) -> Result<bool> {
     let data = r.event.data.as_object().cloned().unwrap_or_default();
     let on_a_run = r.event.kind.starts_with("itero.run.");
+    // a watched path's change starts the workflows that name the path
+    let changed = (r.event.kind == events::PATH_CHANGED)
+        .then(|| data.get("path").and_then(Value::as_str))
+        .flatten()
+        .map(PathBuf::from);
+    let names_it = |f: &Flow| {
+        changed.as_ref().is_some_and(|c| {
+            f.on.paths
+                .iter()
+                .any(|p| expand(&ws.root, p).is_ok_and(|p| p == *c))
+        })
+    };
     let mut starts = vec![];
     for (name, f) in &flows.read {
-        if !f.on.events.contains(&r.event.kind)
+        if !(f.on.events.contains(&r.event.kind) || names_it(f))
             || !flow::active(&f.meta, now)
             || !flow::holds(&f.on, &data, &defined)
             || (on_a_run && data.get("workflow") == Some(&json!(name)))
