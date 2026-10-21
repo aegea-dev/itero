@@ -1,3 +1,38 @@
 /target
-.itero/
+/debug
 /dist
+.itero/
+**/*.rs.bk
+*.pdb
+**/mutants.out*/
+rustc-ice-*.txt
+
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+
+.vscode/
+.claude/
+.codex/
+.agents/
+# Spec-driven-development scratch (briefs, ledgers, review diffs). The writing
+# about the work lives in the private companion repo, never in this checkout.
+.superpowers/
+
+# Private, always-loaded personal memory. Never committed.
+CLAUDE.local.md
+
+.cargo/credentials
+.cargo/credentials.toml
+.mcp.json
+
+.worktrees/
+
+# An unexpanded ~ in an env var can make a tool write its home into the repo. Keep.
+/~/
+
+e2e/node_modules/
+e2e/.yarn/
+e2e/playwright-report/
+e2e/test-results/
