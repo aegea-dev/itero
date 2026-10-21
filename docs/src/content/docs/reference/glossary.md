@@ -1,267 +1,119 @@
 ---
 title: Glossary
-description: itero's terms in plain words, in the order you meet them.
+description: itero's terms in plain words.
 ---
-
-## Where things live
 
 ### workspace
 
-A folder with an `itero.toml`. One daemon and one port per workspace; keep
-work and home apart as two workspaces. Nothing is machine-wide: itero finds
-the workspace from the folder it runs in.
-
-### itero.toml
-
-The workspace's settings: the port, and the folders that hold workflows,
-actions and triggers. A folder may be anywhere, so an app's repository can
-bring its own workflows. See [itero.toml](/reference/itero-toml/).
-
-### journal
-
-`.itero/journal.sqlite`: every event, run, job and answer, and each
-workflow's memory. The one place itero keeps state. Local to the machine,
-never synced.
-
-## What runs
+A folder with an `itero.toml`. One daemon and one port per workspace.
+itero finds the workspace from the folder it runs in; nothing is
+machine-wide.
 
 ### workflow
 
-A template of a state machine: its states, where a run starts, where it
-ends, and the transitions between states. Written in JSON and checked
-strictly: an unknown key is an error. A plain file, so a project keeps its
-workflows in git and changes them as it likes; itero only reads them. See
+A JSON file in `workflows/`, named by its file name: when it runs (`on`)
+and its `steps`, with optional `success`, `failure` and `error` lists and
+a `timeout`. A workflow can be a step of another. See
 [Writing a workflow](/guides/workflows/).
 
-### version
+### step
 
-A hash of what a workflow does, its descriptions and triggers left out.
-`itero check` prints it.
-
-### state
-
-Where a run is. A workflow lists its own states; `failed` is the engine's.
-A run's state is written to the journal, in the same transaction as the
-decision that changed it, so it survives a crash or a restart.
-
-### transition
-
-A move from one state to another. One is taken:
-
-- **when the run enters its `from` state**, for a transition without `on`
-  (the previous transition finished, or the run just started);
-- **when an event arrives**, for a transition with `on` that event's type,
-  sent to the run;
-- **only if its `when` holds**, in either case: a condition over the run's
-  values;
-- **when time runs out**: a transition with a `timeout` moves to its
-  `on_timeout` state instead, when its event did not come or its chain did
-  not finish in time;
-- **when an action fails**: the run moves to the transition's `on_fail`
-  state, or to `failed`.
-
-A transition may run a chain of actions (`do`) on the way.
-
-### run
-
-One instance of a workflow. It starts in `start`, moves along transitions,
-and ends in an `end` state or `failed`. A run is pinned to the workflow's
-version it started with: editing a workflow never changes a run under way.
-A recurring job is many short runs, not one long one.
-
-### trigger
-
-What starts a run: a `schedule` (cron, the machine's local time) or `on` an
-event type. It gives the run its `args`. See [Triggers](/guides/triggers/).
-
-### workspace triggers
-
-`triggers/<workflow>.json`: triggers the workspace adds to a workflow's own,
-or uses instead of them. When a workflow runs is the workspace's business.
-
-### concurrency
-
-How many runs of a workflow may be under way at once (`"concurrency":
-{"max": 1}`); a start beyond that waits its turn (`queue`) or is dropped
-(`skip`). It keeps two quick events from running the same check twice.
-
-### pause (the breaker)
-
-After `pause_after` failed runs in a row (5 unless said), a workflow is
-paused: nothing starts it until `itero resume`, or a new version of its
-file. The engine sends `workflow.paused`, which a maintenance workflow can
-act on.
-
-## What happens in a run
+One thing a workflow does: an action (`#name`), a workflow (`name`), a
+list of them side by side, or one of those with data and an `on`.
 
 ### action
 
-One step a transition runs, named with its version, like `notify@1`:
+An executable file in `actions/`, any language, named by its file name,
+a version in it if any (`notify@0.2`). It reads its values as environment
+variables, prints JSON, and its exit code says how it went: 0 done, 75 not
+yet, anything else an error. See [Actions](/guides/actions/).
 
-- **built-in**: `command@1`, `sh@1`, `http.request@1`, `notify@1`,
-  `memory.set@1`, `json.pick@1`, `event.emit@1`;
-- **the workspace's own**: a folder with an `action.json` and a program
-  (an executable, Python, Bun, or a program in a container image), named
-  `<name>.<target>@<version>`.
+### message
 
-See [Actions](/guides/actions/).
-
-### container action
-
-An action whose program runs in a Docker image (`"type": "container"`):
-the job on stdin, the action's folder at `/action`, its settings passed by
-name so no value stands on a command line. The machine needs Docker, not
-the program's language. Getting its image has its own time limit
-(`limits.prepare`), and the job's time limit starts once the image is
-here; the daemon gets images ahead of time.
-
-### chain
-
-A transition's `do`: its actions, run in order. Each gets the previous one's
-output as `prev`; one with an `id` is `steps.<id>` for the rest of the
-chain. `when` skips an action, `expect` judges its output.
-
-### input
-
-What a transition starts with: the event's data when an event took it, else
-the output that ended the previous transition. A run's first transition
-gets the trigger's event data.
-
-### expression
-
-A [CEL](https://cel.dev) expression: a condition (`when`, `expect`) or a
-`${...}` template in an action's `with`. It sees `args`, `input`, `prev`,
-`steps`, `memory` and `run`.
-
-### memory
-
-A small store of keys and JSON values per workflow, for its own bookkeeping
-("seen up to"), never an app's records. Changed by `memory.set@1`, only
-when the whole chain succeeds.
-
-### secret
-
-`${env.NAME}`: a value from the OS secret store, or the daemon's
-environment. Filled in only when the job starts, so it never reaches the
-journal. See [Secrets](/guides/secrets/).
-
-## Who does the work
-
-### daemon
-
-`itero daemon`: makes passes, one a second. A pass saves new events, fires
-schedules and timers, asks the manager what each run does next, saves each
-answer in one transaction, and hands jobs to workers. It decides nothing
-itself; with no workflows it is idle.
-
-### manager
-
-Decides what a run does next. Pure: JSON in, JSON out, no files, no network,
-no clock. The same input always gives the same answer.
-
-### worker
-
-Runs one job in its own process, and exits. Dumb: the request, the command
-or the program, as the job says.
-
-### job
-
-One action handed to a worker. It carries an idempotency key, the same
-when it runs again. A lost job (killed, its lease ran out, the daemon
-stopped) runs again, up to 3 times; an error fails the action at once.
-`limits.timeout` caps it, `limits.heartbeat` makes it a lease.
-
-## How the outside connects
-
-### event
-
-A typed message, like `photo.added`, with data. Sent to the workspace, it
-starts runs of the workflows with a trigger `on` its type and reaches the
-runs waiting for it with a `match`; sent to a run, it may take one of the
-run's transitions. Types starting with `action.`, `timer.`, `run.`,
-`workflow.` or `source.` are the engine's own and refused from outside.
-See [Apps and events](/guides/apps/).
-
-### publish and subscribe
-
-Events for the workspace are a bus. Apps, sources and workflows (a
-`publish` step) publish; workflows with a trigger `on` a type and runs
-waiting with a `match` subscribe. Each subscriber gets an event once, and
-a run never hears what it published itself.
-
-### match
-
-A condition on a transition with `on`: whether an event for the workspace
-is this run's (`event.data.thread == run.input.thread`). With it, a run can
-be reached without anyone knowing its id.
-
-### run.input
-
-What a run started with: the data of the event that started it. What
-`match` correlates on.
-
-### long-lived run
-
-A run that does not end: a state that loops to itself on an event, with a
-`match`, reacting to every event that is its own. For things with a
-lifecycle: a conversation, an approval, a device.
-
-### run.failed
-
-What the engine publishes when a run fails: the workflow, its version, the
-run, where and why. A maintenance workflow hears it, except about itself.
-`itero errors` lists the failed runs.
+A type (two or more words joined by dots, like `order.placed`) and its
+data. It starts runs and reaches runs waiting for it. See
+[Messages and sources](/guides/messages/).
 
 ### source
 
-A long-lived program that tells itero when something happens outside: it
-watches a file, holds a connection to a server (IMAP IDLE), or asks again
-and again, and prints one event per line. The daemon runs each source in
-`sources/`, starts it again when it ends, and gives up on one that keeps
-ending. `watch@1` is built in. See [Sources](/guides/sources/).
+An executable in `sources/` that keeps running; each line it prints is
+one message of its file name's type.
 
-### cursor
+### schedule
 
-Where a source stopped, as it said last (`{"cursor": ...}`): kept in the
-journal and given back when it starts again, so it carries on without
-repeating itself.
+A cron line in `on`, in the machine's local time: `0 9 * * *`.
 
-### connector
+### run
 
-Everything for one outside system packaged together: its sources, its
-actions and ready-made workflows, like a mail connector with IMAP IDLE,
-POP3 and the local mailbox. Planned: the unit a marketplace would offer.
+One go through a workflow, started by a message or a schedule. It has an
+id (a UUIDv7) and keeps the version of its workflows it started with. It
+ends as `done`, `failed` or `error`.
 
-### app
+### state
 
-Anything outside itero that works with it. Events in (the HTTP API or
-`itero emit`), actions out (its command line or API). Never a library:
-itero orchestrates, and never owns an app's data.
+A run's values: the data of the message that started it, the messages
+that reached it, and what its steps printed. An action gets it as
+environment variables and on stdin.
 
-### HTTP API
+### waiting
 
-The daemon's API on 127.0.0.1 only: `/health`, `/events`, `/runs`,
-`/workflows`. A request naming another host is refused. See
-[HTTP API](/reference/http/).
+A run whose step exited 75: it waits for a message that matches it (shares
+a field with its state and agrees on all it shares), runs the step again
+every hour, and gives up after its `timeout`.
+
+### side by side
+
+A list in `steps`: its entries run at the same time, and the next step
+waits for all of them.
+
+### condition
+
+An `on` in a workflow or a step: `$name` (in the state), `$$NAME`
+(defined), or `{"$name": value}` (exactly). A step whose `on` does not
+hold is skipped.
+
+### args
+
+Data for an action, `args/<action>.json`, set with `itero args`. A list
+runs the step once per item.
+
+### secret
+
+`$$NAME`: from the OS secret store, else the daemon's environment, bound
+only when a step starts, never written down. Set with `itero secret`.
+
+### memory
+
+`$ITERO_MEMORY`: a file an action may keep things in between runs, one
+per workflow.
+
+### journal
+
+`.itero/journal.sqlite`: every message, run and answer. The queue and the
+log; local, never synced. Ended runs and their messages are forgotten a
+day later.
+
+### daemon
+
+`itero daemon`: makes passes, one a second. It starts sources, takes
+messages and schedules, asks the manager, saves each answer, and hands
+steps to workers.
+
+### manager
+
+Decides what a run does next. Pure: JSON in, JSON out, no files, no
+network, no clock.
+
+### worker
+
+Runs one step in its own process, and exits.
 
 ### service
 
-`itero service install`: the daemon starts at login (launchd on macOS,
-systemd on Linux), kept up by the **watchdog**, which restarts it when it
-exits, stops answering or stops making passes. See
+`itero service install`: the daemon at login, kept up by a watchdog. See
 [Start at login](/guides/service/).
 
 ### Itero.app
 
 The macOS notifier: notifications come from itero, with its own entry in
 System Settings.
-
-## Principles
-
-- **The Unix way.** Steps lean on the command line tools already there.
-  Values reach a command only as environment variables, never pasted into
-  its text.
-- **Events in, actions out.** Apps talk to itero through events; itero acts
-  on apps through their own interfaces.
-- **Files, and one journal.** Workflows, actions and triggers are files;
-  everything that happens is in the journal.

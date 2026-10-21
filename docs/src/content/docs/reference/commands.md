@@ -9,87 +9,77 @@ command's options.
 
 ## itero daemon
 
-Runs the workspace's workflows: their schedules, events and jobs, pass
-after pass, starts its [sources](/guides/sources/), and serves the
-[HTTP API](/reference/http/) on `127.0.0.1:<port>`. Ctrl-C stops it. A bad
-source file stops it at start, naming the file.
+Runs the workspace: starts its [sources](/guides/messages/#sources), takes
+messages and schedules, runs steps, pass after pass, and serves the
+[HTTP API](/reference/http/) on `127.0.0.1:<port>`. Ctrl-C stops it.
 
 | Option | Does |
 |---|---|
 | `--interval N` | seconds between passes (1) |
 | `--no-serve` | the passes only, no HTTP API |
-| `--once` | one pass, then stop |
+| `--once` | one pass, then stop (sources do not run) |
 | `--now TIME` | with `--once`: the time to run at, RFC 3339 (for tests) |
 
-It prints a line for each pass that did something: events delivered, jobs
-run, jobs lost (run again), and events waiting.
-
-## itero check
-
-Reads every workflow, action and source, and prints each, workflows with
-their versions:
-
-```
-mail-check  e734495fe858
-mail.check@1
-source mailbox  watch@1
-```
-
-The first problem found is an error naming the file and the transition. A
-folder `itero.toml` lists that is not there is noted.
+It prints a line for each pass that did something.
 
 ## itero emit
 
-```bash
-itero emit <type> [--data JSON] [--run ID]
+```sh
+itero emit <type> ['<data>']
 ```
 
-Sends an event: to a run with `--run`, or to the workspace, where it may
-start runs. `--data` is a JSON object. Prints the event's id. It writes the
-journal directly, so it works while the daemon is stopped. See
-[Apps and events](/guides/apps/).
+Sends a message: `itero emit order.placed '{"order": 43}'`. The type is two
+or more words joined by dots; the data, a JSON object. It prints the
+message's id.
+
+## itero args
+
+```sh
+itero args <action> '<data>'
+itero args <action> --file <path>
+```
+
+Writes `args/<action>.json`: an object, or a list of objects (the step
+runs once per item). See [Args and secrets](/guides/secrets/).
+
+## itero secret
+
+```sh
+itero secret <NAME>
+itero secret <NAME> --file <path>
+```
+
+Keeps a secret in the OS secret store, for `$$NAME`. Without `--file` it
+asks for it, without echo; the value is never an argument.
+
+## itero check
+
+Reads every workflow, action and source, and prints each workflow with
+the actions and workflows its steps name, and each source. Anything wrong
+is an error naming the file: a key it does not know, a message type of one
+word, an action or a workflow that is not there.
 
 ## itero runs
 
-The runs, newest first: id, workflow, state, started, ended.
+The runs, newest first: id, workflow, status (`running`, `waiting`,
+`done`, `failed`, `error`, `split`), started, ended.
 
 ## itero errors
 
-```bash
-itero errors [--limit N]
+The runs that ended in error, newest first: when, the workflow, the run,
+the step and why. `--limit N` (20).
+
+## itero watch
+
+```sh
+itero watch <path>
 ```
 
-The failed runs, newest first (20 unless `--limit` says): when, the
-workflow, the run, the transition that failed and why:
-
-```
-2026-10-16T10:00:02Z  backup               01a144c5-...  start -> done: sh@1: expect failed: output.exit == 0
-```
-
-## itero memory
-
-```bash
-itero memory <workflow>
-```
-
-A workflow's memory, as JSON.
-
-## itero resume
-
-```bash
-itero resume <workflow>
-```
-
-Lets a paused workflow start runs again: one paused after `pause_after`
-failed runs in a row (see [Workflow files](/reference/workflow-file/#paused)).
-Prints `<workflow>: resumed`, or `<workflow>: not paused`.
+For sources: prints a JSON line each time the file or folder changes. It
+ends when its stdin closes.
 
 ## itero service
 
-| Command | Does |
-|---|---|
-| `itero service install [--interval N]` | runs the daemon as a per-user service at login, kept up by a watchdog |
-| `itero service status` | the service's state and the daemon's health |
-| `itero service uninstall` | stops the service and removes it |
-
-See [Start at login](/guides/service/).
+`itero service install` runs the workspace's daemon at login, kept up by a
+watchdog; `status` shows it and the daemon's health; `uninstall` removes
+it. See [Start at login](/guides/service/).
