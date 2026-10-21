@@ -64,8 +64,13 @@ pub enum Cmd {
         #[arg(long)]
         file: Option<std::path::PathBuf>,
     },
-    /// The runs, newest first: id, workflow, where it is or how it ended, started, ended
-    Runs,
+    /// The runs, newest first: id, name, workflow, where it is or how it ended, started, ended
+    Runs {
+        /// One run, by id or name: what happened, step by step
+        run: Option<String>,
+    },
+    /// The workspace: its identity, meta and limits, and the daemon running it
+    Info,
     /// Runs that ended in error, newest first: when, the workflow, the run, the step and why
     Errors {
         /// How many
@@ -172,6 +177,80 @@ fn ignore_sigpipe() {
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
+}
+
+/// The workspace's daemon's `/health`, when one answers on `port`.
+fn daemon_health(port: u16) -> Option<serde_json::Value> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?
+        .get(format!("http://127.0.0.1:{port}/health"))
+        .send()
+        .and_then(|r| r.json())
+        .ok()
+}
+
+/// A run, from the journal: how it started, each step and how it went,
+/// the messages it took, and its state.
+fn story(j: &crate::engine::journal::Journal, r: &crate::engine::journal::Run) -> Result<()> {
+    use crate::engine::journal::subject;
+    println!(
+        "{}  {}  {}  {}",
+        r.name,
+        r.id,
+        r.workflow,
+        crate::engine::steps::status(&r.runtime)
+    );
+    // each result's cause is its job, which names the action
+    let jobs: std::collections::BTreeMap<String, String> = j
+        .events(Some(&subject("worker")))?
+        .into_iter()
+        .filter(|e| e.event.data["run"] == r.id.as_str())
+        .map(|e| {
+            let action = e.event.data["job"]["action"].as_str().unwrap_or("?");
+            (e.event.id, format!("#{action}"))
+        })
+        .collect();
+    for e in j.events(Some(&subject(&r.id)))? {
+        let d = &e.event.data;
+        let step = || {
+            e.event
+                .cause
+                .as_ref()
+                .and_then(|c| jobs.get(c))
+                .map_or("a step", String::as_str)
+                .to_string()
+        };
+        let line = match e.event.kind.as_str() {
+            "run.started" => format!("started  {d}"),
+            "action.finished" => format!("{}  done  {}", step(), d["output"]),
+            "action.waiting" => format!("{}  waiting  {}", step(), d["output"]),
+            "action.failed" => format!("{}  error  {}", step(), d["error"]),
+            "timer.fired" => "waited too long".into(),
+            // a message is copied to every waiting run: show those it took
+            "message" if r.runtime.taken.iter().any(|t| d["id"] == t.as_str()) => {
+                format!(
+                    "message {}  {}",
+                    d["type"].as_str().unwrap_or("?"),
+                    d["data"]
+                )
+            }
+            _ => continue,
+        };
+        println!("  {}  {line}", e.event.time);
+    }
+    if let Some(ended) = &r.ended {
+        println!(
+            "  {ended}  ended {}",
+            crate::engine::steps::status(&r.runtime)
+        );
+    }
+    println!(
+        "  state {}",
+        serde_json::Value::Object(r.runtime.state.clone())
+    );
+    Ok(())
 }
 
 fn dispatch(cli: Cli) -> Result<()> {
@@ -318,8 +397,39 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
             }
             let flows = ws.flows()?;
+            let j = crate::engine::journal::Journal::open(&ws)?;
+            let now = crate::engine::daemon::stamp(chrono::Utc::now());
             for (name, f) in &flows {
                 println!("{name}");
+                let id = j.workflow_id(name, &now)?;
+                println!("  id {}  since {}", id.id, id.created);
+                let m = &f.meta;
+                if let Some(d) = &m.description {
+                    println!("  description {d}");
+                }
+                for (k, t) in [("from", m.from), ("until", m.until)] {
+                    if let Some(t) = t {
+                        println!("  {k} {}", crate::engine::daemon::stamp(t));
+                    }
+                }
+                for (k, on) in [("off", m.off), ("internal", m.internal)] {
+                    if on {
+                        println!("  {k}");
+                    }
+                }
+                for (k, v) in &m.other {
+                    println!("  {k} {v}");
+                }
+                let runs = j.runs_page(Some(name), None, usize::MAX)?;
+                println!("  runs so far {}", runs.len());
+                if let Some(last) = runs.first() {
+                    println!(
+                        "  last run {} {}  {}",
+                        last.name,
+                        crate::engine::steps::status(&last.runtime),
+                        last.ended.as_deref().unwrap_or(&last.started)
+                    );
+                }
                 for u in f.uses() {
                     match u {
                         crate::flow::Name::Action { name: a, version } => {
@@ -344,13 +454,76 @@ fn dispatch(cli: Cli) -> Result<()> {
                 println!("source {kind}  {}", file.display());
             }
         }
-        Cmd::Runs => {
+        Cmd::Runs { run: Some(run) } => {
+            let ws = workspace()?;
+            let j = crate::engine::journal::Journal::open(&ws)?;
+            let found = j.run_by(&run)?;
+            let Some(r) = found.first() else {
+                bail!("no run {run}: itero runs lists them");
+            };
+            if found.len() > 1 {
+                println!(
+                    "{} runs are named {run}: this is the newest; give an id for another",
+                    found.len()
+                );
+            }
+            story(&j, r)?;
+        }
+        Cmd::Info => {
+            let ws = workspace()?;
+            let j = crate::engine::journal::Journal::open(&ws)?;
+            let w = j.workspace()?;
+            println!("workspace");
+            println!("  id {}", w.id);
+            println!("  name {}", w.name);
+            println!("  created {}", w.created);
+            println!("  path {}", ws.root.display());
+            println!("  itero {}", w.itero);
+            if !ws.meta.is_empty() {
+                println!("  meta");
+                for (k, v) in &ws.meta {
+                    println!("    {k} {v}");
+                }
+            }
+            let l = &ws.limits;
+            println!("  limits");
+            println!("    workflows {}", l.workflows);
+            println!("    runs {}", l.runs);
+            println!("    steps {}", l.steps);
+            println!("    space {}", l.space);
+            println!("    keep {}", humantime::format_duration(l.keep));
+            println!("    log {}", l.log);
+            println!("    logs {}", l.logs);
+            match daemon_health(ws.port) {
+                Some(h) if h["workspace"]["id"] != w.id.as_str() => println!(
+                    "daemon: port {} answers, but for another workspace ({})",
+                    ws.port,
+                    h["workspace"]["path"]
+                        .as_str()
+                        .or(h["workspace"].as_str())
+                        .unwrap_or("unknown")
+                ),
+                Some(h) => {
+                    let d = &h["daemon"];
+                    println!("daemon");
+                    for k in ["id", "name", "started", "pid", "host", "itero"] {
+                        println!(
+                            "  {k} {}",
+                            d[k].as_str().map_or(d[k].to_string(), String::from)
+                        );
+                    }
+                }
+                None => println!("daemon: not running (no answer on port {})", ws.port),
+            }
+        }
+        Cmd::Runs { run: None } => {
             let ws = workspace()?;
             let j = crate::engine::journal::Journal::open(&ws)?;
             for r in j.runs_page(None, None, usize::MAX)? {
                 println!(
-                    "{}  {:<20} {:<12} {}  {}",
+                    "{}  {:<20} {:<20} {:<12} {}  {}",
                     r.id,
+                    r.name,
                     r.workflow,
                     crate::engine::steps::status(&r.runtime),
                     r.started,
@@ -413,14 +586,8 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
                 ServiceCmd::Status => {
                     println!("service: {}", service::status(&ws.root)?);
-                    let health = reqwest::blocking::Client::builder()
-                        .timeout(std::time::Duration::from_secs(3))
-                        .build()?
-                        .get(format!("http://127.0.0.1:{}/health", ws.port))
-                        .send()
-                        .and_then(|r| r.json::<serde_json::Value>());
-                    match health {
-                        Ok(h) => println!(
+                    match daemon_health(ws.port) {
+                        Some(h) => println!(
                             "daemon: pid {}, {} passes, last {}{}",
                             h["pid"],
                             h["passes"],
@@ -430,7 +597,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                                 .map(|e| format!(", last error: {e}"))
                                 .unwrap_or_default()
                         ),
-                        Err(_) => println!("daemon: no answer on port {}", ws.port),
+                        None => println!("daemon: no answer on port {}", ws.port),
                     }
                 }
             }

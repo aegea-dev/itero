@@ -44,7 +44,16 @@ async fn health_says_the_loop_is_alive() {
     assert_eq!(v["passes"], 0);
     assert_eq!(v["started"], "2026-10-15T14:00:00Z");
     assert_eq!(v["sources"], json!({}), "no sources");
-    assert_eq!(v["workspace"], json!(d.path().display().to_string()));
+    assert_eq!(
+        v["workspace"]["path"],
+        json!(d.path().display().to_string())
+    );
+    assert_eq!(v["workspace"]["id"].as_str().unwrap().len(), 36);
+    assert!(v["workspace"]["name"].as_str().unwrap().contains('-'));
+    assert_eq!(v["daemon"]["id"].as_str().unwrap().len(), 36);
+    assert!(v["daemon"]["name"].as_str().unwrap().contains('-'));
+    assert_eq!(v["daemon"]["pid"], std::process::id());
+    assert_eq!(v["daemon"]["itero"], env!("CARGO_PKG_VERSION"));
 }
 
 #[tokio::test]
@@ -111,6 +120,10 @@ async fn runs_and_workflows_can_be_read() {
     assert_eq!(run["input"], json!({"kim": "ayşe"}));
     assert_eq!(run["state"], json!({"kim": "ayşe", "son": "çay"}));
     assert_eq!(run["events"][0]["type"], "run.started");
+    let name = runs[0]["name"].as_str().unwrap();
+    let (code, by_name) = send(&app, get(&format!("/runs/{name}"))).await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(by_name["id"], id);
     assert_eq!(send(&app, get("/runs/yok")).await.0, StatusCode::NOT_FOUND);
     let (_, flows) = send(&app, get("/workflows")).await;
     assert_eq!(flows[0]["name"], "sayaç");

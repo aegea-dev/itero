@@ -59,9 +59,48 @@ pub fn stamp(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// One life of the daemon: from its start to its end.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Daemon {
+    pub id: String,
+    /// Two random words.
+    pub name: String,
+    pub started: String,
+    pub pid: u32,
+    pub host: String,
+    pub itero: String,
+}
+
+impl Daemon {
+    pub fn starting(at: &str) -> Daemon {
+        Daemon {
+            id: uuid::Uuid::now_v7().to_string(),
+            name: crate::names::random(),
+            started: at.into(),
+            pid: std::process::id(),
+            host: host(),
+            itero: journal::ITERO.into(),
+        }
+    }
+}
+
+/// This machine's name.
+fn host() -> String {
+    let mut buf = [0u8; 256];
+    // SAFETY: the buffer and its length match; the name ends at its NUL
+    let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
+    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    if ok {
+        String::from_utf8_lossy(&buf[..end]).into_owned()
+    } else {
+        String::new()
+    }
+}
+
 /// How the daemon's loop is doing, for `/health`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Health {
+    pub daemon: Daemon,
     pub started: String,
     /// Passes so far.
     pub passes: u64,
@@ -87,6 +126,7 @@ pub struct SourceHealth {
 impl Health {
     pub fn starting(at: &str) -> Health {
         Health {
+            daemon: Daemon::starting(at),
             started: at.to_string(),
             passes: 0,
             last_pass: None,
@@ -180,6 +220,7 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
     let mut j = Journal::open(ws)?;
     let mut pass = Pass::default();
     let flows = Flows::load(ws)?;
+    j.see_workflows(flows.read.keys(), &stamp(now))?;
     fire_schedules(&flows, &mut j, now)?;
     for (id, run, data) in j.due_timers(&stamp(now))? {
         let e = Envelope::new(

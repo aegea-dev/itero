@@ -72,23 +72,34 @@ async fn local_only(State(s): State<Shared>, req: Request, next: Next) -> Respon
     next.run(req).await
 }
 
-async fn health(State(s): State<Shared>) -> Json<Value> {
+async fn health(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
     let h = s
         .engine
         .health
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
-    Json(json!({
+    let workspace = blocking(&s, |ws| {
+        let w = Journal::open(ws)
+            .and_then(|j| j.workspace())
+            .map_err(internal)?;
+        let mut v = json!(w);
+        v["path"] = json!(ws.root.display().to_string());
+        v["meta"] = json!(ws.meta);
+        Ok(v)
+    })
+    .await?;
+    Ok(Json(json!({
         "ok": true,
-        "pid": std::process::id(),
-        "workspace": s.ws.root.display().to_string(),
+        "pid": h.daemon.pid,
+        "workspace": workspace.0,
+        "daemon": h.daemon,
         "started": h.started,
         "passes": h.passes,
         "last_pass": h.last_pass,
         "last_error": h.last_error,
         "sources": h.sources,
-    }))
+    })))
 }
 
 /// An event as it is posted.
@@ -148,6 +159,7 @@ fn internal(e: anyhow::Error) -> Reply {
 fn run_row(r: &super::journal::Run) -> Value {
     json!({
         "id": r.id,
+        "name": r.name,
         "workflow": r.workflow,
         "status": super::steps::status(&r.runtime),
         "started": r.started,
@@ -190,10 +202,14 @@ async fn runs(State(s): State<Shared>, Query(q): Query<RunsQuery>) -> Result<Jso
 async fn run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Json<Value>, Reply> {
     blocking(&s, move |ws| {
         let j = Journal::open(ws).map_err(internal)?;
+        // by id or name; of two with one name, the newest
         let r = j
-            .run(&id)
+            .run_by(&id)
             .map_err(internal)?
+            .into_iter()
+            .next()
             .ok_or_else(|| fail(StatusCode::NOT_FOUND, format!("no run {id}")))?;
+        let id = r.id.clone();
         let events: Vec<Value> = j
             .events(Some(&super::journal::subject(&id)))
             .map_err(internal)?
