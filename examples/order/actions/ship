@@ -1,0 +1,3 @@
+#!/bin/sh
+# Hands $order to the carrier; a real one calls its API with curl.
+echo "{\"tracking\": \"TR-$order\"}"

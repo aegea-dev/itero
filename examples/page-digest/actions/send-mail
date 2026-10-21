@@ -1,0 +1,10 @@
+#!/bin/sh
+# Mails $text to $to through $host (SMTP over TLS). The password goes to
+# curl on stdin, never on its command line.
+mail=$(mktemp) || exit 1
+trap 'rm -f "$mail"' EXIT
+printf 'From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s\r\n' \
+  "$user" "$to" "${subject:-itero}" "$text" > "$mail"
+printf 'user = "%s:%s"\n' "$user" "$password" |
+  curl -fsS --max-time 60 -K - --ssl-reqd "smtps://$host" \
+    --mail-from "$user" --mail-rcpt "$to" --upload-file "$mail"
