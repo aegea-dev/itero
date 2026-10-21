@@ -1,82 +1,52 @@
 ---
 title: Workspaces, workflows and runs
-description: The few things itero is made of, and how a run moves.
+description: The few things itero is made of.
 ---
 
-## A workspace
-
-A folder with an `itero.toml` is a workspace. One daemon runs one
-workspace; keep work and home apart as two workspaces, each with its own
-daemon and port. itero finds the workspace from the folder it runs in: the
-nearest folder upwards with an `itero.toml`.
+**A workspace** is a folder with an `itero.toml`. One daemon runs one
+workspace:
 
 ```
-itero.toml               port, and where workflows and actions are
-workflows/<name>.json    workflows
-actions/<name>/          your own actions: action.json and a program
-triggers/<name>.json     this workspace's triggers for a workflow
-sources/<name>.json      sources: what tells itero that something happened
-.itero/journal.sqlite    every event, run and job, and each workflow's memory
-.itero/daemon.log        the service's log
+itero.toml                 settings (the port)
+workflows/order.json       a workflow: its name is its file name
+actions/check-payment      an action: an executable, its name its file name
+sources/mail.received      a source: its messages are of this type
+args/check-payment.json    data for an action (itero args)
+.itero/                    the journal and each workflow's memory
 ```
 
-`.itero/` is local to the machine and never synced.
+**A workflow** says when it runs (`on`) and what it does (`steps`):
 
-## A workflow
-
-A workflow is a template: its **states**, where a run **starts**, the states
-where it **ends**, and the **transitions** between states. A transition can
-run a chain of **actions** (`do`), one after the other; the output of one is
-`prev` for the next, and one with an `id` is `steps.<id>` for the rest of
-the chain.
-
-A workflow's **triggers** say when a run starts: a cron **schedule**, or
-**on** an app's event.
-
-## A run
-
-A run is one short instance of a workflow. It starts in the `start` state,
-moves along its transitions, and ends in an `end` state or in `failed`. A
-recurring job is many runs: the mail check is one run every 5 minutes, not
-one run that waits.
-
-A transition without `on` is taken as soon as the run enters its `from`
-state (and its `when` holds). A transition with `on` waits for an event of
-that type sent to the run. A transition with a `timeout` moves to its
-`on_timeout` state when nothing else happened in time.
-
-When an action fails, the run goes to the transition's `on_fail` state, or
-to `failed`.
-
-## Memory
-
-Each workflow has a small store in the journal, keys and JSON values, for
-its own bookkeeping ("seen up to", "sent this year"). Runs read it as
-`memory`; the built-in `memory.set@1` changes it, saved only when the chain
-succeeds. An app's own records belong in the app, not here.
-
-## The pieces
-
-```
-  app or person --events-->  +--------------------+
-  (HTTP API, itero emit)     |      daemon        |  saves every event and
-                             | (one per workspace)|  answer in the journal
-  schedules (cron) --------> +--+--------------+--+  decides nothing
-                                |              |
-                       +--------v---+  +-------v------+
-                       |  manager   |  |    worker    |  one process per
-                       | pure: JSON |  | runs one     |  action, any
-                       | in and out |  | action, exits|  language
-                       +------------+  +--------------+
+```json
+{ "on": ["order.placed"], "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"] }
 ```
 
-- **The daemon** saves events, fires schedules and timers, asks the manager
-  what to do, saves each answer in one transaction, and runs jobs in
-  workers. With no workflow it does nothing.
-- **The manager** decides what a run does next. It is pure: the same input
-  always gives the same answer.
-- **A worker** runs one action in its own process and exits.
+**An action** (`#check-payment`) is a small program. It reads its values
+as environment variables, prints JSON, and its exit code says how it
+went. **A workflow** can be a step too (`order-process`).
 
-Every job carries an idempotency key, the same when it runs again. A job
-that is lost (killed, its lease ran out, the daemon stopped) runs again, up
-to 3 times; an error fails the action at once.
+**A message** has a type, two or more words joined by dots
+(`order.placed`), and data. Apps send them with `itero emit` or `POST
+/events`; sources print them. A message starts a run of every workflow
+whose `on` lists its type.
+
+**A run** is one go through a workflow. It has a **state**: the data of
+the message that started it, plus what each step printed. A step that is
+not ready yet (exit 75) makes the run **wait** until a message for it
+arrives. A run ends as `done`, `failed` (the state says
+`"success": false`) or `error` (something broke).
+
+**The daemon** takes the messages, asks the **manager** what each run
+does next, and runs steps in **workers**. Everything is written to the
+journal first, so a daemon that stops carries on where it was.
+
+Names at a glance:
+
+| Written | Is |
+|---|---|
+| `#check-payment` | an action |
+| `order-process` | a workflow |
+| `order.placed` | a message type |
+| `0 9 * * *` | a schedule (it has spaces) |
+| `$order` | a value in the run's state |
+| `$$API_KEY` | an environment variable or a secret |

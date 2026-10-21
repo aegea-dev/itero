@@ -1,0 +1,11 @@
+{
+  "on": ["order.placed"],
+  "steps": [
+    ["#check-payment", "#check-stock"],
+    "order-process",
+    "#send-mail"
+  ],
+  "success": ["#log-result"],
+  "failure": ["#log-result"],
+  "error": ["#log-result"]
+}

@@ -1,16 +1,18 @@
-//! The daemon's work for one workspace, one pass at a time: fire due
-//! timers, deliver every waiting event to its run's manager, save each
-//! answer, and run the jobs it asks for in workers. The daemon decides
-//! nothing: every change comes from a manager's answer.
-use super::journal::{self, Envelope, Handled, Journal, Recorded};
-use super::worker::{Failure, LOST_EXIT};
-use super::{Answer, Event, Input, Interpreter, Job, Program};
-use crate::workflow::{FAILED, actions};
+//! The daemon's work for one workspace, one pass at a time: start the runs
+//! schedules and messages call for, fire due timers, deliver every waiting
+//! event to its run's manager, save each answer, and run the jobs it asks
+//! for in workers. The daemon decides nothing about a run: every change to
+//! one comes from a manager's answer.
+use super::Event;
+use super::journal::{self, Envelope, Handled, Journal, Recorded, Split, Start};
+use super::steps::{self, StepAnswer, StepInput, StepJob};
+use super::worker::{Failure, LOST_EXIT, NOTIFY, Outcome, StepRun};
+use crate::flow::{self, Flow, Name};
 use crate::workspace::Workspace;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -25,7 +27,7 @@ pub struct Pass {
     pub delivered: usize,
     /// Jobs run in workers, their results saved.
     pub worked: usize,
-    /// Jobs lost (killed, or their lease ran out), to run again.
+    /// Jobs lost (killed, or past their time), to run again.
     pub lost: usize,
     /// Events left for the next pass: their manager kept being killed.
     pub deferred: usize,
@@ -39,11 +41,17 @@ const MAX_EVENTS: usize = 10_000;
 const MAX_TRIES: usize = 3;
 
 /// How many times a job runs, the first run and those after it was lost,
-/// before its action fails.
+/// before its step is an error.
 const MAX_RUNS: i64 = 3;
 
-/// The built-ins a worker runs; any other action is a workspace action.
-const WORKER_BUILT_INS: [&str; 4] = ["http.request@1", "command@1", "sh@1", "notify@1"];
+/// More workers than this at once wait for the next batch.
+const MAX_WORKERS: usize = 8;
+
+/// Seconds a step may take: past that it is stopped and tried again.
+const STEP_TIMEOUT: u64 = 600;
+
+/// How long ended runs and handled messages are kept.
+const KEEP: chrono::Duration = chrono::Duration::days(1);
 
 /// What became of an event given to `deliver`.
 enum Delivered {
@@ -67,8 +75,8 @@ pub struct Health {
     pub last_pass: Option<String>,
     /// What went wrong in the last pass, if anything.
     pub last_error: Option<String>,
-    /// How each source is doing, by name.
-    pub sources: std::collections::BTreeMap<String, SourceHealth>,
+    /// How each source is doing, by the type it sends.
+    pub sources: BTreeMap<String, SourceHealth>,
 }
 
 /// How one source is doing.
@@ -95,7 +103,7 @@ impl Health {
 }
 
 /// Runs passes over the workspace until `wake`'s sender is gone: one every
-/// `interval`, or at once when something arrives on `wake` (an event from
+/// `interval`, or at once when something arrives on `wake` (a message from
 /// outside). Each pass is recorded in `health`, and `report` hears of it; a
 /// pass that fails never stops the next.
 pub fn run_loop(
@@ -106,9 +114,7 @@ pub fn run_loop(
     health: &Mutex<Health>,
     report: impl Fn(&Result<Pass>),
 ) {
-    let mut prefetch = Prefetch::default();
     loop {
-        prefetch.images(ws);
         let now = Utc::now();
         let pass = run_once(ws, now, exe);
         {
@@ -127,33 +133,51 @@ pub fn run_loop(
     }
 }
 
-/// The container images the daemon gets ahead of time, in the background,
-/// so that a job finds its image here: each image once while it runs. One
-/// it could not get, a job gets (or fails to) when it runs.
-#[derive(Default)]
-struct Prefetch(std::collections::HashSet<String>);
+/// The workspace's workflows as their files say, and read.
+struct Flows {
+    values: BTreeMap<String, Value>,
+    read: BTreeMap<String, Flow>,
+}
 
-impl Prefetch {
-    /// Starts getting each container action's image not asked for yet.
-    fn images(&mut self, ws: &Workspace) {
-        // an action file that does not load fails the jobs that use it,
-        // which say why
-        let Ok(actions) = ws.actions() else {
-            return;
-        };
-        for (_, d) in actions {
-            let Some(image) = d.image.filter(|_| d.kind == "container") else {
+impl Flows {
+    fn load(ws: &Workspace) -> Result<Flows> {
+        let values = ws.flow_values()?;
+        let mut read = BTreeMap::new();
+        for (n, v) in &values {
+            read.insert(
+                n.clone(),
+                flow::from_value(v).map_err(|e| anyhow!("{n}: {e}"))?,
+            );
+        }
+        Ok(Flows { values, read })
+    }
+
+    /// `root` and every workflow it uses as a step, there or deeper, as
+    /// their files say: what a run of it is pinned to.
+    fn pinned(&self, root: &str) -> Result<BTreeMap<String, Value>, String> {
+        let mut out = BTreeMap::new();
+        let mut todo = vec![root.to_string()];
+        while let Some(name) = todo.pop() {
+            if out.contains_key(&name) {
                 continue;
+            }
+            let (Some(v), Some(f)) = (self.values.get(&name), self.read.get(&name)) else {
+                return Err(format!("{root} uses workflow {name}, which is not there"));
             };
-            if self.0.insert(image.clone()) {
-                std::thread::spawn(move || {
-                    if let Err(e) = super::worker::ensure_image(&image) {
-                        eprintln!("could not get image {image} ahead of time: {e}");
-                    }
-                });
+            out.insert(name.clone(), v.clone());
+            for n in f.uses() {
+                if let Name::Workflow(w) = n {
+                    todo.push(w);
+                }
             }
         }
+        Ok(out)
     }
+}
+
+/// Whether an environment variable or a secret is defined.
+fn defined(name: &str) -> bool {
+    super::secrets::get(name).is_some()
 }
 
 /// One pass over a workspace; `exe` is the itero binary, run as `itero
@@ -161,12 +185,8 @@ impl Prefetch {
 pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let mut j = Journal::open(ws)?;
     let mut pass = Pass::default();
-    let flows: Vec<crate::workflow::File> = ws.workflows()?.into_iter().map(|(_, f)| f).collect();
-    resume_new_versions(&j, &flows)?;
+    let flows = Flows::load(ws)?;
     fire_schedules(&flows, &mut j, now)?;
-    for id in j.release_queued(&flows, &stamp(now))? {
-        eprintln!("{id}: started from the queue");
-    }
     for (id, run, data) in j.due_timers(&stamp(now))? {
         let e = Envelope::new(
             "daemon",
@@ -183,11 +203,11 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
     loop {
         while let Some(r) = j.next()? {
             if r.event.subject == journal::subject("app") {
-                start_triggered(ws, &mut j, &r, now)?;
+                route(&flows, &mut j, &r, now)?;
                 pass.delivered += 1;
                 continue;
             }
-            if let Delivered::Deferred = deliver(&mut j, &r, now, exe)? {
+            if let Delivered::Deferred = deliver(ws, &mut j, &r, now, exe)? {
                 // events are delivered in order: the rest waits with it
                 pass.deferred += 1;
                 return Ok(pass);
@@ -197,7 +217,7 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
                 return Ok(pass);
             }
         }
-        let batch = batch(j.jobs()?);
+        let batch: Vec<Recorded> = j.jobs()?.into_iter().take(MAX_WORKERS).collect();
         if batch.is_empty() {
             break;
         }
@@ -212,23 +232,19 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
                 pass.worked += 1;
             } else {
                 j.start_job(r.seq)?;
-                starting.push((r, runs + 1));
+                let step = step_run(ws, &j, &r.event.data);
+                starting.push((r, runs + 1, step));
             }
         }
         super::die_at("job-started");
-        let beats = ws.root.join(".itero").join("beats");
         // the workers run side by side; each result is saved on its own
-        let outcomes: Vec<Result<Value, Failure>> = std::thread::scope(|s| {
+        let outcomes: Vec<Result<Outcome, Failure>> = std::thread::scope(|s| {
             let running: Vec<_> = starting
                 .iter()
-                .map(|(r, _)| {
-                    let beat = beats.join(&r.event.id);
-                    s.spawn(move || {
-                        let outcome = job(ws, &r.event.data)
-                            .map_err(Failure::Error)
-                            .and_then(|job| spawn_worker(exe, &job, &beat));
-                        let _ = std::fs::remove_file(&beat);
-                        outcome
+                .map(|(_, _, step)| {
+                    s.spawn(move || match step {
+                        Ok(step) => spawn_worker(exe, step),
+                        Err(why) => Err(Failure::Error(why.clone())),
                     })
                 })
                 .collect();
@@ -242,7 +258,7 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
                 .collect()
         });
         super::die_at("job-done");
-        for ((r, run), outcome) in starting.iter().zip(outcomes) {
+        for ((r, run, _), outcome) in starting.iter().zip(outcomes) {
             match outcome {
                 Err(Failure::Lost(why)) if *run < MAX_RUNS => {
                     j.lose_job(r.seq, &why)?;
@@ -260,28 +276,17 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
             super::die_at("result");
         }
     }
+    j.prune(&stamp(now - KEEP))?;
     Ok(pass)
 }
 
-/// Starts a run of every workflow whose schedule is due. A schedule seen for
-/// the first time only starts counting: it waits for its first slot.
-fn fire_schedules(
-    flows: &[crate::workflow::File],
-    j: &mut Journal,
-    now: DateTime<Utc>,
-) -> Result<()> {
-    // a schedule's key names it, not its place among the triggers: merging
-    // or reordering keeps its last slot; the same schedule twice is one
-    let mut seen = BTreeSet::new();
-    for f in flows {
-        for t in &f.triggers {
-            let Some(schedule) = &t.schedule else {
-                continue;
-            };
-            let key = format!("{}#{schedule}", f.name);
-            if !seen.insert(key.clone()) {
-                continue;
-            }
+/// Starts a run of every workflow whose schedule is due, when its
+/// conditions hold. A schedule seen for the first time only starts
+/// counting: it waits for its first slot.
+fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>) -> Result<()> {
+    for (name, f) in &flows.read {
+        for cron in &f.on.schedules {
+            let key = format!("{name}#{cron}");
             let Some(last) = j.schedule_last(&key)? else {
                 j.set_schedule_last(&key, &stamp(now))?;
                 continue;
@@ -289,10 +294,27 @@ fn fire_schedules(
             let last: DateTime<Utc> = last
                 .parse()
                 .map_err(|_| anyhow!("schedule {key}: its last slot is not a time: {last}"))?;
-            if super::schedule::due(schedule, last, now).map_err(|e| anyhow!(e))? {
-                match j.start_run(f, &t.args, &stamp(now), Some(&key))? {
-                    journal::Started::Run(_) => {}
-                    other => eprintln!("{}: schedule {schedule}: {other:?}", f.name),
+            if !super::schedule::due(cron, last, now).map_err(|e| anyhow!(e))? {
+                continue;
+            }
+            let pinned = flows.pinned(name);
+            match pinned {
+                Ok(pinned) if flow::holds(&f.on, &Map::new(), &defined) => {
+                    let start = Start {
+                        workflow: name.clone(),
+                        flows: pinned,
+                        input: json!({}),
+                        cause: None,
+                    };
+                    j.start_run(&start, &stamp(now), Some(&key))?;
+                }
+                Ok(_) => {
+                    eprintln!("{name}: schedule {cron}: its on does not hold");
+                    j.set_schedule_last(&key, &stamp(now))?;
+                }
+                Err(why) => {
+                    eprintln!("{name}: schedule {cron}: {why}");
+                    j.set_schedule_last(&key, &stamp(now))?;
                 }
             }
         }
@@ -300,97 +322,50 @@ fn fire_schedules(
     Ok(())
 }
 
-/// An app's event: a run of every workflow with an `on` trigger for its
-/// type, the trigger's args and the event's data as input.
-fn start_triggered(
-    ws: &Workspace,
-    j: &mut Journal,
-    r: &Recorded,
-    now: DateTime<Utc>,
-) -> Result<()> {
-    let flows = ws.workflows()?;
-    let about = about(&r.event);
-    let starts: Vec<(&crate::workflow::File, &Map<String, Value>)> = flows
-        .iter()
-        .filter(|(_, f)| Some(f.name.as_str()) != about)
-        .flat_map(|(_, f)| {
-            f.triggers
-                .iter()
-                .filter(|t| t.on.as_deref() == Some(r.event.kind.as_str()))
-                .map(move |t| (f, &t.args))
-        })
-        .collect();
-    // the runs waiting for it: never the run that published it, nor runs of
-    // the workflow an engine event is about
-    let publisher = r.event.source.strip_prefix("manager/");
-    let forward: Vec<String> = j
-        .listeners(&r.event.kind)?
-        .into_iter()
-        .filter(|(id, wf)| Some(id.as_str()) != publisher && Some(wf.as_str()) != about)
-        .map(|(id, _)| id)
-        .collect();
-    let outcomes = j.start_runs_for_event(r, &starts, &forward, &stamp(now))?;
-    if outcomes.is_empty() && forward.is_empty() {
-        eprintln!("{}: no workflow starts on it", r.event.kind);
-    }
-    Ok(())
-}
-
-/// The workflow an engine event (`run.failed`, `workflow.paused`) is
-/// about: its own runs never hear it, so a broken workflow never starts
-/// itself to repair itself.
-fn about(e: &Envelope) -> Option<&str> {
-    matches!(e.kind.as_str(), "run.failed" | "workflow.paused")
-        .then(|| e.data.get("workflow").and_then(Value::as_str))
-        .flatten()
-}
-
-/// A paused workflow whose file is now another version starts again: the
-/// new version is the fix.
-fn resume_new_versions(j: &Journal, flows: &[crate::workflow::File]) -> Result<()> {
-    for p in j.paused()? {
-        let now = flows
-            .iter()
-            .find(|f| f.name == p.workflow)
-            .map(crate::workflow::pin);
-        if now.is_some_and(|pin| pin != p.pin) {
-            j.resume(&p.workflow)?;
-            eprintln!("{}: a new version; resumed", p.workflow);
+/// A message for the workspace: a run of every workflow whose `on` lists
+/// its type and holds over its data, and a copy for every run waiting for
+/// data.
+fn route(flows: &Flows, j: &mut Journal, r: &Recorded, now: DateTime<Utc>) -> Result<()> {
+    let data = r.event.data.as_object().cloned().unwrap_or_default();
+    let mut starts = vec![];
+    for (name, f) in &flows.read {
+        if !f.on.messages.contains(&r.event.kind) || !flow::holds(&f.on, &data, &defined) {
+            continue;
+        }
+        match flows.pinned(name) {
+            Ok(pinned) => starts.push(Start {
+                workflow: name.clone(),
+                flows: pinned,
+                input: Value::Object(data.clone()),
+                cause: Some(r.event.id.clone()),
+            }),
+            Err(why) => eprintln!("{}: {name}: {why}", r.event.kind),
         }
     }
-    Ok(())
+    let waiting: Vec<String> = j
+        .active_runs()?
+        .into_iter()
+        .filter(|run| steps::is_waiting(&run.runtime))
+        .map(|run| run.id)
+        .collect();
+    if starts.is_empty() && waiting.is_empty() {
+        eprintln!(
+            "{}: no workflow starts on it, and no run waits for it",
+            r.event.kind
+        );
+    }
+    j.route(r, &starts, &waiting, &stamp(now))
 }
 
-/// Why a job that kept being lost failed.
+/// Why a job that kept being lost is an error.
 fn lost_too_often(why: &str) -> String {
     format!("lost {MAX_RUNS} times: {why}")
-}
-
-/// More workers than this at once wait for the next batch.
-const MAX_WORKERS: usize = 8;
-
-/// The jobs to run side by side: the oldest for each run (a run's jobs run
-/// in order), at most `MAX_WORKERS`.
-fn batch(jobs: Vec<Recorded>) -> Vec<Recorded> {
-    let mut runs = BTreeSet::new();
-    jobs.into_iter()
-        .filter(|r| runs.insert(job_run(&r.event.data)))
-        .take(MAX_WORKERS)
-        .collect()
-}
-
-/// The run a job is for.
-fn job_run(data: &Value) -> String {
-    data.pointer("/run/id")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string()
 }
 
 /// Asks the manager, and again when it was killed before it answered: it
 /// is pure, so asking again gives the answer it would have given. Killed
 /// `MAX_TRIES` times in a row, it is lost; the event is not.
-fn ask_again(exe: &Path, input: &Input) -> Result<Answer, Failure> {
+fn ask_again(exe: &Path, input: &StepInput) -> Result<StepAnswer, Failure> {
     let mut why = String::new();
     for _ in 0..MAX_TRIES {
         match ask(exe, input) {
@@ -404,7 +379,7 @@ fn ask_again(exe: &Path, input: &Input) -> Result<Answer, Failure> {
 }
 
 /// Runs `itero manager` on one input.
-fn ask(exe: &Path, input: &Input) -> Result<Answer, Failure> {
+fn ask(exe: &Path, input: &StepInput) -> Result<StepAnswer, Failure> {
     let mut c = Command::new(exe)
         .arg("manager")
         .stdin(Stdio::piped())
@@ -441,44 +416,66 @@ fn give_up(j: &mut Journal, seq: i64, at: &str, why: String) -> Result<Delivered
         run: None,
         timers: None,
         events: vec![],
-        memory: None,
-        pause: None,
+        splits: vec![],
     })?;
     Ok(Delivered::Handled)
 }
 
 /// Delivers one event to its run's manager and saves the answer.
-fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Result<Delivered> {
+fn deliver(
+    ws: &Workspace,
+    j: &mut Journal,
+    r: &Recorded,
+    now: DateTime<Utc>,
+    exe: &Path,
+) -> Result<Delivered> {
+    let at = stamp(now);
     let Some(id) = journal::run_of(&r.event.subject).map(str::to_string) else {
-        return give_up(
-            j,
-            r.seq,
-            &stamp(now),
-            format!("no run in {}", r.event.subject),
-        );
+        return give_up(j, r.seq, &at, format!("no run in {}", r.event.subject));
     };
     let Some(run) = j.run(&id)? else {
-        return give_up(j, r.seq, &stamp(now), format!("no run {id}"));
+        return give_up(j, r.seq, &at, format!("no run {id}"));
     };
-    let Some(workflow) = j.workflow(&run.pin)? else {
+    let Some((root, values)) = j.pinned(&run.pin)? else {
         return give_up(
             j,
             r.seq,
-            &stamp(now),
-            format!("workflow {} is not in the journal", run.pin),
+            &at,
+            format!("version {} is not in the journal", run.pin),
         );
     };
-    let mut run_map = Map::new();
-    run_map.insert("id".into(), json!(run.id));
-    run_map.insert("workflow".into(), json!(run.workflow));
-    run_map.insert("started".into(), json!(run.started));
-    run_map.insert("input".into(), run.input.clone());
-    let input = Input {
-        now: stamp(now),
-        workflow: workflow.clone(),
-        run: run_map,
-        args: run.args.clone(),
-        memory: j.memory(&run.workflow)?,
+    // what the manager needs beyond the run: the args of the actions its
+    // workflows name, and which of their $$ names are defined
+    let mut args = BTreeMap::new();
+    let mut names = vec![];
+    for (n, v) in &values {
+        let f = match flow::from_value(v) {
+            Ok(f) => f,
+            Err(e) => return give_up(j, r.seq, &at, format!("{n}: {e}")),
+        };
+        for u in f.uses() {
+            if let Name::Action { name, .. } = u
+                && !args.contains_key(&name)
+            {
+                match ws.args(&name) {
+                    Ok(Some(a)) => {
+                        args.insert(name, a);
+                    }
+                    Ok(None) => {}
+                    Err(e) => return give_up(j, r.seq, &at, format!("{e:#}")),
+                }
+            }
+        }
+        names.extend(f.defined_names());
+    }
+    names.sort();
+    names.dedup();
+    let input = StepInput {
+        now: at.clone(),
+        workflow: root,
+        flows: values,
+        args,
+        defined: names.into_iter().filter(|n| defined(n)).collect(),
         runtime: run.runtime.clone(),
         event: Event {
             id: r.event.id.clone(),
@@ -488,7 +485,7 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
     };
     let answer = match ask_again(exe, &input) {
         Ok(a) => a,
-        Err(Failure::Error(why)) => return give_up(j, r.seq, &stamp(now), why),
+        Err(Failure::Error(why)) => return give_up(j, r.seq, &at, why),
         Err(Failure::Lost(why)) => {
             eprintln!(
                 "{}: {id}: {why}; {} waits for the next pass",
@@ -497,213 +494,142 @@ fn deliver(j: &mut Journal, r: &Recorded, now: DateTime<Utc>, exe: &Path) -> Res
             return Ok(Delivered::Deferred);
         }
     };
-    let mut events: Vec<Envelope> = answer
-        .events
-        .iter()
-        .map(|e| {
-            Envelope::new(
-                &format!("manager/{id}"),
-                &e.kind,
-                &journal::subject(&e.target),
-                &stamp(now),
-                Some(r.event.id.clone()),
-                e.data.clone(),
-            )
-        })
-        .collect();
     for line in &answer.log {
         eprintln!("{}: {id}: {line}", run.workflow);
     }
-    let state = &answer.runtime.state;
-    let ended = answer.runtime.chain.is_none() && (workflow.end.contains(state) || state == FAILED);
-    // a failure is said, for maintenance workflows to hear
-    if ended && state == FAILED {
-        let f = answer.runtime.failed.as_ref();
-        events.push(Envelope::new(
-            "daemon",
-            "run.failed",
-            &journal::subject("app"),
-            &stamp(now),
-            Some(r.event.id.clone()),
-            json!({
-                "workflow": run.workflow,
-                "version": crate::workflow::short(crate::workflow::split_pin(&run.pin).1),
-                "run": id,
-                "from": f.map(|f| f.from.as_str()),
-                "why": f.map(|f| f.why.as_str()),
-            }),
-        ));
+    if let Some(steps::Ended::Error { why }) = &answer.runtime.ended {
+        eprintln!("{}: {id}: error: {why}", run.workflow);
     }
-    // the breaker: this failure and those before it, in a row
-    let limit = workflow.pause_after_or_default();
-    let in_a_row = if ended && state == FAILED {
-        j.failed_in_a_row(&run.workflow)? + 1
-    } else {
-        0
-    };
-    let pause = (limit > 0 && in_a_row >= limit).then(|| {
-        let why = format!("{in_a_row} failed runs in a row");
-        eprintln!("{}: paused: {why}", run.workflow);
-        events.push(Envelope::new(
-            "daemon",
-            "workflow.paused",
-            &journal::subject("app"),
-            &stamp(now),
-            Some(r.event.id.clone()),
-            json!({
-                "workflow": run.workflow,
-                "version": crate::workflow::short(crate::workflow::split_pin(&run.pin).1),
-                "failed": in_a_row,
-                "run": id,
-            }),
-        ));
-        journal::Pause {
+    let mut events: Vec<Envelope> = answer
+        .jobs
+        .iter()
+        .map(|job| {
+            Envelope::new(
+                &format!("manager/{id}"),
+                "action.requested",
+                &journal::subject("worker"),
+                &at,
+                Some(r.event.id.clone()),
+                json!({"run": id, "workflow": run.workflow, "job": job}),
+            )
+        })
+        .collect();
+    // a run starting to wait gets the messages it may have missed
+    if steps::is_waiting(&answer.runtime) && !steps::is_waiting(&run.runtime) {
+        let first = j.started_by(&id)?;
+        for m in j.messages_since(&run.started, first.as_deref())? {
+            events.push(journal::copy(&m.event, &id, &at));
+        }
+    }
+    let splits = answer
+        .split
+        .iter()
+        .map(|rt| Split {
             workflow: &run.workflow,
             pin: &run.pin,
-            why,
-        }
-    });
+            runtime: rt,
+            input: &run.input,
+        })
+        .collect();
     j.handle(Handled {
         seq: r.seq,
-        at: &stamp(now),
+        at: &at,
         error: None,
-        run: Some((&id, &answer.runtime, ended)),
-        timers: answer.timers.as_deref(),
+        run: Some((&id, &answer.runtime, answer.runtime.ended.is_some())),
+        timers: Some(&answer.timers),
         events,
-        memory: (!answer.memory.is_empty()).then_some((&run.workflow, &answer.memory)),
-        pause,
+        splits,
     })?;
     super::die_at("answer");
     Ok(Delivered::Handled)
 }
 
-/// Seconds a built-in may take.
-const BUILT_IN_TIMEOUT: u64 = crate::workflow::actions::DEFAULT_TIMEOUT;
-
-/// `${env.NAME}` in every string, filled in from the OS secret store, else
-/// the daemon's environment.
-pub(crate) fn fill_secrets(v: &Value) -> Result<Value, String> {
-    Ok(match v {
-        Value::String(s) => {
-            use super::eval::{Piece, pieces, secret_name};
-            let mut out = String::new();
-            for piece in pieces(s)? {
-                match piece {
-                    Piece::Text(t) => out += t,
-                    Piece::Expr(e) => match secret_name(e) {
-                        Some(name) => {
-                            out += &super::secrets::get(name)
-                                .ok_or_else(|| format!("secret {name} is not set"))?
-                        }
-                        // any other template was filled in by the manager
-                        None => out += e,
-                    },
-                }
-            }
-            Value::String(out)
-        }
-        Value::Array(a) => Value::Array(a.iter().map(fill_secrets).collect::<Result<_, _>>()?),
-        Value::Object(o) => Value::Object(
-            o.iter()
-                .map(|(k, x)| Ok((k.clone(), fill_secrets(x)?)))
-                .collect::<Result<_, String>>()?,
-        ),
-        other => other.clone(),
-    })
+/// Whether a name can be an environment variable: a letter or `_`, then
+/// letters, digits or `_`.
+fn env_name(n: &str) -> bool {
+    let mut cs = n.chars();
+    cs.next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// The job for an `action.requested` event: arguments with secrets, and
-/// for a workspace action, the program that runs it.
-fn job(ws: &Workspace, data: &Value) -> Result<Job, String> {
-    let get = |k: &str| data.get(k).cloned().unwrap_or(Value::Null);
-    let obj = |k: &str| get(k).as_object().cloned().unwrap_or_default();
-    let action = get("action").as_str().unwrap_or("").to_string();
-    let with = match fill_secrets(&get("with"))? {
-        Value::Object(o) => o,
-        _ => Map::new(),
+/// A value of a step's data or args: `"$name"` is the state's, `"$$NAME"`
+/// the secret's (or the environment variable's); anything else itself.
+fn resolve(v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
+    if let Some(n) = flow::secret_ref(v) {
+        return super::secrets::get(n)
+            .map(Value::String)
+            .ok_or_else(|| format!("{n} is not set: no secret, no environment variable"));
+    }
+    if let Some(n) = flow::state_ref(v) {
+        return Ok(state.get(n).cloned().unwrap_or(Value::Null));
+    }
+    Ok(v.clone())
+}
+
+/// An action's environment: each value found first in the step's data,
+/// then its args (its item, after a split), then the run's state. Names
+/// that cannot be environment variables are on stdin only.
+pub fn bind(
+    state: &Map<String, Value>,
+    args: Option<&Value>,
+    job: &StepJob,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut values = state.clone();
+    let args = match (&job.item, args) {
+        (Some(item), _) => item.as_object().cloned(),
+        (None, Some(Value::Object(o))) => Some(o.clone()),
+        _ => None,
     };
-    let mut job = Job {
-        action: action.clone(),
-        with,
-        key: get("key").as_str().unwrap_or("").to_string(),
-        input: get("input"),
-        prev: get("prev"),
-        run: obj("run"),
-        memory: obj("memory"),
-        args: obj("args"),
+    for layer in [args.unwrap_or_default(), job.data.clone()] {
+        for (k, v) in layer {
+            values.insert(k, resolve(&v, state)?);
+        }
+    }
+    let mut env = BTreeMap::new();
+    for (k, v) in values {
+        if !env_name(&k) {
+            continue;
+        }
+        match v {
+            Value::Null => {}
+            Value::String(s) => {
+                env.insert(k, s);
+            }
+            other => {
+                env.insert(k, other.to_string());
+            }
+        }
+    }
+    Ok(env)
+}
+
+/// What a worker is given for an `action.requested` event: the action's
+/// file, its values bound, the run's state.
+fn step_run(ws: &Workspace, j: &Journal, data: &Value) -> Result<StepRun, String> {
+    let run_id = data["run"].as_str().unwrap_or("");
+    let workflow = data["workflow"].as_str().unwrap_or("");
+    let job: StepJob =
+        serde_json::from_value(data["job"].clone()).map_err(|e| format!("the job: {e}"))?;
+    let run = j
+        .run(run_id)
+        .map_err(|e| format!("{e:#}"))?
+        .ok_or_else(|| format!("no run {run_id}"))?;
+    let file = match ws.action_file(&job.action, job.version.as_deref()) {
+        Ok(f) => f,
+        Err(_) if job.action == NOTIFY && job.version.is_none() => PathBuf::from(NOTIFY),
+        Err(e) => return Err(format!("#{}: {e:#}", job.action)),
+    };
+    let args = ws.args(&job.action).map_err(|e| format!("{e:#}"))?;
+    Ok(StepRun {
+        file,
         root: ws.root.clone(),
-        program: None,
-        timeout: BUILT_IN_TIMEOUT,
-        heartbeat: None,
-        prepare: None,
-    };
-    if WORKER_BUILT_INS.contains(&action.as_str()) {
-        return Ok(job);
-    }
-    let (name, target, version) =
-        actions::split(&action).ok_or_else(|| format!("unknown action {action}"))?;
-    let (folder, d) = ws.action(name).map_err(|e| e.to_string())?;
-    if d.version.to_string() != version {
-        return Err(format!(
-            "action {name} is at version {} now, not {version}",
-            d.version
-        ));
-    }
-    let t = d
-        .targets
-        .get(target)
-        .ok_or_else(|| format!("action {name} has no target {target}"))?;
-    let secs = |d: &str| -> Result<u64, String> {
-        Ok(crate::workflow::expr::duration(d)?.as_secs().max(1))
-    };
-    if let Some(l) = &d.limits {
-        if let Some(t) = &l.timeout {
-            job.timeout = secs(t)?;
-        }
-        job.heartbeat = l.heartbeat.as_deref().map(secs).transpose()?;
-    }
-    let folder = match &d.working_directory {
-        Some(w) => folder.join(w),
-        None => folder,
-    };
-    let (kind, version) = d.kind.split_once('@').unwrap_or((d.kind.as_str(), ""));
-    let interpreter = match kind {
-        "executable" => None,
-        "python" => Some(Interpreter::Python {
-            version: version.to_string(),
-            home: d.home.clone().unwrap_or_else(|| ".venv".into()),
-            requirements: d.requirements.clone(),
-            module: t.module.clone().unwrap_or_default(),
-            callable: t.callable.clone().unwrap_or_default(),
-        }),
-        "bun" => Some(Interpreter::Bun {
-            file: t.file.clone().unwrap_or_default(),
-            export: t.export.clone().unwrap_or_default(),
-        }),
-        "container" => {
-            job.prepare = Some(match d.limits.as_ref().and_then(|l| l.prepare.as_deref()) {
-                Some(p) => secs(p)?,
-                None => crate::workflow::actions::DEFAULT_PREPARE,
-            });
-            Some(Interpreter::Container {
-                image: d.image.clone().unwrap_or_default(),
-            })
-        }
-        other => return Err(format!("unknown action type {other}")),
-    };
-    let mut environment = std::collections::BTreeMap::new();
-    for (k, v) in &d.environment {
-        let filled = fill_secrets(&Value::String(v.clone()))?;
-        environment.insert(k.clone(), filled.as_str().unwrap_or("").to_string());
-    }
-    job.program = Some(Program {
-        folder,
-        executable: t.executable.clone().unwrap_or_default(),
-        arguments: t.arguments.clone(),
-        environment,
-        interpreter,
-    });
-    Ok(job)
+        env: bind(&run.runtime.state, args.as_ref(), &job)?,
+        state: run.runtime.state.clone(),
+        memory: ws.root.join(".itero").join("memory").join(workflow),
+        waiting_since: job.waiting_since.clone(),
+        timeout: STEP_TIMEOUT,
+    })
 }
 
 /// Kills a worker's whole process group, then reaps the worker.
@@ -719,74 +645,22 @@ fn stop(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-/// Stops a job's worker: a container job's with its container, which
-/// would otherwise keep running.
-fn stop_job(child: &mut std::process::Child, job: &Job) {
-    match &job.program {
-        Some(Program {
-            interpreter: Some(Interpreter::Container { .. }),
-            ..
-        }) => super::worker::stop_contained(child, &super::worker::container_name(&job.key)),
-        _ => stop(child),
-    }
-}
-
-/// How long since a job last touched its heartbeat file, or since it
-/// started (`born`) when it has not.
-fn quiet(beat: &Path, born: std::time::SystemTime) -> std::time::Duration {
-    let last = std::fs::metadata(beat)
-        .and_then(|m| m.modified())
-        .map_or(born, |m| m.max(born));
-    std::time::SystemTime::now()
-        .duration_since(last)
-        .unwrap_or_default()
-}
-
-/// A file removed when this goes.
-struct Removed(PathBuf);
-
-impl Drop for Removed {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
-/// Runs `itero worker` on a job in its own process group. The group is
-/// killed at the job's time limit (an error), when its lease runs out
-/// without a heartbeat, or when a container job's image is not here within
-/// `prepare` (both lost: the job runs again). A container job's time limit
-/// starts once its image is here. `beat` is the job's heartbeat file.
-fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
+/// Runs `itero worker` on a step in its own process group, with the
+/// daemon's own folder first on its PATH. Past its time the group is
+/// killed and the job is lost: it runs again.
+fn spawn_worker(exe: &Path, step: &StepRun) -> Result<Outcome, Failure> {
     let mut c = Command::new(exe);
     c.arg("worker")
+        .env("PATH", crate::sources::supervise::path_with(exe))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut c, 0);
-    if job.heartbeat.is_some() {
-        if let Some(dir) = beat.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        // a beat left by an earlier run must not renew this one
-        let _ = std::fs::remove_file(beat);
-        c.env("ITERO_HEARTBEAT", beat);
-    }
-    // a container job says when its image is here, where its time limit
-    // starts; until then `prepare` is its limit
-    let ready = job.prepare.map(|_| Removed(beat.with_extension("ready")));
-    if let Some(Removed(ready)) = &ready {
-        if let Some(dir) = ready.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        let _ = std::fs::remove_file(ready);
-        c.env("ITERO_READY", ready);
-    }
-    let born = std::time::SystemTime::now();
     let mut child = c
         .spawn()
         .map_err(|e| format!("cannot start a worker: {e}"))?;
-    let text = serde_json::to_string(job).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string(step).map_err(|e| e.to_string())?;
     child
         .stdin
         .take()
@@ -814,55 +688,20 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
             .take()
             .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
     );
-    // waits for the worker's exit, the time limit or the end of its lease,
-    // whichever comes first. When the group is killed, the readers end as
-    // its pipes close; they are not waited for, in case something outside
-    // the group holds them.
-    let mut started = std::time::Instant::now();
-    let cap = std::time::Duration::from_secs(job.timeout);
-    let lease = job.heartbeat.map(std::time::Duration::from_secs);
-    let mut preparing = job.prepare.map(std::time::Duration::from_secs);
-    let status = loop {
-        if preparing.is_some()
-            && let Some(Removed(ready)) = &ready
-            && ready.exists()
-        {
-            preparing = None;
-            started = std::time::Instant::now();
-        }
-        let left = preparing.unwrap_or(cap).saturating_sub(started.elapsed());
-        if left.is_zero() {
-            stop_job(&mut child, job);
-            return Err(match preparing {
-                // Docker's trouble, not the job's: it runs again
-                Some(p) => Failure::Lost(format!(
-                    "{}: its image was not here after {}s",
-                    job.action,
-                    p.as_secs()
-                )),
-                None => Failure::Error(format!("{}: timed out after {}s", job.action, job.timeout)),
-            });
-        }
-        let slice = match (lease, preparing) {
-            (None, None) => left,
-            _ => left.min(std::time::Duration::from_millis(200)),
-        };
-        if let Some(status) = child.wait_timeout(slice).map_err(|e| e.to_string())? {
-            break status;
-        }
-        if let Some(lease) = lease
-            && quiet(beat, born) > lease
-        {
-            stop_job(&mut child, job);
-            return Err(Failure::Lost(format!(
-                "no heartbeat for {}s",
-                lease.as_secs()
-            )));
-        }
+    // when the group is killed, the readers end as its pipes close; they
+    // are not waited for, in case something outside the group holds them
+    let limit = std::time::Duration::from_secs(step.timeout);
+    let Some(status) = child.wait_timeout(limit).map_err(|e| e.to_string())? else {
+        // still running, not yet reaped: its group's id is still its own
+        stop(&mut child);
+        return Err(Failure::Lost(format!(
+            "took longer than {}",
+            humantime::format_duration(limit)
+        )));
     };
     let Some(code) = status.code() else {
-        // killed from outside: whatever it started goes too
-        stop_job(&mut child, job);
+        // killed from outside, and already reaped: its group is not killed,
+        // since its id may be another process's by now
         return Err(Failure::Lost(format!("the worker was killed ({status})")));
     };
     let (out, err) = (
@@ -872,11 +711,7 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
     let why = String::from_utf8_lossy(&err).trim().to_string();
     let why = why.strip_prefix("error: ").unwrap_or(&why).to_string();
     match code {
-        0 => {
-            let v: Value =
-                serde_json::from_slice(&out).map_err(|e| format!("the worker's answer: {e}"))?;
-            Ok(v.get("output").cloned().unwrap_or(Value::Null))
-        }
+        0 => Ok(serde_json::from_slice(&out).map_err(|e| format!("the worker's answer: {e}"))?),
         LOST_EXIT => Err(Failure::Lost(why)),
         _ if why.is_empty() => Err(Failure::Error("the worker failed".into())),
         _ => Err(Failure::Error(why)),
@@ -887,20 +722,21 @@ fn spawn_worker(exe: &Path, job: &Job, beat: &Path) -> Result<Value, Failure> {
 fn save_result(
     j: &mut Journal,
     r: &Recorded,
-    outcome: Result<Value, String>,
+    outcome: Result<Outcome, String>,
     now: DateTime<Utc>,
 ) -> Result<()> {
     let data = &r.event.data;
-    let (kind, mut result) = match outcome {
-        Ok(output) => ("action.finished", json!({"output": output})),
-        Err(why) => ("action.failed", json!({"error": why})),
+    let path = data.pointer("/job/path").cloned().unwrap_or(Value::Null);
+    let (kind, result) = match outcome {
+        Ok(Outcome::Done(m)) => ("action.finished", json!({"path": path, "output": m})),
+        Ok(Outcome::NotYet(m)) => ("action.waiting", json!({"path": path, "output": m})),
+        Err(why) => ("action.failed", json!({"path": path, "error": why})),
     };
-    result["chain"] = data.get("chain").cloned().unwrap_or(Value::Null);
-    result["index"] = data.get("index").cloned().unwrap_or(Value::Null);
+    let run = data["run"].as_str().unwrap_or("");
     let e = Envelope::new(
         &format!("worker/{}", r.event.id),
         kind,
-        &journal::subject(&job_run(data)),
+        &journal::subject(run),
         &stamp(now),
         Some(r.event.id.clone()),
         result,
@@ -912,7 +748,6 @@ fn save_result(
         run: None,
         timers: None,
         events: vec![e],
-        memory: None,
-        pause: None,
+        splits: vec![],
     })
 }

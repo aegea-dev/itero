@@ -1,5 +1,12 @@
 # itero: design
 
+> **The files people write are in [design-simple.md](design-simple.md).**
+> That design replaces this one's workflow, action, trigger and source
+> formats (states and transitions, `${...}` expressions, action types,
+> memory steps, pub/sub keys). What follows still describes the engine
+> underneath: the journal, the daemon, the pure manager, workers, the
+> service and the watchdog.
+
 itero (Latin: "I repeat") runs workflows: templates of steps that run again
 and again, on a schedule or when something happens, on one machine, using
 the command line tools already there. It began as the lifecycle engine

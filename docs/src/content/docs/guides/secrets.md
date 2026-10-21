@@ -1,50 +1,58 @@
 ---
-title: Secrets
-description: Tokens and passwords in actions, kept out of workflow files and the journal.
+title: Args and secrets
+description: Where an action's values come from, and how tokens and passwords stay out of files and the journal.
 ---
 
-`${env.NAME}` in an action's `with` stands for a secret: a token, a
-password, an API key. Unlike other templates it is not filled in when the
-run decides what to do, so the value never reaches the journal. The daemon
-fills it in only when the job starts.
+## Where a value comes from
 
-```json
-{ "action": "http.request@1",
-  "with": { "url": "https://api.example.com/items",
-            "headers": { "Authorization": "Bearer ${env.EXAMPLE_TOKEN}" } } }
+An action's environment variables are found by name, the first in:
+
+1. **the step's data** in the workflow: `{"#imap-check": {"host": "imap.example.com"}}`;
+2. **the action's args**, `args/<action>.json`;
+3. **the run's state**: the message that started it, messages since, and
+   what earlier steps printed.
+
+In the step's data and in args, a value that is exactly `"$name"` takes
+the state's value, and `"$$NAME"` a secret's.
+
+## Args
+
+```sh
+itero args imap-check '{"host": "imap.example.com", "port": 993}'
+itero args imap-check --file accounts.json
 ```
 
-## Where the value comes from
+Either writes `args/imap-check.json`, which you can also edit. A list runs
+the step once per item, each with its own copy of the state for the rest
+of the run:
 
-The daemon looks the name up in the OS secret store first, under the
-service `itero`: the Keychain on macOS, the Secret Service on Linux. Then
-in its own environment. A secret that is in neither fails the action
-(`secret EXAMPLE_TOKEN is not set`).
-
-On macOS, keep one in the Keychain:
-
-```bash
-security add-generic-password -s itero -a EXAMPLE_TOKEN -w
+```sh
+itero args imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
+                        {"user": "you@example.com", "password": "$$YOU_PASS"}]'
 ```
 
-`-w` last makes `security` ask for the value, so it stays out of your
-shell's history. On Linux without a secret store (a server, say), set the
-secret in the daemon's environment instead.
+## Secrets
 
-A name is a letter or `_`, then letters, digits or `_`.
+`"$$NAME"` stands for a secret: a token, a password, an API key. It is
+looked up in the OS secret store (the macOS Keychain, the Secret Service
+on Linux), then in the daemon's environment, only when the step starts:
+the value never reaches the run's state, the journal, a log or a command
+line.
 
-`ITERO_NO_SECRET_STORE` set in the daemon's environment keeps it away from
-the store: secrets then come from the environment only. A store that cannot
-be read (locked, not running) is reported once in the log, and the daemon
-goes on with its environment.
-
-## In shell lines
-
-`sh@1` takes values only through `env`, so a secret reaches a shell line as
-an environment variable:
-
-```json
-{ "action": "sh@1",
-  "with": { "run": "curl -fsS -H \"Authorization: Bearer $TOKEN\" https://api.example.com/ping",
-            "env": { "TOKEN": "${env.EXAMPLE_TOKEN}" } } }
+```sh
+itero secret IMAP_PASS                  # asks for it, without echo
+itero secret IMAP_PASS --file pass.txt  # its last newline left out
 ```
+
+A name is a letter or `_`, then letters, digits or `_`. `$$NAME` in an
+`on` is a condition: it holds once `NAME` is defined.
+
+An action passes a secret to a program on its stdin, never on its command
+line, where `ps` would show it. With curl:
+
+```sh
+printf 'user = "%s:%s"\n' "$user" "$password" | curl -fsS -K - "imaps://$host/INBOX"
+```
+
+`ITERO_NO_SECRET_STORE` set keeps itero away from the store: secrets then
+come from the environment only, as in tests and CI.

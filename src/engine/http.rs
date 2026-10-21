@@ -46,7 +46,6 @@ pub fn router(ws: Workspace, engine: Arc<Engine>) -> Router {
         .route("/runs", get(runs))
         .route("/runs/{id}", get(run))
         .route("/workflows", get(workflows))
-        .route("/workflows/{name}/memory", get(memory))
         .layer(middleware::from_fn_with_state(s.clone(), local_only))
         .with_state(s)
 }
@@ -100,8 +99,6 @@ struct Posted {
     kind: String,
     #[serde(default)]
     data: Option<Value>,
-    #[serde(default)]
-    run: Option<String>,
 }
 
 async fn event(
@@ -114,21 +111,17 @@ async fn event(
     let ws = s.ws.clone();
     let now = super::daemon::stamp(chrono::Utc::now());
     // the journal may wait on a busy SQLite: off the async threads
-    let id = tokio::task::spawn_blocking(move || {
-        super::events::emit(&ws, &p.kind, p.data, p.run.as_deref(), &now)
-    })
-    .await
-    .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .map_err(|e| {
-        use super::events::EmitError::*;
-        let code = match &e {
-            Bad(_) => StatusCode::BAD_REQUEST,
-            NoRun(_) => StatusCode::NOT_FOUND,
-            Ended(_) => StatusCode::CONFLICT,
-            Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-        fail(code, e.to_string())
-    })?;
+    let id = tokio::task::spawn_blocking(move || super::events::emit(&ws, &p.kind, p.data, &now))
+        .await
+        .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| {
+            use super::events::EmitError::*;
+            let code = match &e {
+                Bad(_) => StatusCode::BAD_REQUEST,
+                Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            fail(code, e.to_string())
+        })?;
     // a loop that has stopped finds the event in the journal when it starts
     let _ = s.engine.wake.send(());
     Ok((StatusCode::ACCEPTED, Json(json!({ "id": id }))))
@@ -156,7 +149,7 @@ fn run_row(r: &super::journal::Run) -> Value {
     json!({
         "id": r.id,
         "workflow": r.workflow,
-        "state": r.runtime.state,
+        "status": super::steps::status(&r.runtime),
         "started": r.started,
         "ended": r.ended,
     })
@@ -165,20 +158,30 @@ fn run_row(r: &super::journal::Run) -> Value {
 #[derive(serde::Deserialize)]
 struct RunsQuery {
     workflow: Option<String>,
-    state: Option<String>,
+    /// `running`, `waiting`, `done`, `failed`, `error` or `split`.
+    status: Option<String>,
     limit: Option<usize>,
 }
 
 async fn runs(State(s): State<Shared>, Query(q): Query<RunsQuery>) -> Result<Json<Value>, Reply> {
     blocking(&s, move |ws| {
         let j = Journal::open(ws).map_err(internal)?;
-        let runs = j
-            .runs_page(
-                q.workflow.as_deref(),
-                q.state.as_deref(),
-                q.limit.unwrap_or(50),
-            )
-            .map_err(internal)?;
+        let limit = q.limit.unwrap_or(50);
+        let runs = match q.status.as_deref() {
+            // under way: few, and their status is not a column
+            Some(st @ ("running" | "waiting")) => j
+                .active_runs()
+                .map_err(internal)?
+                .into_iter()
+                .rev()
+                .filter(|r| super::steps::status(&r.runtime) == st)
+                .filter(|r| q.workflow.as_ref().is_none_or(|w| *w == r.workflow))
+                .take(limit)
+                .collect(),
+            ended => j
+                .runs_page(q.workflow.as_deref(), ended, limit)
+                .map_err(internal)?,
+        };
         Ok(Value::Array(runs.iter().map(run_row).collect()))
     })
     .await
@@ -207,7 +210,8 @@ async fn run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Json<Val
             })
             .collect();
         let mut v = run_row(&r);
-        v["args"] = Value::Object(r.args.clone());
+        v["input"] = r.input.clone();
+        v["state"] = Value::Object(r.runtime.state.clone());
         v["events"] = Value::Array(events);
         Ok(v)
     })
@@ -216,39 +220,21 @@ async fn run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Json<Val
 
 async fn workflows(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
     blocking(&s, |ws| {
-        let flows = ws.workflows().map_err(internal)?;
-        let paused = Journal::open(ws)
-            .and_then(|j| j.paused())
-            .map_err(internal)?;
+        let flows = ws.flows().map_err(internal)?;
         Ok(Value::Array(
             flows
                 .iter()
-                .map(|(_, f)| {
+                .map(|(name, f)| {
                     json!({
-                        "name": f.name,
-                        "version": crate::workflow::version(f),
-                        "triggers": f.triggers,
-                        "paused": paused.iter().find(|p| p.workflow == f.name),
+                        "name": name,
+                        "on": {
+                            "messages": f.on.messages,
+                            "schedules": f.on.schedules,
+                        },
                     })
                 })
                 .collect(),
         ))
-    })
-    .await
-}
-
-async fn memory(State(s): State<Shared>, Path(name): Path<String>) -> Result<Json<Value>, Reply> {
-    blocking(&s, move |ws| {
-        let known = ws
-            .workflows()
-            .map_err(internal)?
-            .iter()
-            .any(|(_, f)| f.name == name);
-        if !known {
-            return Err(fail(StatusCode::NOT_FOUND, format!("no workflow {name}")));
-        }
-        let j = Journal::open(ws).map_err(internal)?;
-        Ok(Value::Object(j.memory(&name).map_err(internal)?))
     })
     .await
 }

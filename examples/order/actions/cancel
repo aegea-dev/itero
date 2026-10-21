@@ -1,0 +1,3 @@
+#!/bin/sh
+# Neither paid nor in stock: the order is cancelled.
+echo '{"success": false, "why": "cancelled"}'

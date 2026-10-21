@@ -1,0 +1,9 @@
+#!/bin/sh
+# How the order went: done, failed and why, or the step that broke.
+if [ -n "$failed_step" ]; then
+  echo "order $order: error at $failed_step: $why" >> results.log
+elif [ "$success" = false ]; then
+  echo "order $order: failed: $why" >> results.log
+else
+  echo "order $order: done" >> results.log
+fi

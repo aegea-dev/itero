@@ -68,74 +68,53 @@ async fn another_host_is_refused() {
 }
 
 #[tokio::test]
-async fn runs_workflows_and_memory_can_be_read() {
+async fn runs_and_workflows_can_be_read() {
     let d = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(d.path().join("workflows")).unwrap();
+    std::fs::create_dir_all(d.path().join("actions")).unwrap();
     std::fs::write(
-        d.path().join("workflows/sayac.json"),
-        r#"{ "name": "sayac",
-      "triggers": [ { "on": "say" } ],
-      "states": ["basla", "bitti"], "start": "basla", "end": ["bitti"],
-      "transitions": [ { "from": "basla", "to": "bitti",
-        "do": [ { "action": "memory.set@1", "with": { "son": "çay" } } ] } ] }"#,
+        d.path().join("workflows/sayaç.json"),
+        r##"{ "on": ["say.bir"], "steps": ["#yaz"] }"##,
     )
     .unwrap();
+    let action = d.path().join("actions/yaz");
+    std::fs::write(&action, "#!/bin/sh\necho '{\"son\": \"çay\"}'\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&action, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let (app, _w) = app(d.path());
     let ws = itero::workspace::find(d.path()).unwrap();
     let now = "2026-10-15T14:00:00Z";
-    itero::engine::events::emit(&ws, "say", None, None, now).unwrap();
+    itero::engine::events::emit(&ws, "say.bir", Some(json!({"kim": "ayşe"})), now).unwrap();
     let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
     itero::engine::daemon::run_once(&ws, now.parse().unwrap(), exe).unwrap();
 
-    let (code, runs) = send(&app, get("/runs?workflow=sayac&limit=10")).await;
+    let (code, runs) = send(&app, get("/runs?workflow=sayaç&limit=10")).await;
     assert_eq!(code, StatusCode::OK, "{runs}");
     assert_eq!(runs.as_array().unwrap().len(), 1);
-    assert_eq!(runs[0]["state"], "bitti");
-    assert_eq!(runs[0]["workflow"], "sayac");
+    assert_eq!(runs[0]["status"], "done");
+    assert_eq!(runs[0]["workflow"], "sayaç");
     let (_, none) = send(&app, get("/runs?workflow=baska")).await;
     assert_eq!(none, json!([]));
-    let (_, none) = send(&app, get("/runs?state=failed")).await;
+    let (_, none) = send(&app, get("/runs?status=error")).await;
     assert_eq!(none, json!([]));
-    let (_, done) = send(&app, get("/runs?state=bitti")).await;
+    let (_, none) = send(&app, get("/runs?status=waiting")).await;
+    assert_eq!(none, json!([]));
+    let (_, done) = send(&app, get("/runs?status=done")).await;
     assert_eq!(done.as_array().unwrap().len(), 1);
     let id = runs[0]["id"].as_str().unwrap();
     let (code, run) = send(&app, get(&format!("/runs/{id}"))).await;
     assert_eq!(code, StatusCode::OK);
-    assert_eq!(run["state"], "bitti");
+    assert_eq!(run["status"], "done");
+    assert_eq!(run["input"], json!({"kim": "ayşe"}));
+    assert_eq!(run["state"], json!({"kim": "ayşe", "son": "çay"}));
     assert_eq!(run["events"][0]["type"], "run.started");
     assert_eq!(send(&app, get("/runs/yok")).await.0, StatusCode::NOT_FOUND);
     let (_, flows) = send(&app, get("/workflows")).await;
-    assert_eq!(flows[0]["name"], "sayac");
-    assert_eq!(flows[0]["version"].as_str().unwrap().len(), 64);
-    assert_eq!(flows[0]["triggers"], json!([{"on": "say"}]));
-    assert_eq!(flows[0]["paused"], Value::Null);
-    // paused, it says when and why
-    itero::engine::journal::Journal::open(&ws)
-        .unwrap()
-        .handle(itero::engine::journal::Handled {
-            seq: 0,
-            at: "2026-10-15T14:01:00Z",
-            error: None,
-            run: None,
-            timers: None,
-            events: vec![],
-            memory: None,
-            pause: Some(itero::engine::journal::Pause {
-                workflow: "sayac",
-                pin: "sayac@eski",
-                why: "5 failed runs in a row".into(),
-            }),
-        })
-        .unwrap();
-    let (_, flows) = send(&app, get("/workflows")).await;
-    assert_eq!(flows[0]["paused"]["at"], "2026-10-15T14:01:00Z");
-    assert_eq!(flows[0]["paused"]["why"], "5 failed runs in a row");
-    let (_, m) = send(&app, get("/workflows/sayac/memory")).await;
-    assert_eq!(m, json!({"son": "çay"}));
-    assert_eq!(
-        send(&app, get("/workflows/yok/memory")).await.0,
-        StatusCode::NOT_FOUND
-    );
+    assert_eq!(flows[0]["name"], "sayaç");
+    assert_eq!(flows[0]["on"]["messages"], json!(["say.bir"]));
 }
 
 fn post(path: &str, body: &str) -> Request<Body> {
@@ -164,12 +143,8 @@ async fn an_event_posted_is_saved_and_wakes_the_loop() {
     let (code, v) = send(&app, post("/events", r#"{"type": "timer.fired"}"#)).await;
     assert_eq!(code, StatusCode::BAD_REQUEST);
     assert!(v["error"].as_str().unwrap().contains("engine's own"));
-    let (code, _) = send(
-        &app,
-        post("/events", r#"{"type": "onay.geldi", "run": "yok"}"#),
-    )
-    .await;
-    assert_eq!(code, StatusCode::NOT_FOUND);
+    let (code, _) = send(&app, post("/events", r#"{"type": "foto"}"#)).await;
+    assert_eq!(code, StatusCode::BAD_REQUEST, "a type of one word");
 }
 
 #[tokio::test]

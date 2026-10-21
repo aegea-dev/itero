@@ -1,0 +1,10 @@
+{
+  "on": ["0 9 * * *"],
+  "steps": [
+    { "#fetch": { "url": "https://example.com/news" } },
+    { "#ask-ai": { "prompt": "Summarize this page in 5 bullets.", "key": "$$ANTHROPIC_KEY" } },
+    { "#send-mail": { "host": "smtp.example.com", "user": "me@example.com",
+                      "password": "$$SMTP_PASS", "to": "me@example.com",
+                      "subject": "Daily digest" } }
+  ]
+}

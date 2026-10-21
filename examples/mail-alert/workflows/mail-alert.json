@@ -1,0 +1,1 @@
+{ "on": ["mail.received"], "steps": ["#notify"] }

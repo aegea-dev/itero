@@ -30,27 +30,43 @@ pub enum Cmd {
         #[arg(long)]
         no_serve: bool,
     },
-    /// Check every workflow and action; print each with its version
+    /// Check every workflow, action and source; print each
     Check,
-    /// Send an event: to a run, or to the workspace, where it may start runs
+    /// Send a message: it starts runs and reaches the runs waiting for it
     Emit {
-        /// The event's type, like photo.added
+        /// Its type, two or more words joined by dots, like order.placed
         #[arg(value_name = "TYPE")]
         kind: String,
         /// Its data, a JSON object
-        #[arg(long)]
+        #[arg(value_name = "DATA")]
         data: Option<String>,
-        /// The run it is for; without, it is for the workspace
-        #[arg(long)]
-        run: Option<String>,
     },
-    /// The runs, newest first: id, workflow, state, started, ended
+    /// Set an action's args: a JSON object, or a list of objects (its step runs once per item)
+    Args {
+        /// The action, without # or a version
+        action: String,
+        /// The args, as JSON
+        #[arg(
+            value_name = "DATA",
+            required_unless_present = "file",
+            conflicts_with = "file"
+        )]
+        data: Option<String>,
+        /// Read the args from this file
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+    /// Keep a secret in the OS secret store, for $$NAME (asks for it, without echo)
+    Secret {
+        /// Its name: a letter or _, then letters, digits or _
+        name: String,
+        /// Read it from this file (its last newline left out)
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+    /// The runs, newest first: id, workflow, where it is or how it ended, started, ended
     Runs,
-    /// A workflow's memory, as JSON
-    Memory { workflow: String },
-    /// Let a paused workflow start runs again
-    Resume { workflow: String },
-    /// Failed runs, newest first: when, the workflow, the run, where and why
+    /// Runs that ended in error, newest first: when, the workflow, the run, the step and why
     Errors {
         /// How many
         #[arg(long, default_value_t = 20)]
@@ -67,9 +83,8 @@ pub enum Cmd {
     /// A worker: one job, JSON in on stdin, its output as JSON on stdout
     #[command(hide = true)]
     Worker,
-    /// A built-in source: its settings on stdin, its events on stdout
-    #[command(hide = true)]
-    Source { kind: String },
+    /// For sources: print a line each time a file or folder changes
+    Watch { path: std::path::PathBuf },
     /// Keeps `itero daemon` running: restarts it when it exits, stops
     /// answering or stops making passes (what the service runs)
     #[command(hide = true)]
@@ -146,8 +161,27 @@ fn report(pass: &Result<crate::engine::daemon::Pass>) {
     }
 }
 
+/// Ignores SIGPIPE again, for the commands that write to other processes
+/// (the daemon to its manager and workers, a worker to its action, the
+/// watchdog to the daemon): one that has gone is a write error, already
+/// handled, not a reason to die. `main` restores the default for the
+/// rest, so `itero runs | head` ends quietly.
+fn ignore_sigpipe() {
+    #[cfg(unix)]
+    // SAFETY: before this command starts any thread or child
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+}
+
 fn dispatch(cli: Cli) -> Result<()> {
     let workspace = || crate::workspace::find(&std::env::current_dir()?);
+    if matches!(
+        cli.cmd,
+        Cmd::Daemon { .. } | Cmd::Manager | Cmd::Worker | Cmd::Watchdog { .. }
+    ) {
+        ignore_sigpipe();
+    }
     match cli.cmd {
         Cmd::Daemon {
             once,
@@ -183,15 +217,14 @@ fn dispatch(cli: Cli) -> Result<()> {
                 wake,
             });
             // a bad source file stops the daemon here, naming the file
-            for (name, folder, def) in ws.sources()? {
+            for (kind, file) in ws.source_files()? {
                 let (ws, exe, engine) = (ws.clone(), exe.clone(), engine.clone());
                 let wake = engine.wake.clone();
-                eprintln!("itero: source {name}");
+                eprintln!("itero: source {kind}");
                 std::thread::spawn(move || {
                     let source = crate::sources::supervise::Source {
-                        name: &name,
-                        folder: &folder,
-                        def: &def,
+                        kind: &kind,
+                        file: &file,
                     };
                     let policy = crate::sources::supervise::Policy::default();
                     crate::sources::supervise::run(
@@ -221,16 +254,61 @@ fn dispatch(cli: Cli) -> Result<()> {
                 http::serve(http::router(ws.clone(), engine), ws.port)?;
             }
         }
-        Cmd::Emit { kind, data, run } => {
+        Cmd::Emit { kind, data } => {
             let ws = workspace()?;
             let data = data
-                .map(|d| {
-                    serde_json::from_str(&d).map_err(|_| anyhow!("--data takes a JSON object"))
-                })
+                .map(|d| serde_json::from_str(&d).map_err(|_| anyhow!("the data is a JSON object")))
                 .transpose()?;
             let now = crate::engine::daemon::stamp(chrono::Utc::now());
-            let id = crate::engine::events::emit(&ws, &kind, data, run.as_deref(), &now)?;
+            let id = crate::engine::events::emit(&ws, &kind, data, &now)?;
             println!("{id}");
+        }
+        Cmd::Args { action, data, file } => {
+            let ws = workspace()?;
+            let text = match (data, file) {
+                (Some(d), _) => d,
+                (None, Some(f)) => std::fs::read_to_string(&f)
+                    .map_err(|e| anyhow!("cannot read {}: {e}", f.display()))?,
+                (None, None) => bail!("give the args as JSON, or --file"),
+            };
+            let bad_name = action.is_empty()
+                || action.contains(['/', '\\', '#', '@', '$'])
+                || action.starts_with('.');
+            if bad_name {
+                bail!("{action} is not an action's name");
+            }
+            let v: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|_| anyhow!("args are an object, or a list of objects, as JSON"))?;
+            let ok = match &v {
+                serde_json::Value::Object(_) => true,
+                serde_json::Value::Array(items) => items.iter().all(|i| i.is_object()),
+                _ => false,
+            };
+            if !ok {
+                bail!("args are an object, or a list of objects, as JSON");
+            }
+            let dir = ws.root.join("args");
+            std::fs::create_dir_all(&dir)?;
+            let f = dir.join(format!("{action}.json"));
+            std::fs::write(&f, serde_json::to_string_pretty(&v)? + "\n")?;
+            println!("{}", f.display());
+        }
+        Cmd::Secret { name, file } => {
+            crate::engine::secrets::ready(&name)?;
+            let value = match file {
+                Some(f) => {
+                    let t = std::fs::read_to_string(&f)
+                        .map_err(|e| anyhow!("cannot read {}: {e}", f.display()))?;
+                    let t = t.strip_suffix('\n').unwrap_or(&t);
+                    t.strip_suffix('\r').unwrap_or(t).to_string()
+                }
+                None => rpassword::prompt_password(format!("{name}: "))?,
+            };
+            if value.is_empty() {
+                bail!("{name}: an empty secret is not kept");
+            }
+            crate::engine::secrets::set(&name, &value)?;
+            println!("{name}: kept in the OS secret store");
         }
         Cmd::Check => {
             let ws = workspace()?;
@@ -239,18 +317,31 @@ fn dispatch(cli: Cli) -> Result<()> {
                     eprintln!("note: no folder {}", dir.display());
                 }
             }
-            for (_, f) in ws.workflows()? {
-                let version = crate::workflow::version(&f);
-                println!("{}  {}", f.name, crate::workflow::short(&version));
-            }
-            for (_, d) in ws.actions()? {
-                for target in d.targets.keys() {
-                    println!("{}.{target}@{}", d.name, d.version);
+            let flows = ws.flows()?;
+            for (name, f) in &flows {
+                println!("{name}");
+                for u in f.uses() {
+                    match u {
+                        crate::flow::Name::Action { name: a, version } => {
+                            match ws.action_file(&a, version.as_deref()) {
+                                Ok(file) => println!("  #{a}  {}", file.display()),
+                                Err(_) if a == "notify" && version.is_none() => {
+                                    println!("  #notify  built in")
+                                }
+                                Err(e) => bail!("{name}: {e:#}"),
+                            }
+                        }
+                        crate::flow::Name::Workflow(w) => {
+                            if !flows.iter().any(|(n, _)| *n == w) {
+                                bail!("{name} uses workflow {w}, which is not there");
+                            }
+                            println!("  {w}  workflow");
+                        }
+                    }
                 }
             }
-            for (name, _, d) in ws.sources()? {
-                let what = d.source.clone().unwrap_or_else(|| d.program.join(" "));
-                println!("source {name}  {what}");
+            for (kind, file) in ws.source_files()? {
+                println!("source {kind}  {}", file.display());
             }
         }
         Cmd::Runs => {
@@ -261,27 +352,14 @@ fn dispatch(cli: Cli) -> Result<()> {
                     "{}  {:<20} {:<12} {}  {}",
                     r.id,
                     r.workflow,
-                    r.runtime.state,
+                    crate::engine::steps::status(&r.runtime),
                     r.started,
                     r.ended.as_deref().unwrap_or("-")
                 );
             }
         }
-        Cmd::Memory { workflow } => {
-            let ws = workspace()?;
-            let j = crate::engine::journal::Journal::open(&ws)?;
-            let m = j.memory(&workflow)?;
-            println!("{}", serde_json::to_string_pretty(&m)?);
-        }
-        Cmd::Source { kind } => {
-            let mut first = String::new();
-            std::io::stdin().read_line(&mut first)?;
-            let s: crate::sources::Settings =
-                serde_json::from_str(&first).map_err(|e| anyhow!("the source's settings: {e}"))?;
-            let source = match kind.as_str() {
-                "watch@1" => crate::sources::Watch::new(&s)?,
-                other => bail!("no built-in source {other}"),
-            };
+        Cmd::Watch { path } => {
+            let source = crate::sources::Watch::new(&path)?;
             // the daemon going away closes stdin: then this source stops
             std::thread::spawn(|| {
                 let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
@@ -292,34 +370,18 @@ fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Errors { limit } => {
             let ws = workspace()?;
             let j = crate::engine::journal::Journal::open(&ws)?;
-            for r in j.runs_page(None, Some(crate::workflow::FAILED), limit)? {
-                let (from, to, why) = match &r.runtime.failed {
-                    Some(f) => {
-                        let to = j
-                            .workflow(&r.pin)?
-                            .and_then(|w| w.transitions.get(f.transition).map(|t| t.to.clone()))
-                            .unwrap_or_default();
-                        (f.from.clone(), to, f.why.clone())
-                    }
-                    None => Default::default(),
-                };
+            for r in j.runs_page(None, Some("error"), limit)? {
+                let st = &r.runtime.state;
+                let text = |k: &str| st.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 println!(
-                    "{}  {:<20} {}  {from} -> {to}: {why}",
+                    "{}  {:<20} {}  {}: {}",
                     r.ended.as_deref().unwrap_or(&r.started),
                     r.workflow,
-                    r.id
+                    r.id,
+                    text("failed_step"),
+                    text("why")
                 );
             }
-        }
-        Cmd::Resume { workflow } => {
-            let ws = workspace()?;
-            let j = crate::engine::journal::Journal::open(&ws)?;
-            let word = if j.resume(&workflow)? {
-                "resumed"
-            } else {
-                "not paused"
-            };
-            println!("{workflow}: {word}");
         }
         Cmd::Service { cmd } => {
             use crate::engine::service;
@@ -399,26 +461,25 @@ fn dispatch(cli: Cli) -> Result<()> {
             crate::engine::die_at("manager");
             let mut text = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
-            let input: crate::engine::Input =
+            let input: crate::engine::steps::StepInput =
                 serde_json::from_str(&text).map_err(|e| anyhow!("the manager's input: {e}"))?;
-            let answer = crate::engine::manager::decide(&input).map_err(|e| anyhow!(e))?;
+            let answer = crate::engine::steps::decide(&input).map_err(|e| anyhow!(e))?;
             println!("{}", serde_json::to_string(&answer)?);
         }
         Cmd::Worker => {
             let mut text = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
-            let job: crate::engine::Job =
-                serde_json::from_str(&text).map_err(|e| anyhow!("the worker's job: {e}"))?;
-            use crate::engine::worker::{Failure, LOST_EXIT, run};
+            let step: crate::engine::worker::StepRun =
+                serde_json::from_str(&text).map_err(|e| anyhow!("the worker's step: {e}"))?;
+            use crate::engine::worker::{Failure, LOST_EXIT, run_step};
             #[cfg(unix)]
             crate::engine::worker::stop_with_parent();
             crate::engine::die_at("worker");
-            match run(&job) {
-                Ok(output) => {
-                    // the job's effect is done; its answer is not yet given
+            match run_step(&step) {
+                Ok(outcome) => {
+                    // the step's effect is done; its answer is not yet given
                     crate::engine::die_at("worker-done");
-                    crate::engine::die_at(&format!("worker-done:{}", job.action));
-                    println!("{}", serde_json::json!({ "output": output }))
+                    println!("{}", serde_json::to_string(&outcome)?)
                 }
                 Err(Failure::Error(why)) => bail!(why),
                 Err(Failure::Lost(why)) => {

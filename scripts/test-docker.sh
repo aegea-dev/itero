@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs the tests that need Docker: tests/containers.rs (container actions)
-# and tests/mail_servers.rs, against a real mail server: GreenMail (Apache
+# Runs the tests that need Docker:
+# tests/mail_servers.rs, against a real mail server: GreenMail (Apache
 # 2.0), in Docker, with SMTP on 13025, POP3 on 13110 and IMAP on 13143 of
 # 127.0.0.1. Its login checks are off: any account exists once used. The
 # server's container is removed afterwards, whatever the tests did.
@@ -51,4 +51,4 @@ until printf 'a LOGOUT\r\n' | nc -w 1 127.0.0.1 13143 2>/dev/null | grep -q '^\*
 	sleep 1
 done
 
-ITERO_DOCKER=1 ITERO_GREENMAIL=127.0.0.1 cargo "+$TOOLCHAIN" test --test containers --test mail_servers
+ITERO_DOCKER=1 ITERO_GREENMAIL=127.0.0.1 cargo "+$TOOLCHAIN" test --test mail_servers

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Paid but out of stock: the customer is told it comes later.
+echo '{"success": false, "why": "out of stock"}'

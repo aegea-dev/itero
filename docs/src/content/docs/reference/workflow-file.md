@@ -1,90 +1,41 @@
 ---
 title: Workflow files
-description: Every key of a workflow file.
+description: Every key of a workflow file, and every form of a step.
 ---
 
-A workflow is a JSON file ending in `.json` in a workflows folder. An
-unknown key is an error naming the file. [Writing a workflow](/guides/workflows/)
-explains how the pieces fit.
-
-## The workflow
+`workflows/<name>.json`; the workflow's name is the file name. An unknown
+key is an error.
 
 | Key | Is | |
 |---|---|---|
-| `name` | lowercase letters, digits and `-`; unique in the workspace | needed |
-| `description` | text for people | |
-| `states` | every state a run can be in; not `failed`, the engine's own | needed |
-| `start` | the state a run begins in | needed |
-| `end` | the states where a run ends | |
-| `triggers` | what starts a run | |
-| `transitions` | the moves between states | |
-| `concurrency` | `{"max": n, "then": "queue" \| "skip"}`: at most `n` runs under way; a start beyond waits its turn (`queue`, the default) or is dropped (`skip`) | |
-| `pause_after` | failed runs in a row that pause the workflow (5 unless given; 0 never) | |
+| `on` | when it runs: a list of message types, schedules, `$name` and `$$NAME`; or an object of exact `$name` values | none: it runs only as a step |
+| `steps` | what it does, in order | needed |
+| `success` | steps run when it went well | |
+| `failure` | steps run when the state says `"success": false` | |
+| `error` | steps run when something broke | |
+| `timeout` | how long a run may wait for data, like `"2h"` | a day |
 
-`concurrency` and `pause_after` are not part of the workflow's version:
-they say how often it runs, not what a run does.
+## `on`
 
-## Paused
-
-When `pause_after` runs in a row have failed, the workflow is paused:
-nothing starts it, the daemon's log says so, and the engine sends
-`workflow.paused` to the workspace, with data `{workflow, version, failed,
-run}` (the last failed run's id), so a maintenance workflow can act on it.
-`itero resume <workflow>` starts it again, and so does a new version of its
-file: the fix. `GET /workflows` shows a workflow's pause.
-
-## A trigger
-
-| Key | Is |
+| Entry | Means |
 |---|---|
-| `schedule` | a cron line, in the machine's local time |
-| `on` | an event type, like `photo.added` |
-| `args` | an object: the run's `args` |
+| `order.placed` | a message of this type starts a run |
+| `0 9 * * *` | a schedule starts a run (cron, local time) |
+| `$order` | condition: `order` is in the state |
+| `$$API` | condition: `API` is defined (environment or secret) |
+| `{"$order": 43}` | condition: `order` is exactly `43` |
 
-One of `schedule` and `on`. See [Triggers](/guides/triggers/).
+Message types and schedules are alternatives; conditions must all hold.
 
-## A transition
+## A step
 
-| Key | Is | |
-|---|---|---|
-| `from` | the state it leaves, or `"*"`: any state (it needs `on` and takes no timeout; one from the run's own state wins) | needed |
-| `to` | the state it enters | needed |
-| `on` | the event type that takes it; without, it is taken on entering `from` | |
-| `match` | with `on`: whether an event for the workspace is this run's; it then hears them too (`event.data.x == run.input.x`) | |
-| `when` | a condition that must hold for it to be taken | |
-| `do` | the chain of actions, run in order | |
-| `timeout` | a duration: `30s`, `5m`, `2h`, `7d`, `1h 30m` | with `on_timeout` |
-| `on_timeout` | the state to go to when time runs out | with `timeout` |
-| `on_fail` | the state to go to when an action fails, instead of `failed` | |
-| `description` | text for people | |
+| Form | Is |
+|---|---|
+| `"#name"` | an action, its latest version |
+| `"#name@0.2"` | an action at a version |
+| `"name"` | a workflow, run here with the same state |
+| `["#a", "b"]` | side by side; the next step waits for all |
+| `{"#name": {...}}` | with data for it; `on` in it is when it runs |
 
-A transition to its own state needs `on`, `do`, or both.
-
-## An action in `do`
-
-A name, like `"notify@1"`, or an object:
-
-| Key | Is | |
-|---|---|---|
-| `action` | a built-in, or `<name>.<target>@<version>` from an actions folder | needed |
-| `id` | names its output `steps.<id>`; unique in the workflow | |
-| `when` | a condition: false skips it, and `prev` passes through | |
-| `with` | its arguments; strings may hold `${...}` templates | |
-| `expect` | a condition over `output`: false means it failed | |
-| `description` | text for people | |
-
-Or a step that publishes an event for the workspace, when the chain
-succeeds:
-
-| Key | Is | |
-|---|---|---|
-| `publish` | its type, like `report.ready`; not one of the engine's own | needed |
-| `data` | an object, the event's data; may hold templates | |
-| `id`, `when`, `description` | as for an action | |
-
-## Expressions
-
-Conditions and templates are [CEL](https://cel.dev). They see `args`,
-`input`, `prev`, `steps`, `memory` and `run` (with `run.input`, what the
-run started with); `expect` also sees `output`, and `match` sees `event`.
-`${env.NAME}` is a [secret](/guides/secrets/), not an expression.
+In a step's data, `"$name"` is the state's value, `"$$NAME"` a secret's.
+See [Writing a workflow](/guides/workflows/).

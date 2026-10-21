@@ -1,0 +1,34 @@
+#!/bin/sh
+# New mail in a POP3 mailbox since the last check: {"title", "text"}, or
+# nothing. The first check only notes where the mailbox is. The password
+# goes to curl on stdin, never on its command line.
+scheme=pop3; [ "$tls" = true ] && scheme=pop3s
+url="$scheme://$host:$port"
+esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+ask() { printf 'user = "%s:%s"\n' "$(esc "$user")" "$(esc "$password")" | curl -fsS -K - "$@"; }
+# a subject as sent: =?UTF-8?B?...?= is decoded
+decode() {
+  case "$1" in
+    =\?[Uu][Tt][Ff]-8\?[Bb]\?*\?=) printf '%s' "$1" | sed 's/^=?[^?]*?[Bb]?//; s/?=$//' | base64 -d ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# "number uid", one line per mail
+list=$(ask "$url/" -X UIDL) || exit 1
+list=$(printf '%s\n' "$list" | tr -d '\r')
+last=$(cat "$ITERO_MEMORY" 2>/dev/null)
+top=$(printf '%s\n' "$list" | awk 'NF == 2 { u = $2 } END { print u }')
+echo "${top:-none}" > "$ITERO_MEMORY"
+[ -n "$last" ] || exit 0
+# the mails after the last one seen; all of them, if it is gone
+if printf '%s\n' "$list" | awk '{ print $2 }' | grep -qxF "$last"; then
+  new=$(printf '%s\n' "$list" | awk -v last="$last" 'seen && NF == 2 { print } $2 == last { seen = 1 }')
+else
+  new=$(printf '%s\n' "$list" | awk 'NF == 2')
+fi
+[ -n "$new" ] || exit 0
+n=$(printf '%s\n' "$new" | wc -l | tr -d ' ')
+newest=$(printf '%s\n' "$new" | tail -n 1 | cut -d ' ' -f 1)
+subject=$(ask "$url/$newest" -X "TOP $newest 0" | tr -d '\r' | sed -n 's/^Subject: //p' | head -n 1)
+printf '{"title": "Mail", "text": "%s new: %s"}\n' "$n" "$(esc "$(decode "$subject")")"

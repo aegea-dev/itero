@@ -1,0 +1,3 @@
+#!/bin/sh
+# Is $order in stock? A real one asks the warehouse with curl.
+echo '{"stock": true}'
