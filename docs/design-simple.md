@@ -77,8 +77,8 @@ They run in order. A step is:
 - **an action**, `"#check-payment"`, or **a workflow**, `"order-process"`.
   A workflow used as a step shares the run's state;
 - **a list**, `["#check-payment", "#check-stock"]`: those run side by
-  side, and the next step waits for all of them. A list holds actions, not
-  workflows, for now;
+  side, and the next step waits for all of them. A list can hold actions
+  and workflows: `["#check-payment", "stock-check"]`;
 - **an object**, an action or workflow with data for it and an optional
   condition:
 
@@ -153,12 +153,12 @@ exit 75
 
 ### Side by side
 
-Actions in a list run at the same time, each with the same state. A field
-that only one of them prints joins the state as it is. A field that more
-than one prints is kept per action:
+Actions and workflows in a list run at the same time, each starting from
+the same state. A field that only one of them prints joins the state as it
+is. A field that more than one prints is kept per name:
 
 ```json
-"status": { "#check-payment": "ok", "#check-stock": "low" }
+"status": { "#check-payment": "ok", "stock-check": "low" }
 ```
 
 ## Values

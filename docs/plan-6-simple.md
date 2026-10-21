@@ -33,8 +33,8 @@ axum, uuid (v7). Shell, `curl` and `jq` in the examples.
 - Every task ends with `make fmt-check`, `make lint-check` and `make test`
   green, then one commit.
 - Branch `simple` from `main`; one PR when the plan is done.
-- Kept small on purpose (the spec's "Later"): a side-by-side list holds
-  actions only, no workflows; no pausing; no settings for lists.
+- Kept small on purpose (the spec's "Later"): no pausing; no settings for
+  side-by-side lists.
 
 ---
 
@@ -62,7 +62,7 @@ pub struct On {
 }
 pub enum Step {
     One { name: Name, data: Map<String, Value>, on: Option<On> },
-    Side(Vec<Name>),                                 // actions only
+    Side(Vec<Name>),                                 // actions and workflows
 }
 pub enum Name { Action { name: String, version: Option<String> }, Workflow(String) }
 pub fn parse(text: &str) -> Result<Flow, String>;
@@ -86,9 +86,11 @@ impl Workspace {
   - steps: `"#check-payment"`, `"order-process"`, `["#a", "#b"]`,
     `{"#ship": {"carrier": "PTT", "on": {"$paid": true}}}` with its data
     and condition; `"#notify@0.2"` with its version.
-  - errors naming the file: an unknown key; no `steps`; a workflow inside
-    a side-by-side list; a message type of one word; a bad cron line; a
-    bad `timeout`; a step object with two keys.
+  - `["#check-payment", "stock-check"]`: an action and a workflow side by
+    side.
+  - errors naming the file: an unknown key; no `steps`; a message type of
+    one word; a bad cron line; a bad `timeout`; a step object with two
+    keys.
   - `action_file("notify", None)` picks `notify@0.10` over `notify@0.2`
     (numbers, not text) and a plain `notify` when it is the only one; a
     file that is not executable is an error.
@@ -110,16 +112,20 @@ clock, no files, no environment.
 **Interfaces (produces):**
 ```rust
 pub struct Runtime {
-    pub frames: Vec<Frame>,                 // [0] the run's workflow, then workflows used as steps
-    pub branches: Vec<Branch>,              // the step running now: one, or a side-by-side list
+    pub at: At,                             // where the run is: a tree, see below
     pub phase: Phase,                       // Steps | Success | Failure | Error
     pub state: Map<String, Value>,
     pub item: Option<Value>,                // after a split: this run's args item
     pub waiting_since: Option<String>,
     pub ended: Option<Ended>,               // Done | Failed | Error { why }
 }
-pub struct Frame { pub workflow: String, pub step: usize }
-pub struct Branch { pub action: String, pub output: Option<Map<String, Value>>, pub waiting: bool }
+/// Where a run is. The root is the run's own workflow; a workflow used as
+/// a step nests one; a side-by-side list holds one per entry.
+pub enum At {
+    Flow { workflow: String, step: usize, inner: Option<Box<At>> },
+    Action { name: String, output: Option<Map<String, Value>>, waiting: bool },
+    Side(Vec<(String, At)>),                // by name: "#check-payment", "stock-check"
+}
 pub struct StepInput {
     pub now: String,
     pub flows: BTreeMap<String, Flow>,      // the run's pinned workflows, by name
@@ -152,6 +158,9 @@ copied to the run), `timer.fired`.
   - a side-by-side list: two jobs at once; the next step only after both;
     a field printed by both becomes `{"#a": …, "#b": …}`, one printed by
     one stays plain.
+  - `["#check-payment", "stock-check"]`: the workflow's steps run beside
+    the action, and the list is done when the action and the workflow's
+    last step are; a list inside that workflow nests the same way.
   - a step whose `on` does not hold is skipped; a workflow used as a step
     whose `on` does not hold is skipped; one that holds runs its steps with
     the same state, then the outer workflow goes on.
