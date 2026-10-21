@@ -12,8 +12,8 @@ machine-wide.
 ### workflow
 
 A JSON file in `workflows/`, named by its file name: when it runs (`on`)
-and its `steps`, with optional `success`, `failure` and `error` lists and
-a `timeout`. A workflow can be a step of another. See
+and its `steps`, with optional `meta`, `success`, `failure` and `error`
+lists and a `timeout`. A workflow can be a step of another. See
 [Writing a workflow](/guides/workflows/).
 
 ### step
@@ -51,9 +51,10 @@ Each change starts a run.
 
 ### run
 
-One go through a workflow, started by a message or a schedule. It has an
-id (a UUIDv7) and keeps the version of its workflows it started with. It
-ends as `done`, `failed` or `error`.
+One go through a workflow, started by a message, a schedule or a watched
+path. It has an id (a UUIDv7) and a name (`misty-lake`), and keeps the
+version of its workflows it started with. It ends as `done`, `failed` or
+`error`.
 
 ### state
 

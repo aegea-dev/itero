@@ -265,10 +265,16 @@ until something changes. No process per watch.
 - Each change starts a run with `{"path": "...", "kind": "changed"}`
   (`created`, `removed`); a burst of changes is one, once the path has
   been quiet for half a second.
-- A path that is not there yet is watched for when it comes.
+- A path that is not there yet is watched for when it comes; its folder
+  must be there.
 - `$$NAME` in a path is an environment variable, like `$$USER`, filled in
   when the daemon reads the workflow. The path, filled in, is in the run's
-  data and in the log, so a secret never goes in one.
+  data and in the log, so a secret never goes in one. `~/` is the home
+  folder; a relative path is in the workspace.
+- The watcher reads the workflows' paths again every second, so editing a
+  workflow moves its watch. A change is sent as the daemon's own message
+  `itero.path.changed` `{"path", "kind"}`, which starts the workflows
+  naming that path.
 
 `itero watch <path>` stays, for a source that wants the same events.
 
@@ -405,10 +411,10 @@ logs = 3            # rolled logs kept: itero.log.1 to itero.log.3
 ```
 
 Each limit has the default shown. Past `space`, the daemon sends
-`itero.space.full`, and its `keep` workflow forgets ended runs
-sooner than `keep`, oldest first (see The daemon's own workflows); if
-`.itero/` is still too big, it starts no new run and logs an `error` line
-until there is room.
+`itero.space.full` and logs an `error` line, once, and its `keep`
+workflow forgets every ended run, not only those past `keep` (see The
+daemon's own workflows); until there is room, no new run starts but
+internal ones, and the messages that would start one wait their turn.
 
 ### Where to see them
 
@@ -429,20 +435,25 @@ everything that happens:
 {"time":"2026-10-21T13:45:02Z","workspace":"01a0f3…","daemon":"01a15f2c…","event":"step.done","workflow":"order","run":"01a15eb3…","step":"#ship","output":{"tracking":"TR-1"}}
 ```
 
-Every line has `time`, `workspace`, `daemon` and `event`; the rest
-depends on the event:
+Every line has `time`, `workspace`, `daemon` and `event`; a line about a
+run has `workflow`, `run` and `run_name`, and `"internal": true` when its
+workflow is internal; the rest depends on the event:
 
 | `event` | Also |
 |---|---|
-| `daemon.started`, `daemon.stopped` | `itero` (its version) |
+| `daemon.started` | every field of the workspace and the daemon |
+| `daemon.stopped` | |
 | `message` | `message`, `type`, `data`, and what it did: `started` (runs), `reached` (runs), or `nothing` |
-| `run.started` | `workflow`, `run`, `message` or `schedule` or `path` |
-| `step.started` | `workflow`, `run`, `step` |
-| `step.done`, `step.waiting` | `workflow`, `run`, `step`, `output` |
-| `step.failed` | `workflow`, `run`, `step`, `why` |
-| `step.skipped` | `workflow`, `run`, `step` (its conditions did not hold) |
-| `run.ended` | `workflow`, `run`, `status` (`done`, `failed`, `error`), `why` |
+| `run.started` | `message` (a path's change is the message `itero.path.changed`), or `schedule` |
+| `step.started` | `step` |
+| `step.done`, `step.waiting` | `step`, `output` |
+| `step.failed` | `step`, `why` |
+| `step.skipped` | `step`, `why` (its conditions did not hold) |
+| `run.note` | `note`: what the run did with a message or a timer it was given |
+| `run.ended` | `status` (`done`, `failed`, `error`, `split`), `why` |
+| `run.skipped` | `workflow`, `schedule`, `why`: a schedule came due and `on` did not hold |
 | `source.started`, `source.ended`, `source.gave-up` | `source`, `why` |
+| `paths.watched` | `paths`: every path watched, when they change |
 | `error` | `why`: what went wrong in the daemon itself |
 
 - **It holds no secrets:** only what steps printed, never their
@@ -493,7 +504,9 @@ the daemon may send (refused from `itero emit`, `/events` and sources):
 
 A message about a workflow's run never starts a run of that same workflow
 (when it is about an error there), so a broken workflow cannot set itself
-off again and again.
+off again and again. No run waits for the daemon's own messages: they
+only start workflows. `itero.path.changed` `{"path", "kind"}` is one too:
+the change of a watched path (see Watching files).
 
 **Internal workflows.** A workflow with `"meta": {"internal": true}` looks
 after the workspace rather than doing its work. Nothing in its name says

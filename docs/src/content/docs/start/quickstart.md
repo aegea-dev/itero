@@ -43,8 +43,9 @@ itero runs
 
 A notification says "Merhaba, Ayşe!", and `itero runs` shows the run as
 `done`, with its name: `itero runs <name>` tells it step by step, and
-`.itero/itero.log` has every line. Without `--once`, `itero daemon` keeps running and takes each
-message as it comes; `itero service install` starts it at login.
+`.itero/itero.log` has a line for each step. Without `--once`, `itero
+daemon` keeps running and takes each message as it comes; `itero service
+install` starts it at login.
 
 ## Next
 

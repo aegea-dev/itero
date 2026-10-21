@@ -28,9 +28,10 @@ action, a small executable file in any language, or another workflow.
 		A workspace is a folder: workflows as JSON, actions as executables,
 		sources as executables. No action descriptions, no expressions.
 	</Card>
-	<Card title="Messages and schedules" icon="rocket">
+	<Card title="Messages, schedules and files" icon="rocket">
 		A message from an app, a source or `itero emit` starts runs, and
-		reaches the runs waiting for it; a schedule starts them too.
+		reaches the runs waiting for it; a schedule or a watched file starts
+		them too.
 	</Card>
 	<Card title="The Unix way" icon="seti:shell">
 		An action reads its values as environment variables and prints JSON;
@@ -38,7 +39,8 @@ action, a small executable file in any language, or another workflow.
 		the work.
 	</Card>
 	<Card title="Kept up" icon="approve-check">
-		Every message and answer is in a SQLite journal. A lost step runs
-		again; a watchdog restarts the daemon, which starts at login.
+		Every message and answer is in a SQLite journal, and every step in a
+		JSON log. A lost step runs again; a watchdog restarts the daemon,
+		which starts at login.
 	</Card>
 </CardGrid>

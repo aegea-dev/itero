@@ -7,7 +7,7 @@ description: The few things itero is made of.
 workspace:
 
 ```
-itero.toml                 settings (the port)
+itero.toml                 settings: the port, [meta], [limits]
 workflows/order.json       a workflow: its name is its file name
 actions/check-payment      an action: an executable, its name its file name
 sources/mail.received      a source: its messages are of this type
@@ -28,10 +28,12 @@ went. **A workflow** can be a step too (`order-process`).
 **A message** has a type, two or more words joined by dots
 (`order.placed`), and data. Apps send them with `itero emit` or `POST
 /events`; sources print them. A message starts a run of every workflow
-whose `on` lists its type.
+whose `on` has an `event` of its type. A schedule or a change to a
+watched file starts runs too.
 
-**A run** is one go through a workflow. It has a **state**: the data of
-the message that started it, plus what each step printed. A step that is
+**A run** is one go through a workflow, with an id and a name of two
+random words (`misty-lake`). It has a **state**: the data of the message
+that started it, plus what each step printed. A step that is
 not ready yet (exit 75) makes the run **wait** until a message for it
 arrives. A run ends as `done`, `failed` (the state says
 `"success": false`) or `error` (something broke).

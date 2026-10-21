@@ -36,9 +36,11 @@ it may reach when some are waiting.
 
 ## What a message does
 
-- **It starts a run** of every workflow whose `on` lists its type, and
-  whose conditions hold over its data. Its data is the run's first state.
-  Every such workflow starts, side by side.
+- **It starts a run** of every workflow whose `on` has an `event` of its
+  type, whose conditions hold over its data, and that is not `off` or
+  outside its `from` and `until`. Its data is the run's first state.
+  Every such workflow starts, side by side. With `runs` runs under way
+  ([`[limits]`](/reference/itero-toml/#limits)), it waits its turn.
 - **It reaches the runs waiting for data** (a step exited 75) that it
   matches: it shares at least one field with the run's state and agrees
   with it on every one they share. `{"payment_ref": "pay-1", "paid": true}`
@@ -48,7 +50,7 @@ it may reach when some are waiting.
 - A run that starts waiting gets the matching messages that came since it
   started, so a fast reply is not missed.
 
-Messages are kept until their runs end, then a day more.
+Messages are kept until their runs end, then `keep` more (a day).
 
 ## Where messages come from
 

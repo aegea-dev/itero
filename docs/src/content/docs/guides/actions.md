@@ -50,11 +50,16 @@ A version is part of the file name: `notify@0.2`, `notify@0.10`. `#notify`
 is the highest, compared as numbers; `#notify@0.2` pins one. Args and
 secrets are the action's, whatever the version.
 
-## Built in: `#notify`
+## Built in
 
 `#notify` shows `$text` (and `$title`) as a desktop notification: through
-Itero.app on macOS (`osascript` without it), `notify-send` on Linux. A
-workspace action named `notify` is used instead.
+Itero.app on macOS (`osascript` without it), `notify-send` on Linux.
+
+`#forget` forgets ended runs and their messages past `keep`, and
+`#roll-log` rolls the log; the built-in workflows use them
+([The daemon's own workflows](/guides/maintenance/)).
+
+A workspace action of the same name is used instead of a built-in one.
 
 ## Other languages, and Docker
 

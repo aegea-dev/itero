@@ -121,7 +121,9 @@ Steps run at the end, by the outcome:
 
 These steps get `$why` and `$failed_step`. The run ends as `done`,
 `failed` or `error`; if one of these steps breaks, it ends as `error` and
-no other list runs. A workflow used as a step has no end lists of its own:
+no other list runs. A run ending in error or failed also sends
+`itero.run.error` or `itero.run.failed`, for workflows that watch over
+others ([The daemon's own workflows](/guides/maintenance/)). A workflow used as a step has no end lists of its own:
 the run's own workflow has them.
 
 ## Waiting: `timeout`

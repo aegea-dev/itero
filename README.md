@@ -46,18 +46,20 @@ through `notify-send` (or `gdbus`, or `kdialog`).
 A folder with `itero.toml` is a workspace; `itero daemon` runs it.
 
 ```
-itero.toml                 settings (the port)
+itero.toml                 settings: the port, [meta], [limits]
 workflows/order.json       a workflow: when it runs (on) and its steps
 actions/check-payment      an action: an executable, its name its file name
 sources/mail.received      a source: each line it prints is a message of this type
 args/check-payment.json    data for an action (itero args)
+.itero/                    the journal, the log (itero.log) and memory
 ```
 
-- **A workflow** starts on a message type (`order.placed`) or a schedule
-  (`0 9 * * *`), under conditions (`$order`, `$$API`). Its steps are
-  actions (`#name`), workflows, lists that run side by side, and steps
-  with data and their own `on`. `success`, `failure` and `error` run at the
-  end.
+- **A workflow** starts on a message (`{"event": "order.placed"}`), a
+  schedule (`{"schedule": "0 9 * * *"}`) or a watched file
+  (`{"path": "inbox"}`), under conditions (`{"$paid": true}`,
+  `{"has": ["$order", "$$API"]}`). Its steps are actions (`#name`),
+  workflows, lists that run side by side, and steps with data and their
+  own `on`. `success`, `failure` and `error` run at the end.
 - **An action** reads its values as environment variables (from the step,
   its args, then the run's state; `$$NAME` for a secret) and the state on
   stdin, prints a JSON object, and exits 0 (done), 75 (not yet: wait for a
