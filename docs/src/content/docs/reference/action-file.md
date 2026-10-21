@@ -23,5 +23,6 @@ extension, in any language its first line names.
 | any other exit | an error; the end of stderr says why |
 
 A step may take 10 minutes; a lost or timed-out step runs again, up to 3
-times. `#notify` is built in: it shows `$text` and `$title`. See
+times. Built in, unless the workspace has an action of the name:
+`#notify` (shows `$text` and `$title`), `#forget` and `#roll-log`. See
 [Actions](/guides/actions/).

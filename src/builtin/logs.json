@@ -1,0 +1,5 @@
+{
+  "meta": { "internal": true, "description": "Rolls the log when it is full" },
+  "on": [{ "event": "itero.log.full" }],
+  "steps": ["#roll-log"]
+}

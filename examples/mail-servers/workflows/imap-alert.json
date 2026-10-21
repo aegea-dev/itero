@@ -1,8 +1,8 @@
 {
-  "on": ["* * * * *"],
+  "on": [{ "schedule": "* * * * *" }],
   "steps": [
     { "#imap-check": { "host": "imap.example.com", "port": 993, "tls": true,
                        "user": "me@example.com", "password": "$$IMAP_PASS" } },
-    { "#notify": { "on": ["$text"] } }
+    { "#notify": { "on": [{ "has": "$text" }] } }
   ]
 }

@@ -4,9 +4,11 @@
 //! for in workers. The daemon decides nothing about a run: every change to
 //! one comes from a manager's answer.
 use super::Event;
+use super::events;
 use super::journal::{self, Envelope, Handled, Journal, Recorded, Split, Start};
+use super::log::Log;
 use super::steps::{self, StepAnswer, StepInput, StepJob};
-use super::worker::{Failure, LOST_EXIT, NOTIFY, Outcome, StepRun};
+use super::worker::{self, Failure, LOST_EXIT, Outcome, StepRun};
 use crate::flow::{self, Flow, Name};
 use crate::workspace::Workspace;
 use anyhow::{Result, anyhow};
@@ -44,14 +46,8 @@ const MAX_TRIES: usize = 3;
 /// before its step is an error.
 const MAX_RUNS: i64 = 3;
 
-/// More workers than this at once wait for the next batch.
-const MAX_WORKERS: usize = 8;
-
 /// Seconds a step may take: past that it is stopped and tried again.
 const STEP_TIMEOUT: u64 = 600;
-
-/// How long ended runs and handled messages are kept.
-const KEEP: chrono::Duration = chrono::Duration::days(1);
 
 /// What became of an event given to `deliver`.
 enum Delivered {
@@ -65,9 +61,50 @@ pub fn stamp(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// One life of the daemon: from its start to its end.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Daemon {
+    pub id: String,
+    /// Two random words.
+    pub name: String,
+    pub started: String,
+    pub pid: u32,
+    pub host: String,
+    pub itero: String,
+}
+
+impl Daemon {
+    /// This process's life, made the first time it is asked for.
+    pub fn current() -> &'static Daemon {
+        static LIFE: std::sync::OnceLock<Daemon> = std::sync::OnceLock::new();
+        LIFE.get_or_init(|| Daemon {
+            id: uuid::Uuid::now_v7().to_string(),
+            name: crate::names::random(),
+            started: stamp(Utc::now()),
+            pid: std::process::id(),
+            host: host(),
+            itero: journal::ITERO.into(),
+        })
+    }
+}
+
+/// This machine's name.
+fn host() -> String {
+    let mut buf = [0u8; 256];
+    // SAFETY: the buffer and its length match; the name ends at its NUL
+    let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
+    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    if ok {
+        String::from_utf8_lossy(&buf[..end]).into_owned()
+    } else {
+        String::new()
+    }
+}
+
 /// How the daemon's loop is doing, for `/health`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Health {
+    pub daemon: Daemon,
     pub started: String,
     /// Passes so far.
     pub passes: u64,
@@ -93,6 +130,7 @@ pub struct SourceHealth {
 impl Health {
     pub fn starting(at: &str) -> Health {
         Health {
+            daemon: Daemon::current().clone(),
             started: at.to_string(),
             passes: 0,
             last_pass: None,
@@ -152,6 +190,20 @@ impl Flows {
         Ok(Flows { values, read })
     }
 
+    /// Whether a workflow looks after the workspace (`meta.internal`).
+    fn internal(&self, name: &str) -> bool {
+        self.read.get(name).is_some_and(|f| f.meta.internal)
+    }
+
+    /// The internal workflows' names.
+    fn internals(&self) -> Vec<String> {
+        self.read
+            .iter()
+            .filter(|(_, f)| f.meta.internal)
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+
     /// `root` and every workflow it uses as a step, there or deeper, as
     /// their files say: what a run of it is pinned to.
     fn pinned(&self, root: &str) -> Result<BTreeMap<String, Value>, String> {
@@ -175,6 +227,127 @@ impl Flows {
     }
 }
 
+/// A `path` entry as a path: `~/` is the home folder, `$$NAME` an
+/// environment variable (never a secret: the path is in runs and the
+/// log), and a relative path is under the workspace.
+pub fn expand(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let (mut out, mut rest) = match path.strip_prefix("~/") {
+        Some(r) => (
+            std::env::var("HOME").map_err(|_| format!("{path}: HOME is not set"))? + "/",
+            r,
+        ),
+        None => (String::new(), path),
+    };
+    while let Some(i) = rest.find("$$") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        let n = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        let name = &after[..n];
+        let v = std::env::var(name)
+            .ok()
+            .filter(|_| env_name(name))
+            .ok_or_else(|| format!("{path}: no environment variable {name}"))?;
+        out.push_str(&v);
+        rest = &after[n..];
+    }
+    out.push_str(rest);
+    Ok(root.join(out))
+}
+
+/// Every path the workflows' `on` names, filled in, and what could not
+/// be.
+fn wanted_paths(ws: &Workspace) -> (Vec<PathBuf>, Vec<String>) {
+    let (mut paths, mut errors) = (vec![], vec![]);
+    match ws.flows() {
+        Ok(flows) => {
+            for (name, f) in flows {
+                for p in &f.on.paths {
+                    match expand(&ws.root, p) {
+                        Ok(p) if !paths.contains(&p) => paths.push(p),
+                        Ok(_) => {}
+                        Err(e) => errors.push(format!("{name}: {e}")),
+                    }
+                }
+            }
+        }
+        Err(e) => errors.push(format!("{e:#}")),
+    }
+    paths.sort();
+    (paths, errors)
+}
+
+/// Watches every path a workflow's `on` names, all in this one thread,
+/// and sends `itero.path.changed` for each change once the path has been
+/// quiet for half a second. The paths are read again every second, so
+/// editing a workflow moves its watch. Runs for good.
+pub fn watch_paths(ws: &Workspace, wake: &std::sync::mpsc::Sender<()>, log: &Log) {
+    use crate::watch::{Debouncer, Kind};
+    use std::time::{Duration, Instant};
+    let mut backend = match crate::watch::open_many(&[]) {
+        Ok(b) => b,
+        Err(e) => {
+            log.write(
+                "error",
+                json!({ "why": format!("cannot watch files: {e}") }),
+            );
+            return;
+        }
+    };
+    let mut d = Debouncer::new(Duration::from_millis(500), Duration::from_secs(5));
+    let mut watched: Option<Vec<PathBuf>> = None;
+    let mut said = vec![];
+    loop {
+        let (paths, mut errors) = wanted_paths(ws);
+        if watched.as_ref() != Some(&paths) {
+            match backend.set(&paths) {
+                Ok(()) => {
+                    log.write("paths.watched", json!({ "paths": paths }));
+                    watched = Some(paths);
+                }
+                // tried again next time: a folder may come
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+        if errors != said {
+            for why in &errors {
+                log.write("error", json!({ "why": why }));
+            }
+            said = errors;
+        }
+        let timeout = d.due().map_or(Duration::from_secs(1), |at| {
+            at.saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(1))
+        });
+        match backend.wait(timeout) {
+            Ok(changes) => d.add(changes, Instant::now()),
+            Err(e) => {
+                log.write("error", json!({ "why": format!("watching files: {e}") }));
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        }
+        for c in d.take(Instant::now()) {
+            let kind = match c.kind {
+                Kind::Created => "created",
+                Kind::Removed | Kind::Renamed => "removed",
+                Kind::Changed | Kind::Rescan => "changed",
+            };
+            let m = events::own(
+                events::PATH_CHANGED,
+                json!({ "path": c.path.display().to_string(), "kind": kind }),
+                &stamp(Utc::now()),
+            );
+            match Journal::open(ws).and_then(|j| j.publish(&m)) {
+                Ok(()) => {
+                    let _ = wake.send(());
+                }
+                Err(e) => log.write("error", json!({ "why": format!("{e:#}") })),
+            }
+        }
+    }
+}
+
 /// Whether an environment variable or a secret is defined.
 fn defined(name: &str) -> bool {
     super::secrets::get(name).is_some()
@@ -184,9 +357,12 @@ fn defined(name: &str) -> bool {
 /// manager` and `itero worker`.
 pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let mut j = Journal::open(ws)?;
+    let log = Log::new(ws, &j.workspace()?.id);
     let mut pass = Pass::default();
     let flows = Flows::load(ws)?;
-    fire_schedules(&flows, &mut j, now)?;
+    j.see_workflows(flows.read.keys(), &stamp(now))?;
+    let no_room = watch_limits(ws, &j, now, &log)?;
+    fire_schedules(&flows, &mut j, now, &log)?;
     for (id, run, data) in j.due_timers(&stamp(now))? {
         let e = Envelope::new(
             "daemon",
@@ -199,25 +375,33 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
         j.fire_timer(id, &e)?;
     }
     // runs' events first; then the waiting jobs, whose results are the
-    // next events
+    // next events. Messages that would start a run while `runs` are under
+    // way are held; they are taken again once a run has ended.
+    let mut held = vec![];
     loop {
-        while let Some(r) = j.next()? {
+        while let Some(r) = j.next(&held)? {
             if r.event.subject == journal::subject("app") {
-                route(&flows, &mut j, &r, now)?;
-                pass.delivered += 1;
+                if route(ws, &flows, &mut j, &r, now, &log, no_room)? {
+                    pass.delivered += 1;
+                } else {
+                    held.push(r.seq);
+                }
                 continue;
             }
-            if let Delivered::Deferred = deliver(ws, &mut j, &r, now, exe)? {
+            if let Delivered::Deferred = deliver(ws, &mut j, &r, now, exe, &log)? {
                 // events are delivered in order: the rest waits with it
                 pass.deferred += 1;
                 return Ok(pass);
             }
             pass.delivered += 1;
+            if !held.is_empty() && j.active_count(&flows.internals())? < ws.limits.runs {
+                held.clear();
+            }
             if pass.delivered >= MAX_EVENTS {
                 return Ok(pass);
             }
         }
-        let batch: Vec<Recorded> = j.jobs()?.into_iter().take(MAX_WORKERS).collect();
+        let batch: Vec<Recorded> = j.jobs()?.into_iter().take(ws.limits.steps).collect();
         if batch.is_empty() {
             break;
         }
@@ -232,7 +416,7 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
                 pass.worked += 1;
             } else {
                 j.start_job(r.seq)?;
-                let step = step_run(ws, &j, &r.event.data);
+                let step = step_run(ws, &j, &r.event.data, &stamp(now));
                 starting.push((r, runs + 1, step));
             }
         }
@@ -276,14 +460,48 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
             super::die_at("result");
         }
     }
-    j.prune(&stamp(now - KEEP))?;
     Ok(pass)
+}
+
+/// Sends `itero.space.full` when `.itero/` grows past its `space`, and
+/// `itero.log.full` when the log grows past its `log` limit: each once,
+/// until there is room again or the log is rolled. Returns whether
+/// `.itero/` is past its space: then no new run starts but internal ones.
+fn watch_limits(ws: &Workspace, j: &Journal, now: DateTime<Utc>, log: &Log) -> Result<bool> {
+    let at = stamp(now);
+    let (used, space) = (ws.used(), ws.limits.space);
+    let no_room = used > space;
+    if no_room && !j.flag(journal::SPACE_FULL)? {
+        j.publish(&events::own(
+            "itero.space.full",
+            json!({ "used": used, "limit": space }),
+            &at,
+        ))?;
+        j.set_flag(journal::SPACE_FULL, true)?;
+        log.write(
+            "error",
+            json!({ "why": format!(".itero/ takes {used} bytes, past its space ({space}): no new runs until there is room") }),
+        );
+    } else if !no_room && j.flag(journal::SPACE_FULL)? {
+        j.set_flag(journal::SPACE_FULL, false)?;
+    }
+    let path = ws.root.join(".itero").join("itero.log");
+    let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+    if size > ws.limits.log && !j.flag(journal::LOG_FULL)? {
+        j.publish(&events::own(
+            "itero.log.full",
+            json!({ "path": path.display().to_string(), "size": size, "limit": ws.limits.log }),
+            &at,
+        ))?;
+        j.set_flag(journal::LOG_FULL, true)?;
+    }
+    Ok(no_room)
 }
 
 /// Starts a run of every workflow whose schedule is due, when its
 /// conditions hold. A schedule seen for the first time only starts
 /// counting: it waits for its first slot.
-fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>) -> Result<()> {
+fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log) -> Result<()> {
     for (name, f) in &flows.read {
         for cron in &f.on.schedules {
             let key = format!("{name}#{cron}");
@@ -291,6 +509,11 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>) -> Result<
                 j.set_schedule_last(&key, &stamp(now))?;
                 continue;
             };
+            // off or outside its dates, its slots pass without a run
+            if !flow::active(&f.meta, now) {
+                j.set_schedule_last(&key, &stamp(now))?;
+                continue;
+            }
             let last: DateTime<Utc> = last
                 .parse()
                 .map_err(|_| anyhow!("schedule {key}: its last slot is not a time: {last}"))?;
@@ -309,11 +532,17 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>) -> Result<
                     j.start_run(&start, &stamp(now), Some(&key))?;
                 }
                 Ok(_) => {
-                    eprintln!("{name}: schedule {cron}: its on does not hold");
+                    log.write(
+                        "run.skipped",
+                        json!({ "workflow": name, "schedule": cron, "why": "its on does not hold" }),
+                    );
                     j.set_schedule_last(&key, &stamp(now))?;
                 }
                 Err(why) => {
-                    eprintln!("{name}: schedule {cron}: {why}");
+                    log.write(
+                        "error",
+                        json!({ "workflow": name, "schedule": cron, "why": why }),
+                    );
                     j.set_schedule_last(&key, &stamp(now))?;
                 }
             }
@@ -322,14 +551,42 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>) -> Result<
     Ok(())
 }
 
-/// A message for the workspace: a run of every workflow whose `on` lists
-/// its type and holds over its data, and a copy for every run waiting for
-/// data.
-fn route(flows: &Flows, j: &mut Journal, r: &Recorded, now: DateTime<Utc>) -> Result<()> {
+/// A message for the workspace: a run of every active workflow whose `on`
+/// lists its type and holds over its data, and a copy for every run
+/// waiting for data. False, and nothing done, when it would start a run
+/// (not an internal one) while `runs` are under way, or while `.itero/`
+/// has no room: it waits its turn. A message about a run never starts its
+/// own workflow.
+fn route(
+    ws: &Workspace,
+    flows: &Flows,
+    j: &mut Journal,
+    r: &Recorded,
+    now: DateTime<Utc>,
+    log: &Log,
+    no_room: bool,
+) -> Result<bool> {
     let data = r.event.data.as_object().cloned().unwrap_or_default();
+    let on_a_run = r.event.kind.starts_with("itero.run.");
+    // a watched path's change starts the workflows that name the path
+    let changed = (r.event.kind == events::PATH_CHANGED)
+        .then(|| data.get("path").and_then(Value::as_str))
+        .flatten()
+        .map(PathBuf::from);
+    let names_it = |f: &Flow| {
+        changed.as_ref().is_some_and(|c| {
+            f.on.paths
+                .iter()
+                .any(|p| expand(&ws.root, p).is_ok_and(|p| p == *c))
+        })
+    };
     let mut starts = vec![];
     for (name, f) in &flows.read {
-        if !f.on.messages.contains(&r.event.kind) || !flow::holds(&f.on, &data, &defined) {
+        if !(f.on.events.contains(&r.event.kind) || names_it(f))
+            || !flow::active(&f.meta, now)
+            || !flow::holds(&f.on, &data, &defined)
+            || (on_a_run && data.get("workflow") == Some(&json!(name)))
+        {
             continue;
         }
         match flows.pinned(name) {
@@ -339,22 +596,33 @@ fn route(flows: &Flows, j: &mut Journal, r: &Recorded, now: DateTime<Utc>) -> Re
                 input: Value::Object(data.clone()),
                 cause: Some(r.event.id.clone()),
             }),
-            Err(why) => eprintln!("{}: {name}: {why}", r.event.kind),
+            Err(why) => log.write(
+                "error",
+                json!({ "workflow": name, "message": r.event.id, "why": why }),
+            ),
         }
     }
+    let counted = starts.iter().any(|s| !flows.internal(&s.workflow));
+    if counted && (no_room || j.active_count(&flows.internals())? >= ws.limits.runs) {
+        return Ok(false);
+    }
+    // the daemon's own messages start workflows; no run waits for them
     let waiting: Vec<String> = j
         .active_runs()?
         .into_iter()
-        .filter(|run| steps::is_waiting(&run.runtime))
+        .filter(|run| steps::is_waiting(&run.runtime) && !r.event.kind.starts_with(events::OWN))
         .map(|run| run.id)
         .collect();
-    if starts.is_empty() && waiting.is_empty() {
-        eprintln!(
-            "{}: no workflow starts on it, and no run waits for it",
-            r.event.kind
-        );
+    let started = j.route(r, &starts, &waiting, &stamp(now))?;
+    let mut line = json!({ "message": r.event.id, "type": r.event.kind, "data": r.event.data });
+    if started.is_empty() && waiting.is_empty() {
+        line["nothing"] = json!(true);
+    } else {
+        line["started"] = json!(started);
+        line["reached"] = json!(waiting);
     }
-    j.route(r, &starts, &waiting, &stamp(now))
+    log.write("message", line);
+    Ok(true)
 }
 
 /// Why a job that kept being lost is an error.
@@ -408,7 +676,8 @@ fn ask(exe: &Path, input: &StepInput) -> Result<StepAnswer, Failure> {
 }
 
 /// Marks an event handled with the reason it could not be delivered.
-fn give_up(j: &mut Journal, seq: i64, at: &str, why: String) -> Result<Delivered> {
+fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Result<Delivered> {
+    log.write("error", json!({ "why": why }));
     j.handle(Handled {
         seq,
         at,
@@ -428,16 +697,18 @@ fn deliver(
     r: &Recorded,
     now: DateTime<Utc>,
     exe: &Path,
+    log: &Log,
 ) -> Result<Delivered> {
     let at = stamp(now);
     let Some(id) = journal::run_of(&r.event.subject).map(str::to_string) else {
-        return give_up(j, r.seq, &at, format!("no run in {}", r.event.subject));
+        return give_up(log, j, r.seq, &at, format!("no run in {}", r.event.subject));
     };
     let Some(run) = j.run(&id)? else {
-        return give_up(j, r.seq, &at, format!("no run {id}"));
+        return give_up(log, j, r.seq, &at, format!("no run {id}"));
     };
     let Some((root, values)) = j.pinned(&run.pin)? else {
         return give_up(
+            log,
             j,
             r.seq,
             &at,
@@ -448,11 +719,18 @@ fn deliver(
     // workflows name, and which of their $$ names are defined
     let mut args = BTreeMap::new();
     let mut names = vec![];
+    let mut who = Who {
+        run: &run,
+        internal: false,
+    };
     for (n, v) in &values {
         let f = match flow::from_value(v) {
             Ok(f) => f,
-            Err(e) => return give_up(j, r.seq, &at, format!("{n}: {e}")),
+            Err(e) => return give_up(log, j, r.seq, &at, format!("{n}: {e}")),
         };
+        if *n == root {
+            who.internal = f.meta.internal;
+        }
         for u in f.uses() {
             if let Name::Action { name, .. } = u
                 && !args.contains_key(&name)
@@ -462,7 +740,7 @@ fn deliver(
                         args.insert(name, a);
                     }
                     Ok(None) => {}
-                    Err(e) => return give_up(j, r.seq, &at, format!("{e:#}")),
+                    Err(e) => return give_up(log, j, r.seq, &at, format!("{e:#}")),
                 }
             }
         }
@@ -485,21 +763,17 @@ fn deliver(
     };
     let answer = match ask_again(exe, &input) {
         Ok(a) => a,
-        Err(Failure::Error(why)) => return give_up(j, r.seq, &at, why),
+        Err(Failure::Error(why)) => return give_up(log, j, r.seq, &at, why),
         Err(Failure::Lost(why)) => {
-            eprintln!(
-                "{}: {id}: {why}; {} waits for the next pass",
-                run.workflow, r.event.kind
+            log.write(
+                "error",
+                who.line(
+                    json!({ "why": format!("{why}; {} waits for the next pass", r.event.kind) }),
+                ),
             );
             return Ok(Delivered::Deferred);
         }
     };
-    for line in &answer.log {
-        eprintln!("{}: {id}: {line}", run.workflow);
-    }
-    if let Some(steps::Ended::Error { why }) = &answer.runtime.ended {
-        eprintln!("{}: {id}: error: {why}", run.workflow);
-    }
     let mut events: Vec<Envelope> = answer
         .jobs
         .iter()
@@ -521,6 +795,32 @@ fn deliver(
             events.push(journal::copy(&m.event, &id, &at));
         }
     }
+    // a run ending in error or failed: the daemon's own message says so
+    if run.runtime.ended.is_none() {
+        let why = answer
+            .runtime
+            .state
+            .get("why")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let own = match &answer.runtime.ended {
+            Some(steps::Ended::Error { .. }) => Some((
+                "itero.run.error",
+                json!({
+                    "workflow": run.workflow, "run": id, "why": why,
+                    "failed_step": answer.runtime.state.get("failed_step"),
+                }),
+            )),
+            Some(steps::Ended::Failed) => Some((
+                "itero.run.failed",
+                json!({ "workflow": run.workflow, "run": id, "why": why }),
+            )),
+            _ => None,
+        };
+        if let Some((kind, data)) = own {
+            events.push(events::own(kind, data, &at));
+        }
+    }
     let splits = answer
         .split
         .iter()
@@ -540,8 +840,87 @@ fn deliver(
         events,
         splits,
     })?;
+    tell(log, &who, r, &answer);
     super::die_at("answer");
     Ok(Delivered::Handled)
+}
+
+/// The run a log line is about, and whether its workflow is internal.
+struct Who<'a> {
+    run: &'a journal::Run,
+    internal: bool,
+}
+
+impl Who<'_> {
+    /// A line's `fields` and which run it is about.
+    fn line(&self, mut fields: Value) -> Value {
+        fields["workflow"] = json!(self.run.workflow);
+        fields["run"] = json!(self.run.id);
+        fields["run_name"] = json!(self.run.name);
+        if self.internal {
+            fields["internal"] = json!(true);
+        }
+        fields
+    }
+}
+
+/// Logs what an answer, saved, did to a run: the event it answered, the
+/// steps it starts, what the manager noted, and the run's end.
+fn tell(log: &Log, who: &Who, r: &Recorded, answer: &StepAnswer) {
+    let d = &r.event.data;
+    match r.event.kind.as_str() {
+        "run.started" => log.write(
+            "run.started",
+            who.line(match &r.event.cause {
+                Some(m) => json!({ "message": m }),
+                None => json!({ "schedule": true }),
+            }),
+        ),
+        "action.finished" | "action.waiting" => log.write(
+            if r.event.kind == "action.finished" {
+                "step.done"
+            } else {
+                "step.waiting"
+            },
+            who.line(json!({ "step": d["step"], "output": d["output"] })),
+        ),
+        "action.failed" => log.write(
+            "step.failed",
+            who.line(json!({ "step": d["step"], "why": d["error"] })),
+        ),
+        _ => {}
+    }
+    for note in &answer.notes {
+        let event = note["event"].as_str().unwrap_or("run.note");
+        log.write(event, who.line(note.clone()));
+    }
+    for line in &answer.log {
+        log.write("run.note", who.line(json!({ "note": line })));
+    }
+    for job in &answer.jobs {
+        log.write(
+            "step.started",
+            who.line(json!({ "step": format!("#{}", job.action) })),
+        );
+    }
+    let run = who.run;
+    if run.runtime.ended.is_none()
+        && let Some(ended) = &answer.runtime.ended
+    {
+        let why = match ended {
+            steps::Ended::Error { why } => json!(why),
+            _ => answer
+                .runtime
+                .state
+                .get("why")
+                .cloned()
+                .unwrap_or(Value::Null),
+        };
+        log.write(
+            "run.ended",
+            who.line(json!({ "status": steps::status(&answer.runtime), "why": why })),
+        );
+    }
 }
 
 /// Whether a name can be an environment variable: a letter or `_`, then
@@ -606,7 +985,7 @@ pub fn bind(
 
 /// What a worker is given for an `action.requested` event: the action's
 /// file, its values bound, the run's state.
-fn step_run(ws: &Workspace, j: &Journal, data: &Value) -> Result<StepRun, String> {
+fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<StepRun, String> {
     let run_id = data["run"].as_str().unwrap_or("");
     let workflow = data["workflow"].as_str().unwrap_or("");
     let job: StepJob =
@@ -617,7 +996,9 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value) -> Result<StepRun, String
         .ok_or_else(|| format!("no run {run_id}"))?;
     let file = match ws.action_file(&job.action, job.version.as_deref()) {
         Ok(f) => f,
-        Err(_) if job.action == NOTIFY && job.version.is_none() => PathBuf::from(NOTIFY),
+        Err(_) if worker::BUILT_IN.contains(&job.action.as_str()) && job.version.is_none() => {
+            PathBuf::from(&job.action)
+        }
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
     let args = ws.args(&job.action).map_err(|e| format!("{e:#}"))?;
@@ -629,6 +1010,7 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value) -> Result<StepRun, String
         memory: ws.root.join(".itero").join("memory").join(workflow),
         waiting_since: job.waiting_since.clone(),
         timeout: STEP_TIMEOUT,
+        now: now.into(),
     })
 }
 
@@ -727,10 +1109,20 @@ fn save_result(
 ) -> Result<()> {
     let data = &r.event.data;
     let path = data.pointer("/job/path").cloned().unwrap_or(Value::Null);
+    let step = format!("#{}", data["job"]["action"].as_str().unwrap_or("?"));
     let (kind, result) = match outcome {
-        Ok(Outcome::Done(m)) => ("action.finished", json!({"path": path, "output": m})),
-        Ok(Outcome::NotYet(m)) => ("action.waiting", json!({"path": path, "output": m})),
-        Err(why) => ("action.failed", json!({"path": path, "error": why})),
+        Ok(Outcome::Done(m)) => (
+            "action.finished",
+            json!({"path": path, "step": step, "output": m}),
+        ),
+        Ok(Outcome::NotYet(m)) => (
+            "action.waiting",
+            json!({"path": path, "step": step, "output": m}),
+        ),
+        Err(why) => (
+            "action.failed",
+            json!({"path": path, "step": step, "error": why}),
+        ),
     };
     let run = data["run"].as_str().unwrap_or("");
     let e = Envelope::new(

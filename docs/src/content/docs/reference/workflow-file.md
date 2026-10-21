@@ -8,7 +8,8 @@ key is an error.
 
 | Key | Is | |
 |---|---|---|
-| `on` | when it runs: a list of message types, schedules, `$name` and `$$NAME`; or an object of exact `$name` values | none: it runs only as a step |
+| `meta` | about it: `description`, `from`, `until`, `off`, `internal`, and keys of your own | |
+| `on` | when it runs: a list of objects (below) | none: it runs only as a step |
 | `steps` | what it does, in order | needed |
 | `success` | steps run when it went well | |
 | `failure` | steps run when the state says `"success": false` | |
@@ -19,13 +20,28 @@ key is an error.
 
 | Entry | Means |
 |---|---|
-| `order.placed` | a message of this type starts a run |
-| `0 9 * * *` | a schedule starts a run (cron, local time) |
-| `$order` | condition: `order` is in the state |
-| `$$API` | condition: `API` is defined (environment or secret) |
+| `{"event": "order.placed"}` | a message of this type starts a run |
+| `{"schedule": "0 9 * * *"}` | a schedule starts a run (cron, local time) |
+| `{"path": "inbox"}` | a change to this file or folder starts a run; `~/` is home, `$$NAME` an environment variable, a relative path is in the workspace |
 | `{"$order": 43}` | condition: `order` is exactly `43` |
+| `{"has": "$order"}` | condition: `order` is in the state |
+| `{"has": ["$order", "$$API"]}` | condition: all are there; `$$API` is defined (environment or secret) |
 
-Message types and schedules are alternatives; conditions must all hold.
+`event`, `schedule` and `path` are alternatives, each alone in its
+object; conditions must all hold. Any other key is an error naming it.
+
+## `meta`
+
+| Key | Means |
+|---|---|
+| `description` | text |
+| `from`, `until` | a date (`2026-11-01`, a whole day) or an RFC 3339 time: outside them nothing starts it |
+| `off` | `true`: nothing starts it |
+| `internal` | `true`: it looks after the workspace; its runs are left out of lists unless asked, and outside the limits |
+| any other | kept and shown |
+
+`id`, `name`, `created`, `path` and `version` are given by itero; setting
+one is an error.
 
 ## A step
 

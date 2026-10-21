@@ -95,7 +95,7 @@ fn state(r: &Run) -> Value {
 fn a_run_starts_with_the_message_as_its_state() {
     let mut r = Run::new(&[(
         "sipariş",
-        json!({"on": ["order.placed"], "steps": ["#ödeme-kontrol", "#kargola"]}),
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#ödeme-kontrol", "#kargola"]}),
     )]);
     let a = r.start(json!({"sipariş": 43, "tutar": 120}));
     assert_eq!(names(&a), vec!["ödeme-kontrol"]);
@@ -168,15 +168,15 @@ fn a_step_runs_only_when_its_on_holds() {
             json!({"steps": [
                 "#check",
                 "işle",
-                {"#bildir": {"on": ["$$API"]}},
+                {"#bildir": {"on": [{ "has": "$$API" }]}},
                 "#bitir"
             ]}),
         ),
         (
             "işle",
-            json!({"on": ["$paid"], "steps": [
-                {"#ship":           {"on": {"$paid": true,  "$stock": true}}},
-                {"#remind-payment": {"on": {"$paid": false, "$stock": true}}}
+            json!({"on": [{ "has": "$paid" }], "steps": [
+                {"#ship":           {"on": [{"$paid": true,  "$stock": true}]}},
+                {"#remind-payment": {"on": [{"$paid": false, "$stock": true}]}}
             ]}),
         ),
     ]);
@@ -190,7 +190,10 @@ fn a_step_runs_only_when_its_on_holds() {
     // a workflow whose on does not hold is skipped as a whole
     let mut r = Run::new(&[
         ("sipariş", json!({"steps": ["#check", "işle", "#bitir"]})),
-        ("işle", json!({"on": ["$paid"], "steps": ["#ship"]})),
+        (
+            "işle",
+            json!({"on": [{ "has": "$paid" }], "steps": ["#ship"]}),
+        ),
     ]);
     r.defined = vec!["API".into()];
     let a = r.start(json!({"order": 43}));

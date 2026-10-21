@@ -2,7 +2,7 @@
 //! workflows, actions and sources. One daemon runs one workspace.
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -17,6 +17,83 @@ struct Settings {
     actions: Vec<String>,
     #[serde(default = "default_sources")]
     sources: Vec<String>,
+    #[serde(default)]
+    meta: Map<String, Value>,
+    #[serde(default)]
+    limits: RawLimits,
+}
+
+/// `[limits]` as written: sizes and durations are text, `"1GB"`, `"1d"`.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawLimits {
+    workflows: Option<usize>,
+    runs: Option<usize>,
+    steps: Option<usize>,
+    space: Option<String>,
+    keep: Option<String>,
+    log: Option<String>,
+    logs: Option<usize>,
+}
+
+/// How much a workspace may hold and do at once.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Limits {
+    /// Workflows in its folders.
+    pub workflows: usize,
+    /// Runs under way at once; past it, messages wait their turn.
+    pub runs: usize,
+    /// Steps running at once.
+    pub steps: usize,
+    /// Bytes `.itero/` may take.
+    pub space: u64,
+    /// How long ended runs and their messages are kept.
+    pub keep: std::time::Duration,
+    /// Bytes the log may reach before it is rolled.
+    pub log: u64,
+    /// Rolled logs kept.
+    pub logs: usize,
+}
+
+impl RawLimits {
+    fn read(self) -> Result<Limits> {
+        let count = |name: &str, v: Option<usize>, default: usize| match v {
+            Some(0) => bail!("limits: {name} is at least 1"),
+            v => Ok(v.unwrap_or(default)),
+        };
+        let keep = match self.keep {
+            None => std::time::Duration::from_secs(24 * 60 * 60),
+            Some(t) => humantime::parse_duration(&t).map_err(|_| {
+                anyhow!("limits: keep: a duration is like 30m, 2h or 1d, not \"{t}\"")
+            })?,
+        };
+        Ok(Limits {
+            workflows: count("workflows", self.workflows, 100)?,
+            runs: count("runs", self.runs, 1000)?,
+            steps: count("steps", self.steps, 8)?,
+            space: size("space", self.space, 1 << 30)?,
+            keep,
+            log: size("log", self.log, 10 << 20)?,
+            logs: count("logs", self.logs, 3)?,
+        })
+    }
+}
+
+/// `"10MB"`: a number and KB, MB or GB (of 1024).
+fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
+    let Some(s) = v else {
+        return Ok(default);
+    };
+    let wrong = || anyhow!("limits: {name}: a size is like 10MB or 1GB, not \"{s}\"");
+    let (n, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len()));
+    let n: u64 = n.parse().map_err(|_| wrong())?;
+    let shift = match unit.trim() {
+        "KB" => 10,
+        "MB" => 20,
+        "GB" => 30,
+        _ => return Err(wrong()),
+    };
+    n.checked_mul(1 << shift).ok_or_else(wrong)
 }
 
 fn default_sources() -> Vec<String> {
@@ -35,6 +112,13 @@ fn default_actions() -> Vec<String> {
     vec!["actions".into()]
 }
 
+/// The workflows itero carries, run as if they were in `workflows/`; a
+/// file of the same name there is used instead.
+pub const BUILT_IN: [(&str, &str); 2] = [
+    ("keep", include_str!("builtin/keep.json")),
+    ("logs", include_str!("builtin/logs.json")),
+];
+
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub root: PathBuf,
@@ -43,6 +127,9 @@ pub struct Workspace {
     pub actions: Vec<PathBuf>,
     /// The folders with the workspace's sources.
     pub sources: Vec<PathBuf>,
+    /// `[meta]`: what a person says about the workspace.
+    pub meta: Map<String, Value>,
+    pub limits: Limits,
 }
 
 /// A listed folder: `~/` is the home folder, a relative path is under the
@@ -68,12 +155,20 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
     let text = std::fs::read_to_string(&path)
         .with_context(|| format!("cannot read {}", path.display()))?;
     let s: Settings = toml::from_str(&text).with_context(|| format!("{}", path.display()))?;
+    for k in s.meta.keys() {
+        crate::flow::given_by_itero(k).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    }
     Ok(Workspace {
         root: root.to_path_buf(),
         port: s.port,
         workflows: s.workflows.iter().map(|w| folder(root, w)).collect(),
         actions: s.actions.iter().map(|a| folder(root, a)).collect(),
         sources: s.sources.iter().map(|x| folder(root, x)).collect(),
+        meta: s.meta,
+        limits: s
+            .limits
+            .read()
+            .with_context(|| format!("{}", path.display()))?,
     })
 }
 
@@ -124,8 +219,24 @@ impl Workspace {
         self.root.join(".itero").join("journal.sqlite")
     }
 
+    /// The bytes `.itero/` takes: the journal, the logs, memory.
+    pub fn used(&self) -> u64 {
+        fn size(p: &Path) -> u64 {
+            match std::fs::symlink_metadata(p) {
+                Ok(m) if m.is_dir() => std::fs::read_dir(p)
+                    .map(|es| es.flatten().map(|e| size(&e.path())).sum())
+                    .unwrap_or(0),
+                Ok(m) => m.len(),
+                Err(_) => 0,
+            }
+        }
+        size(&self.root.join(".itero"))
+    }
+
     /// Every workflow, as its file's JSON, by name (its file name), each
-    /// checked. Two with one name is an error naming the second.
+    /// checked, and the built-in ones no file replaces. Two with one name
+    /// is an error naming the second; more than `limits.workflows`, the
+    /// internal ones apart, is an error too.
     pub fn flow_values(&self) -> Result<BTreeMap<String, Value>> {
         let mut out = BTreeMap::new();
         for dir in &self.workflows {
@@ -148,6 +259,21 @@ impl Workspace {
                 out.insert(name, v);
             }
         }
+        for (name, text) in BUILT_IN {
+            if !out.contains_key(name) {
+                out.insert(name.to_string(), serde_json::from_str(text)?);
+            }
+        }
+        let counted = out
+            .values()
+            .filter(|v| v.pointer("/meta/internal") != Some(&Value::Bool(true)))
+            .count();
+        if counted > self.limits.workflows {
+            bail!(
+                "{counted} workflows: workflows in itero.toml's [limits] allows {}",
+                self.limits.workflows
+            );
+        }
         Ok(out)
     }
 
@@ -160,6 +286,17 @@ impl Workspace {
                 Ok((n, f))
             })
             .collect()
+    }
+
+    /// The names of the internal workflows: whose runs lists leave out
+    /// unless asked.
+    pub fn internal(&self) -> Result<Vec<String>> {
+        Ok(self
+            .flows()?
+            .into_iter()
+            .filter(|(_, f)| f.meta.internal)
+            .map(|(n, _)| n)
+            .collect())
     }
 
     /// An action's file: `name@version` when pinned, else the highest

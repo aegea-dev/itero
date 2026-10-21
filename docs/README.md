@@ -24,7 +24,7 @@ PnP linker breaks Astro's virtual modules, so keep it.
 src/content/docs/
   index.mdx          landing page
   start/             install, quickstart, concepts
-  guides/            workflows, actions, triggers, apps, secrets, the service
+  guides/            workflows, actions, messages, secrets, the log, the daemon's own workflows, the service
   reference/         commands, file formats, the HTTP API
 astro.config.mjs     sidebar, theme
 ```

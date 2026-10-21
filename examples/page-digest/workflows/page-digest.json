@@ -1,5 +1,5 @@
 {
-  "on": ["0 9 * * *"],
+  "on": [{ "schedule": "0 9 * * *" }],
   "steps": [
     { "#fetch": { "url": "https://example.com/news" } },
     { "#ask-ai": { "prompt": "Summarize this page in 5 bullets.", "key": "$$ANTHROPIC_KEY" } },

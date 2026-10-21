@@ -44,8 +44,8 @@ itero secret IMAP_PASS                  # asks for it, without echo
 itero secret IMAP_PASS --file pass.txt  # its last newline left out
 ```
 
-A name is a letter or `_`, then letters, digits or `_`. `$$NAME` in an
-`on` is a condition: it holds once `NAME` is defined.
+A name is a letter or `_`, then letters, digits or `_`. In an `on`,
+`{"has": "$$NAME"}` is a condition: it holds once `NAME` is defined.
 
 An action passes a secret to a program on its stdin, never on its command
 line, where `ps` would show it. With curl:

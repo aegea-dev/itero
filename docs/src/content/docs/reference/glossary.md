@@ -12,8 +12,8 @@ machine-wide.
 ### workflow
 
 A JSON file in `workflows/`, named by its file name: when it runs (`on`)
-and its `steps`, with optional `success`, `failure` and `error` lists and
-a `timeout`. A workflow can be a step of another. See
+and its `steps`, with optional `meta`, `success`, `failure` and `error`
+lists and a `timeout`. A workflow can be a step of another. See
 [Writing a workflow](/guides/workflows/).
 
 ### step
@@ -41,13 +41,20 @@ one message of its file name's type.
 
 ### schedule
 
-A cron line in `on`, in the machine's local time: `0 9 * * *`.
+A cron line in `on`, in the machine's local time:
+`{"schedule": "0 9 * * *"}`.
+
+### path
+
+A file or folder in `on`, watched by the daemon: `{"path": "inbox"}`.
+Each change starts a run.
 
 ### run
 
-One go through a workflow, started by a message or a schedule. It has an
-id (a UUIDv7) and keeps the version of its workflows it started with. It
-ends as `done`, `failed` or `error`.
+One go through a workflow, started by a message, a schedule or a watched
+path. It has an id (a UUIDv7) and a name (`misty-lake`), and keeps the
+version of its workflows it started with. It ends as `done`, `failed` or
+`error`.
 
 ### state
 
@@ -68,9 +75,9 @@ waits for all of them.
 
 ### condition
 
-An `on` in a workflow or a step: `$name` (in the state), `$$NAME`
-(defined), or `{"$name": value}` (exactly). A step whose `on` does not
-hold is skipped.
+An entry of `on` in a workflow or a step: `{"has": "$name"}` (in the
+state), `{"has": "$$NAME"}` (defined), or `{"$name": value}` (exactly). A
+step whose `on` does not hold is skipped.
 
 ### args
 
@@ -89,24 +96,39 @@ per workflow.
 
 ### journal
 
-`.itero/journal.sqlite`: every message, run and answer. The queue and the
-log; local, never synced. Ended runs and their messages are forgotten a
-day later.
+`.itero/journal.sqlite`: every message, run and answer, and the IDs.
+Local, never synced. Ended runs and their messages are forgotten a day
+later (`keep`).
 
 ### daemon
 
-`itero daemon`: makes passes, one a second. It starts sources, takes
-messages and schedules, asks the manager, saves each answer, and hands
-steps to workers.
+`itero daemon`: runs one workspace, pass after pass. It starts sources,
+watches paths, takes messages and schedules, decides what each run does
+next, and runs each step's action in its own process. See
+[Workspaces, workflows and runs](/start/concepts/).
 
-### manager
+### log
 
-Decides what a run does next. Pure: JSON in, JSON out, no files, no
-network, no clock.
+`.itero/itero.log`: one JSON line for everything the daemon does. See
+[The log, IDs and names](/guides/log/).
 
-### worker
+### id and name
 
-Runs one step in its own process, and exits.
+What itero gives the workspace, each daemon's life, each workflow and
+each run: a UUIDv7, and a name (two random words, or a workflow's file
+name). Commands take either: `itero runs misty-lake`.
+
+### meta
+
+What a person says about a workflow (`meta`) or a workspace (`[meta]`):
+a description, `from` and `until`, `off`, `internal`, and keys of their
+own.
+
+### internal
+
+A workflow with `"meta": {"internal": true}`: it looks after the
+workspace. Listed apart, outside the limits. `keep` and `logs` are built
+in. See [The daemon's own workflows](/guides/maintenance/).
 
 ### service
 

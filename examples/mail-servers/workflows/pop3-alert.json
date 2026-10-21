@@ -1,8 +1,8 @@
 {
-  "on": ["* * * * *"],
+  "on": [{ "schedule": "* * * * *" }],
   "steps": [
     { "#pop3-check": { "host": "pop.example.com", "port": 995, "tls": true,
                        "user": "me@example.com", "password": "$$POP3_PASS" } },
-    { "#notify": { "on": ["$text"] } }
+    { "#notify": { "on": [{ "has": "$text" }] } }
   ]
 }

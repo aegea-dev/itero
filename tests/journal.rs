@@ -111,7 +111,7 @@ fn the_runs_of_the_old_form_end_and_their_events_stay() {
     assert!(old.handled.is_some());
     assert_eq!(old.note.as_deref(), Some("a run of the old form"));
     // a message not taken yet is still waiting for the daemon
-    assert_eq!(j.next().unwrap().unwrap().event.id, "e-eski");
+    assert_eq!(j.next(&[]).unwrap().unwrap().event.id, "e-eski");
 }
 
 fn start(workflow: &str, flows: Value) -> Start {
@@ -127,7 +127,7 @@ fn start(workflow: &str, flows: Value) -> Start {
 fn a_version_of_a_runs_workflows_is_pinned_once() {
     let d = tempfile::tempdir().unwrap();
     let mut j = Journal::open(&ws(d.path())).unwrap();
-    let flows = json!({"sipariş": {"on": ["order.placed"], "steps": ["#gönder"]}});
+    let flows = json!({"sipariş": {"on": [{ "event": "order.placed" }], "steps": ["#gönder"]}});
     let a = j
         .start_run(&start("sipariş", flows.clone()), NOW, None)
         .unwrap();
@@ -163,7 +163,7 @@ fn a_message_starts_runs_and_reaches_waiting_runs_in_one_go() {
         json!({"order": 43}),
     ))
     .unwrap();
-    let m = j.next().unwrap().unwrap();
+    let m = j.next(&[]).unwrap().unwrap();
     let waiting = j
         .start_run(
             &start("sipariş", json!({"sipariş": {"steps": ["#a"]}})),
@@ -242,4 +242,77 @@ fn a_day_after_they_end_runs_and_their_messages_are_forgotten() {
         .collect();
     // the old one goes; the newer one may still be wanted by the run under way
     assert_eq!(messages, vec!["m-yeni"]);
+}
+
+fn two_words(name: &str) -> bool {
+    let w: Vec<&str> = name.split('-').collect();
+    w.len() == 2
+        && w.iter()
+            .all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase()))
+}
+
+#[test]
+fn the_workspace_has_one_identity_kept_in_its_journal() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = ws(d.path());
+    let a = Journal::open(&ws).unwrap().workspace().unwrap();
+    assert_eq!(a.id.len(), 36, "a UUIDv7: {}", a.id);
+    assert!(two_words(&a.name), "{}", a.name);
+    assert_eq!(a.itero, env!("CARGO_PKG_VERSION"));
+    assert!(a.created.ends_with('Z'), "{}", a.created);
+    assert_eq!(Journal::open(&ws).unwrap().workspace().unwrap(), a);
+}
+
+#[test]
+fn an_earlier_journal_gets_an_identity_too() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = ws(d.path());
+    std::fs::create_dir_all(d.path().join(".itero")).unwrap();
+    rusqlite::Connection::open(ws.journal())
+        .unwrap()
+        .execute_batch(VERSION_1)
+        .unwrap();
+    let w = Journal::open(&ws).unwrap().workspace().unwrap();
+    assert_eq!(w.id.len(), 36);
+}
+
+#[test]
+fn a_workflow_keeps_its_id_while_its_name_stays() {
+    let d = tempfile::tempdir().unwrap();
+    let j = Journal::open(&ws(d.path())).unwrap();
+    let a = j.workflow_id("sipariş", NOW).unwrap();
+    let b = j.workflow_id("sipariş", "2026-10-22T10:00:00Z").unwrap();
+    assert_eq!(a, b);
+    assert_eq!((a.name.as_str(), a.created.as_str()), ("sipariş", NOW));
+    assert_ne!(j.workflow_id("kargo", NOW).unwrap().id, a.id);
+}
+
+#[test]
+fn a_run_has_a_two_word_name_and_is_found_by_it_or_its_id() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = ws(d.path());
+    let mut j = Journal::open(&ws).unwrap();
+    let flows = json!({"sipariş": {"steps": ["#gönder"]}});
+    let a = j
+        .start_run(&start("sipariş", flows.clone()), NOW, None)
+        .unwrap();
+    let ra = j.run(&a).unwrap().unwrap();
+    assert!(two_words(&ra.name), "{}", ra.name);
+    assert_eq!(j.run_by(&a).unwrap(), vec![ra.clone()]);
+    assert_eq!(j.run_by(&ra.name).unwrap(), vec![ra.clone()]);
+    assert!(j.run_by("yok-böyle").unwrap().is_empty());
+    let b = j
+        .start_run(&start("sipariş", flows), "2026-10-21T11:00:00Z", None)
+        .unwrap();
+    rusqlite::Connection::open(ws.journal())
+        .unwrap()
+        .execute("UPDATE runs SET name = ?1", [&ra.name])
+        .unwrap();
+    let both: Vec<String> = j
+        .run_by(&ra.name)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(both, vec![b, a], "two with one name: the newest first");
 }

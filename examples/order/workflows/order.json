@@ -1,5 +1,5 @@
 {
-  "on": ["order.placed"],
+  "on": [{ "event": "order.placed" }],
   "steps": [
     ["#check-payment", "#check-stock"],
     "order-process",

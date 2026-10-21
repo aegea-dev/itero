@@ -15,7 +15,7 @@ A workflow, `workflows/greet.json`: on a `greet.someone` message, run the
 action `#hello`, then show what it said.
 
 ```json
-{ "on": ["greet.someone"], "steps": ["#hello", "#notify"] }
+{ "on": [{ "event": "greet.someone" }], "steps": ["#hello", "#notify"] }
 ```
 
 An action, `actions/hello`: any executable file. It gets the message's
@@ -42,8 +42,10 @@ itero runs
 ```
 
 A notification says "Merhaba, Ayşe!", and `itero runs` shows the run as
-`done`. Without `--once`, `itero daemon` keeps running and takes each
-message as it comes; `itero service install` starts it at login.
+`done`, with its name: `itero runs <name>` tells it step by step, and
+`.itero/itero.log` has a line for each step. Without `--once`, `itero
+daemon` keeps running and takes each message as it comes; `itero service
+install` starts it at login.
 
 ## Next
 
@@ -51,5 +53,7 @@ message as it comes; `itero service install` starts it at login.
   workflows as steps, the end lists.
 - [Actions](/guides/actions/): what an action gets and how it answers.
 - [Messages and sources](/guides/messages/): where messages come from.
-- The examples in the repository: `mail-alert`, `mail-servers`, `order`
-  and `page-digest`.
+- [The log, IDs and names](/guides/log/): what happened, and how to find
+  it.
+- The examples in the repository: `mail-alert`, `mail-servers`, `order`,
+  `page-digest` and `photos`.

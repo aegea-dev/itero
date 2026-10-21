@@ -1,13 +1,13 @@
 ---
 title: Writing a workflow
-description: on, steps, side by side, conditions, workflows as steps, and the lists run at the end.
+description: on, meta, steps, side by side, conditions, workflows as steps, and the lists run at the end.
 ---
 
 A workflow is a JSON file in `workflows/`; its name is its file name.
 
 ```json
 {
-  "on": ["order.placed"],
+  "on": [{ "event": "order.placed" }],
   "steps": [
     ["#check-payment", "#check-stock"],
     "order-process",
@@ -21,24 +21,57 @@ A workflow is a JSON file in `workflows/`; its name is its file name.
 
 ## When it runs: `on`
 
-A list of:
+A list of objects, each saying one thing:
 
-- **message types**: `order.placed` starts a run when such a message comes;
-- **schedules**, in cron form and the machine's local time: `0 9 * * *`;
-- **`$name`**: the value is in the run's state;
-- **`$$NAME`**: that environment variable or secret is defined.
+| Entry | Means |
+|---|---|
+| `{ "event": "order.placed" }` | a message of this type starts a run |
+| `{ "schedule": "0 9 * * *" }` | a schedule starts a run (cron, the machine's local time) |
+| `{ "path": "~/Pictures/inbox" }` | a change to this file or folder starts a run ([Watching files](/guides/messages/#watching-files)) |
+| `{ "$paid": true }` | condition: the state's `paid` is exactly `true` |
+| `{ "has": "$order" }` | condition: `order` is in the state |
+| `{ "has": ["$order", "$$API"] }` | condition: both are there; `$$API` is an environment variable or a secret |
 
-Message types and schedules are alternatives: any of them starts a run.
-`$` and `$$` entries are conditions that must all hold:
-`["order.received", "$$API"]` starts a run on `order.received` only if
-`API` is defined.
+`event`, `schedule` and `path` are alternatives: any of them starts a
+run. The others are conditions that must all hold:
 
-`on` can also be an object of exact values: `{"$order": 43}` holds when the
-state has `order` equal to `43`. Values compare exactly: `0` is not
-`false`.
+```json
+"on": [{ "event": "order.received" }, { "has": "$$API" }]
+```
 
-A workflow with no message type or schedule in its `on` never starts by
-itself: it runs only as a step of another.
+starts a run on `order.received` only if `API` is defined. Values compare
+exactly: `0` is not `false`. An `event`, `schedule` or `path` stands alone
+in its object.
+
+A workflow with no `event`, `schedule` or `path` never starts by itself:
+it runs only as a step of another.
+
+## About it: `meta`
+
+An optional object for what is not the work itself:
+
+```json
+{
+  "meta": {
+    "description": "Orders from the shop",
+    "from": "2026-11-01", "until": "2026-12-31",
+    "owner": "ayşe", "tags": ["orders", "payments"]
+  },
+  "on": [{ "event": "order.placed" }],
+  "steps": ["#check-payment", "#ship"]
+}
+```
+
+| Key | Means |
+|---|---|
+| `description` | text for people |
+| `from`, `until` | a date or an RFC 3339 time: outside them nothing starts it; runs under way finish. A date is a whole day. |
+| `off` | `true`: nothing starts it, without deleting it |
+| `internal` | `true`: it looks after the workspace ([The daemon's own workflows](/guides/maintenance/)) |
+| any other | yours: itero keeps it, `itero check` shows it, and nothing more |
+
+`id`, `name`, `created`, `path` and `version` are itero's and cannot be
+set ([The log, IDs and names](/guides/log/)).
 
 ## What it does: `steps`
 
@@ -53,7 +86,7 @@ Steps run in order. A step is:
 - **an object**: a name with data for it, and when it runs:
 
   ```json
-  { "#ship": { "carrier": "PTT Kargo", "on": { "$paid": true, "$stock": true } } }
+  { "#ship": { "carrier": "PTT Kargo", "on": [{ "$paid": true, "$stock": true }] } }
   ```
 
   The step runs only if its `on` holds; otherwise it is skipped. The other
@@ -65,12 +98,12 @@ So branches are steps with conditions. `order-process` picks one of four:
 
 ```json
 {
-  "on": ["$paid", "$stock"],
+  "on": [{ "has": ["$paid", "$stock"] }],
   "steps": [
-    { "#ship":           { "on": { "$paid": true,  "$stock": true } } },
-    { "#remind-payment": { "on": { "$paid": false, "$stock": true } } },
-    { "#remind-stock":   { "on": { "$paid": true,  "$stock": false } } },
-    { "#cancel":         { "on": { "$paid": false, "$stock": false } } }
+    { "#ship":           { "on": [{ "$paid": true,  "$stock": true }] } },
+    { "#remind-payment": { "on": [{ "$paid": false, "$stock": true }] } },
+    { "#remind-stock":   { "on": [{ "$paid": true,  "$stock": false }] } },
+    { "#cancel":         { "on": [{ "$paid": false, "$stock": false }] } }
   ]
 }
 ```
@@ -88,7 +121,9 @@ Steps run at the end, by the outcome:
 
 These steps get `$why` and `$failed_step`. The run ends as `done`,
 `failed` or `error`; if one of these steps breaks, it ends as `error` and
-no other list runs. A workflow used as a step has no end lists of its own:
+no other list runs. A run ending in error or failed also sends
+`itero.run.error` or `itero.run.failed`, for workflows that watch over
+others ([The daemon's own workflows](/guides/maintenance/)). A workflow used as a step has no end lists of its own:
 the run's own workflow has them.
 
 ## Waiting: `timeout`

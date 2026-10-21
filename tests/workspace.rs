@@ -24,7 +24,8 @@ fn a_workspace_without_its_folders_has_no_workflows_and_its_daemon_idles() {
     let d = tempfile::tempdir().unwrap();
     write(d.path(), "itero.toml", "");
     let ws = workspace::find(d.path()).unwrap();
-    assert!(ws.flows().unwrap().is_empty());
+    let names: Vec<String> = ws.flows().unwrap().into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["keep", "logs"], "only the built-in ones");
     assert!(ws.source_files().unwrap().is_empty());
     let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
     let pass = itero::engine::daemon::run_once(&ws, chrono::Utc::now(), exe).unwrap();
@@ -64,7 +65,7 @@ fn workflows_are_named_after_their_files() {
     write(
         d.path(),
         "workflows/posta-uyarısı.json",
-        r##"{ "on": ["mail.received"], "steps": ["#notify"] }"##,
+        r##"{ "on": [{ "event": "mail.received" }], "steps": ["#notify"] }"##,
     );
     write(
         d.path(),
@@ -73,7 +74,7 @@ fn workflows_are_named_after_their_files() {
     );
     let flows = ws.flows().unwrap();
     let names: Vec<&str> = flows.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, vec!["posta-uyarısı", "sipariş"]);
+    assert_eq!(names, vec!["keep", "logs", "posta-uyarısı", "sipariş"]);
     write(d.path(), "workflows/bozuk.json", r##"{ "steps": [] }"##);
     let e = format!("{:#}", ws.flows().unwrap_err());
     assert!(
@@ -149,4 +150,60 @@ fn args_are_an_object_or_a_list_of_objects() {
         let e = format!("{:#}", ws.args(name).unwrap_err());
         assert!(e.contains(&format!("{name}.json")), "{text}: {e}");
     }
+}
+
+#[test]
+fn meta_is_free_and_limits_have_defaults() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = simple(d.path());
+    assert!(ws.meta.is_empty());
+    let l = &ws.limits;
+    assert_eq!((l.workflows, l.runs, l.steps, l.logs), (100, 1000, 8, 3));
+    assert_eq!((l.space, l.log), (1 << 30, 10 << 20));
+    assert_eq!(l.keep, std::time::Duration::from_secs(86_400));
+    write(
+        d.path(),
+        "itero.toml",
+        "[meta]\ndescription = \"Ev: posta ve siparişler\"\nsahibi = \"ayşe\"\netiketler = [\"ev\", \"küçük\"]\n\n[limits]\nruns = 5\nspace = \"500MB\"\nkeep = \"2h\"\nlog = \"64KB\"\n",
+    );
+    let ws = workspace::find(d.path()).unwrap();
+    assert_eq!(ws.meta["sahibi"], "ayşe");
+    assert_eq!(ws.meta["etiketler"], serde_json::json!(["ev", "küçük"]));
+    assert_eq!(ws.limits.runs, 5);
+    assert_eq!(ws.limits.workflows, 100);
+    assert_eq!(ws.limits.space, 500 << 20);
+    assert_eq!(ws.limits.log, 64 << 10);
+    assert_eq!(ws.limits.keep, std::time::Duration::from_secs(7200));
+}
+
+#[test]
+fn limit_mistakes_are_named() {
+    for (toml, says) in [
+        ("[limits]\nkoşu = 5\n", "koşu"),
+        ("[limits]\nspace = \"çok\"\n", "a size is like 10MB or 1GB"),
+        ("[limits]\nkeep = \"bir gün\"\n", "a duration is like"),
+        ("[limits]\nsteps = 0\n", "steps is at least 1"),
+        ("[meta]\nid = \"01a0\"\n", "id is given by itero"),
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), "itero.toml", toml);
+        let e = format!("{:#}", workspace::find(d.path()).err().unwrap());
+        assert!(e.contains(says), "{toml}: {e}");
+    }
+}
+
+#[test]
+fn more_workflows_than_the_limit_is_an_error() {
+    let d = tempfile::tempdir().unwrap();
+    write(d.path(), "itero.toml", "[limits]\nworkflows = 2\n");
+    let ws = workspace::find(d.path()).unwrap();
+    for n in ["bir", "iki", "üç"] {
+        write(
+            d.path(),
+            &format!("workflows/{n}.json"),
+            r##"{ "steps": ["#gönder"] }"##,
+        );
+    }
+    let e = format!("{:#}", ws.flows().unwrap_err());
+    assert!(e.contains("3 workflows") && e.contains("limits"), "{e}");
 }

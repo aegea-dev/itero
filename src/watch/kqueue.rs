@@ -1,7 +1,7 @@
-//! macOS: kqueue's vnode events on the target and on its parent folder.
-//! The target's own events say it changed, was removed or renamed; the
-//! parent's say an entry came or went, which is how a file that is not
-//! there yet, or that an atomic save replaced, is found again.
+//! macOS: kqueue's vnode events on each target and on its parent folder,
+//! all on one kqueue. A target's own events say it changed, was removed or
+//! renamed; its parent's say an entry came or went, which is how a file
+//! that is not there yet, or that an atomic save replaced, is found again.
 use super::{Backend, Change, Kind};
 use std::ffi::CString;
 use std::io;
@@ -17,13 +17,18 @@ const TARGET: u32 = libc::NOTE_WRITE
     | libc::NOTE_RENAME
     | libc::NOTE_REVOKE;
 
-pub struct Kqueue {
-    kq: OwnedFd,
+/// One watched path. Closing its descriptors drops their events.
+struct Entry {
     path: PathBuf,
     /// The target's own watch and its inode; none while it is not there.
     target: Option<(OwnedFd, u64)>,
     /// The parent folder's watch.
     parent: OwnedFd,
+}
+
+pub struct Kqueue {
+    kq: OwnedFd,
+    entries: Vec<Entry>,
 }
 
 /// Opens a path for events only: it keeps no volume busy.
@@ -61,34 +66,26 @@ fn register(kq: RawFd, fd: RawFd, fflags: u32) -> io::Result<()> {
     }
 }
 
-impl Kqueue {
-    pub fn new(path: &Path) -> io::Result<Kqueue> {
-        // SAFETY: kqueue takes no arguments
-        let kq = unsafe { libc::kqueue() };
-        if kq < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: a new descriptor this function owns
-        let kq = unsafe { OwnedFd::from_raw_fd(kq) };
+impl Entry {
+    fn new(kq: RawFd, path: &Path) -> io::Result<Entry> {
         let folder = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         let parent = open_evtonly(folder)?;
-        register(kq.as_raw_fd(), parent.as_raw_fd(), libc::NOTE_WRITE)?;
-        let mut k = Kqueue {
-            kq,
+        register(kq, parent.as_raw_fd(), libc::NOTE_WRITE)?;
+        let mut e = Entry {
             path: path.to_path_buf(),
             target: None,
             parent,
         };
-        k.watch_target()?;
-        Ok(k)
+        e.watch_target(kq)?;
+        Ok(e)
     }
 
     /// Watches the target if it is there and not watched already; true
     /// when a new watch was set.
-    fn watch_target(&mut self) -> io::Result<bool> {
+    fn watch_target(&mut self, kq: RawFd) -> io::Result<bool> {
         let Some(ino) = inode(&self.path) else {
             self.target = None;
             return Ok(false);
@@ -101,21 +98,90 @@ impl Kqueue {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(e) => return Err(e),
         };
-        register(self.kq.as_raw_fd(), fd.as_raw_fd(), TARGET)?;
+        register(kq, fd.as_raw_fd(), TARGET)?;
         self.target = Some((fd, ino));
         Ok(true)
+    }
+
+    /// What its events this time say: `target`, the flags of its target's
+    /// events, and `parent`, whether its parent folder had any.
+    fn changes(&mut self, kq: RawFd, target: &[u32], parent: bool) -> io::Result<Vec<Kind>> {
+        let mut out = vec![];
+        let mut look_again = parent;
+        for f in target {
+            let kind = if f & libc::NOTE_DELETE != 0 {
+                Kind::Removed
+            } else if f & libc::NOTE_RENAME != 0 {
+                Kind::Renamed
+            } else if f & libc::NOTE_REVOKE != 0 {
+                Kind::Rescan
+            } else {
+                Kind::Changed
+            };
+            if kind != Kind::Changed {
+                // its watch now follows an inode that is gone or moved
+                self.target = None;
+                look_again = true;
+            }
+            out.push(kind);
+        }
+        if look_again {
+            let had = self.target.is_some() || out.iter().any(|k| *k != Kind::Changed);
+            if inode(&self.path).is_none() {
+                if self.target.take().is_some() {
+                    out.push(Kind::Removed);
+                }
+            } else if self.watch_target(kq)? {
+                // a new watch: what was written before it was set is unseen
+                out.push(if had { Kind::Rescan } else { Kind::Created });
+            }
+        }
+        Ok(out)
+    }
+}
+
+impl Kqueue {
+    pub fn new(paths: &[PathBuf]) -> io::Result<Kqueue> {
+        // SAFETY: kqueue takes no arguments
+        let kq = unsafe { libc::kqueue() };
+        if kq < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut k = Kqueue {
+            // SAFETY: a new descriptor this function owns
+            kq: unsafe { OwnedFd::from_raw_fd(kq) },
+            entries: vec![],
+        };
+        k.set(paths)?;
+        Ok(k)
     }
 }
 
 impl Backend for Kqueue {
+    fn set(&mut self, paths: &[PathBuf]) -> io::Result<()> {
+        self.entries.retain(|e| paths.contains(&e.path));
+        let mut failed = None;
+        for p in paths {
+            if !self.entries.iter().any(|e| e.path == *p) {
+                match Entry::new(self.kq.as_raw_fd(), p) {
+                    Ok(e) => self.entries.push(e),
+                    Err(e) => {
+                        failed.get_or_insert(super::naming(p, e));
+                    }
+                }
+            }
+        }
+        failed.map_or(Ok(()), Err)
+    }
+
     fn wait(&mut self, timeout: Duration) -> io::Result<Vec<Change>> {
         let ts = libc::timespec {
             tv_sec: timeout.as_secs().min(i64::MAX as u64) as libc::time_t,
             tv_nsec: timeout.subsec_nanos() as libc::c_long,
         };
         // SAFETY: kevent is plain data; all zeros is a valid value
-        let mut evs: [libc::kevent; 16] = unsafe { std::mem::zeroed() };
-        // SAFETY: room for 16 events and a valid timeout
+        let mut evs: [libc::kevent; 64] = unsafe { std::mem::zeroed() };
+        // SAFETY: room for 64 events and a valid timeout
         let n = unsafe {
             libc::kevent(
                 self.kq.as_raw_fd(),
@@ -134,51 +200,28 @@ impl Backend for Kqueue {
                 Err(e)
             };
         }
+        let evs = &evs[..n as usize];
+        let kq = self.kq.as_raw_fd();
         let mut out = vec![];
-        let target = self.target.as_ref().map(|(fd, _)| fd.as_raw_fd());
-        let parent = self.parent.as_raw_fd();
-        let mut look_again = false;
-        for ev in &evs[..n as usize] {
-            let fd = ev.ident as RawFd;
-            if Some(fd) == target {
-                let f = ev.fflags;
-                let kind = if f & libc::NOTE_DELETE != 0 {
-                    Kind::Removed
-                } else if f & libc::NOTE_RENAME != 0 {
-                    Kind::Renamed
-                } else if f & libc::NOTE_REVOKE != 0 {
-                    Kind::Rescan
-                } else {
-                    Kind::Changed
-                };
-                if kind != Kind::Changed {
-                    // its watch now follows an inode that is gone or moved
-                    self.target = None;
-                    look_again = true;
-                }
-                out.push(kind);
-            } else if fd == parent {
-                // an entry in the parent came or went: perhaps the target
-                look_again = true;
+        for e in &mut self.entries {
+            let target = e.target.as_ref().map(|(fd, _)| fd.as_raw_fd());
+            let parent = e.parent.as_raw_fd();
+            let mine: Vec<u32> = evs
+                .iter()
+                .filter(|ev| Some(ev.ident as RawFd) == target)
+                .map(|ev| ev.fflags)
+                .collect();
+            let parent_moved = evs.iter().any(|ev| ev.ident as RawFd == parent);
+            if mine.is_empty() && !parent_moved {
+                continue;
+            }
+            for kind in e.changes(kq, &mine, parent_moved)? {
+                out.push(Change {
+                    path: e.path.clone(),
+                    kind,
+                });
             }
         }
-        if look_again {
-            let had = self.target.is_some() || out.iter().any(|k| *k != Kind::Changed);
-            if inode(&self.path).is_none() {
-                if self.target.take().is_some() {
-                    out.push(Kind::Removed);
-                }
-            } else if self.watch_target()? {
-                // a new watch: what was written before it was set is unseen
-                out.push(if had { Kind::Rescan } else { Kind::Created });
-            }
-        }
-        Ok(out
-            .into_iter()
-            .map(|kind| Change {
-                path: self.path.clone(),
-                kind,
-            })
-            .collect())
+        Ok(out)
     }
 }

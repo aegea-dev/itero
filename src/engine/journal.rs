@@ -17,7 +17,7 @@ pub const SCHEMA_VERSION: i64 = 1 + MIGRATIONS.len() as i64;
 /// The steps from each version to the next: `MIGRATIONS[0]` takes version 1
 /// to 2, and so on. A step is only ever added, never changed: a journal on
 /// someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 4] = [
+const MIGRATIONS: [&str; 5] = [
     // 2: what handling an event did, when no run shows it
     "ALTER TABLE events ADD COLUMN note TEXT;",
     // 3: starts waiting for a free slot, paused workflows, sources' cursors
@@ -33,6 +33,10 @@ const MIGRATIONS: [&str; 4] = [
      UPDATE events SET handled = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), note = 'a run of the old form'
        WHERE handled IS NULL AND subject != 'itero.app';
      DELETE FROM runs; DELETE FROM workflows;",
+    // 6: names for runs, identities for workflows (the workspace's is in
+    // meta, made when the journal is opened)
+    "ALTER TABLE runs ADD COLUMN name TEXT;
+     CREATE TABLE workflow_ids (name TEXT PRIMARY KEY, id TEXT NOT NULL, created TEXT NOT NULL, itero TEXT NOT NULL);",
 ];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
@@ -123,6 +127,8 @@ pub struct Recorded {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Run {
     pub id: String,
+    /// Two random words, to say aloud and type.
+    pub name: String,
     pub workflow: String,
     /// The version of its workflows it is pinned to: a UUIDv7.
     pub pin: String,
@@ -132,6 +138,25 @@ pub struct Run {
     pub started: String,
     pub ended: Option<String>,
 }
+
+/// What itero gives a workspace or a workflow, and nobody edits: an id, a
+/// name (two random words, or a workflow's file name), when it was made,
+/// and the itero that made it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Identity {
+    pub id: String,
+    pub name: String,
+    pub created: String,
+    pub itero: String,
+}
+
+/// This itero's version.
+pub const ITERO: &str = env!("CARGO_PKG_VERSION");
+
+/// Flags: `itero.log.full` was sent and the log not yet rolled.
+pub const LOG_FULL: &str = "flag.log_full";
+/// `itero.space.full` was sent and there is no room yet.
+pub const SPACE_FULL: &str = "flag.space_full";
 
 /// A run to start: its workflow, the workflows pinned with it (its own and
 /// those it uses as steps), the message's data, and the message.
@@ -253,6 +278,27 @@ impl Journal {
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?1)",
             params![SCHEMA_VERSION.to_string()],
         )?;
+        let workspace = Identity {
+            id: uuid::Uuid::now_v7().to_string(),
+            name: crate::names::random(),
+            created: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            itero: ITERO.into(),
+        };
+        tx.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES ('workspace', ?1)",
+            params![json(&workspace)?],
+        )?;
+        // runs from before names had them
+        let unnamed: Vec<String> = tx
+            .prepare("SELECT id FROM runs WHERE name IS NULL")?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        for id in unnamed {
+            tx.execute(
+                "UPDATE runs SET name = ?2 WHERE id = ?1",
+                params![id, crate::names::random()],
+            )?;
+        }
         tx.commit()?;
         Ok(Journal { db })
     }
@@ -262,10 +308,14 @@ impl Journal {
         publish(&self.db, e)
     }
 
-    /// The oldest event not yet handled, apart from those for workers.
-    pub fn next(&self) -> Result<Option<Recorded>> {
+    /// The oldest event not yet handled, apart from those for workers and
+    /// those `held` (messages waiting for room).
+    pub fn next(&self, held: &[i64]) -> Result<Option<Recorded>> {
+        let held: Vec<String> = held.iter().map(i64::to_string).collect();
         let sql = format!(
-            "SELECT {COLUMNS} FROM events WHERE handled IS NULL AND subject != 'itero.worker' ORDER BY seq LIMIT 1"
+            "SELECT {COLUMNS} FROM events WHERE handled IS NULL AND subject != 'itero.worker'
+             AND seq NOT IN ({}) ORDER BY seq LIMIT 1",
+            held.join(",")
         );
         Ok(self.db.query_row(&sql, [], row).optional()?)
     }
@@ -325,12 +375,12 @@ impl Journal {
     }
 
     /// The messages for the workspace since `time`, apart from `except`
-    /// (the one that started a run): what a run starting to wait may have
-    /// missed.
+    /// (the one that started a run) and the daemon's own (`itero.`, which
+    /// no run waits for): what a run starting to wait may have missed.
     pub fn messages_since(&self, time: &str, except: Option<&str>) -> Result<Vec<Recorded>> {
         let sql = format!(
             "SELECT {COLUMNS} FROM events WHERE subject = 'itero.app' AND time >= ?1
-               AND (?2 IS NULL OR id != ?2) ORDER BY seq"
+               AND (?2 IS NULL OR id != ?2) AND substr(type, 1, 6) != 'itero.' ORDER BY seq"
         );
         let mut s = self.db.prepare(&sql)?;
         let out = s
@@ -356,7 +406,7 @@ impl Journal {
     pub fn run(&self, id: &str) -> Result<Option<Run>> {
         self.db
             .query_row(
-                "SELECT id, workflow, pin, runtime, input, started, ended FROM runs WHERE id = ?1",
+                &format!("SELECT {RUN_COLUMNS} FROM runs WHERE id = ?1"),
                 params![id],
                 run_row,
             )
@@ -364,40 +414,136 @@ impl Journal {
             .transpose()
     }
 
+    /// A flag the daemon keeps between passes, like `LOG_FULL`.
+    pub fn flag(&self, key: &str) -> Result<bool> {
+        let v: Option<String> = self
+            .db
+            .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(v.as_deref() == Some("1"))
+    }
+
+    pub fn set_flag(&self, key: &str, on: bool) -> Result<()> {
+        self.db.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+            params![key, if on { "1" } else { "0" }],
+        )?;
+        Ok(())
+    }
+
+    /// Gives back the room of what was forgotten: the file shrinks.
+    pub fn compact(&self) -> Result<()> {
+        self.db
+            .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(())
+    }
+
+    /// How many runs are under way, those of the workflows in `apart` left
+    /// out.
+    pub fn active_count(&self, apart: &[String]) -> Result<usize> {
+        let n: i64 = self.db.query_row(
+            "SELECT COUNT(*) FROM runs WHERE ended IS NULL
+             AND workflow NOT IN (SELECT value FROM json_each(?1))",
+            params![json(&apart)?],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
+    /// The runs with this id or name, newest first: a name may be given
+    /// twice.
+    pub fn run_by(&self, id_or_name: &str) -> Result<Vec<Run>> {
+        let mut s = self.db.prepare(&format!(
+            "SELECT {RUN_COLUMNS} FROM runs WHERE id = ?1 OR name = ?1 ORDER BY started DESC, id DESC"
+        ))?;
+        let rows: Vec<Result<Run>> = s
+            .query_map(params![id_or_name], run_row)?
+            .collect::<rusqlite::Result<_>>()?;
+        rows.into_iter().collect()
+    }
+
+    /// The workspace's identity, made with its journal.
+    pub fn workspace(&self) -> Result<Identity> {
+        let t: String =
+            self.db
+                .query_row("SELECT value FROM meta WHERE key = 'workspace'", [], |r| {
+                    r.get(0)
+                })?;
+        Ok(serde_json::from_str(&t)?)
+    }
+
+    /// A workflow's identity by its name, made the first time it is seen.
+    pub fn workflow_id(&self, name: &str, at: &str) -> Result<Identity> {
+        see_workflow(&self.db, name, at)?;
+        Ok(self.db.query_row(
+            "SELECT id, name, created, itero FROM workflow_ids WHERE name = ?1",
+            params![name],
+            |r| {
+                Ok(Identity {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    created: r.get(2)?,
+                    itero: r.get(3)?,
+                })
+            },
+        )?)
+    }
+
+    /// Makes the identities of workflows not seen before, in one go.
+    pub fn see_workflows<'a>(
+        &mut self,
+        names: impl IntoIterator<Item = &'a String>,
+        at: &str,
+    ) -> Result<()> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for n in names {
+            see_workflow(&tx, n, at)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// The runs not ended, oldest first.
     pub fn active_runs(&self) -> Result<Vec<Run>> {
-        let mut s = self.db.prepare(
-            "SELECT id, workflow, pin, runtime, input, started, ended FROM runs
-             WHERE ended IS NULL ORDER BY started, id",
-        )?;
+        let mut s = self.db.prepare(&format!(
+            "SELECT {RUN_COLUMNS} FROM runs
+             WHERE ended IS NULL ORDER BY started, id"
+        ))?;
         let rows: Vec<Result<Run>> = s.query_map([], run_row)?.collect::<rusqlite::Result<_>>()?;
         rows.into_iter().collect()
     }
 
-    /// The newest `limit` runs, of one workflow or all, ended one way (the
-    /// kind of `ended`: done, failed, error, split) or any, newest first.
+    /// The newest `limit` runs, of one workflow or all but those in
+    /// `apart`, ended one way (the kind of `ended`: done, failed, error,
+    /// split) or any, newest first.
     pub fn runs_page(
         &self,
         workflow: Option<&str>,
         ended: Option<&str>,
+        apart: &[String],
         limit: usize,
     ) -> Result<Vec<Run>> {
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let mut s = self.db.prepare(
-            "SELECT id, workflow, pin, runtime, input, started, ended FROM runs
+        let mut s = self.db.prepare(&format!(
+            "SELECT {RUN_COLUMNS} FROM runs
              WHERE (?1 IS NULL OR workflow = ?1)
                AND (?2 IS NULL OR json_extract(runtime, '$.ended.kind') = ?2)
-             ORDER BY started DESC, id DESC LIMIT ?3",
-        )?;
+               AND workflow NOT IN (SELECT value FROM json_each(?3))
+             ORDER BY started DESC, id DESC LIMIT ?4"
+        ))?;
         let rows: Vec<Result<Run>> = s
-            .query_map(params![workflow, ended, limit], run_row)?
+            .query_map(params![workflow, ended, json(&apart)?, limit], run_row)?
             .collect::<rusqlite::Result<_>>()?;
         rows.into_iter().collect()
     }
 
     /// Every run, oldest first.
     pub fn runs(&self) -> Result<Vec<Run>> {
-        let mut out = self.runs_page(None, None, usize::MAX)?;
+        let mut out = self.runs_page(None, None, &[], usize::MAX)?;
         out.reverse();
         Ok(out)
     }
@@ -457,19 +603,21 @@ impl Journal {
     /// copies the message to each run in `waiting`, and marks it handled.
     /// One transaction, so a message taken again starts and copies nothing
     /// twice. Nothing started and nothing copied is noted, not an error.
+    /// Returns the runs started.
     pub fn route(
         &mut self,
         r: &Recorded,
         starts: &[Start],
         waiting: &[String],
         at: &str,
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         let tx = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut started = vec![];
         for s in starts {
             let pin = pin(&tx, &s.workflow, &s.flows)?;
-            insert_run(
+            started.push(insert_run(
                 &tx,
                 &s.workflow,
                 &pin,
@@ -477,7 +625,7 @@ impl Journal {
                 &s.input,
                 at,
                 s.cause.clone(),
-            )?;
+            )?);
         }
         for id in waiting {
             publish(&tx, &copy(&r.event, id, at))?;
@@ -489,7 +637,7 @@ impl Journal {
             params![r.seq, at, note],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(started)
     }
 
     /// When a schedule (`<workflow>#<cron>`) last started a run, or was
@@ -618,8 +766,10 @@ impl Journal {
     }
 }
 
+const RUN_COLUMNS: &str = "id, workflow, pin, runtime, input, started, ended, name";
+
 fn run_row(r: &rusqlite::Row) -> rusqlite::Result<Result<Run>> {
-    let (id, workflow, pin, rt, input, started, ended): (
+    let (id, workflow, pin, rt, input, started, ended, name): (
         String,
         String,
         String,
@@ -627,6 +777,7 @@ fn run_row(r: &rusqlite::Row) -> rusqlite::Result<Result<Run>> {
         Option<String>,
         String,
         Option<String>,
+        String,
     ) = (
         r.get(0)?,
         r.get(1)?,
@@ -635,10 +786,12 @@ fn run_row(r: &rusqlite::Row) -> rusqlite::Result<Result<Run>> {
         r.get(4)?,
         r.get(5)?,
         r.get(6)?,
+        r.get(7)?,
     );
     Ok((|| {
         Ok(Run {
             id,
+            name,
             workflow,
             pin,
             runtime: serde_json::from_str(&rt)?,
@@ -697,8 +850,8 @@ fn insert_run(
 ) -> Result<String> {
     let id = uuid::Uuid::now_v7().to_string();
     db.execute(
-        "INSERT INTO runs (id, workflow, pin, runtime, args, input, started) VALUES (?1, ?2, ?3, ?4, '{}', ?5, ?6)",
-        params![id, workflow, pin, json(rt)?, json(input)?, now],
+        "INSERT INTO runs (id, name, workflow, pin, runtime, args, input, started) VALUES (?1, ?2, ?3, ?4, ?5, '{}', ?6, ?7)",
+        params![id, crate::names::random(), workflow, pin, json(rt)?, json(input)?, now],
     )?;
     let e = Envelope::new(
         "daemon",
@@ -710,6 +863,15 @@ fn insert_run(
     );
     publish(db, &e)?;
     Ok(id)
+}
+
+/// A workflow's identity, made unless it has one.
+fn see_workflow(db: &Connection, name: &str, at: &str) -> Result<()> {
+    db.execute(
+        "INSERT OR IGNORE INTO workflow_ids (name, id, created, itero) VALUES (?1, ?2, ?3, ?4)",
+        params![name, uuid::Uuid::now_v7().to_string(), at, ITERO],
+    )?;
+    Ok(())
 }
 
 fn set_schedule_last(db: &Connection, key: &str, at: &str) -> Result<()> {

@@ -19,31 +19,34 @@ fn err(text: &str) -> String {
 }
 
 #[test]
-fn on_takes_messages_and_schedules_as_alternatives() {
-    let f =
-        flow::parse(r##"{ "on": ["mail.received", "0 * * * *"], "steps": ["#notify"] }"##).unwrap();
-    assert_eq!(f.on.messages, vec!["mail.received"]);
-    assert_eq!(f.on.schedules, vec!["0 * * * *"]);
-    assert!(f.on.present.is_empty() && f.on.defined.is_empty());
-}
-
-#[test]
-fn on_takes_conditions_on_the_state_and_on_secrets() {
-    let f =
-        flow::parse(r##"{ "on": ["sipariş.alındı", "$sipariş", "$$API"], "steps": ["#onayla"] }"##)
-            .unwrap();
-    assert_eq!(f.on.messages, vec!["sipariş.alındı"]);
-    assert_eq!(f.on.present, vec!["sipariş"]);
-    assert_eq!(f.on.defined, vec!["API"]);
-    let g = flow::parse(r##"{ "on": { "$order": 43 }, "steps": ["#ship"] }"##).unwrap();
-    assert_eq!(g.on.equal, obj(json!({"order": 43})));
-    assert!(g.on.messages.is_empty());
-}
-
-#[test]
-fn a_condition_holds_on_exact_values_present_names_and_defined_secrets() {
+fn on_entries_say_what_they_are() {
     let f = flow::parse(
-        r##"{ "on": ["$order", "$$API"], "steps": [{ "#ship": { "on": { "$paid": true, "$stock": 0 } } }] }"##,
+        r##"{ "on": [
+              { "event": "sipariş.alındı" },
+              { "schedule": "0 9 * * *" },
+              { "path": "/var/mail/$$USER" },
+              { "$paid": true, "$stock": 0 },
+              { "has": "$sipariş" },
+              { "has": ["$tutar", "$$API"] }
+            ],
+            "steps": ["#onayla"] }"##,
+    )
+    .unwrap();
+    assert_eq!(f.on.events, vec!["sipariş.alındı"]);
+    assert_eq!(f.on.schedules, vec!["0 9 * * *"]);
+    assert_eq!(f.on.paths, vec!["/var/mail/$$USER"]);
+    assert_eq!(f.on.equal, obj(json!({"paid": true, "stock": 0})));
+    assert_eq!(f.on.has, vec!["$sipariş", "$tutar", "$$API"]);
+    assert!(flow::starts(&f.on));
+    let g = flow::parse(r##"{ "on": [{ "has": "$order" }], "steps": ["#ship"] }"##).unwrap();
+    assert!(!flow::starts(&g.on), "conditions alone start nothing");
+}
+
+#[test]
+fn conditions_hold_on_exact_values_present_names_and_defined_secrets() {
+    let f = flow::parse(
+        r##"{ "on": [{ "has": ["$order", "$$API"] }],
+              "steps": [{ "#ship": { "on": [{ "$paid": true, "$stock": 0 }] } }] }"##,
     )
     .unwrap();
     let defined = |n: &str| n == "API";
@@ -81,12 +84,12 @@ fn a_condition_holds_on_exact_values_present_names_and_defined_secrets() {
 fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
     let f = flow::parse(
         r##"{
-          "on": ["order.placed"],
+          "on": [{ "event": "order.placed" }],
           "steps": [
             ["#check-payment", "stock-check"],
             "order-process",
             "#notify@0.2",
-            { "#ship": { "carrier": "PTT Kargo", "on": { "$paid": true } } }
+            { "#ship": { "carrier": "PTT Kargo", "on": [{ "$paid": true }] } }
           ],
           "success": ["#log-result"],
           "failure": ["#log-result"],
@@ -135,7 +138,7 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
 #[test]
 fn a_workflow_without_on_runs_only_as_a_step() {
     let f = flow::parse(r##"{ "steps": ["#ship"] }"##).unwrap();
-    assert!(f.on.messages.is_empty() && f.on.schedules.is_empty());
+    assert!(!flow::starts(&f.on));
     assert_eq!(f.timeout, None);
 }
 
@@ -146,15 +149,40 @@ fn mistakes_are_named() {
             r##"{ "steps": ["#a"], "tetik": [] }"##,
             "unknown key \"tetik\"",
         ),
-        (r##"{ "on": ["a.b"] }"##, "steps"),
-        (r##"{ "on": ["a.b"], "steps": [] }"##, "steps is empty"),
-        (r##"{ "on": ["sipariş"], "steps": ["#a"] }"##, "\"sipariş\""),
+        (r##"{ "on": [{ "event": "a.b" }] }"##, "steps"),
         (
-            r##"{ "on": ["61 * * * *"], "steps": ["#a"] }"##,
+            r##"{ "on": [{ "event": "a.b" }], "steps": [] }"##,
+            "steps is empty",
+        ),
+        // the old forms, now refused
+        (r##"{ "on": ["a.b"], "steps": ["#a"] }"##, "an object"),
+        (r##"{ "on": { "$a": 1 }, "steps": ["#a"] }"##, "a list"),
+        (
+            r##"{ "on": [{ "event": "sipariş" }], "steps": ["#a"] }"##,
+            "\"sipariş\"",
+        ),
+        (
+            r##"{ "on": [{ "schedule": "61 * * * *" }], "steps": ["#a"] }"##,
             "61 * * * *",
         ),
         (
-            r##"{ "on": ["a.b"], "steps": ["#a"], "timeout": "bir gün" }"##,
+            r##"{ "on": [{ "event": "a.b", "$vip": true }], "steps": ["#a"] }"##,
+            "one thing",
+        ),
+        (
+            r##"{ "on": [{ "olay": "a.b" }], "steps": ["#a"] }"##,
+            "\"olay\"",
+        ),
+        (r##"{ "on": [{ "$$API": 1 }], "steps": ["#a"] }"##, "$$API"),
+        (r##"{ "on": [{ "has": 3 }], "steps": ["#a"] }"##, "has"),
+        (
+            r##"{ "on": [{ "has": ["ad"] }], "steps": ["#a"] }"##,
+            "\"ad\"",
+        ),
+        (r##"{ "on": [{ "path": 7 }], "steps": ["#a"] }"##, "path"),
+        (r##"{ "on": [{ "path": "" }], "steps": ["#a"] }"##, "path"),
+        (
+            r##"{ "on": [{ "event": "a.b" }], "steps": ["#a"], "timeout": "bir gün" }"##,
             "bir gün",
         ),
         (r##"{ "steps": [{ "#a": {}, "#b": {} }] }"##, "one name"),
@@ -162,11 +190,6 @@ fn mistakes_are_named() {
         (r##"{ "steps": [["#a", { "#b": {} }]] }"##, "side by side"),
         (r##"{ "steps": ["#"] }"##, "\"#\""),
         (r##"{ "steps": ["#a@x.1"] }"##, "version"),
-        (r##"{ "on": { "$$API": "x" }, "steps": ["#a"] }"##, "$$API"),
-        (
-            r##"{ "on": { "order": 1 }, "steps": ["#a"] }"##,
-            "\"order\"",
-        ),
         (r##"[]"##, "an object"),
     ] {
         let e = err(text);
@@ -188,5 +211,68 @@ fn message_types_are_two_words_or_more() {
         "$order",
     ] {
         assert!(!flow::is_message_type(t), "{t}");
+    }
+}
+
+#[test]
+fn meta_keeps_the_known_keys_and_the_persons_own() {
+    let f = flow::from_value(&json!({
+        "meta": {
+            "description": "Siparişler dükkândan",
+            "from": "2026-11-01", "until": "2026-12-31",
+            "internal": true,
+            "sahibi": "ayşe", "etiketler": ["ödeme", "kargo"]
+        },
+        "steps": ["#gönder"]
+    }))
+    .unwrap();
+    assert_eq!(f.meta.description.as_deref(), Some("Siparişler dükkândan"));
+    assert!(f.meta.internal && !f.meta.off);
+    assert_eq!(f.meta.other["sahibi"], "ayşe");
+    assert_eq!(f.meta.other["etiketler"], json!(["ödeme", "kargo"]));
+    let at = |s: &str| s.parse().unwrap();
+    // a date is a whole day: from its start, until its end
+    assert!(!flow::active(&f.meta, at("2026-10-31T23:59:59Z")));
+    assert!(flow::active(&f.meta, at("2026-11-01T00:00:00Z")));
+    assert!(flow::active(&f.meta, at("2026-12-31T23:59:59Z")));
+    assert!(!flow::active(&f.meta, at("2027-01-01T00:00:00Z")));
+    let timed = flow::from_value(&json!({
+        "meta": { "until": "2026-12-31T18:00:00+03:00" }, "steps": ["#gönder"]
+    }))
+    .unwrap();
+    assert!(flow::active(&timed.meta, at("2026-12-31T14:59:59Z")));
+    assert!(!flow::active(&timed.meta, at("2026-12-31T15:00:00Z")));
+    let off = flow::from_value(&json!({ "meta": { "off": true }, "steps": ["#gönder"] })).unwrap();
+    assert!(!flow::active(&off.meta, at("2026-11-01T00:00:00Z")));
+    let plain = flow::from_value(&json!({ "steps": ["#gönder"] })).unwrap();
+    assert!(flow::active(&plain.meta, at("2026-11-01T00:00:00Z")));
+}
+
+#[test]
+fn meta_mistakes_are_named() {
+    for (meta, says) in [
+        (json!("açıklama"), "meta is an object"),
+        (json!({ "id": "01a0" }), "id is given by itero"),
+        (json!({ "name": "sipariş" }), "name is given by itero"),
+        (
+            json!({ "created": "2026-10-21" }),
+            "created is given by itero",
+        ),
+        (json!({ "path": "/tmp" }), "path is given by itero"),
+        (json!({ "version": "3" }), "version is given by itero"),
+        (
+            json!({ "from": "yarın" }),
+            "from: a date (2026-11-01) or a time",
+        ),
+        (
+            json!({ "until": 2026 }),
+            "until: a date (2026-11-01) or a time",
+        ),
+        (json!({ "off": "evet" }), "off is true or false"),
+        (json!({ "internal": 1 }), "internal is true or false"),
+        (json!({ "description": ["ü"] }), "description is text"),
+    ] {
+        let e = flow::from_value(&json!({ "meta": meta, "steps": ["#gönder"] })).unwrap_err();
+        assert!(e.contains(says), "{meta}: {e}");
     }
 }

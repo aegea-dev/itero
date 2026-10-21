@@ -6,7 +6,7 @@ small executable files in any language, leaning on the command line tools
 already there (`sh`, `curl`, `jq`).
 
 ```json
-{ "on": ["order.placed"], "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"] }
+{ "on": [{ "event": "order.placed" }], "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"] }
 ```
 
 Documentation: <https://aegea-dev.github.io/itero/>.
@@ -46,18 +46,20 @@ through `notify-send` (or `gdbus`, or `kdialog`).
 A folder with `itero.toml` is a workspace; `itero daemon` runs it.
 
 ```
-itero.toml                 settings (the port)
+itero.toml                 settings: the port, [meta], [limits]
 workflows/order.json       a workflow: when it runs (on) and its steps
 actions/check-payment      an action: an executable, its name its file name
 sources/mail.received      a source: each line it prints is a message of this type
 args/check-payment.json    data for an action (itero args)
+.itero/                    the journal, the log (itero.log) and memory
 ```
 
-- **A workflow** starts on a message type (`order.placed`) or a schedule
-  (`0 9 * * *`), under conditions (`$order`, `$$API`). Its steps are
-  actions (`#name`), workflows, lists that run side by side, and steps
-  with data and their own `on`. `success`, `failure` and `error` run at the
-  end.
+- **A workflow** starts on a message (`{"event": "order.placed"}`), a
+  schedule (`{"schedule": "0 9 * * *"}`) or a watched file
+  (`{"path": "inbox"}`), under conditions (`{"$paid": true}`,
+  `{"has": ["$order", "$$API"]}`). Its steps are actions (`#name`),
+  workflows, lists that run side by side, and steps with data and their
+  own `on`. `success`, `failure` and `error` run at the end.
 - **An action** reads its values as environment variables (from the step,
   its args, then the run's state; `$$NAME` for a secret) and the state on
   stdin, prints a JSON object, and exits 0 (done), 75 (not yet: wait for a
@@ -66,8 +68,9 @@ args/check-payment.json    data for an action (itero args)
   runs waiting for it that it matches by their data.
 
 Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero args`,
-`itero secret`, `itero check`, `itero runs`, `itero errors`, `itero watch`,
-`itero service install|status|uninstall`.
+`itero secret`, `itero check`, `itero info`, `itero runs [<run>]`,
+`itero errors`, `itero watch`, `itero service install|status|uninstall`.
+What the daemon does is in `.itero/itero.log`, one JSON line each.
 
 ## Examples
 
@@ -79,6 +82,8 @@ Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero args`,
   payment waiting for its provider, then shipping and a mail.
 - [`examples/page-digest`](examples/page-digest): a page, summarized by an
   AI assistant, by mail.
+- [`examples/photos`](examples/photos): a thumbnail for each photo dropped
+  into a folder the daemon watches.
 
 ## Design
 

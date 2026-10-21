@@ -44,7 +44,16 @@ async fn health_says_the_loop_is_alive() {
     assert_eq!(v["passes"], 0);
     assert_eq!(v["started"], "2026-10-15T14:00:00Z");
     assert_eq!(v["sources"], json!({}), "no sources");
-    assert_eq!(v["workspace"], json!(d.path().display().to_string()));
+    assert_eq!(
+        v["workspace"]["path"],
+        json!(d.path().display().to_string())
+    );
+    assert_eq!(v["workspace"]["id"].as_str().unwrap().len(), 36);
+    assert!(v["workspace"]["name"].as_str().unwrap().contains('-'));
+    assert_eq!(v["daemon"]["id"].as_str().unwrap().len(), 36);
+    assert!(v["daemon"]["name"].as_str().unwrap().contains('-'));
+    assert_eq!(v["daemon"]["pid"], std::process::id());
+    assert_eq!(v["daemon"]["itero"], env!("CARGO_PKG_VERSION"));
 }
 
 #[tokio::test]
@@ -74,7 +83,12 @@ async fn runs_and_workflows_can_be_read() {
     std::fs::create_dir_all(d.path().join("actions")).unwrap();
     std::fs::write(
         d.path().join("workflows/sayaç.json"),
-        r##"{ "on": ["say.bir"], "steps": ["#yaz"] }"##,
+        r##"{ "on": [{ "event": "say.bir" }], "steps": ["#yaz"] }"##,
+    )
+    .unwrap();
+    std::fs::write(
+        d.path().join("workflows/bakım.json"),
+        r##"{ "meta": { "internal": true }, "on": [{ "event": "say.bir" }], "steps": ["#yaz"] }"##,
     )
     .unwrap();
     let action = d.path().join("actions/yaz");
@@ -103,7 +117,9 @@ async fn runs_and_workflows_can_be_read() {
     let (_, none) = send(&app, get("/runs?status=waiting")).await;
     assert_eq!(none, json!([]));
     let (_, done) = send(&app, get("/runs?status=done")).await;
-    assert_eq!(done.as_array().unwrap().len(), 1);
+    assert_eq!(done.as_array().unwrap().len(), 1, "internal runs left out");
+    let (_, all) = send(&app, get("/runs?all=true")).await;
+    assert_eq!(all.as_array().unwrap().len(), 2, "{all}");
     let id = runs[0]["id"].as_str().unwrap();
     let (code, run) = send(&app, get(&format!("/runs/{id}"))).await;
     assert_eq!(code, StatusCode::OK);
@@ -111,10 +127,24 @@ async fn runs_and_workflows_can_be_read() {
     assert_eq!(run["input"], json!({"kim": "ayşe"}));
     assert_eq!(run["state"], json!({"kim": "ayşe", "son": "çay"}));
     assert_eq!(run["events"][0]["type"], "run.started");
+    let name = runs[0]["name"].as_str().unwrap();
+    let (code, by_name) = send(&app, get(&format!("/runs/{name}"))).await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(by_name["id"], id);
     assert_eq!(send(&app, get("/runs/yok")).await.0, StatusCode::NOT_FOUND);
     let (_, flows) = send(&app, get("/workflows")).await;
-    assert_eq!(flows[0]["name"], "sayaç");
-    assert_eq!(flows[0]["on"]["messages"], json!(["say.bir"]));
+    let named = |n: &str| {
+        flows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == n)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(named("sayaç")["on"]["events"], json!(["say.bir"]));
+    assert_eq!(named("sayaç")["internal"], false);
+    assert_eq!(named("keep")["internal"], true, "built in");
 }
 
 fn post(path: &str, body: &str) -> Request<Body> {

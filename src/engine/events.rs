@@ -22,12 +22,92 @@ impl std::fmt::Display for EmitError {
 
 impl std::error::Error for EmitError {}
 
+/// The start of the types of the daemon's own messages, `itero.run.error`:
+/// workflows may run on them, and only the daemon sends them.
+pub const OWN: &str = "itero.";
+
 /// Types the engine sends itself: from outside they would forge a worker's
-/// result, a timer, a run's start or a source's state.
+/// result, a timer, a run's start, a source's state or the daemon's own
+/// message.
 pub fn engine_own(kind: &str) -> bool {
-    ["action.", "timer.", "run.", "workflow.", "source."]
+    ["action.", "timer.", "run.", "workflow.", "source.", OWN]
         .iter()
         .any(|p| kind.starts_with(p))
+}
+
+/// A watched path changed: `{"path", "kind"}`. It starts the workflows
+/// whose `on` names the path.
+pub const PATH_CHANGED: &str = "itero.path.changed";
+
+/// One of the daemon's own messages, for the workspace.
+pub fn own(kind: &str, data: Value, now: &str) -> Envelope {
+    debug_assert!(kind.starts_with(OWN));
+    Envelope::new("daemon", kind, &journal::subject("app"), now, None, data)
+}
+
+/// What a message will do, as the workflows on disk say: the workflows it
+/// starts, how many runs wait (it may reach them), and, when nothing
+/// starts on its type, the nearest type something does start on.
+#[derive(Debug, Default, PartialEq)]
+pub struct Fate {
+    pub starts: Vec<String>,
+    pub waiting: usize,
+    pub nearest: Option<String>,
+}
+
+pub fn fate(ws: &Workspace, kind: &str, data: &Map<String, Value>) -> anyhow::Result<Fate> {
+    let now = chrono::Utc::now();
+    let defined = |n: &str| super::secrets::get(n).is_some();
+    let flows = ws.flows()?;
+    let starts = flows
+        .iter()
+        .filter(|(_, f)| {
+            f.on.events.iter().any(|e| e == kind)
+                && crate::flow::active(&f.meta, now)
+                && crate::flow::holds(&f.on, data, &defined)
+        })
+        .map(|(n, _)| n.clone())
+        .collect::<Vec<_>>();
+    let waiting = Journal::open(ws)?
+        .active_runs()?
+        .iter()
+        .filter(|r| super::steps::is_waiting(&r.runtime))
+        .count();
+    // a type a letter or three away is a typo
+    let nearest = if starts.is_empty() {
+        flows
+            .iter()
+            .flat_map(|(_, f)| f.on.events.iter())
+            .map(|e| (distance(e, kind), e))
+            .filter(|(d, _)| (1..=3).contains(d))
+            .min()
+            .map(|(_, e)| e.clone())
+    } else {
+        None
+    };
+    Ok(Fate {
+        starts,
+        waiting,
+        nearest,
+    })
+}
+
+/// The edits (a letter added, removed or changed) from `a` to `b`.
+fn distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let here = row[j + 1];
+            row[j + 1] = (prev + usize::from(ca != *cb))
+                .min(row[j] + 1)
+                .min(here + 1);
+            prev = here;
+        }
+    }
+    row[b.len()]
 }
 
 /// Saves a message for the workspace, where it may start runs and reach

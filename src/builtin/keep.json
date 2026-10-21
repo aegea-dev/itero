@@ -1,0 +1,5 @@
+{
+  "meta": { "internal": true, "description": "Forgets what ended long enough ago" },
+  "on": [{ "schedule": "0 * * * *" }, { "event": "itero.space.full" }],
+  "steps": ["#forget"]
+}

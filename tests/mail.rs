@@ -141,6 +141,9 @@ fn check_lists_the_workflow_and_the_source() {
         .unwrap();
     assert!(o.status.success(), "{o:?}");
     let out = String::from_utf8(o.stdout).unwrap();
-    assert!(out.contains("mail-alert\n  #notify  built in"), "{out}");
+    assert!(
+        out.contains("mail-alert\n  id ") && out.contains("  #notify  built in"),
+        "{out}"
+    );
     assert!(out.contains("source mail.received  "), "{out}");
 }
