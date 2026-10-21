@@ -1,0 +1,15 @@
+#!/bin/sh
+# What the page at $url says about itself, as {"page": "..."}: its title
+# and its meta tags (description, keywords, og:title, ...), one per line.
+# The rest of the page is left out: it is mostly markup, and too big for a
+# model.
+curl -fsSL --max-time 30 "$url" |
+  perl -0777 -ne '
+    print "title: $1\n" if /<title[^>]*>\s*(.*?)\s*<\/title>/si;
+    while (/<meta\b([^>]*)>/gsi) {
+      my $tag = $1;
+      my ($name) = $tag =~ /\b(?:name|property)\s*=\s*["\x27]([^"\x27]+)/i;
+      my ($content) = $tag =~ /\bcontent\s*=\s*["\x27]([^"\x27]*)/i;
+      print "$name: $content\n" if defined $name && defined $content && length $content;
+    }' |
+  jq -Rs '{page: .}'

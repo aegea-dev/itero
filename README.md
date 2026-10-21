@@ -82,6 +82,9 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
   payment waiting for its provider, then shipping and a mail.
 - [`examples/page-digest`](examples/page-digest): a page, summarized by an
   AI assistant, by mail.
+- [`examples/page-summary`](examples/page-summary): a page sent in a
+  message, summarized by a model on this machine (LM Studio), printed in
+  the daemon's terminal.
 - [`examples/photos`](examples/photos): a thumbnail for each photo dropped
   into a folder the daemon watches.
 

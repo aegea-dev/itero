@@ -1,0 +1,5 @@
+#!/bin/sh
+# Shows the page and its summary on the terminal the daemon runs in. Its
+# stdout is its answer to itero, so it writes to the terminal itself; run
+# as a service there is none, and it shows nothing.
+{ printf '\n%s\n%s\n' "$url" "$text" > /dev/tty; } 2>/dev/null || true
