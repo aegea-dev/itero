@@ -329,6 +329,76 @@ timers are the workspace's, and only the `daemon` ID is new. Deleting
 with its `.itero/` copies its ID too, since it is the same history.
 `/health` shows the `workspace` and `daemon` IDs.
 
+## Metadata
+
+Every workspace, daemon life, workflow and run has an identity itero gives
+it, which nobody edits, and a few settings a person may give it.
+
+### Given by itero (read-only)
+
+| | Workspace | Daemon (each life) | Workflow | Run |
+|---|---|---|---|---|
+| `id` | UUIDv7, made with its journal | UUIDv7, at its start | UUIDv7, the first time its file is seen | UUIDv7, at its start |
+| `name` | two random words: `quiet-river` | two random words: `brave-otter` | its file name: `order` | two random words: `misty-lake` |
+| `created` | when its journal was made | when it started | when its file was first seen | when it started |
+| `path` | the folder | the folder it runs | its file | |
+| also | the itero version that made it | its pid, host and itero version | its current version, its last run and how it ended, its runs so far | its workflow and status |
+
+- They are kept in the journal, never in files a person writes.
+- A random name is an adjective and a noun, lowercase, joined by `-`,
+  picked from built-in lists. It is a label to say aloud and type; the
+  UUID stays the identity, and two with one name are told apart by it.
+  Commands take either: `itero runs misty-lake`.
+- A workflow's `id` follows its name: editing the file keeps the `id` and
+  gives a new `version`; deleting the file and writing it again keeps it
+  too, since the name is the same.
+
+### Set by a person
+
+**A workflow:** an optional `meta` object, so the top level stays `on`
+and `steps`:
+
+```json
+{
+  "meta": { "description": "Orders from the shop", "from": "2026-11-01", "until": "2026-12-31", "off": false },
+  "on": [{ "event": "order.placed" }],
+  "steps": ["#check-payment", "#ship"]
+}
+```
+
+| Key | Means |
+|---|---|
+| `description` | text for people |
+| `from`, `until` | dates, or times in RFC 3339: outside them nothing starts it; runs under way finish |
+| `off` | `true`: nothing starts it, without deleting it |
+
+**The workspace:** `itero.toml`:
+
+```toml
+port = 8787
+description = "Home: mail and orders"
+
+[limits]
+workflows = 100     # more is refused by itero check and at the daemon's start
+runs = 1000         # runs under way at once; past it, messages wait their turn
+steps = 8           # steps running at once
+space = "1GB"       # .itero/: the journal, the log, memory
+keep = "1d"         # how long ended runs and their messages are kept
+log = "10MB"        # then the log is rotated
+```
+
+Each limit has the default shown. Past `space`, the daemon first forgets
+ended runs sooner than `keep`, oldest first; if `.itero/` is still too big,
+it starts no new run and logs an `error` line until there is room.
+
+### Where to see them
+
+- `itero info`: the workspace and the daemon running it, if any.
+- `itero check`: each workflow's `id`, `version` and `meta`.
+- `/health`: the workspace and the daemon.
+- The log: `daemon.started` carries every field of the workspace and the
+  daemon; other lines carry their IDs, and their names too.
+
 ## The log
 
 `.itero/itero.log`: one JSON object per line, written by the daemon,
@@ -388,6 +458,7 @@ itero secret <NAME>          set a secret (asks; or --file)
 itero runs                   runs, newest first, and how each ended
 itero errors                 runs that ended in error: which step and why
 itero check                  read every file; say what is wrong
+itero info                   the workspace and its daemon: IDs, names, limits
 itero watch <path>           for sources: a line per change
 ```
 
