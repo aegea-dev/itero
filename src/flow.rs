@@ -1,6 +1,7 @@
 //! A workflow file in the simple form (`docs/design-simple.md`): `on`,
 //! `steps`, and the `success`, `failure` and `error` lists run at the end.
 //! Its name is its file name, so the file has none.
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use std::time::Duration;
 
@@ -16,6 +17,82 @@ pub struct Flow {
     pub error: Vec<Step>,
     /// How long a run may wait for data; `None` is `WAIT`.
     pub timeout: Option<Duration>,
+    pub meta: Meta,
+}
+
+/// What a person says about a workflow: a few keys itero knows, and any
+/// others, kept and shown.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Meta {
+    pub description: Option<String>,
+    /// Nothing starts it before this.
+    pub from: Option<DateTime<Utc>>,
+    /// Nothing starts it from this on.
+    pub until: Option<DateTime<Utc>>,
+    /// Nothing starts it.
+    pub off: bool,
+    /// It looks after the workspace.
+    pub internal: bool,
+    /// The person's own keys.
+    pub other: Map<String, Value>,
+}
+
+/// The names itero gives and nobody sets: in a workflow's `meta` and the
+/// workspace's `[meta]` they are an error.
+pub fn given_by_itero(key: &str) -> Result<(), String> {
+    match key {
+        "id" | "name" | "created" | "path" | "version" => {
+            Err(format!("meta: {key} is given by itero and cannot be set"))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Whether anything may start a workflow at `now`: it is not off, and
+/// `now` is within its `from` and `until`.
+pub fn active(meta: &Meta, now: DateTime<Utc>) -> bool {
+    !meta.off && meta.from.is_none_or(|f| now >= f) && meta.until.is_none_or(|u| now < u)
+}
+
+fn meta(v: &Value) -> Result<Meta, String> {
+    let Value::Object(m) = v else {
+        return Err("meta is an object: { \"description\": \"...\" }".into());
+    };
+    let flag = |k: &str, v: &Value| v.as_bool().ok_or(format!("meta: {k} is true or false"));
+    let mut out = Meta::default();
+    for (k, v) in m {
+        given_by_itero(k)?;
+        match k.as_str() {
+            "description" => {
+                out.description = Some(v.as_str().ok_or("meta: description is text")?.into())
+            }
+            "from" => out.from = Some(moment(k, v, false)?),
+            "until" => out.until = Some(moment(k, v, true)?),
+            "off" => out.off = flag(k, v)?,
+            "internal" => out.internal = flag(k, v)?,
+            _ => {
+                out.other.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A date or an RFC 3339 time. A date is a whole day: `from` it starts at
+/// its first second, `until` it ends after its last.
+fn moment(key: &str, v: &Value, end: bool) -> Result<DateTime<Utc>, String> {
+    let wrong = || format!("meta: {key}: a date (2026-11-01) or a time (2026-11-01T09:00:00Z)");
+    let s = v.as_str().ok_or_else(wrong)?;
+    if let Ok(t) = DateTime::parse_from_rfc3339(s) {
+        return Ok(t.with_timezone(&Utc));
+    }
+    let day = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| wrong())?;
+    let day = if end {
+        day.succ_opt().ok_or_else(wrong)?
+    } else {
+        day
+    };
+    Ok(day.and_time(chrono::NaiveTime::MIN).and_utc())
 }
 
 /// When a workflow or a step runs. Messages and schedules are
@@ -74,6 +151,7 @@ pub fn from_value(v: &Value) -> Result<Flow, String> {
     let mut f = Flow::default();
     for (k, v) in top {
         match k.as_str() {
+            "meta" => f.meta = meta(v)?,
             "on" => f.on = on(v)?,
             "steps" => f.steps = steps(k, v)?,
             "success" => f.success = steps(k, v)?,
@@ -87,7 +165,7 @@ pub fn from_value(v: &Value) -> Result<Flow, String> {
             }
             other => {
                 return Err(format!(
-                    "unknown key \"{other}\": a workflow has on, steps, success, failure, error and timeout"
+                    "unknown key \"{other}\": a workflow has meta, on, steps, success, failure, error and timeout"
                 ));
             }
         }

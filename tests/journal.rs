@@ -111,7 +111,7 @@ fn the_runs_of_the_old_form_end_and_their_events_stay() {
     assert!(old.handled.is_some());
     assert_eq!(old.note.as_deref(), Some("a run of the old form"));
     // a message not taken yet is still waiting for the daemon
-    assert_eq!(j.next().unwrap().unwrap().event.id, "e-eski");
+    assert_eq!(j.next(&[]).unwrap().unwrap().event.id, "e-eski");
 }
 
 fn start(workflow: &str, flows: Value) -> Start {
@@ -163,7 +163,7 @@ fn a_message_starts_runs_and_reaches_waiting_runs_in_one_go() {
         json!({"order": 43}),
     ))
     .unwrap();
-    let m = j.next().unwrap().unwrap();
+    let m = j.next(&[]).unwrap().unwrap();
     let waiting = j
         .start_run(
             &start("sipariş", json!({"sipariş": {"steps": ["#a"]}})),

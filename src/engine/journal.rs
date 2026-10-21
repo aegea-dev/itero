@@ -262,10 +262,14 @@ impl Journal {
         publish(&self.db, e)
     }
 
-    /// The oldest event not yet handled, apart from those for workers.
-    pub fn next(&self) -> Result<Option<Recorded>> {
+    /// The oldest event not yet handled, apart from those for workers and
+    /// those `held` (messages waiting for room).
+    pub fn next(&self, held: &[i64]) -> Result<Option<Recorded>> {
+        let held: Vec<String> = held.iter().map(i64::to_string).collect();
         let sql = format!(
-            "SELECT {COLUMNS} FROM events WHERE handled IS NULL AND subject != 'itero.worker' ORDER BY seq LIMIT 1"
+            "SELECT {COLUMNS} FROM events WHERE handled IS NULL AND subject != 'itero.worker'
+             AND seq NOT IN ({}) ORDER BY seq LIMIT 1",
+            held.join(",")
         );
         Ok(self.db.query_row(&sql, [], row).optional()?)
     }
@@ -365,6 +369,16 @@ impl Journal {
     }
 
     /// The runs not ended, oldest first.
+    /// How many runs are under way.
+    pub fn active_count(&self) -> Result<usize> {
+        let n: i64 =
+            self.db
+                .query_row("SELECT COUNT(*) FROM runs WHERE ended IS NULL", [], |r| {
+                    r.get(0)
+                })?;
+        Ok(n as usize)
+    }
+
     pub fn active_runs(&self) -> Result<Vec<Run>> {
         let mut s = self.db.prepare(
             "SELECT id, workflow, pin, runtime, input, started, ended FROM runs

@@ -44,14 +44,8 @@ const MAX_TRIES: usize = 3;
 /// before its step is an error.
 const MAX_RUNS: i64 = 3;
 
-/// More workers than this at once wait for the next batch.
-const MAX_WORKERS: usize = 8;
-
 /// Seconds a step may take: past that it is stopped and tried again.
 const STEP_TIMEOUT: u64 = 600;
-
-/// How long ended runs and handled messages are kept.
-const KEEP: chrono::Duration = chrono::Duration::days(1);
 
 /// What became of an event given to `deliver`.
 enum Delivered {
@@ -199,12 +193,17 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
         j.fire_timer(id, &e)?;
     }
     // runs' events first; then the waiting jobs, whose results are the
-    // next events
+    // next events. Messages that would start a run while `runs` are under
+    // way are held; they are taken again once a run has ended.
+    let mut held = vec![];
     loop {
-        while let Some(r) = j.next()? {
+        while let Some(r) = j.next(&held)? {
             if r.event.subject == journal::subject("app") {
-                route(&flows, &mut j, &r, now)?;
-                pass.delivered += 1;
+                if route(ws, &flows, &mut j, &r, now)? {
+                    pass.delivered += 1;
+                } else {
+                    held.push(r.seq);
+                }
                 continue;
             }
             if let Delivered::Deferred = deliver(ws, &mut j, &r, now, exe)? {
@@ -213,11 +212,14 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
                 return Ok(pass);
             }
             pass.delivered += 1;
+            if !held.is_empty() && j.active_count()? < ws.limits.runs {
+                held.clear();
+            }
             if pass.delivered >= MAX_EVENTS {
                 return Ok(pass);
             }
         }
-        let batch: Vec<Recorded> = j.jobs()?.into_iter().take(MAX_WORKERS).collect();
+        let batch: Vec<Recorded> = j.jobs()?.into_iter().take(ws.limits.steps).collect();
         if batch.is_empty() {
             break;
         }
@@ -276,7 +278,8 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
             super::die_at("result");
         }
     }
-    j.prune(&stamp(now - KEEP))?;
+    let keep = chrono::Duration::from_std(ws.limits.keep).unwrap_or(chrono::Duration::MAX);
+    j.prune(&stamp(now - keep))?;
     Ok(pass)
 }
 
@@ -291,6 +294,11 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>) -> Result<
                 j.set_schedule_last(&key, &stamp(now))?;
                 continue;
             };
+            // off or outside its dates, its slots pass without a run
+            if !flow::active(&f.meta, now) {
+                j.set_schedule_last(&key, &stamp(now))?;
+                continue;
+            }
             let last: DateTime<Utc> = last
                 .parse()
                 .map_err(|_| anyhow!("schedule {key}: its last slot is not a time: {last}"))?;
@@ -322,14 +330,24 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>) -> Result<
     Ok(())
 }
 
-/// A message for the workspace: a run of every workflow whose `on` lists
-/// its type and holds over its data, and a copy for every run waiting for
-/// data.
-fn route(flows: &Flows, j: &mut Journal, r: &Recorded, now: DateTime<Utc>) -> Result<()> {
+/// A message for the workspace: a run of every active workflow whose `on`
+/// lists its type and holds over its data, and a copy for every run
+/// waiting for data. False, and nothing done, when it would start a run
+/// while `runs` are under way: it waits its turn.
+fn route(
+    ws: &Workspace,
+    flows: &Flows,
+    j: &mut Journal,
+    r: &Recorded,
+    now: DateTime<Utc>,
+) -> Result<bool> {
     let data = r.event.data.as_object().cloned().unwrap_or_default();
     let mut starts = vec![];
     for (name, f) in &flows.read {
-        if !f.on.events.contains(&r.event.kind) || !flow::holds(&f.on, &data, &defined) {
+        if !f.on.events.contains(&r.event.kind)
+            || !flow::active(&f.meta, now)
+            || !flow::holds(&f.on, &data, &defined)
+        {
             continue;
         }
         match flows.pinned(name) {
@@ -341,6 +359,9 @@ fn route(flows: &Flows, j: &mut Journal, r: &Recorded, now: DateTime<Utc>) -> Re
             }),
             Err(why) => eprintln!("{}: {name}: {why}", r.event.kind),
         }
+    }
+    if !starts.is_empty() && j.active_count()? >= ws.limits.runs {
+        return Ok(false);
     }
     let waiting: Vec<String> = j
         .active_runs()?
@@ -354,7 +375,8 @@ fn route(flows: &Flows, j: &mut Journal, r: &Recorded, now: DateTime<Utc>) -> Re
             r.event.kind
         );
     }
-    j.route(r, &starts, &waiting, &stamp(now))
+    j.route(r, &starts, &waiting, &stamp(now))?;
+    Ok(true)
 }
 
 /// Why a job that kept being lost is an error.

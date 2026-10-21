@@ -213,3 +213,66 @@ fn message_types_are_two_words_or_more() {
         assert!(!flow::is_message_type(t), "{t}");
     }
 }
+
+#[test]
+fn meta_keeps_the_known_keys_and_the_persons_own() {
+    let f = flow::from_value(&json!({
+        "meta": {
+            "description": "Siparişler dükkândan",
+            "from": "2026-11-01", "until": "2026-12-31",
+            "internal": true,
+            "sahibi": "ayşe", "etiketler": ["ödeme", "kargo"]
+        },
+        "steps": ["#gönder"]
+    }))
+    .unwrap();
+    assert_eq!(f.meta.description.as_deref(), Some("Siparişler dükkândan"));
+    assert!(f.meta.internal && !f.meta.off);
+    assert_eq!(f.meta.other["sahibi"], "ayşe");
+    assert_eq!(f.meta.other["etiketler"], json!(["ödeme", "kargo"]));
+    let at = |s: &str| s.parse().unwrap();
+    // a date is a whole day: from its start, until its end
+    assert!(!flow::active(&f.meta, at("2026-10-31T23:59:59Z")));
+    assert!(flow::active(&f.meta, at("2026-11-01T00:00:00Z")));
+    assert!(flow::active(&f.meta, at("2026-12-31T23:59:59Z")));
+    assert!(!flow::active(&f.meta, at("2027-01-01T00:00:00Z")));
+    let timed = flow::from_value(&json!({
+        "meta": { "until": "2026-12-31T18:00:00+03:00" }, "steps": ["#gönder"]
+    }))
+    .unwrap();
+    assert!(flow::active(&timed.meta, at("2026-12-31T14:59:59Z")));
+    assert!(!flow::active(&timed.meta, at("2026-12-31T15:00:00Z")));
+    let off = flow::from_value(&json!({ "meta": { "off": true }, "steps": ["#gönder"] })).unwrap();
+    assert!(!flow::active(&off.meta, at("2026-11-01T00:00:00Z")));
+    let plain = flow::from_value(&json!({ "steps": ["#gönder"] })).unwrap();
+    assert!(flow::active(&plain.meta, at("2026-11-01T00:00:00Z")));
+}
+
+#[test]
+fn meta_mistakes_are_named() {
+    for (meta, says) in [
+        (json!("açıklama"), "meta is an object"),
+        (json!({ "id": "01a0" }), "id is given by itero"),
+        (json!({ "name": "sipariş" }), "name is given by itero"),
+        (
+            json!({ "created": "2026-10-21" }),
+            "created is given by itero",
+        ),
+        (json!({ "path": "/tmp" }), "path is given by itero"),
+        (json!({ "version": "3" }), "version is given by itero"),
+        (
+            json!({ "from": "yarın" }),
+            "from: a date (2026-11-01) or a time",
+        ),
+        (
+            json!({ "until": 2026 }),
+            "until: a date (2026-11-01) or a time",
+        ),
+        (json!({ "off": "evet" }), "off is true or false"),
+        (json!({ "internal": 1 }), "internal is true or false"),
+        (json!({ "description": ["ü"] }), "description is text"),
+    ] {
+        let e = flow::from_value(&json!({ "meta": meta, "steps": ["#gönder"] })).unwrap_err();
+        assert!(e.contains(says), "{meta}: {e}");
+    }
+}

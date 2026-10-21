@@ -150,3 +150,59 @@ fn args_are_an_object_or_a_list_of_objects() {
         assert!(e.contains(&format!("{name}.json")), "{text}: {e}");
     }
 }
+
+#[test]
+fn meta_is_free_and_limits_have_defaults() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = simple(d.path());
+    assert!(ws.meta.is_empty());
+    let l = &ws.limits;
+    assert_eq!((l.workflows, l.runs, l.steps, l.logs), (100, 1000, 8, 3));
+    assert_eq!((l.space, l.log), (1 << 30, 10 << 20));
+    assert_eq!(l.keep, std::time::Duration::from_secs(86_400));
+    write(
+        d.path(),
+        "itero.toml",
+        "[meta]\ndescription = \"Ev: posta ve siparişler\"\nsahibi = \"ayşe\"\netiketler = [\"ev\", \"küçük\"]\n\n[limits]\nruns = 5\nspace = \"500MB\"\nkeep = \"2h\"\nlog = \"64KB\"\n",
+    );
+    let ws = workspace::find(d.path()).unwrap();
+    assert_eq!(ws.meta["sahibi"], "ayşe");
+    assert_eq!(ws.meta["etiketler"], serde_json::json!(["ev", "küçük"]));
+    assert_eq!(ws.limits.runs, 5);
+    assert_eq!(ws.limits.workflows, 100);
+    assert_eq!(ws.limits.space, 500 << 20);
+    assert_eq!(ws.limits.log, 64 << 10);
+    assert_eq!(ws.limits.keep, std::time::Duration::from_secs(7200));
+}
+
+#[test]
+fn limit_mistakes_are_named() {
+    for (toml, says) in [
+        ("[limits]\nkoşu = 5\n", "koşu"),
+        ("[limits]\nspace = \"çok\"\n", "a size is like 10MB or 1GB"),
+        ("[limits]\nkeep = \"bir gün\"\n", "a duration is like"),
+        ("[limits]\nsteps = 0\n", "steps is at least 1"),
+        ("[meta]\nid = \"01a0\"\n", "id is given by itero"),
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), "itero.toml", toml);
+        let e = format!("{:#}", workspace::find(d.path()).err().unwrap());
+        assert!(e.contains(says), "{toml}: {e}");
+    }
+}
+
+#[test]
+fn more_workflows_than_the_limit_is_an_error() {
+    let d = tempfile::tempdir().unwrap();
+    write(d.path(), "itero.toml", "[limits]\nworkflows = 2\n");
+    let ws = workspace::find(d.path()).unwrap();
+    for n in ["bir", "iki", "üç"] {
+        write(
+            d.path(),
+            &format!("workflows/{n}.json"),
+            r##"{ "steps": ["#gönder"] }"##,
+        );
+    }
+    let e = format!("{:#}", ws.flows().unwrap_err());
+    assert!(e.contains("3 workflows") && e.contains("limits"), "{e}");
+}

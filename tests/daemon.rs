@@ -22,8 +22,13 @@ struct Ws {
 
 impl Ws {
     fn new() -> Ws {
+        Ws::with("")
+    }
+
+    /// A workspace whose itero.toml says `toml`.
+    fn with(toml: &str) -> Ws {
         let d = tempfile::tempdir().unwrap();
-        std::fs::write(d.path().join("itero.toml"), "").unwrap();
+        std::fs::write(d.path().join("itero.toml"), toml).unwrap();
         let ws = itero::workspace::find(d.path()).unwrap();
         Ws { d, ws }
     }
@@ -362,4 +367,41 @@ fn a_daemon_killed_anywhere_carries_on_with_nothing_lost_or_repeated() {
         assert_eq!(ws.read("sayı.log"), "bir\niki\n", "{point}");
         assert_eq!(ws.statuses(), vec!["done"], "{point}");
     }
+}
+
+#[test]
+fn a_workflow_off_or_outside_its_dates_starts_nothing() {
+    let w = Ws::new();
+    w.action("yaz", "echo \"$kim\" >> yazılan.txt");
+    let flow =
+        |meta: Value| json!({ "meta": meta, "on": [{ "event": "selam.ver" }], "steps": ["#yaz"] });
+    w.flow("kapalı", flow(json!({ "off": true })));
+    w.flow("erken", flow(json!({ "from": "2026-10-22" })));
+    w.flow("geç", flow(json!({ "until": "2026-10-20" })));
+    w.flow(
+        "açık",
+        flow(json!({ "from": "2026-10-21", "until": "2026-10-21" })),
+    );
+    w.emit("selam.ver", json!({ "kim": "ayşe" }));
+    w.pass(NOW);
+    let names: Vec<String> = w.runs().into_iter().map(|r| r.workflow).collect();
+    assert_eq!(names, ["açık"]);
+    assert_eq!(w.read("yazılan.txt"), "ayşe\n");
+}
+
+#[test]
+fn past_the_runs_limit_messages_wait_their_turn() {
+    let w = Ws::with("[limits]\nruns = 1\n");
+    w.action("bekle", "[ -n \"$tamam\" ] || exit 75");
+    w.flow(
+        "sıra",
+        json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#bekle"] }),
+    );
+    w.emit("iş.geldi", json!({ "iş": 1 }));
+    w.emit("iş.geldi", json!({ "iş": 2 }));
+    w.pass(NOW);
+    assert_eq!(w.statuses(), ["waiting"], "the second waits for room");
+    w.emit("iş.bitti", json!({ "iş": 1, "tamam": true }));
+    w.pass(NOW);
+    assert_eq!(w.statuses(), ["done", "waiting"]);
 }
