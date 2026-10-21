@@ -208,6 +208,62 @@ fn exit_why(exit: i32, stderr: &[u8]) -> String {
 /// The built-in `#notify`, when the workspace has no action of that name.
 pub const NOTIFY: &str = "notify";
 
+/// The built-in `#forget`: forgets ended runs and their messages past
+/// `limits.keep`, or all ended ones while `.itero/` is past its space.
+pub const FORGET: &str = "forget";
+
+/// The built-in `#roll-log`: `itero.log` becomes `itero.log.1`, `.1`
+/// becomes `.2`, and so on, keeping `limits.logs` of them.
+pub const ROLL_LOG: &str = "roll-log";
+
+/// The actions itero carries, used when the workspace has none of the name.
+pub const BUILT_IN: [&str; 3] = [NOTIFY, FORGET, ROLL_LOG];
+
+fn forget(r: &StepRun) -> Result<Outcome, Failure> {
+    let failed = |e: anyhow::Error| Failure::Error(format!("#forget: {e:#}"));
+    let ws = crate::workspace::find(&r.root).map_err(failed)?;
+    let now: chrono::DateTime<chrono::Utc> = r
+        .now
+        .parse()
+        .map_err(|_| Failure::Error(format!("#forget: now is not a time: {}", r.now)))?;
+    let full = ws.used() > ws.limits.space;
+    let keep = chrono::Duration::from_std(ws.limits.keep).unwrap_or(chrono::Duration::MAX);
+    let before = if full { now } else { now - keep };
+    let before = super::daemon::stamp(before);
+    let j = super::journal::Journal::open(&ws).map_err(failed)?;
+    j.prune(&before).map_err(failed)?;
+    if full {
+        j.compact().map_err(failed)?;
+    }
+    let mut out = Map::new();
+    out.insert("forgot_before".into(), before.into());
+    Ok(Outcome::Done(out))
+}
+
+fn roll_log(r: &StepRun) -> Result<Outcome, Failure> {
+    let failed = |e: anyhow::Error| Failure::Error(format!("#roll-log: {e:#}"));
+    let ws = crate::workspace::find(&r.root).map_err(failed)?;
+    let log = ws.root.join(".itero").join("itero.log");
+    let nth = |n: usize| log.with_extension(format!("log.{n}"));
+    let keep = ws.limits.logs;
+    let gone = |e: std::io::Error| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            Ok(())
+        } else {
+            Err(Failure::Error(format!("#roll-log: {e}")))
+        }
+    };
+    std::fs::remove_file(nth(keep)).or_else(gone)?;
+    for n in (1..keep).rev() {
+        std::fs::rename(nth(n), nth(n + 1)).or_else(gone)?;
+    }
+    std::fs::rename(&log, nth(1)).or_else(gone)?;
+    super::journal::Journal::open(&ws)
+        .and_then(|j| j.set_flag(super::journal::LOG_FULL, false))
+        .map_err(failed)?;
+    Ok(Outcome::Done(Map::new()))
+}
+
 /// What `itero worker` reads for one step (`docs/design-simple.md`).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StepRun {
@@ -228,6 +284,9 @@ pub struct StepRun {
     pub waiting_since: Option<String>,
     /// Seconds it may take (the daemon stops it after that).
     pub timeout: u64,
+    /// The daemon's pass time, for the built-in actions.
+    #[serde(default)]
+    pub now: String,
 }
 
 /// How a step went, as `itero worker` prints it.
@@ -246,8 +305,14 @@ pub enum Outcome {
 pub const NOT_YET: i32 = 75;
 
 /// Runs one step: the action with its values in its environment and the
-/// state on stdin; or the built-in `#notify`.
+/// state on stdin; or a built-in one.
 pub fn run_step(r: &StepRun) -> Result<Outcome, Failure> {
+    if r.file == Path::new(FORGET) {
+        return forget(r);
+    }
+    if r.file == Path::new(ROLL_LOG) {
+        return roll_log(r);
+    }
     if r.file == Path::new(NOTIFY) {
         let body = r
             .env

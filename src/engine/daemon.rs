@@ -4,10 +4,11 @@
 //! for in workers. The daemon decides nothing about a run: every change to
 //! one comes from a manager's answer.
 use super::Event;
+use super::events;
 use super::journal::{self, Envelope, Handled, Journal, Recorded, Split, Start};
 use super::log::Log;
 use super::steps::{self, StepAnswer, StepInput, StepJob};
-use super::worker::{Failure, LOST_EXIT, NOTIFY, Outcome, StepRun};
+use super::worker::{self, Failure, LOST_EXIT, Outcome, StepRun};
 use crate::flow::{self, Flow, Name};
 use crate::workspace::Workspace;
 use anyhow::{Result, anyhow};
@@ -189,6 +190,20 @@ impl Flows {
         Ok(Flows { values, read })
     }
 
+    /// Whether a workflow looks after the workspace (`meta.internal`).
+    fn internal(&self, name: &str) -> bool {
+        self.read.get(name).is_some_and(|f| f.meta.internal)
+    }
+
+    /// The internal workflows' names.
+    fn internals(&self) -> Vec<String> {
+        self.read
+            .iter()
+            .filter(|(_, f)| f.meta.internal)
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+
     /// `root` and every workflow it uses as a step, there or deeper, as
     /// their files say: what a run of it is pinned to.
     fn pinned(&self, root: &str) -> Result<BTreeMap<String, Value>, String> {
@@ -225,6 +240,7 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
     let mut pass = Pass::default();
     let flows = Flows::load(ws)?;
     j.see_workflows(flows.read.keys(), &stamp(now))?;
+    let no_room = watch_limits(ws, &j, now, &log)?;
     fire_schedules(&flows, &mut j, now, &log)?;
     for (id, run, data) in j.due_timers(&stamp(now))? {
         let e = Envelope::new(
@@ -244,7 +260,7 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
     loop {
         while let Some(r) = j.next(&held)? {
             if r.event.subject == journal::subject("app") {
-                if route(ws, &flows, &mut j, &r, now, &log)? {
+                if route(ws, &flows, &mut j, &r, now, &log, no_room)? {
                     pass.delivered += 1;
                 } else {
                     held.push(r.seq);
@@ -257,7 +273,7 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
                 return Ok(pass);
             }
             pass.delivered += 1;
-            if !held.is_empty() && j.active_count()? < ws.limits.runs {
+            if !held.is_empty() && j.active_count(&flows.internals())? < ws.limits.runs {
                 held.clear();
             }
             if pass.delivered >= MAX_EVENTS {
@@ -279,7 +295,7 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
                 pass.worked += 1;
             } else {
                 j.start_job(r.seq)?;
-                let step = step_run(ws, &j, &r.event.data);
+                let step = step_run(ws, &j, &r.event.data, &stamp(now));
                 starting.push((r, runs + 1, step));
             }
         }
@@ -323,9 +339,42 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
             super::die_at("result");
         }
     }
-    let keep = chrono::Duration::from_std(ws.limits.keep).unwrap_or(chrono::Duration::MAX);
-    j.prune(&stamp(now - keep))?;
     Ok(pass)
+}
+
+/// Sends `itero.space.full` when `.itero/` grows past its `space`, and
+/// `itero.log.full` when the log grows past its `log` limit: each once,
+/// until there is room again or the log is rolled. Returns whether
+/// `.itero/` is past its space: then no new run starts but internal ones.
+fn watch_limits(ws: &Workspace, j: &Journal, now: DateTime<Utc>, log: &Log) -> Result<bool> {
+    let at = stamp(now);
+    let (used, space) = (ws.used(), ws.limits.space);
+    let no_room = used > space;
+    if no_room && !j.flag(journal::SPACE_FULL)? {
+        j.publish(&events::own(
+            "itero.space.full",
+            json!({ "used": used, "limit": space }),
+            &at,
+        ))?;
+        j.set_flag(journal::SPACE_FULL, true)?;
+        log.write(
+            "error",
+            json!({ "why": format!(".itero/ takes {used} bytes, past its space ({space}): no new runs until there is room") }),
+        );
+    } else if !no_room && j.flag(journal::SPACE_FULL)? {
+        j.set_flag(journal::SPACE_FULL, false)?;
+    }
+    let path = ws.root.join(".itero").join("itero.log");
+    let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+    if size > ws.limits.log && !j.flag(journal::LOG_FULL)? {
+        j.publish(&events::own(
+            "itero.log.full",
+            json!({ "path": path.display().to_string(), "size": size, "limit": ws.limits.log }),
+            &at,
+        ))?;
+        j.set_flag(journal::LOG_FULL, true)?;
+    }
+    Ok(no_room)
 }
 
 /// Starts a run of every workflow whose schedule is due, when its
@@ -384,7 +433,9 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log)
 /// A message for the workspace: a run of every active workflow whose `on`
 /// lists its type and holds over its data, and a copy for every run
 /// waiting for data. False, and nothing done, when it would start a run
-/// while `runs` are under way: it waits its turn.
+/// (not an internal one) while `runs` are under way, or while `.itero/`
+/// has no room: it waits its turn. A message about a run never starts its
+/// own workflow.
 fn route(
     ws: &Workspace,
     flows: &Flows,
@@ -392,13 +443,16 @@ fn route(
     r: &Recorded,
     now: DateTime<Utc>,
     log: &Log,
+    no_room: bool,
 ) -> Result<bool> {
     let data = r.event.data.as_object().cloned().unwrap_or_default();
+    let on_a_run = r.event.kind.starts_with("itero.run.");
     let mut starts = vec![];
     for (name, f) in &flows.read {
         if !f.on.events.contains(&r.event.kind)
             || !flow::active(&f.meta, now)
             || !flow::holds(&f.on, &data, &defined)
+            || (on_a_run && data.get("workflow") == Some(&json!(name)))
         {
             continue;
         }
@@ -415,13 +469,15 @@ fn route(
             ),
         }
     }
-    if !starts.is_empty() && j.active_count()? >= ws.limits.runs {
+    let counted = starts.iter().any(|s| !flows.internal(&s.workflow));
+    if counted && (no_room || j.active_count(&flows.internals())? >= ws.limits.runs) {
         return Ok(false);
     }
+    // the daemon's own messages start workflows; no run waits for them
     let waiting: Vec<String> = j
         .active_runs()?
         .into_iter()
-        .filter(|run| steps::is_waiting(&run.runtime))
+        .filter(|run| steps::is_waiting(&run.runtime) && !r.event.kind.starts_with(events::OWN))
         .map(|run| run.id)
         .collect();
     let started = j.route(r, &starts, &waiting, &stamp(now))?;
@@ -530,11 +586,18 @@ fn deliver(
     // workflows name, and which of their $$ names are defined
     let mut args = BTreeMap::new();
     let mut names = vec![];
+    let mut who = Who {
+        run: &run,
+        internal: false,
+    };
     for (n, v) in &values {
         let f = match flow::from_value(v) {
             Ok(f) => f,
             Err(e) => return give_up(log, j, r.seq, &at, format!("{n}: {e}")),
         };
+        if *n == root {
+            who.internal = f.meta.internal;
+        }
         for u in f.uses() {
             if let Name::Action { name, .. } = u
                 && !args.contains_key(&name)
@@ -571,8 +634,7 @@ fn deliver(
         Err(Failure::Lost(why)) => {
             log.write(
                 "error",
-                about(
-                    &run,
+                who.line(
                     json!({ "why": format!("{why}; {} waits for the next pass", r.event.kind) }),
                 ),
             );
@@ -600,6 +662,32 @@ fn deliver(
             events.push(journal::copy(&m.event, &id, &at));
         }
     }
+    // a run ending in error or failed: the daemon's own message says so
+    if run.runtime.ended.is_none() {
+        let why = answer
+            .runtime
+            .state
+            .get("why")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let own = match &answer.runtime.ended {
+            Some(steps::Ended::Error { .. }) => Some((
+                "itero.run.error",
+                json!({
+                    "workflow": run.workflow, "run": id, "why": why,
+                    "failed_step": answer.runtime.state.get("failed_step"),
+                }),
+            )),
+            Some(steps::Ended::Failed) => Some((
+                "itero.run.failed",
+                json!({ "workflow": run.workflow, "run": id, "why": why }),
+            )),
+            _ => None,
+        };
+        if let Some((kind, data)) = own {
+            events.push(events::own(kind, data, &at));
+        }
+    }
     let splits = answer
         .split
         .iter()
@@ -619,33 +707,41 @@ fn deliver(
         events,
         splits,
     })?;
-    tell(log, &run, r, &answer);
+    tell(log, &who, r, &answer);
     super::die_at("answer");
     Ok(Delivered::Handled)
 }
 
-/// A run's lines: `fields` and which run it is.
-fn about(run: &journal::Run, mut fields: Value) -> Value {
-    fields["workflow"] = json!(run.workflow);
-    fields["run"] = json!(run.id);
-    fields["run_name"] = json!(run.name);
-    fields
+/// The run a log line is about, and whether its workflow is internal.
+struct Who<'a> {
+    run: &'a journal::Run,
+    internal: bool,
+}
+
+impl Who<'_> {
+    /// A line's `fields` and which run it is about.
+    fn line(&self, mut fields: Value) -> Value {
+        fields["workflow"] = json!(self.run.workflow);
+        fields["run"] = json!(self.run.id);
+        fields["run_name"] = json!(self.run.name);
+        if self.internal {
+            fields["internal"] = json!(true);
+        }
+        fields
+    }
 }
 
 /// Logs what an answer, saved, did to a run: the event it answered, the
 /// steps it starts, what the manager noted, and the run's end.
-fn tell(log: &Log, run: &journal::Run, r: &Recorded, answer: &StepAnswer) {
+fn tell(log: &Log, who: &Who, r: &Recorded, answer: &StepAnswer) {
     let d = &r.event.data;
     match r.event.kind.as_str() {
         "run.started" => log.write(
             "run.started",
-            about(
-                run,
-                match &r.event.cause {
-                    Some(m) => json!({ "message": m }),
-                    None => json!({ "schedule": true }),
-                },
-            ),
+            who.line(match &r.event.cause {
+                Some(m) => json!({ "message": m }),
+                None => json!({ "schedule": true }),
+            }),
         ),
         "action.finished" | "action.waiting" => log.write(
             if r.event.kind == "action.finished" {
@@ -653,27 +749,28 @@ fn tell(log: &Log, run: &journal::Run, r: &Recorded, answer: &StepAnswer) {
             } else {
                 "step.waiting"
             },
-            about(run, json!({ "step": d["step"], "output": d["output"] })),
+            who.line(json!({ "step": d["step"], "output": d["output"] })),
         ),
         "action.failed" => log.write(
             "step.failed",
-            about(run, json!({ "step": d["step"], "why": d["error"] })),
+            who.line(json!({ "step": d["step"], "why": d["error"] })),
         ),
         _ => {}
     }
     for note in &answer.notes {
         let event = note["event"].as_str().unwrap_or("run.note");
-        log.write(event, about(run, note.clone()));
+        log.write(event, who.line(note.clone()));
     }
     for line in &answer.log {
-        log.write("run.note", about(run, json!({ "note": line })));
+        log.write("run.note", who.line(json!({ "note": line })));
     }
     for job in &answer.jobs {
         log.write(
             "step.started",
-            about(run, json!({ "step": format!("#{}", job.action) })),
+            who.line(json!({ "step": format!("#{}", job.action) })),
         );
     }
+    let run = who.run;
     if run.runtime.ended.is_none()
         && let Some(ended) = &answer.runtime.ended
     {
@@ -688,10 +785,7 @@ fn tell(log: &Log, run: &journal::Run, r: &Recorded, answer: &StepAnswer) {
         };
         log.write(
             "run.ended",
-            about(
-                run,
-                json!({ "status": steps::status(&answer.runtime), "why": why }),
-            ),
+            who.line(json!({ "status": steps::status(&answer.runtime), "why": why })),
         );
     }
 }
@@ -758,7 +852,7 @@ pub fn bind(
 
 /// What a worker is given for an `action.requested` event: the action's
 /// file, its values bound, the run's state.
-fn step_run(ws: &Workspace, j: &Journal, data: &Value) -> Result<StepRun, String> {
+fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<StepRun, String> {
     let run_id = data["run"].as_str().unwrap_or("");
     let workflow = data["workflow"].as_str().unwrap_or("");
     let job: StepJob =
@@ -769,7 +863,9 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value) -> Result<StepRun, String
         .ok_or_else(|| format!("no run {run_id}"))?;
     let file = match ws.action_file(&job.action, job.version.as_deref()) {
         Ok(f) => f,
-        Err(_) if job.action == NOTIFY && job.version.is_none() => PathBuf::from(NOTIFY),
+        Err(_) if worker::BUILT_IN.contains(&job.action.as_str()) && job.version.is_none() => {
+            PathBuf::from(&job.action)
+        }
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
     let args = ws.args(&job.action).map_err(|e| format!("{e:#}"))?;
@@ -781,6 +877,7 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value) -> Result<StepRun, String
         memory: ws.root.join(".itero").join("memory").join(workflow),
         waiting_since: job.waiting_since.clone(),
         timeout: STEP_TIMEOUT,
+        now: now.into(),
     })
 }
 

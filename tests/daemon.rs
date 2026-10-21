@@ -78,6 +78,23 @@ impl Ws {
     fn read(&self, rel: &str) -> String {
         std::fs::read_to_string(self.d.path().join(rel)).unwrap_or_default()
     }
+
+    /// The log's lines.
+    fn log(&self) -> Vec<Value> {
+        self.read(".itero/itero.log")
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    /// The types of the messages the log tells of.
+    fn messages(&self) -> Vec<String> {
+        self.log()
+            .iter()
+            .filter(|l| l["event"] == "message")
+            .map(|l| l["type"].as_str().unwrap().to_string())
+            .collect()
+    }
 }
 
 /// The order of the design: payment and stock side by side, the payment
@@ -178,7 +195,7 @@ fn an_action_that_breaks_runs_the_error_list() {
         "true #check-stock exit 3: depo kapalı\n"
     );
     let j = Journal::open(&ws.ws).unwrap();
-    let errors = j.runs_page(None, Some("error"), 10).unwrap();
+    let errors = j.runs_page(None, Some("error"), &[], 10).unwrap();
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].runtime.state["failed_step"], "#check-stock");
 }
@@ -404,4 +421,157 @@ fn past_the_runs_limit_messages_wait_their_turn() {
     w.emit("iş.bitti", json!({ "iş": 1, "tamam": true }));
     w.pass(NOW);
     assert_eq!(w.statuses(), ["done", "waiting"]);
+}
+
+#[test]
+fn a_run_in_error_sends_itero_run_error_never_to_its_own_workflow() {
+    let w = Ws::new();
+    w.action("kır", "echo 'çöktü' >&2; exit 3");
+    w.action("uyar", "echo \"$workflow: $why\" >> uyarılar.txt; exit 3");
+    w.flow(
+        "bozuk",
+        json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#kır"] }),
+    );
+    w.flow(
+        "uyarı",
+        json!({ "on": [{ "event": "itero.run.error" }], "steps": ["#uyar"] }),
+    );
+    w.emit("iş.geldi", json!({}));
+    w.pass(NOW);
+    w.pass(NOW);
+    let said = w.read("uyarılar.txt");
+    assert_eq!(said.lines().count(), 1, "{said}");
+    assert!(said.starts_with("bozuk: exit 3: çöktü"), "{said}");
+    let error = w
+        .log()
+        .into_iter()
+        .find(|l| l["event"] == "message" && l["type"] == "itero.run.error")
+        .unwrap();
+    assert_eq!(error["data"]["workflow"], "bozuk");
+    assert_eq!(error["data"]["failed_step"], "#kır");
+    let errors = w
+        .messages()
+        .iter()
+        .filter(|t| *t == "itero.run.error")
+        .count();
+    assert_eq!(
+        errors, 2,
+        "one for bozuk, one for uyarı, which starts nothing"
+    );
+}
+
+#[test]
+fn itero_messages_cannot_be_sent_from_outside() {
+    let w = Ws::new();
+    let e = itero::engine::events::emit(&w.ws, "itero.run.error", Some(json!({})), NOW)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("itero.run.error"), "{e}");
+}
+
+#[test]
+fn internal_runs_are_outside_the_runs_limit_and_say_so_in_the_log() {
+    let w = Ws::with("[limits]\nruns = 1\nworkflows = 1\n");
+    w.action("bekle", "exit 75");
+    w.action("bak", "true");
+    w.flow(
+        "sıra",
+        json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#bekle"] }),
+    );
+    w.flow(
+        "bakım",
+        json!({ "meta": { "internal": true }, "on": [{ "event": "bakım.zamanı" }], "steps": ["#bak"] }),
+    );
+    w.emit("iş.geldi", json!({}));
+    w.emit("bakım.zamanı", json!({}));
+    w.pass(NOW);
+    assert_eq!(w.statuses(), ["waiting", "done"]);
+    let mine: Vec<Value> = w
+        .log()
+        .into_iter()
+        .filter(|l| l["workflow"] == "bakım")
+        .collect();
+    assert!(!mine.is_empty());
+    assert!(mine.iter().all(|l| l["internal"] == true), "{mine:#?}");
+}
+
+#[test]
+fn keep_forgets_ended_runs_every_hour() {
+    let w = Ws::new();
+    w.action("yaz", "true");
+    w.flow(
+        "eski",
+        json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#yaz"] }),
+    );
+    w.emit("iş.geldi", json!({}));
+    w.pass("2026-10-10T09:30:00Z");
+    assert_eq!(w.runs().len(), 1);
+    // a day later, at the hour: keep runs and forgets what ended a day ago
+    w.pass("2026-10-11T10:00:00Z");
+    let names: Vec<String> = w.runs().into_iter().map(|r| r.workflow).collect();
+    assert_eq!(names, ["keep"], "the old run forgotten; keep's own stays");
+}
+
+#[test]
+fn past_its_space_the_daemon_says_so_and_starts_no_run() {
+    let w = Ws::with("[limits]\nspace = \"1KB\"\n");
+    w.action("yaz", "true");
+    w.flow(
+        "iş",
+        json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#yaz"] }),
+    );
+    w.pass(NOW);
+    w.emit("iş.geldi", json!({}));
+    w.pass(NOW);
+    let full: Vec<Value> = w
+        .log()
+        .into_iter()
+        .filter(|l| l["type"] == "itero.space.full")
+        .collect();
+    assert_eq!(full.len(), 1, "sent once");
+    assert_eq!(full[0]["data"]["limit"], 1024);
+    assert!(full[0]["data"]["used"].as_u64().unwrap() > 1024);
+    assert!(w.log().iter().any(|l| l["event"] == "error"));
+    assert!(
+        w.runs().iter().all(|r| r.workflow == "keep"),
+        "no run of iş"
+    );
+}
+
+#[test]
+fn past_its_size_the_log_is_rolled() {
+    let w = Ws::with("[limits]\nlog = \"1KB\"\nlogs = 1\n");
+    w.action("yaz", "true");
+    w.flow(
+        "iş",
+        json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#yaz"] }),
+    );
+    for _ in 0..3 {
+        w.emit(
+            "iş.geldi",
+            json!({ "söz": "çok uzun bir satır ".repeat(10) }),
+        );
+        w.pass(NOW);
+    }
+    w.pass(NOW);
+    assert!(w.read(".itero/itero.log.1").contains("itero.log.full"));
+    assert!(!w.d.path().join(".itero/itero.log.2").exists(), "logs = 1");
+    assert!(w.read(".itero/itero.log").len() < 1024 * 4);
+}
+
+#[test]
+fn a_built_in_workflow_is_replaced_or_turned_off_by_a_file_of_its_name() {
+    let w = Ws::with("[limits]\nlog = \"1KB\"\n");
+    w.flow(
+        "logs",
+        json!({ "meta": { "off": true }, "on": [{ "event": "itero.log.full" }], "steps": ["#roll-log"] }),
+    );
+    for _ in 0..3 {
+        w.emit(
+            "iş.geldi",
+            json!({ "söz": "çok uzun bir satır ".repeat(10) }),
+        );
+        w.pass(NOW);
+    }
+    assert!(!w.d.path().join(".itero/itero.log.1").exists());
 }

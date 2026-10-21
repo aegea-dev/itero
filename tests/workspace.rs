@@ -24,7 +24,8 @@ fn a_workspace_without_its_folders_has_no_workflows_and_its_daemon_idles() {
     let d = tempfile::tempdir().unwrap();
     write(d.path(), "itero.toml", "");
     let ws = workspace::find(d.path()).unwrap();
-    assert!(ws.flows().unwrap().is_empty());
+    let names: Vec<String> = ws.flows().unwrap().into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["keep", "logs"], "only the built-in ones");
     assert!(ws.source_files().unwrap().is_empty());
     let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
     let pass = itero::engine::daemon::run_once(&ws, chrono::Utc::now(), exe).unwrap();
@@ -73,7 +74,7 @@ fn workflows_are_named_after_their_files() {
     );
     let flows = ws.flows().unwrap();
     let names: Vec<&str> = flows.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, vec!["posta-uyarısı", "sipariş"]);
+    assert_eq!(names, vec!["keep", "logs", "posta-uyarısı", "sipariş"]);
     write(d.path(), "workflows/bozuk.json", r##"{ "steps": [] }"##);
     let e = format!("{:#}", ws.flows().unwrap_err());
     assert!(

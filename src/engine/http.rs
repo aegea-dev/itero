@@ -173,12 +173,20 @@ struct RunsQuery {
     /// `running`, `waiting`, `done`, `failed`, `error` or `split`.
     status: Option<String>,
     limit: Option<usize>,
+    /// The internal workflows' runs too.
+    #[serde(default)]
+    all: bool,
 }
 
 async fn runs(State(s): State<Shared>, Query(q): Query<RunsQuery>) -> Result<Json<Value>, Reply> {
     blocking(&s, move |ws| {
         let j = Journal::open(ws).map_err(internal)?;
         let limit = q.limit.unwrap_or(50);
+        let apart = if q.all {
+            vec![]
+        } else {
+            ws.internal().map_err(internal)?
+        };
         let runs = match q.status.as_deref() {
             // under way: few, and their status is not a column
             Some(st @ ("running" | "waiting")) => j
@@ -188,10 +196,11 @@ async fn runs(State(s): State<Shared>, Query(q): Query<RunsQuery>) -> Result<Jso
                 .rev()
                 .filter(|r| super::steps::status(&r.runtime) == st)
                 .filter(|r| q.workflow.as_ref().is_none_or(|w| *w == r.workflow))
+                .filter(|r| !apart.contains(&r.workflow))
                 .take(limit)
                 .collect(),
             ended => j
-                .runs_page(q.workflow.as_deref(), ended, limit)
+                .runs_page(q.workflow.as_deref(), ended, &apart, limit)
                 .map_err(internal)?,
         };
         Ok(Value::Array(runs.iter().map(run_row).collect()))
@@ -243,6 +252,7 @@ async fn workflows(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
                 .map(|(name, f)| {
                     json!({
                         "name": name,
+                        "internal": f.meta.internal,
                         "on": {
                             "events": f.on.events,
                             "schedules": f.on.schedules,

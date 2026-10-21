@@ -208,6 +208,16 @@ fn a_daemon_says_when_it_starts_and_stops() {
         false
     };
     assert!(saw("source.ended"), "{:#?}", lines(root));
+    let own = || {
+        lines(root)
+            .iter()
+            .any(|l| l["event"] == "message" && l["type"] == "itero.daemon.started")
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !own() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(own(), "{:#?}", lines(root));
     // SAFETY: a plain kill of our own child
     unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
     child.wait().unwrap();

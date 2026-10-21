@@ -100,7 +100,9 @@ fn each_line_is_a_message_of_the_sources_type() {
     let h = run_it(&ws);
     assert_eq!(h.sources["deneme.başladı"].state, "gave up");
     let j = Journal::open(&ws).unwrap();
-    let evs = j.events(Some("itero.app")).unwrap();
+    let mut evs = j.events(Some("itero.app")).unwrap();
+    // the last is the daemon's own: the source was given up on
+    assert_eq!(evs.pop().unwrap().event.kind, "itero.source.gave-up");
     // three lines a start, one bad; four starts before it is given up on
     assert_eq!(evs.len(), 3 * 4, "{evs:?}");
     assert!(evs.iter().all(|e| e.event.kind == "deneme.başladı"));
@@ -146,4 +148,11 @@ fn a_source_that_cannot_start_is_given_up_on_with_why() {
     let last: serde_json::Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
     assert_eq!(last["event"], "source.gave-up");
     assert_eq!(last["source"], "deneme.başladı");
+    let own = Journal::open(&ws)
+        .unwrap()
+        .events(Some("itero.app"))
+        .unwrap();
+    let gave_up = own.last().unwrap();
+    assert_eq!(gave_up.event.kind, "itero.source.gave-up");
+    assert_eq!(gave_up.event.data["source"], "deneme.başladı");
 }

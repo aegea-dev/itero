@@ -22,12 +22,23 @@ impl std::fmt::Display for EmitError {
 
 impl std::error::Error for EmitError {}
 
+/// The start of the types of the daemon's own messages, `itero.run.error`:
+/// workflows may run on them, and only the daemon sends them.
+pub const OWN: &str = "itero.";
+
 /// Types the engine sends itself: from outside they would forge a worker's
-/// result, a timer, a run's start or a source's state.
+/// result, a timer, a run's start, a source's state or the daemon's own
+/// message.
 pub fn engine_own(kind: &str) -> bool {
-    ["action.", "timer.", "run.", "workflow.", "source."]
+    ["action.", "timer.", "run.", "workflow.", "source.", OWN]
         .iter()
         .any(|p| kind.starts_with(p))
+}
+
+/// One of the daemon's own messages, for the workspace.
+pub fn own(kind: &str, data: Value, now: &str) -> Envelope {
+    debug_assert!(kind.starts_with(OWN));
+    Envelope::new("daemon", kind, &journal::subject("app"), now, None, data)
 }
 
 /// Saves a message for the workspace, where it may start runs and reach

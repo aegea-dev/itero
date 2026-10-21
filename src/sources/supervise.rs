@@ -152,13 +152,22 @@ pub fn run(
         ends.push(Instant::now());
         let restarts = ends.len() - 1;
         if restarts >= policy.give_up_after {
-            log.write(
-                "source.gave-up",
-                json!({
-                    "source": s.kind,
-                    "why": format!("started again {restarts} times in {}s", policy.window.as_secs()),
-                }),
+            let why = format!(
+                "started again {restarts} times in {}s, last {ended}",
+                policy.window.as_secs()
             );
+            log.write("source.gave-up", json!({ "source": s.kind, "why": why }));
+            let own = crate::engine::events::own(
+                "itero.source.gave-up",
+                json!({ "source": s.kind, "why": why }),
+                &stamp(chrono::Utc::now()),
+            );
+            if let Err(e) = Journal::open(ws).and_then(|j| j.publish(&own)) {
+                log.write(
+                    "error",
+                    json!({ "source": s.kind, "why": format!("{e:#}") }),
+                );
+            }
             set(health, s.kind, |h| {
                 h.state = "gave up".into();
                 h.restarts = restarts;

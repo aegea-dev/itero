@@ -27,6 +27,7 @@ mod steps {
             memory: dir.join(".itero/memory/sipariş"),
             waiting_since: None,
             timeout: 10,
+            now: String::new(),
         }
     }
 

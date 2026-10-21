@@ -153,6 +153,11 @@ pub struct Identity {
 /// This itero's version.
 pub const ITERO: &str = env!("CARGO_PKG_VERSION");
 
+/// Flags: `itero.log.full` was sent and the log not yet rolled.
+pub const LOG_FULL: &str = "flag.log_full";
+/// `itero.space.full` was sent and there is no room yet.
+pub const SPACE_FULL: &str = "flag.space_full";
+
 /// A run to start: its workflow, the workflows pinned with it (its own and
 /// those it uses as steps), the message's data, and the message.
 pub struct Start {
@@ -370,12 +375,12 @@ impl Journal {
     }
 
     /// The messages for the workspace since `time`, apart from `except`
-    /// (the one that started a run): what a run starting to wait may have
-    /// missed.
+    /// (the one that started a run) and the daemon's own (`itero.`, which
+    /// no run waits for): what a run starting to wait may have missed.
     pub fn messages_since(&self, time: &str, except: Option<&str>) -> Result<Vec<Recorded>> {
         let sql = format!(
             "SELECT {COLUMNS} FROM events WHERE subject = 'itero.app' AND time >= ?1
-               AND (?2 IS NULL OR id != ?2) ORDER BY seq"
+               AND (?2 IS NULL OR id != ?2) AND substr(type, 1, 6) != 'itero.' ORDER BY seq"
         );
         let mut s = self.db.prepare(&sql)?;
         let out = s
@@ -409,13 +414,41 @@ impl Journal {
             .transpose()
     }
 
-    /// How many runs are under way.
-    pub fn active_count(&self) -> Result<usize> {
-        let n: i64 =
-            self.db
-                .query_row("SELECT COUNT(*) FROM runs WHERE ended IS NULL", [], |r| {
-                    r.get(0)
-                })?;
+    /// A flag the daemon keeps between passes, like `LOG_FULL`.
+    pub fn flag(&self, key: &str) -> Result<bool> {
+        let v: Option<String> = self
+            .db
+            .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(v.as_deref() == Some("1"))
+    }
+
+    pub fn set_flag(&self, key: &str, on: bool) -> Result<()> {
+        self.db.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+            params![key, if on { "1" } else { "0" }],
+        )?;
+        Ok(())
+    }
+
+    /// Gives back the room of what was forgotten: the file shrinks.
+    pub fn compact(&self) -> Result<()> {
+        self.db
+            .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(())
+    }
+
+    /// How many runs are under way, those of the workflows in `apart` left
+    /// out.
+    pub fn active_count(&self, apart: &[String]) -> Result<usize> {
+        let n: i64 = self.db.query_row(
+            "SELECT COUNT(*) FROM runs WHERE ended IS NULL
+             AND workflow NOT IN (SELECT value FROM json_each(?1))",
+            params![json(&apart)?],
+            |r| r.get(0),
+        )?;
         Ok(n as usize)
     }
 
@@ -484,12 +517,14 @@ impl Journal {
         rows.into_iter().collect()
     }
 
-    /// The newest `limit` runs, of one workflow or all, ended one way (the
-    /// kind of `ended`: done, failed, error, split) or any, newest first.
+    /// The newest `limit` runs, of one workflow or all but those in
+    /// `apart`, ended one way (the kind of `ended`: done, failed, error,
+    /// split) or any, newest first.
     pub fn runs_page(
         &self,
         workflow: Option<&str>,
         ended: Option<&str>,
+        apart: &[String],
         limit: usize,
     ) -> Result<Vec<Run>> {
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
@@ -497,17 +532,18 @@ impl Journal {
             "SELECT {RUN_COLUMNS} FROM runs
              WHERE (?1 IS NULL OR workflow = ?1)
                AND (?2 IS NULL OR json_extract(runtime, '$.ended.kind') = ?2)
-             ORDER BY started DESC, id DESC LIMIT ?3"
+               AND workflow NOT IN (SELECT value FROM json_each(?3))
+             ORDER BY started DESC, id DESC LIMIT ?4"
         ))?;
         let rows: Vec<Result<Run>> = s
-            .query_map(params![workflow, ended, limit], run_row)?
+            .query_map(params![workflow, ended, json(&apart)?, limit], run_row)?
             .collect::<rusqlite::Result<_>>()?;
         rows.into_iter().collect()
     }
 
     /// Every run, oldest first.
     pub fn runs(&self) -> Result<Vec<Run>> {
-        let mut out = self.runs_page(None, None, usize::MAX)?;
+        let mut out = self.runs_page(None, None, &[], usize::MAX)?;
         out.reverse();
         Ok(out)
     }

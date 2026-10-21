@@ -22,6 +22,7 @@ fn the_built_in_notify_shows_text() {
         memory: d.path().join("hafıza"),
         waiting_since: None,
         timeout: 10,
+        now: String::new(),
     };
     assert_eq!(
         worker::run_step(&step(&[("text", "Ayşe: Toplantı")])).unwrap(),

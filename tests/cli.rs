@@ -123,6 +123,12 @@ fn check_says_what_each_workflow_uses_and_what_is_not_there() {
     );
     assert!(text.contains("  stok  workflow"), "{text}");
     assert!(text.contains("  #notify  built in"), "{text}");
+    // the internal ones last, apart: the built-in keep and logs
+    let (work, internal) = text.split_once("\ninternal\n").expect(&text);
+    assert!(!work.contains("#forget"), "{text}");
+    for says in ["keep", "#forget  built in", "logs", "#roll-log  built in"] {
+        assert!(internal.contains(says), "{says}: {text}");
+    }
     std::fs::remove_file(d.path().join("actions/depo")).unwrap();
     let o = itero(d.path(), &["check"]);
     assert!(!o.status.success());
@@ -171,8 +177,17 @@ fn runs_and_errors_say_how_each_run_is_doing() {
             .any(|l| l.contains("kötü") && l.contains("error")),
         "{runs}"
     );
+    file(
+        d.path(),
+        "workflows/bakım.json",
+        r##"{ "meta": { "internal": true }, "on": [{ "event": "a.b" }], "steps": ["#tamam"] }"##,
+    );
+    itero(d.path(), &["emit", "a.b", "{}"]);
+    itero(d.path(), &["daemon", "--once"]);
+    assert!(!out(&itero(d.path(), &["runs"])).contains("bakım"));
+    assert!(out(&itero(d.path(), &["runs", "--all"])).contains("bakım"));
     let errors = out(&itero(d.path(), &["errors"]));
-    assert_eq!(errors.lines().count(), 1, "{errors}");
+    assert_eq!(errors.lines().count(), 2, "{errors}");
     assert!(
         errors.contains("kötü") && errors.contains("#bozuk: exit 2: olmadı"),
         "{errors}"

@@ -68,6 +68,9 @@ pub enum Cmd {
     Runs {
         /// One run, by id or name: what happened, step by step
         run: Option<String>,
+        /// The internal workflows' runs too
+        #[arg(long)]
+        all: bool,
     },
     /// The workspace: its identity, meta and limits, and the daemon running it
     Info,
@@ -337,6 +340,11 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }),
             );
             stop_on_signal(log.clone());
+            crate::engine::journal::Journal::open(&ws)?.publish(&crate::engine::events::own(
+                "itero.daemon.started",
+                serde_json::json!({ "daemon": me.id, "name": me.name, "itero": me.itero }),
+                &me.started,
+            ))?;
             eprintln!(
                 "itero: running the workflows in {}, a pass every {interval}s (Ctrl-C stops); log: .itero/itero.log",
                 ws.root.display()
@@ -452,10 +460,17 @@ fn dispatch(cli: Cli) -> Result<()> {
                     eprintln!("note: no folder {}", dir.display());
                 }
             }
-            let flows = ws.flows()?;
+            let mut flows = ws.flows()?;
+            // the internal ones last, apart
+            flows.sort_by_key(|(_, f)| f.meta.internal);
             let j = crate::engine::journal::Journal::open(&ws)?;
             let now = crate::engine::daemon::stamp(chrono::Utc::now());
+            let mut apart = false;
             for (name, f) in &flows {
+                if f.meta.internal && !apart {
+                    apart = true;
+                    println!("\ninternal");
+                }
                 println!("{name}");
                 let id = j.workflow_id(name, &now)?;
                 println!("  id {}  since {}", id.id, id.created);
@@ -476,7 +491,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 for (k, v) in &m.other {
                     println!("  {k} {v}");
                 }
-                let runs = j.runs_page(Some(name), None, usize::MAX)?;
+                let runs = j.runs_page(Some(name), None, &[], usize::MAX)?;
                 println!("  runs so far {}", runs.len());
                 if let Some(last) = runs.first() {
                     println!(
@@ -491,8 +506,11 @@ fn dispatch(cli: Cli) -> Result<()> {
                         crate::flow::Name::Action { name: a, version } => {
                             match ws.action_file(&a, version.as_deref()) {
                                 Ok(file) => println!("  #{a}  {}", file.display()),
-                                Err(_) if a == "notify" && version.is_none() => {
-                                    println!("  #notify  built in")
+                                Err(_)
+                                    if crate::engine::worker::BUILT_IN.contains(&a.as_str())
+                                        && version.is_none() =>
+                                {
+                                    println!("  #{a}  built in")
                                 }
                                 Err(e) => bail!("{name}: {e:#}"),
                             }
@@ -510,7 +528,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 println!("source {kind}  {}", file.display());
             }
         }
-        Cmd::Runs { run: Some(run) } => {
+        Cmd::Runs { run: Some(run), .. } => {
             let ws = workspace()?;
             let j = crate::engine::journal::Journal::open(&ws)?;
             let found = j.run_by(&run)?;
@@ -572,10 +590,11 @@ fn dispatch(cli: Cli) -> Result<()> {
                 None => println!("daemon: not running (no answer on port {})", ws.port),
             }
         }
-        Cmd::Runs { run: None } => {
+        Cmd::Runs { run: None, all } => {
             let ws = workspace()?;
             let j = crate::engine::journal::Journal::open(&ws)?;
-            for r in j.runs_page(None, None, usize::MAX)? {
+            let apart = if all { vec![] } else { ws.internal()? };
+            for r in j.runs_page(None, None, &apart, usize::MAX)? {
                 println!(
                     "{}  {:<20} {:<20} {:<12} {}  {}",
                     r.id,
@@ -599,7 +618,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Errors { limit } => {
             let ws = workspace()?;
             let j = crate::engine::journal::Journal::open(&ws)?;
-            for r in j.runs_page(None, Some("error"), limit)? {
+            for r in j.runs_page(None, Some("error"), &[], limit)? {
                 let st = &r.runtime.state;
                 let text = |k: &str| st.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 println!(
