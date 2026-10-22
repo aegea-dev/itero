@@ -345,15 +345,24 @@ impl Workspace {
     }
 
     /// Every action's file, by its whole file name (`notify@0.2`), in any
-    /// subfolder of the actions folders.
+    /// subfolder of the actions folders. Only executables are actions: the
+    /// files beside them (a `package.json`, a `README.md`) are left alone.
     pub fn action_files(&self) -> Result<BTreeMap<String, PathBuf>> {
+        named("action", self.files_in(&self.actions, true)?)
+    }
+
+    /// The files in `dirs` and their subfolders, by whole file name: the
+    /// executable ones, or the others.
+    fn files_in(&self, dirs: &[PathBuf], runnable: bool) -> Result<Vec<(String, PathBuf)>> {
         let mut files = vec![];
-        for dir in self.actions.iter().filter(|d| d.exists()) {
-            for f in listed(dir, |p| p.is_file().then(|| p.to_path_buf()))? {
+        for dir in dirs.iter().filter(|d| d.exists()) {
+            for f in listed(dir, |p| {
+                (p.is_file() && executable(p) == runnable).then(|| p.to_path_buf())
+            })? {
                 files.push((stem_with_ext(&f), f));
             }
         }
-        named("action", files)
+        Ok(files)
     }
 
     /// An action's file: `name@version` when pinned, else the highest
@@ -373,35 +382,35 @@ impl Workspace {
             }
         }
         let Some((_, f)) = found else {
-            return Err(match version {
-                Some(v) => anyhow!("no action {name}@{v} in the actions folders"),
-                None => anyhow!("no action {name} in the actions folders"),
-            });
+            // a file of that name that is not executable: most likely a
+            // forgotten chmod
+            let wanted = match version {
+                Some(v) => format!("{name}@{v}"),
+                None => name.to_string(),
+            };
+            if let Some((_, f)) = self
+                .files_in(&self.actions, false)?
+                .into_iter()
+                .find(|(file, _)| *file == wanted)
+            {
+                bail!("{} is not executable: chmod +x it", f.display());
+            }
+            bail!("no action {wanted} in the actions folders");
         };
-        if !executable(&f) {
-            bail!("{} is not executable: chmod +x it", f.display());
-        }
         Ok(f)
     }
 
     /// Every source in the simple form: an executable whose file name is
     /// the type of the messages it sends.
     pub fn source_files(&self) -> Result<Vec<(String, PathBuf)>> {
-        let mut files = vec![];
-        for dir in self.sources.iter().filter(|d| d.exists()) {
-            for f in listed(dir, |p| p.is_file().then(|| p.to_path_buf()))? {
-                let kind = stem_with_ext(&f);
-                if !crate::flow::is_message_type(&kind) || crate::engine::events::engine_own(&kind)
-                {
-                    bail!(
-                        "{}: a source's name is the message type it sends, two or more words joined by . (like mail.received)",
-                        f.display()
-                    );
-                }
-                if !executable(&f) {
-                    bail!("{} is not executable: chmod +x it", f.display());
-                }
-                files.push((kind, f));
+        // only executables are sources: notes beside them are left alone
+        let files = self.files_in(&self.sources, true)?;
+        for (kind, f) in &files {
+            if !crate::flow::is_message_type(kind) || crate::engine::events::engine_own(kind) {
+                bail!(
+                    "{}: a source's name is the message type it sends, two or more words joined by . (like mail.received)",
+                    f.display()
+                );
             }
         }
         Ok(named("source", files)?.into_iter().collect())

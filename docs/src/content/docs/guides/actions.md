@@ -7,6 +7,8 @@ An action is an executable file in `actions/` or any subfolder of it, in
 any language its first line names (`#!/bin/sh`, `#!/usr/bin/env python3`).
 It has no extension and no description file; its name is its file name,
 unique among the actions (`actions/mail/imap-check` is `#imap-check`).
+Files that are not executable (a `README.md`, a `package.json`) can sit
+beside actions; they are not actions.
 
 `actions/ship`:
 
@@ -64,7 +66,7 @@ Itero.app on macOS (`osascript` without it), `notify-send` on Linux.
 
 A workspace action of the same name is used instead of a built-in one.
 
-## Other languages, and Docker
+## Other languages, and their dependencies
 
 The first line picks the language. A Python action:
 
@@ -75,5 +77,61 @@ state = json.load(sys.stdin)
 print(json.dumps({"total": state["price"] * state["count"]}))
 ```
 
+An action that uses packages should bring them, so it runs the same on any
+machine with its tool, and nobody installs anything by hand. itero installs
+nothing itself; each language's tool does it:
+
+### Python with uv
+
+[uv](https://docs.astral.sh/uv/) runs a script whose dependencies are
+written at its top (PEP 723, a Python standard). It installs them on the
+first run, in a cache of its own:
+
+```python
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["python-slugify>=8"]
+# ///
+import json, os
+from slugify import slugify
+print(json.dumps({"slug": slugify(os.environ["title"])}))
+```
+
+`examples/slug` is this action, with a workflow around it.
+
+### JavaScript with Bun
+
+[Bun](https://bun.sh) installs a package an action imports when there is no
+`node_modules`; a version in the import pins it:
+
+```js
+#!/usr/bin/env bun
+import slugify from "slugify@1.6.6";
+console.log(JSON.stringify({ slug: slugify(process.env.title ?? "", { lower: true }) }));
+```
+
+### Node, and anything with a project folder
+
+A program with its own `package.json`, `pyproject.toml` or build keeps its
+project in a folder, and the action starts it:
+
+```
+actions/web/screenshot          #!/bin/sh
+                                cd "$(dirname "$0")/screenshot-app" && exec node main.js
+actions/web/screenshot-app/     package.json, node_modules/, main.js
+```
+
+Only executable files are actions. The rest of the folder (`package.json`,
+`main.js`, a `README.md`) is left alone, and `node_modules` and hidden folders
+(`.venv`) are never looked into. Install it once yourself (`npm install`),
+in that folder. itero starts the action in the workspace; this one moves
+into its project before it starts the program.
+
+### Docker
+
 A program that needs its own image runs it itself: `exec docker run --rm
 -i -e order my/image`.
+
+When a program or a package is missing, the step ends in error with what the
+action printed, such as `docker: not found` or Python's `No module named …`.
