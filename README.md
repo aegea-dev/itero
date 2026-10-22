@@ -1,10 +1,12 @@
-# itero: everything iterated
+# itero: your domain, your solution, your tool
 
-Chain any program into workflows that run on their own: scripts, command
-line tools, containers, API calls, models. If it runs on your machine, it
-is a step. You write the chain in a small JSON file, by hand or with AI;
-itero runs it when something happens or on a schedule, with waiting,
-retries, guards, undo and a record of every run.
+Build the harness you need, from anything, for anything. Chain scripts,
+CLI tools, containers, APIs, message queues, any programming language, AI
+agents and models: anything that runs becomes a step in your workflows.
+
+You write the chain in a small JSON file, by hand or with AI; itero runs
+it when something happens or on a schedule, with waiting, retries,
+guards, undo and a record of every run.
 
 Documentation: <https://aegea-dev.github.io/itero/>.
 
