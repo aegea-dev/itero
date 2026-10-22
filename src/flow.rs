@@ -115,11 +115,13 @@ pub struct On {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
-    /// An action or a workflow, with data for it and when it runs.
+    /// An action or a workflow, with data for it, when it runs, and what
+    /// takes it back when the run breaks after it finished.
     One {
         name: Name,
         data: Map<String, Value>,
-        on: Option<On>,
+        on: Option<Box<On>>,
+        undo: Option<Name>,
     },
     /// Actions and workflows that run side by side; the next step waits
     /// for all of them.
@@ -300,6 +302,7 @@ fn step(v: &Value) -> Result<Step, String> {
             name: name(s)?,
             data: Map::new(),
             on: None,
+            undo: None,
         }),
         Value::Array(items) => {
             let names = items
@@ -324,10 +327,20 @@ fn step(v: &Value) -> Result<Step, String> {
             };
             let mut data = fields.clone();
             let when = data.remove("on").map(|w| on(&w)).transpose()?;
+            let undo = data
+                .remove("undo")
+                .map(|u| match u.as_str() {
+                    Some(s) => name(s).map_err(|e| format!("{k}: undo: {e}")),
+                    None => Err(format!(
+                        "{k}: undo is an action or a workflow, like \"#cluster-delete\""
+                    )),
+                })
+                .transpose()?;
             Ok(Step::One {
                 name: name(k)?,
                 data,
-                on: when,
+                on: when.map(Box::new),
+                undo,
             })
         }
         _ => Err("a step is a name, a list side by side, or { name: { data } }".into()),
@@ -335,7 +348,7 @@ fn step(v: &Value) -> Result<Step, String> {
 }
 
 /// `#name` or `#name@1.2` is an action, any other name a workflow.
-fn name(s: &str) -> Result<Name, String> {
+pub fn name(s: &str) -> Result<Name, String> {
     let ok = |n: &str| {
         !n.is_empty() && !n.contains(['/', '#', '@', '$']) && !n.contains(char::is_whitespace)
     };
@@ -388,7 +401,7 @@ impl Flow {
         let mut out: Vec<Name> = vec![];
         for s in self.all_steps() {
             let names: Vec<&Name> = match s {
-                Step::One { name, .. } => vec![name],
+                Step::One { name, undo, .. } => std::iter::once(name).chain(undo).collect(),
                 Step::Side(names) => names.iter().collect(),
             };
             for n in names {

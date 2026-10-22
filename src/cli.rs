@@ -289,12 +289,17 @@ fn story(j: &crate::engine::journal::Journal, r: &crate::engine::journal::Run) -
     for e in j.events(Some(&subject(&r.id)))? {
         let d = &e.event.data;
         let step = || {
-            e.event
+            let name = e
+                .event
                 .cause
                 .as_ref()
                 .and_then(|c| jobs.get(c))
-                .map_or("a step", String::as_str)
-                .to_string()
+                .map_or("a step", String::as_str);
+            let undo = crate::engine::steps::Phase::Undo.index() as u64;
+            match d["path"][0].as_u64() {
+                Some(p) if p == undo => format!("{name} (undo)"),
+                _ => name.to_string(),
+            }
         };
         let line = match e.event.kind.as_str() {
             "run.started" => format!("started  {d}"),

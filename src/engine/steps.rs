@@ -35,6 +35,10 @@ pub struct Runtime {
     pub taken: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended: Option<Ended>,
+    /// The undos of the steps that finished, as written, oldest first: run
+    /// newest first when a step breaks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub undo: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -50,10 +54,14 @@ pub enum Phase {
     Failure,
     /// Its `error` list: something broke.
     Error,
+    /// Before the error list: the undos of the steps that finished, newest
+    /// first.
+    Undo,
 }
 
 impl Phase {
-    fn index(self) -> usize {
+    /// The first number of a job's path.
+    pub fn index(self) -> usize {
         self as usize
     }
 }
@@ -336,6 +344,10 @@ impl Machine<'_> {
                 self.end(Ended::Error { why });
                 Ok(())
             }
+            Phase::Undo => {
+                self.rt.phase = Phase::Error;
+                self.begin()
+            }
         }
     }
 
@@ -353,7 +365,6 @@ impl Machine<'_> {
             .to_string()
     }
 
-    /// Something broke at `step`: the error list, or the end.
     /// A step whose `on` does not hold: it is passed by.
     fn skipped(&mut self, step: &str) {
         self.notes.push(serde_json::json!({
@@ -363,12 +374,18 @@ impl Machine<'_> {
         }));
     }
 
+    /// Something broke at `step`: the undos, then the error list; or, in
+    /// an end list, the end.
     fn fail(&mut self, why: &str, step: &str) -> Result<(), String> {
         self.rt.state.insert("why".into(), why.into());
         self.rt.state.insert("failed_step".into(), step.into());
         self.log.push(format!("{step}: {why}"));
         if self.rt.phase == Phase::Steps {
-            self.rt.phase = Phase::Error;
+            self.rt.phase = if self.rt.undo.is_empty() {
+                Phase::Error
+            } else {
+                Phase::Undo
+            };
             self.begin()
         } else {
             // a step of an end list broke: no other list runs
@@ -377,17 +394,39 @@ impl Machine<'_> {
         }
     }
 
-    fn list(&self, workflow: &str, root: bool) -> Vec<Step> {
+    /// An undo that broke: noted, and the next one runs all the same.
+    fn undo_failed(&mut self, path: &[usize], step: &str, why: &str) -> Result<(), String> {
+        self.notes
+            .push(json!({"event": "undo.failed", "step": step, "why": why}));
+        self.log.push(format!("undo {step}: {why}"));
+        self.finished(path, &Map::new())
+    }
+
+    fn list(&self, workflow: &str, root: bool) -> Result<Vec<Step>, String> {
         let f = &self.flows[workflow];
         if !root {
-            return f.steps.clone();
+            return Ok(f.steps.clone());
         }
-        match self.rt.phase {
+        Ok(match self.rt.phase {
             Phase::Steps => f.steps.clone(),
             Phase::Success => f.success.clone(),
             Phase::Failure => f.failure.clone(),
             Phase::Error => f.error.clone(),
-        }
+            Phase::Undo => self
+                .rt
+                .undo
+                .iter()
+                .rev()
+                .map(|u| {
+                    Ok(Step::One {
+                        name: flow::name(u)?,
+                        data: Map::new(),
+                        on: None,
+                        undo: None,
+                    })
+                })
+                .collect::<Result<_, String>>()?,
+        })
     }
 
     fn holds(&self, on: &On) -> bool {
@@ -404,7 +443,7 @@ impl Machine<'_> {
         from: usize,
         path: &mut Vec<usize>,
     ) -> Result<Option<At>, String> {
-        let steps = self.list(workflow, root);
+        let steps = self.list(workflow, root)?;
         for (idx, step) in steps.iter().enumerate().skip(from) {
             path.push(idx);
             let node = self.start_step(step, path)?;
@@ -422,7 +461,7 @@ impl Machine<'_> {
 
     fn start_step(&mut self, step: &Step, path: &mut Vec<usize>) -> Result<Option<At>, String> {
         match step {
-            Step::One { name, data, on } => {
+            Step::One { name, data, on, .. } => {
                 if let Some(on) = on
                     && !self.holds(on)
                 {
@@ -566,6 +605,14 @@ impl Machine<'_> {
                         inner: Some(Box::new(n)),
                     })),
                     None => {
+                        // the step finished: what takes it back, if the run
+                        // breaks later
+                        if self.rt.phase == Phase::Steps
+                            && let Some(Step::One { undo: Some(u), .. }) =
+                                self.flows[&workflow].steps.get(step)
+                        {
+                            self.rt.undo.push(written(u));
+                        }
                         let mut p = prefix;
                         self.start_list(&workflow, depth == 0, step + 1, &mut p)
                     }
@@ -629,6 +676,9 @@ impl Machine<'_> {
             return Ok(());
         };
         let step = format!("#{name}");
+        if self.rt.phase == Phase::Undo {
+            return self.undo_failed(path, &step, why);
+        }
         self.fail(why, &step)
     }
 
@@ -712,9 +762,13 @@ impl Machine<'_> {
                         .is_some_and(|s| s + limit <= self.now)
                 });
                 match late {
-                    Some((_, name, _)) => {
+                    Some((path, name, _)) => {
                         let wait = humantime::format_duration(limit.to_std().unwrap_or_default());
-                        self.fail(&format!("waited {wait} for data"), &format!("#{name}"))
+                        let (why, step) = (format!("waited {wait} for data"), format!("#{name}"));
+                        if self.rt.phase == Phase::Undo {
+                            return self.undo_failed(&path, &step, &why);
+                        }
+                        self.fail(&why, &step)
                     }
                     None => Ok(()),
                 }
@@ -763,6 +817,18 @@ fn label(n: &Name) -> String {
     match n {
         Name::Action { name, .. } => format!("#{name}"),
         Name::Workflow(w) => w.clone(),
+    }
+}
+
+/// A name as a workflow writes it: `#name@0.2` for an action, the name for
+/// a workflow.
+fn written(n: &Name) -> String {
+    match n {
+        Name::Action {
+            name,
+            version: Some(v),
+        } => format!("#{name}@{v}"),
+        other => label(other),
     }
 }
 

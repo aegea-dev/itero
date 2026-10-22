@@ -125,6 +125,14 @@ The run ends as `done`, `failed` or `error`. These steps get `$why` and
 `$failed_step` in the state. If one of them breaks, the run ends as
 `error` and no other list runs.
 
+### `undo`: taking steps back
+
+A step's data can name what takes it back: `{ "#cluster-create": {
+"undo": "#cluster-delete" } }`. When a step breaks, the undos of the steps
+that finished run newest first, with `$why` and `$failed_step`, then the
+`error` list. An undo that breaks is logged (`undo.failed`) and the others
+still run. A `failure` undoes nothing.
+
 ### `timeout`
 
 How long a run may wait for data (see exit 75), like `"2h"`. Unless
@@ -316,6 +324,7 @@ A run moves through its workflow's steps:
 
 ```
 run:  started ─► step ─► step ─► … ─► success / failure / error list ─► ended
+                                 └─ breaks: undos, newest first ─► error list
                    │
                    └─ exit 75: waiting ─► (a matching message, or the hourly retry) ─► the step again
 ```
