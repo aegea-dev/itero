@@ -1,0 +1,8 @@
+# A title turned into a URL slug by a Python action that brings its own
+# dependency: actions/python/slugify is a uv script (PEP 723), so uv installs
+# python-slugify on its first run. Needs uv: https://docs.astral.sh/uv/
+#
+# Run `itero daemon` in this folder, then from another terminal:
+#   itero emit --wait title.received '{"title": "Çok Güzel Bir Başlık"}'
+# which prints the run, its state holding "slug": "cok-guzel-bir-baslik".
+port = 8793

@@ -1,0 +1,17 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["python-slugify>=8"]
+# ///
+"""$title as a URL slug: {"slug": "..."}.
+
+An action that brings its own dependency: uv reads the block above, installs
+python-slugify the first time in its own cache, and runs the script. Nothing
+is installed by hand, and nothing by itero.
+"""
+import json
+import os
+
+from slugify import slugify
+
+print(json.dumps({"slug": slugify(os.environ["title"])}))

@@ -65,4 +65,5 @@ itero runs <name>      # the run step by step
 - [The log, IDs and names](/guides/log/): what happened, and how to find
   it.
 - The examples in the repository: `mail-alert`, `mail-servers`, `order`,
-  `page-digest`, `page-summary` (a local model) and `photos`.
+  `page-digest`, `page-summary` (a local model), `photos` and `slug` (a
+  Python action that brings its own dependency).

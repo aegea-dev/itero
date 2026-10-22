@@ -91,6 +91,8 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
   the daemon's terminal.
 - [`examples/photos`](examples/photos): a thumbnail for each photo dropped
   into a folder the daemon watches.
+- [`examples/slug`](examples/slug): a Python action that brings its own
+  dependency with uv, answering `itero emit --wait`.
 
 ## Design
 

@@ -1,0 +1,1 @@
+{ "on": [{ "event": "title.received" }, { "has": "$title" }], "steps": ["#slugify"] }
