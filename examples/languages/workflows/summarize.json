@@ -1,0 +1,9 @@
+{
+  "on": [{ "event": "website.summarize" }, { "has": "$url" }],
+  "steps": [
+    "#fetch",
+    "#to-markdown",
+    { "#ask-ai": { "prompt": "Summarize this page in 5 bullets.", "key": "$$LM_STUDIO_TOKEN" } }
+  ],
+  "success": ["#print"]
+}

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Asks a local model (LM Studio's OpenAI-compatible API) $prompt about
+# $page: {"text": ...}. The token goes to curl on stdin, never on its
+# command line.
+body=$(mktemp) || exit 1
+trap 'rm -f "$body"' EXIT
+jq -n --arg q "$prompt
+
+$page" '{model: "openai/gpt-oss-20b",
+          messages: [{role: "user", content: $q}]}' > "$body"
+printf 'header = "Authorization: Bearer %s"\n' "$key" |
+  curl -fsS --max-time 300 -K - http://localhost:1234/v1/chat/completions \
+    -H 'content-type: application/json' \
+    --data-binary @"$body" |
+  jq '{text: .choices[0].message.content}'
