@@ -1,0 +1,17 @@
+#!/bin/sh
+# Asks the app at $url until it answers (a minute at most), then six times
+# more: whoami says which pod served each request, so the answer shows the
+# load spread over the cluster. Prints {"served_by": [...]}.
+set -eu
+tries=0
+until curl -fsS --max-time 2 "$url" >/dev/null 2>&1; do
+  tries=$((tries + 1))
+  if [ "$tries" -ge 60 ]; then
+    echo "$url did not answer within a minute" >&2
+    exit 1
+  fi
+  sleep 1
+done
+for _ in 1 2 3 4 5 6; do
+  curl -fsS --max-time 5 "$url" | sed -n 's/^Hostname: //p'
+done | sort -u | jq -Rn '{served_by: [inputs]}'

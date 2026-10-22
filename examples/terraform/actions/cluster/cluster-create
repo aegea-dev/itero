@@ -1,0 +1,15 @@
+#!/bin/sh
+# A k3d cluster named $name: 1 server and 2 agents (3 machines, each a
+# container), its load balancer serving $port (8080 unless given) on
+# 127.0.0.1. Its kubeconfig goes in .itero/clusters/$name/, so your own
+# ~/.kube/config is left alone. Prints {"cluster", "kubeconfig", "url"}.
+set -eu
+port=${port:-8080}
+k3d cluster create "$name" --servers 1 --agents 2 \
+  --port "127.0.0.1:$port:80@loadbalancer" --wait \
+  --kubeconfig-update-default=false --kubeconfig-switch-context=false 1>&2
+dir=".itero/clusters/$name"
+mkdir -p "$dir"
+k3d kubeconfig get "$name" > "$dir/kubeconfig"
+jq -n --arg c "$name" --arg k "$dir/kubeconfig" --arg u "http://localhost:$port" \
+  '{cluster: $c, kubeconfig: $k, url: $u}'

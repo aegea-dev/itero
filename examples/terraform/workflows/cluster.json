@@ -1,0 +1,6 @@
+{
+  "meta": { "description": "A 3-machine k3d cluster with a web app, applied with OpenTofu" },
+  "on": [{ "event": "cluster.requested" }, { "has": "$name" }],
+  "steps": ["#cluster-create", "#tf-plan", "#check-plan", "#tf-apply", "#web-check"],
+  "error": ["#cluster-delete"]
+}

@@ -1,0 +1,5 @@
+{
+  "meta": { "description": "Installs the tools the Brewfile lists; it changes the machine, so it runs only when asked" },
+  "on": [{ "event": "tools.requested" }],
+  "steps": ["#tools"]
+}
