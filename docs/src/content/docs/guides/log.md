@@ -32,6 +32,7 @@ workflow is [internal](/guides/maintenance/).
 | `run.skipped` | a schedule came due and the workflow's `on` did not hold |
 | `source.started`, `source.ended`, `source.gave-up` | `source`, `why` |
 | `paths.watched` | `paths`: every path watched now |
+| `reply.sent`, `reply.failed` | `url`, `run`, and for `reply.failed` `why`: a callback taken, or to be tried again |
 | `error` | `why`: what went wrong in the daemon itself |
 
 It holds what steps printed, never their environment, so no secret.

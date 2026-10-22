@@ -40,6 +40,15 @@ pub enum Cmd {
         /// Its data, a JSON object
         #[arg(value_name = "DATA")]
         data: Option<String>,
+        /// Wait for the runs it starts to end, and print them as JSON (exit 1: one failed or broke; 2: time ran out)
+        #[arg(long)]
+        wait: bool,
+        /// With --wait: how long, like 30s or 5m
+        #[arg(long, default_value = "60s", requires = "wait")]
+        timeout: String,
+        /// Post each run's end to this URL, when it ends
+        #[arg(long, value_name = "URL")]
+        reply: Option<String>,
     },
     /// Set an action's args: a JSON object, or a list of objects (its step runs once per item)
     Args {
@@ -427,7 +436,14 @@ fn dispatch(cli: Cli) -> Result<()> {
                 http::serve(http::router(ws.clone(), engine), ws.port)?;
             }
         }
-        Cmd::Emit { kind, data } => {
+        Cmd::Emit {
+            kind,
+            data,
+            wait,
+            timeout,
+            reply,
+        } => {
+            use crate::engine::events::{self, Waited};
             let ws = workspace()?;
             let data = data
                 .map(|d| serde_json::from_str(&d).map_err(|_| anyhow!("the data is a JSON object")))
@@ -437,7 +453,27 @@ fn dispatch(cli: Cli) -> Result<()> {
                 .as_ref()
                 .and_then(|d: &serde_json::Value| d.as_object().cloned())
                 .unwrap_or_default();
-            let id = crate::engine::events::emit(&ws, &kind, data, &now)?;
+            if wait {
+                let timeout = humantime::parse_duration(&timeout).map_err(|_| {
+                    anyhow!("--timeout: a duration is like 30s or 5m, not {timeout}")
+                })?;
+                // with no daemon nothing would answer: say so, sending nothing
+                if !daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)? {
+                    bail!("no daemon is running: start itero daemon, then send it again");
+                }
+                let id = events::emit_with(&ws, &kind, data, reply.as_deref(), &now)?;
+                let (answer, how) = events::wait_for(&ws, &id, timeout)?;
+                println!("{}", serde_json::to_string_pretty(&answer)?);
+                match how {
+                    Waited::Done => return Ok(()),
+                    Waited::Failed => std::process::exit(1),
+                    Waited::TimedOut => {
+                        eprintln!("timed out: not every run it started has ended");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            let id = events::emit_with(&ws, &kind, data, reply.as_deref(), &now)?;
             println!("{id}");
             // what it will do, on stderr: stdout stays the id for scripts
             let fate = crate::engine::events::fate(&ws, &kind, &fields)?;

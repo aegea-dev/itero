@@ -354,8 +354,76 @@ fn defined(name: &str) -> bool {
 }
 
 /// One pass over a workspace; `exe` is the itero binary, run as `itero
-/// manager` and `itero worker`.
+/// manager` and `itero worker`. Ends by posting the callbacks due.
 pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
+    let pass = runs_pass(ws, now, exe)?;
+    send_replies(ws, now)?;
+    Ok(pass)
+}
+
+/// How long a callback is tried before it is given up on.
+const REPLY_FOR: chrono::Duration = chrono::Duration::days(1);
+
+/// Posts each callback due: one taken (2xx) is done; one refused or
+/// unreachable is tried again later, waiting twice as long each time (10s
+/// to an hour), and given up on a day after its first try.
+fn send_replies(ws: &Workspace, now: DateTime<Utc>) -> Result<()> {
+    let j = Journal::open(ws)?;
+    let due = j.due_replies(&stamp(now))?;
+    if due.is_empty() {
+        return Ok(());
+    }
+    let log = Log::new(ws, &j.workspace()?.id);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    for journal::DueReply {
+        id,
+        url,
+        body,
+        first,
+        tries,
+    } in due
+    {
+        let run: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+        let first: DateTime<Utc> = first.parse().unwrap_or(now);
+        if now - first > REPLY_FOR {
+            log.write(
+                "error",
+                json!({ "why": format!("gave up calling {url} back for run {} after a day", run["run"]), "run": run["run"] }),
+            );
+            j.reply_done(id)?;
+            continue;
+        }
+        let sent = client
+            .post(&url)
+            .header("content-type", "application/json")
+            .body(body)
+            .send();
+        match sent {
+            Ok(r) if r.status().is_success() => {
+                log.write("reply.sent", json!({ "url": url, "run": run["run"] }));
+                j.reply_done(id)?;
+            }
+            other => {
+                let why = match other {
+                    Ok(r) => format!("answered {}", r.status()),
+                    Err(e) => e.to_string(),
+                };
+                let wait = chrono::Duration::seconds(10 << tries.clamp(0, 9))
+                    .min(chrono::Duration::hours(1));
+                log.write(
+                    "reply.failed",
+                    json!({ "url": url, "run": run["run"], "why": why }),
+                );
+                j.reply_later(id, &stamp(now + wait))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let mut j = Journal::open(ws)?;
     let log = Log::new(ws, &j.workspace()?.id);
     let mut pass = Pass::default();
@@ -528,6 +596,7 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log)
                         flows: pinned,
                         input: json!({}),
                         cause: None,
+                        reply: None,
                     };
                     j.start_run(&start, &stamp(now), Some(&key))?;
                 }
@@ -580,6 +649,7 @@ fn route(
                 .any(|p| expand(&ws.root, p).is_ok_and(|p| p == *c))
         })
     };
+    let reply = j.reply_of(r.seq)?;
     let mut starts = vec![];
     for (name, f) in &flows.read {
         if !(f.on.events.contains(&r.event.kind) || names_it(f))
@@ -595,6 +665,7 @@ fn route(
                 flows: pinned,
                 input: Value::Object(data.clone()),
                 cause: Some(r.event.id.clone()),
+                reply: reply.clone(),
             }),
             Err(why) => log.write(
                 "error",
@@ -686,6 +757,7 @@ fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Resul
         timers: None,
         events: vec![],
         splits: vec![],
+        reply: None,
     })?;
     Ok(Delivered::Handled)
 }
@@ -829,8 +901,23 @@ fn deliver(
             pin: &run.pin,
             runtime: rt,
             input: &run.input,
+            message: run.message.as_deref(),
+            reply: run.reply.as_deref(),
         })
         .collect();
+    // a run ending (not split: its parts end on their own) is posted to
+    // where its message asked
+    let ends = run.runtime.ended.is_none()
+        && answer.runtime.ended.is_some()
+        && !matches!(answer.runtime.ended, Some(steps::Ended::Split));
+    let reply = match (&run.reply, ends) {
+        (Some(url), true) => {
+            let mut body = journal::answer(&run, &answer.runtime);
+            body["message"] = json!(run.message);
+            Some((url.as_str(), body))
+        }
+        _ => None,
+    };
     j.handle(Handled {
         seq: r.seq,
         at: &at,
@@ -839,6 +926,7 @@ fn deliver(
         timers: Some(&answer.timers),
         events,
         splits,
+        reply,
     })?;
     tell(log, &who, r, &answer);
     super::die_at("answer");
@@ -1153,5 +1241,6 @@ fn save_result(
         timers: None,
         events: vec![e],
         splits: vec![],
+        reply: None,
     })
 }

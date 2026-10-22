@@ -61,6 +61,11 @@ impl Ws {
         itero::engine::events::emit(&self.ws, kind, Some(data), NOW).unwrap();
     }
 
+    /// A message whose runs' ends are posted to `reply`.
+    fn emit_replying(&self, kind: &str, data: Value, reply: &str) -> String {
+        itero::engine::events::emit_with(&self.ws, kind, Some(data), Some(reply), NOW).unwrap()
+    }
+
     fn pass(&self, now: &str) -> Pass {
         run_once(&self.ws, now.parse().unwrap(), exe()).unwrap()
     }
@@ -289,12 +294,133 @@ fn a_run_that_waits_past_its_timeout_ends_in_error() {
     assert_eq!(ws.runs()[0].runtime.state["why"], "waited 1m for data");
 }
 
+/// An app's endpoint on 127.0.0.1: answers each request with the next of
+/// `statuses` (the last one again after them), and hands over each body.
+fn endpoint(statuses: Vec<u16>) -> (String, std::sync::mpsc::Receiver<Value>) {
+    use std::io::{BufRead, BufReader, Read};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/itero", listener.local_addr().unwrap());
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for (i, stream) in listener.incoming().enumerate() {
+            let mut stream = stream.unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if let Some(n) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = n.trim().parse().unwrap();
+                }
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let status = *statuses.get(i).or(statuses.last()).unwrap();
+            write!(stream, "HTTP/1.1 {status} X\r\ncontent-length: 0\r\n\r\n").unwrap();
+            let _ = tx.send(serde_json::from_slice(&body).unwrap());
+        }
+    });
+    (url, rx)
+}
+
+#[test]
+fn the_app_is_called_back_when_each_run_ends() {
+    let w = Ws::new();
+    w.action("selamla", "echo \"{\\\"selam\\\": \\\"merhaba $kim\\\"}\"");
+    w.action("kır", "echo 'çöktü' >&2; exit 3");
+    w.flow(
+        "iyi",
+        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }),
+    );
+    w.flow(
+        "kötü",
+        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#kır"] }),
+    );
+    let (url, bodies) = endpoint(vec![200]);
+    let message = w.emit_replying("kişi.geldi", json!({ "kim": "ayşe" }), &url);
+    w.pass(NOW);
+    let mut got: Vec<Value> = bodies.try_iter().collect();
+    got.sort_by_key(|b| b["workflow"].to_string());
+    assert_eq!(got.len(), 2, "{got:?}");
+    let (good, bad) = (&got[0], &got[1]);
+    assert_eq!(good["workflow"], "iyi");
+    assert_eq!(good["status"], "done");
+    assert_eq!(good["message"], message.as_str());
+    assert_eq!(good["state"]["selam"], "merhaba ayşe");
+    assert_eq!(
+        good["name"],
+        w.runs()
+            .iter()
+            .find(|r| r.workflow == "iyi")
+            .unwrap()
+            .name
+            .as_str()
+    );
+    assert_eq!(bad["status"], "error");
+    // a message without a reply calls nothing
+    w.emit("kişi.geldi", json!({ "kim": "can" }));
+    w.pass(NOW);
+    assert_eq!(bodies.try_iter().count(), 0);
+}
+
+#[test]
+fn a_callback_the_app_refuses_is_tried_again_later() {
+    let w = Ws::new();
+    w.action("selamla", "true");
+    w.flow(
+        "iyi",
+        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }),
+    );
+    let (url, bodies) = endpoint(vec![500, 200]);
+    w.emit_replying("kişi.geldi", json!({ "kim": "ayşe" }), &url);
+    w.pass(NOW);
+    assert_eq!(bodies.try_iter().count(), 1, "refused once");
+    w.pass(NOW);
+    assert_eq!(bodies.try_iter().count(), 0, "not again at once");
+    w.pass("2026-10-21T10:05:00Z");
+    assert_eq!(bodies.try_iter().count(), 1, "taken later");
+    w.pass("2026-10-21T11:00:00Z");
+    assert_eq!(bodies.try_iter().count(), 0, "taken once");
+}
+
+#[test]
+fn a_callback_no_app_takes_is_given_up_after_a_day() {
+    let w = Ws::new();
+    w.action("selamla", "true");
+    w.flow(
+        "iyi",
+        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }),
+    );
+    // a port no one listens on
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    w.emit_replying("kişi.geldi", json!({}), &format!("http://{closed}/itero"));
+    w.pass(NOW);
+    w.pass("2026-10-22T10:00:01Z");
+    let gave_up = w
+        .log()
+        .into_iter()
+        .any(|l| l["event"] == "error" && l["why"].as_str().unwrap_or("").contains("gave up"));
+    assert!(gave_up, "{:#?}", w.log());
+    let left: i64 = rusqlite::Connection::open(w.ws.journal())
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM replies", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
 #[test]
 fn a_value_too_big_for_the_environment_is_on_stdin_only() {
     let w = Ws::new();
+    // stdin kept as it came: no jq, which not every system has
     w.action(
         "ölç",
-        "echo \"${sayfa:-yok}\" > ortam.txt; jq -r '.sayfa | length' > uzunluk.txt",
+        "echo \"${sayfa:-yok}\" > ortam.txt; cat > girdi.json",
     );
     w.flow(
         "büyük",
@@ -303,9 +429,15 @@ fn a_value_too_big_for_the_environment_is_on_stdin_only() {
     // 2 MB: past every system's limit for one environment variable
     w.emit("sayfa.geldi", json!({ "sayfa": "ş".repeat(1_000_000) }));
     w.pass(NOW);
-    assert_eq!(w.statuses(), ["done"]);
+    let state = &w.runs()[0].runtime.state;
+    assert_eq!(w.statuses(), ["done"], "{:?}", state.get("why"));
     assert_eq!(w.read("ortam.txt"), "yok\n", "not in the environment");
-    assert_eq!(w.read("uzunluk.txt"), "1000000\n", "whole on stdin");
+    let stdin: Value = serde_json::from_str(&w.read("girdi.json")).unwrap();
+    assert_eq!(
+        stdin["sayfa"].as_str().unwrap().chars().count(),
+        1_000_000,
+        "whole on stdin"
+    );
 }
 
 #[test]

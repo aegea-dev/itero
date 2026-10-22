@@ -17,7 +17,7 @@ pub const SCHEMA_VERSION: i64 = 1 + MIGRATIONS.len() as i64;
 /// The steps from each version to the next: `MIGRATIONS[0]` takes version 1
 /// to 2, and so on. A step is only ever added, never changed: a journal on
 /// someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 5] = [
+const MIGRATIONS: [&str; 6] = [
     // 2: what handling an event did, when no run shows it
     "ALTER TABLE events ADD COLUMN note TEXT;",
     // 3: starts waiting for a free slot, paused workflows, sources' cursors
@@ -37,6 +37,12 @@ const MIGRATIONS: [&str; 5] = [
     // meta, made when the journal is opened)
     "ALTER TABLE runs ADD COLUMN name TEXT;
      CREATE TABLE workflow_ids (name TEXT PRIMARY KEY, id TEXT NOT NULL, created TEXT NOT NULL, itero TEXT NOT NULL);",
+    // 7: answers: where a message's answer goes, each run's message, and
+    // the callbacks still to deliver
+    "ALTER TABLE events ADD COLUMN reply TEXT;
+     ALTER TABLE runs ADD COLUMN message TEXT;
+     ALTER TABLE runs ADD COLUMN reply TEXT;
+     CREATE TABLE replies (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT NOT NULL, body TEXT NOT NULL, first TEXT NOT NULL, next TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0);",
 ];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
@@ -137,6 +143,32 @@ pub struct Run {
     pub input: Value,
     pub started: String,
     pub ended: Option<String>,
+    /// The message that started it, or the run it split from.
+    pub message: Option<String>,
+    /// Where its end is posted, as that message asked.
+    pub reply: Option<String>,
+}
+
+/// A callback to deliver.
+pub struct DueReply {
+    pub id: i64,
+    pub url: String,
+    /// The run's answer, as JSON text.
+    pub body: String,
+    /// When it was first due.
+    pub first: String,
+    pub tries: i64,
+}
+
+/// A run's answer: what a waiting app or a callback gets when it ends.
+pub fn answer(run: &Run, rt: &Runtime) -> Value {
+    json!({
+        "run": run.id,
+        "name": run.name,
+        "workflow": run.workflow,
+        "status": super::steps::status(rt),
+        "state": rt.state,
+    })
 }
 
 /// What itero gives a workspace or a workflow, and nobody edits: an id, a
@@ -165,6 +197,23 @@ pub struct Start {
     pub flows: BTreeMap<String, Value>,
     pub input: Value,
     pub cause: Option<String>,
+    /// Where the run's end is posted.
+    pub reply: Option<String>,
+}
+
+impl Start {
+    fn new_run<'a>(&'a self, pin: &'a str, rt: &'a Runtime, now: &'a str) -> NewRun<'a> {
+        NewRun {
+            workflow: &self.workflow,
+            pin,
+            rt,
+            input: &self.input,
+            now,
+            cause: self.cause.as_deref(),
+            message: self.cause.as_deref(),
+            reply: self.reply.as_deref(),
+        }
+    }
 }
 
 /// A run split from another: its own copy of the runtime, from the same
@@ -174,6 +223,9 @@ pub struct Split<'a> {
     pub pin: &'a str,
     pub runtime: &'a Runtime,
     pub input: &'a Value,
+    /// The message and the reply of the run it splits from.
+    pub message: Option<&'a str>,
+    pub reply: Option<&'a str>,
 }
 
 /// A subject: `itero.run.<id>`, `itero.worker` for jobs, or `itero.app`
@@ -205,6 +257,8 @@ pub struct Handled<'a> {
     pub events: Vec<Envelope>,
     /// Runs split from this one.
     pub splits: Vec<Split<'a>>,
+    /// A callback to deliver: the URL and the body.
+    pub reply: Option<(&'a str, Value)>,
 }
 
 pub struct Journal {
@@ -402,6 +456,91 @@ impl Journal {
             .flatten())
     }
 
+    /// Saves a message whose runs' ends are posted to `reply`.
+    pub fn publish_replying(&mut self, e: &Envelope, reply: &str) -> Result<()> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        publish(&tx, e)?;
+        tx.execute(
+            "UPDATE events SET reply = ?2 WHERE id = ?1",
+            params![e.id, reply],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Where a message's runs' ends are posted, if it asked.
+    pub fn reply_of(&self, seq: i64) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT reply FROM events WHERE seq = ?1",
+                params![seq],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// The runs a message started (and those split from them), oldest
+    /// first; `None` while no daemon has taken the message.
+    pub fn runs_of(&self, message: &str) -> Result<Option<Vec<Run>>> {
+        let handled: Option<Option<String>> = self
+            .db
+            .query_row(
+                "SELECT handled FROM events WHERE id = ?1",
+                params![message],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if handled.flatten().is_none() {
+            return Ok(None);
+        }
+        let mut s = self.db.prepare(&format!(
+            "SELECT {RUN_COLUMNS} FROM runs WHERE message = ?1 ORDER BY started, id"
+        ))?;
+        let rows: Vec<Result<Run>> = s
+            .query_map(params![message], run_row)?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(Some(rows.into_iter().collect::<Result<_>>()?))
+    }
+
+    /// Callbacks due at `now` (RFC 3339).
+    pub fn due_replies(&self, now: &str) -> Result<Vec<DueReply>> {
+        let mut s = self.db.prepare(
+            "SELECT id, url, body, first, tries FROM replies WHERE next <= ?1 ORDER BY id",
+        )?;
+        let out = s
+            .query_map(params![now], |r| {
+                Ok(DueReply {
+                    id: r.get(0)?,
+                    url: r.get(1)?,
+                    body: r.get(2)?,
+                    first: r.get(3)?,
+                    tries: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(out)
+    }
+
+    /// A callback delivered, or given up on.
+    pub fn reply_done(&self, id: i64) -> Result<()> {
+        self.db
+            .execute("DELETE FROM replies WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// A callback to try again at `next`.
+    pub fn reply_later(&self, id: i64, next: &str) -> Result<()> {
+        self.db.execute(
+            "UPDATE replies SET tries = tries + 1, next = ?2 WHERE id = ?1",
+            params![id, next],
+        )?;
+        Ok(())
+    }
+
     /// A run by id.
     pub fn run(&self, id: &str) -> Result<Option<Run>> {
         self.db
@@ -593,15 +732,7 @@ impl Journal {
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let pin = pin(&tx, &s.workflow, &s.flows)?;
-        let id = insert_run(
-            &tx,
-            &s.workflow,
-            &pin,
-            &Runtime::default(),
-            &s.input,
-            now,
-            s.cause.clone(),
-        )?;
+        let id = insert_run(&tx, s.new_run(&pin, &Runtime::default(), now))?;
         if let Some(key) = schedule {
             set_schedule_last(&tx, key, now)?;
         }
@@ -627,15 +758,7 @@ impl Journal {
         let mut started = vec![];
         for s in starts {
             let pin = pin(&tx, &s.workflow, &s.flows)?;
-            started.push(insert_run(
-                &tx,
-                &s.workflow,
-                &pin,
-                &Runtime::default(),
-                &s.input,
-                at,
-                s.cause.clone(),
-            )?);
+            started.push(insert_run(&tx, s.new_run(&pin, &Runtime::default(), at))?);
         }
         for id in waiting {
             publish(&tx, &copy(&r.event, id, at))?;
@@ -725,7 +848,25 @@ impl Journal {
             publish(&tx, e)?;
         }
         for s in &h.splits {
-            insert_run(&tx, s.workflow, s.pin, s.runtime, s.input, now, None)?;
+            insert_run(
+                &tx,
+                NewRun {
+                    workflow: s.workflow,
+                    pin: s.pin,
+                    rt: s.runtime,
+                    input: s.input,
+                    now,
+                    cause: None,
+                    message: s.message,
+                    reply: s.reply,
+                },
+            )?;
+        }
+        if let Some((url, body)) = &h.reply {
+            tx.execute(
+                "INSERT INTO replies (url, body, first, next) VALUES (?1, ?2, ?3, ?3)",
+                params![url, json(body)?, now],
+            )?;
         }
         tx.commit()?;
         Ok(())
@@ -776,27 +917,19 @@ impl Journal {
     }
 }
 
-const RUN_COLUMNS: &str = "id, workflow, pin, runtime, input, started, ended, name";
+const RUN_COLUMNS: &str = "id, workflow, pin, runtime, input, started, ended, name, message, reply";
 
 fn run_row(r: &rusqlite::Row) -> rusqlite::Result<Result<Run>> {
-    let (id, workflow, pin, rt, input, started, ended, name): (
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        String,
-    ) = (
+    let (rt, input): (String, Option<String>) = (r.get(3)?, r.get(4)?);
+    let (id, workflow, pin, started, ended, name, message, reply) = (
         r.get(0)?,
         r.get(1)?,
         r.get(2)?,
-        r.get(3)?,
-        r.get(4)?,
         r.get(5)?,
         r.get(6)?,
         r.get(7)?,
+        r.get(8)?,
+        r.get(9)?,
     );
     Ok((|| {
         Ok(Run {
@@ -811,6 +944,8 @@ fn run_row(r: &rusqlite::Row) -> rusqlite::Result<Result<Run>> {
             },
             started,
             ended,
+            message,
+            reply,
         })
     })())
 }
@@ -849,27 +984,45 @@ fn pin(db: &Connection, workflow: &str, flows: &BTreeMap<String, Value>) -> Resu
 
 /// A new run, and its `run.started` event carrying `input`, caused by the
 /// message that started it; returns its id.
-fn insert_run(
-    db: &Connection,
-    workflow: &str,
-    pin: &str,
-    rt: &Runtime,
-    input: &Value,
-    now: &str,
-    cause: Option<String>,
-) -> Result<String> {
+/// A run to insert.
+struct NewRun<'a> {
+    workflow: &'a str,
+    pin: &'a str,
+    rt: &'a Runtime,
+    input: &'a Value,
+    now: &'a str,
+    /// The message that started it: its `run.started` event's cause.
+    cause: Option<&'a str>,
+    /// The message whose answer it is part of: its cause, or (split) its
+    /// parent's.
+    message: Option<&'a str>,
+    reply: Option<&'a str>,
+}
+
+fn insert_run(db: &Connection, r: NewRun) -> Result<String> {
     let id = uuid::Uuid::now_v7().to_string();
     db.execute(
-        "INSERT INTO runs (id, name, workflow, pin, runtime, args, input, started) VALUES (?1, ?2, ?3, ?4, ?5, '{}', ?6, ?7)",
-        params![id, crate::names::random(), workflow, pin, json(rt)?, json(input)?, now],
+        "INSERT INTO runs (id, name, workflow, pin, runtime, args, input, started, message, reply)
+         VALUES (?1, ?2, ?3, ?4, ?5, '{}', ?6, ?7, ?8, ?9)",
+        params![
+            id,
+            crate::names::random(),
+            r.workflow,
+            r.pin,
+            json(r.rt)?,
+            json(r.input)?,
+            r.now,
+            r.message,
+            r.reply
+        ],
     )?;
     let e = Envelope::new(
         "daemon",
         "run.started",
         &subject(&id),
-        now,
-        cause,
-        input.clone(),
+        r.now,
+        r.cause.map(str::to_string),
+        r.input.clone(),
     );
     publish(db, &e)?;
     Ok(id)

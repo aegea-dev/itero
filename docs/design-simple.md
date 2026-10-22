@@ -229,6 +229,17 @@ nothing starts on its type, with the nearest type that does
 (`order.places`: did you mean `order.placed`?). If no daemon is running,
 it says the message waits for one.
 
+A sender that wants what came of its message asks for it:
+
+- **wait:** `itero emit --wait` (or `POST /events?wait=60`) returns when the
+  runs the message started have ended, with each run's status and state;
+- **reply:** `--reply <url>` (or `"reply"` in the posted message) has each
+  run posted to the URL when it ends, tried again until the app answers
+  2xx, and given up a day after the first try.
+
+Each run keeps the message that started it (a split run its parent's) and
+where its answer goes, so neither needs anything in the workflow files.
+
 Messages come from:
 - **push**: an app or a webhook calls `POST /events`, or a source holds a
   connection open and prints a line when told something;
@@ -568,6 +579,8 @@ earlier design describes.
 ```
 itero daemon                 run the workspace (itero service install: at login)
 itero emit <type> '<data>'   send a message, and say what it starts
+  --wait                     ... and print its runs' end (exit 0 done, 1 failed or broke, 2 time ran out)
+  --reply <url>              ... and post each run's end to the URL
 itero args <action> '<data>' set an action's data (or --file)
 itero secret <NAME>          set a secret (asks; or --file)
 itero runs                   runs, newest first, and how each ended

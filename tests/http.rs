@@ -155,6 +155,57 @@ fn post(path: &str, body: &str) -> Request<Body> {
         .unwrap()
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn an_event_posted_with_wait_is_answered_with_its_runs_end() {
+    let d = tempfile::tempdir().unwrap();
+    let (app, woken) = app(d.path());
+    std::fs::create_dir_all(d.path().join("workflows")).unwrap();
+    std::fs::create_dir_all(d.path().join("actions")).unwrap();
+    std::fs::write(
+        d.path().join("workflows/selam.json"),
+        r##"{ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }"##,
+    )
+    .unwrap();
+    let action = d.path().join("actions/selamla");
+    std::fs::write(&action, "#!/bin/sh\necho '{\"selam\": \"merhaba\"}'\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&action, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    // the daemon's loop, which the post wakes
+    let ws = itero::workspace::find(d.path()).unwrap();
+    std::thread::spawn(move || {
+        let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
+        while woken.recv().is_ok() {
+            itero::engine::daemon::run_once(&ws, chrono::Utc::now(), exe).unwrap();
+        }
+    });
+    let (code, v) = send(
+        &app,
+        post(
+            "/events?wait=20",
+            r#"{"type": "kişi.geldi", "data": {"kim": "ayşe"}}"#,
+        ),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{v}");
+    assert_eq!(v["message"].as_str().unwrap().len(), 36);
+    assert_eq!(v["runs"][0]["workflow"], "selam");
+    assert_eq!(v["runs"][0]["status"], "done");
+    assert_eq!(v["runs"][0]["state"]["selam"], "merhaba");
+    let (code, v) = send(
+        &app,
+        post(
+            "/events",
+            r#"{"type": "kişi.geldi", "reply": "ftp://örnek.test"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(code, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("http"), "{v}");
+}
+
 #[tokio::test]
 async fn an_event_posted_is_saved_and_wakes_the_loop() {
     let d = tempfile::tempdir().unwrap();
