@@ -11,9 +11,9 @@ machine-wide.
 
 ### workflow
 
-A JSON file in `workflows/`, named by its file name: when it runs (`on`)
-and its `steps`, with optional `meta`, `success`, `failure` and `error`
-lists and a `timeout`. A workflow can be a step of another. See
+A JSON file in `workflows/` or a subfolder of it, named by its file name:
+when it runs (`on`) and its `steps`, with optional `meta`, `success`,
+`failure` and `error` lists and a `timeout`. A workflow can be a step of another. See
 [Writing a workflow](/guides/workflows/).
 
 ### step
@@ -23,10 +23,24 @@ list of them side by side, or one of those with data and an `on`.
 
 ### action
 
-An executable file in `actions/`, any language, named by its file name,
-a version in it if any (`notify@0.2`). It reads its values as environment
-variables, prints JSON, and its exit code says how it went: 0 done, 75 not
-yet, anything else an error. See [Actions](/guides/actions/).
+An executable file in `actions/` or a subfolder of it, any language, named
+by its file name, a version in it if any (`notify@0.2`). It reads its values
+as environment variables, prints JSON, and its exit code says how it went: 0
+done, 75 not yet, anything else an error. See [Actions](/guides/actions/).
+
+### subfolder
+
+A folder in `workflows/`, `actions/` or `sources/` that groups files; it
+is never part of a name. Hidden folders and `node_modules` are not looked
+into, and files that are not executable are not actions or sources.
+[`itero which`](/commands/which/) says where a name is.
+
+### needs
+
+What an action needs and lacks: a program its first line or a shell
+command runs, or a Python, Node or Bun package. Named in the run's error
+when a step fails, and by `itero check` before. See
+[Actions](/guides/actions/#when-something-it-needs-is-missing).
 
 ### message
 
@@ -36,8 +50,8 @@ data. It starts runs and reaches runs waiting for it. See
 
 ### source
 
-An executable in `sources/` that keeps running; each line it prints is
-one message of its file name's type.
+An executable in `sources/` or a subfolder of it that keeps running; each
+line it prints is one message of its file name's type.
 
 ### schedule
 

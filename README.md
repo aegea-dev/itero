@@ -58,6 +58,9 @@ args/check-payment.json    data for an action (itero args)
 .itero/                    the journal, the log (itero.log) and memory
 ```
 
+`workflows/`, `actions/` and `sources/` may have subfolders to group files;
+a name stays its file name, and `itero which <name>` says where it is.
+
 - **A workflow** starts on a message (`{"event": "order.placed"}`), a
   schedule (`{"schedule": "0 9 * * *"}`) or a watched file
   (`{"path": "inbox"}`), under conditions (`{"$paid": true}`,
@@ -67,7 +70,9 @@ args/check-payment.json    data for an action (itero args)
 - **An action** reads its values as environment variables (from the step,
   its args, then the run's state; `$$NAME` for a secret) and the state on
   stdin, prints a JSON object, and exits 0 (done), 75 (not yet: wait for a
-  matching message) or anything else (an error).
+  matching message) or anything else (an error). A program or a package it
+  needs and lacks is named: in the run's error when a step fails, and by
+  `itero check` before anything runs.
 - **A message** starts runs of the workflows on its type, and reaches the
   runs waiting for it that it matches by their data.
 
