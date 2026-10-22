@@ -1,8 +1,9 @@
 name: Test
 
-# Formatting, clippy and the test suite on every pull request and on main,
-# on Linux and macOS, and the tests that need Docker on Linux: the same make
-# targets as on a development machine.
+# Formatting, cargo check, clippy and the test suite on every pull request
+# and on main, on Linux and macOS, and the tests that need Docker on Linux:
+# the same make targets as on a development machine. Cargo.lock's audit is
+# in audit.yml.
 on:
   push:
     branches: [main]
@@ -48,6 +49,9 @@ jobs:
 
       - name: Formatting
         run: make fmt-check
+
+      - name: Check
+        run: make check
 
       - name: Clippy
         run: make lint-check

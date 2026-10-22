@@ -48,6 +48,17 @@ lint: ## Run clippy (lists warnings, does not fail on them)
 lint-check: ## Run clippy: any warning fails the build
 	$(CARGO) clippy --all-targets -- -D warnings
 
+.PHONY: check
+check: ## Type-check every target (the binary, tests), without building them
+	$(CARGO) check --all-targets
+
+# Cargo.lock against the RustSec advisory database. Needs cargo-audit
+# (`cargo install cargo-audit --locked`); deliberate exceptions, each with its
+# reason, go in .cargo/audit.toml.
+.PHONY: audit
+audit: ## Check Cargo.lock for known vulnerabilities (cargo-audit)
+	$(CARGO) audit
+
 # Itero.app around itero-notifier, next to the itero binary, where `itero
 # worker` looks for it: macOS shows notifications with a sender only when an
 # app sends them. Signed ad hoc (no developer account needed on this Mac).
