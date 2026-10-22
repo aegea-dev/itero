@@ -599,7 +599,18 @@ fn dispatch(cli: Cli) -> Result<()> {
                     match u {
                         crate::flow::Name::Action { name: a, version } => {
                             match ws.action_file(&a, version.as_deref()) {
-                                Ok(file) => println!("  #{a}  {}", file.display()),
+                                Ok(file) => {
+                                    println!("  #{a}  {}", file.display());
+                                    // the PATH an action runs with
+                                    let path = crate::sources::supervise::path_with(
+                                        &std::env::current_exe()?,
+                                    );
+                                    let first = crate::engine::worker::first_line(&file)
+                                        .unwrap_or_default();
+                                    for note in crate::needs::notes(&file, &first, Some(&path)) {
+                                        println!("    {note}");
+                                    }
+                                }
                                 Err(_)
                                     if crate::engine::worker::BUILT_IN.contains(&a.as_str())
                                         && version.is_none() =>

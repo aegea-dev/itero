@@ -186,10 +186,19 @@ fn show(title: &str, body: &str) -> Result<(), String> {
     ))
 }
 
-/// Why a program failed: its exit code, and the end of its stderr, where a
-/// traceback says what went wrong.
+/// Why a program failed: what it needs that is not there, when its stderr
+/// says so; its exit code, and the end of its stderr, where a traceback says
+/// what went wrong.
 fn exit_why(exit: i32, stderr: &[u8]) -> String {
     let all = String::from_utf8_lossy(stderr).trim().to_string();
+    let why = plain_why(exit, &all);
+    match crate::needs::missing(exit, &all) {
+        Some(needs) => format!("{needs}; {why}"),
+        None => why,
+    }
+}
+
+fn plain_why(exit: i32, all: &str) -> String {
     let tail: String = all
         .chars()
         .rev()
@@ -339,6 +348,16 @@ pub fn run_step(r: &StepRun) -> Result<Outcome, Failure> {
         std::io::ErrorKind::PermissionDenied => {
             format!("{} is not executable: chmod +x it", r.file.display())
         }
+        // the file is there: what its first line runs it with is not
+        std::io::ErrorKind::NotFound if r.file.is_file() => {
+            match first_line(&r.file).and_then(|l| crate::needs::interpreter(&l)) {
+                Some(p) => format!(
+                    "needs {p} (the first line of {}): not found",
+                    r.file.display()
+                ),
+                None => format!("cannot run {}: {e}", r.file.display()),
+            }
+        }
         _ => format!("cannot run {}: {e}", r.file.display()),
     })?;
     let mut stdin = child.stdin.take().expect("piped");
@@ -354,6 +373,16 @@ pub fn run_step(r: &StepRun) -> Result<Outcome, Failure> {
         NOT_YET => Ok(Outcome::NotYet(printed(&out.stdout)?)),
         _ => Err(Failure::Error(exit_why(exit, &out.stderr))),
     }
+}
+
+/// A file's first line, as text.
+pub fn first_line(f: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let mut line = String::new();
+    std::io::BufReader::new(std::fs::File::open(f).ok()?)
+        .read_line(&mut line)
+        .ok()?;
+    Some(line.trim_end().to_string())
 }
 
 /// What an action printed: nothing, or one JSON object.
