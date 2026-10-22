@@ -66,6 +66,7 @@ export default defineConfig({
 						{ label: 'itero runs', slug: 'commands/runs' },
 						{ label: 'itero errors', slug: 'commands/errors' },
 						{ label: 'itero check', slug: 'commands/check' },
+						{ label: 'itero which', slug: 'commands/which' },
 						{ label: 'itero info', slug: 'commands/info' },
 						{ label: 'itero args', slug: 'commands/args' },
 						{ label: 'itero secret', slug: 'commands/secret' },

@@ -21,8 +21,10 @@ sources = ["sources"]
 | `sources` | the folders with [sources](/guides/messages/#sources), any number | `["sources"]` |
 
 A folder is relative to the workspace; `~/` is your home folder. A folder
-that is not there holds nothing, and `itero check` notes it. Two workflows
-with one name, in any of the folders, is an error.
+that is not there holds nothing, and `itero check` notes it. Each folder's
+subfolders count too (hidden ones and `node_modules` apart). Two workflows,
+two actions or two sources of one name, in any of the folders, is an error
+naming both files.
 
 Args live in `args/`; the journal, the log and each workflow's memory in
 `.itero/`. Two workspaces on one machine need two ports.

@@ -15,6 +15,7 @@ command's options.
 | [`itero runs`](/commands/runs/) | the runs, or one run step by step |
 | [`itero errors`](/commands/errors/) | the runs that ended in error, and why |
 | [`itero check`](/commands/check/) | reads every file and says what is wrong |
+| [`itero which`](/commands/which/) | where a workflow, action or source of a name is |
 | [`itero info`](/commands/info/) | the workspace and its daemon: IDs, names, limits |
 | [`itero args`](/commands/args/) | sets an action's data |
 | [`itero secret`](/commands/secret/) | keeps a secret in the OS secret store |

@@ -85,6 +85,8 @@ pub enum Cmd {
     Info,
     /// Each workflow: what starts it, its runs and the last; and whether a daemon takes the messages
     Workflows,
+    /// Where a workflow, action or source of this name is (#name: the action only)
+    Which { name: String },
     /// Runs that ended in error, newest first: when, the workflow, the run, the step and why
     Errors {
         /// How many
@@ -552,6 +554,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             flows.sort_by_key(|(_, f)| f.meta.internal);
             let j = crate::engine::journal::Journal::open(&ws)?;
             let now = crate::engine::daemon::stamp(chrono::Utc::now());
+            let files = ws.flow_files()?;
             let mut apart = false;
             for (name, f) in &flows {
                 if f.meta.internal && !apart {
@@ -561,6 +564,10 @@ fn dispatch(cli: Cli) -> Result<()> {
                 println!("{name}");
                 let id = j.workflow_id(name, &now)?;
                 println!("  id {}  since {}", id.id, id.created);
+                match files.get(name) {
+                    Some(file) => println!("  file {}", ws.shown(file)),
+                    None => println!("  file built in"),
+                }
                 let m = &f.meta;
                 if let Some(d) = &m.description {
                     println!("  description {d}");
@@ -630,14 +637,56 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
             story(&j, r)?;
         }
+        Cmd::Which { name } => {
+            let ws = workspace()?;
+            let (action_only, name) = match name.strip_prefix('#') {
+                Some(n) => (true, n.to_string()),
+                None => (false, name),
+            };
+            let mut found: Vec<(&str, String)> = vec![];
+            if !action_only {
+                match ws.flow_files()?.get(&name) {
+                    Some(f) => found.push(("workflow", ws.shown(f))),
+                    None if crate::workspace::BUILT_IN.iter().any(|(n, _)| *n == name) => {
+                        found.push(("workflow", "built in".into()))
+                    }
+                    None => {}
+                }
+            }
+            // the action, and each of its versions
+            let actions: Vec<String> = ws
+                .action_files()?
+                .into_iter()
+                .filter(|(file, _)| *file == name || file.starts_with(&format!("{name}@")))
+                .map(|(_, f)| ws.shown(&f))
+                .collect();
+            if actions.is_empty() && crate::engine::worker::BUILT_IN.contains(&name.as_str()) {
+                found.push(("action", "built in".into()));
+            }
+            found.extend(actions.into_iter().map(|a| ("action", a)));
+            if !action_only {
+                for (kind, f) in ws.source_files()? {
+                    if kind == name {
+                        found.push(("source", ws.shown(&f)));
+                    }
+                }
+            }
+            if found.is_empty() {
+                bail!("nothing named {name}: itero workflows and itero check list them");
+            }
+            for (kind, path) in found {
+                println!("{kind:<10}{path}");
+            }
+        }
         Cmd::Workflows => {
             let ws = workspace()?;
             let j = crate::engine::journal::Journal::open(&ws)?;
             let now = chrono::Utc::now();
             let mut flows = ws.flows()?;
             flows.sort_by_key(|(_, f)| f.meta.internal);
-            // the columns: name, what starts it, runs, the last, notes
-            let mut rows: Vec<[String; 5]> = vec![];
+            let files = ws.flow_files()?;
+            // the columns: name, its file, what starts it, runs, the last, notes
+            let mut rows: Vec<[String; 6]> = vec![];
             for (name, f) in &flows {
                 let on = &f.on;
                 let mut starts: Vec<String> = on.events.iter().map(|e| format!("on {e}")).collect();
@@ -664,8 +713,12 @@ fn dispatch(cli: Cli) -> Result<()> {
                     }
                     None => "last: none".into(),
                 };
+                let file = files
+                    .get(name)
+                    .map_or_else(|| "built in".to_string(), |f| ws.shown(f));
                 rows.push([
                     name.clone(),
+                    file,
                     starts.join(", "),
                     format!("runs {}", runs.len()),
                     last,
@@ -673,13 +726,13 @@ fn dispatch(cli: Cli) -> Result<()> {
                 ]);
             }
             let width = |c: usize| rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0);
-            let widths: Vec<usize> = (0..4).map(width).collect();
+            let widths: Vec<usize> = (0..5).map(width).collect();
             for r in &rows {
                 let mut line = String::new();
                 for (c, w) in widths.iter().enumerate() {
                     line += &format!("{:<w$}   ", r[c]);
                 }
-                line += &r[4];
+                line += &r[5];
                 println!("{}", line.trim_end());
             }
             let waiting = match j.waiting_messages()? {

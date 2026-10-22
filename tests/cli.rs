@@ -89,7 +89,7 @@ fn file(d: &Path, rel: &str, text: &str) {
     std::fs::create_dir_all(f.parent().unwrap()).unwrap();
     std::fs::write(&f, text).unwrap();
     #[cfg(unix)]
-    if rel.starts_with("actions/") {
+    if rel.starts_with("actions/") || rel.starts_with("sources/") {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
@@ -475,4 +475,49 @@ fn emit_wait_answers_with_the_runs_end() {
     assert_eq!(o.status.code(), Some(0), "{o:?}");
     let answer: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(answer["runs"], serde_json::json!([]));
+}
+
+#[test]
+fn which_says_where_each_kind_of_one_name_is() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/dükkân/gönder.json",
+        r##"{ "on": [{ "event": "sipariş.geldi" }], "steps": ["#gönder"] }"##,
+    );
+    file(d.path(), "actions/kargo/gönder", "#!/bin/sh\n");
+    file(d.path(), "actions/kargo/eski/gönder@0.1", "#!/bin/sh\n");
+    file(d.path(), "sources/posta/posta.geldi", "#!/bin/sh\n");
+    let found = out(&itero(d.path(), &["which", "gönder"]));
+    assert_eq!(
+        found,
+        "workflow  workflows/dükkân/gönder.json\naction    actions/kargo/gönder\naction    actions/kargo/eski/gönder@0.1\n",
+    );
+    assert_eq!(
+        out(&itero(d.path(), &["which", "#gönder"])),
+        "action    actions/kargo/gönder\naction    actions/kargo/eski/gönder@0.1\n",
+        "#name: the action only"
+    );
+    assert_eq!(
+        out(&itero(d.path(), &["which", "posta.geldi"])),
+        "source    sources/posta/posta.geldi\n"
+    );
+    assert_eq!(
+        out(&itero(d.path(), &["which", "notify"])),
+        "action    built in\n"
+    );
+    assert_eq!(
+        out(&itero(d.path(), &["which", "keep"])),
+        "workflow  built in\n"
+    );
+    let o = itero(d.path(), &["which", "yok"]);
+    assert!(
+        !o.status.success() && err(&o).contains("nothing named yok"),
+        "{o:?}"
+    );
+    let list = out(&itero(d.path(), &["workflows"]));
+    let line = list.lines().find(|l| l.starts_with("gönder ")).unwrap();
+    assert!(line.contains("workflows/dükkân/gönder.json"), "{list}");
+    let keep = list.lines().find(|l| l.starts_with("keep ")).unwrap();
+    assert!(keep.contains("built in"), "{list}");
 }

@@ -72,7 +72,7 @@ args/check-payment.json    data for an action (itero args)
   runs waiting for it that it matches by their data.
 
 Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero args`,
-`itero secret`, `itero check`, `itero workflows`, `itero info`, `itero runs [<run>]`,
+`itero secret`, `itero check`, `itero which`, `itero workflows`, `itero info`, `itero runs [<run>]`,
 `itero errors`, `itero watch`, `itero service install|status|uninstall`.
 What the daemon does is in `.itero/itero.log`, one JSON line each.
 
