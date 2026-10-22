@@ -574,6 +574,32 @@ Later, more of them, as real needs come: a doctor that asks an AI
 assistant what went wrong in a failed run and proposes a fix, as the
 earlier design describes.
 
+## Folders and needs
+
+**Subfolders group.** `workflows/`, `actions/` and `sources/` may have
+subfolders at any depth (`workflows/shop/order.json`,
+`actions/mail/imap-check`). A name stays its file name, unique within its
+kind: two workflows, actions or sources of one name are an error naming
+both files; an action and a workflow may share one. Hidden folders and
+`node_modules` are not looked into, and only executable files are actions
+or sources, so a project's `package.json` or a `README.md` can sit beside
+them. `itero which <name>` says where a name is; nothing is stored, so
+nothing goes stale.
+
+**What an action needs and lacks is named, found from the action itself:**
+
+- when a step fails, from its exit code and stderr: exit 127 from a shell
+  or `env` (`needs docker: not found on PATH`), Python's
+  `ModuleNotFoundError`, Node's and Bun's "Cannot find module/package", and
+  a first line naming a program that is not there;
+- before anything runs, `itero check`: the first line's interpreter
+  (`needs`), and for a shell script the commands it runs (`may need`, a
+  hint).
+
+Versions and whether a service is up are the action's to check. itero
+installs nothing: an action brings its packages with its language's tools
+(uv for Python, Bun's auto-install, a project folder for Node).
+
 ## Commands
 
 ```
