@@ -16,6 +16,7 @@ workflows come last, apart.
 $ itero check
 greet
   id 01a16000-8c57-75e1-b8ee-cf8f8d2199d1  since 2026-10-21T19:46:51Z
+  file workflows/greet.json
   runs so far 1
   last run fair-glacier done  2026-10-21T19:46:53Z
   #hello  /Users/me/home/actions/hello

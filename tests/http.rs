@@ -144,6 +144,8 @@ async fn runs_and_workflows_can_be_read() {
     };
     assert_eq!(named("sayaç")["on"]["events"], json!(["say.bir"]));
     assert_eq!(named("sayaç")["internal"], false);
+    assert_eq!(named("sayaç")["path"], "workflows/sayaç.json");
+    assert_eq!(named("keep")["path"], serde_json::Value::Null, "built in");
     assert_eq!(named("keep")["internal"], true, "built in");
 }
 

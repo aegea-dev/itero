@@ -172,18 +172,54 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
     })
 }
 
-/// The files in `dir` that `keep` picks, sorted; a missing folder is an
-/// error naming it.
+/// The files in `dir` and its subfolders that `keep` picks, sorted; a
+/// missing folder is an error naming it. Subfolders only group: hidden ones
+/// (`.venv`, `.git`) and `node_modules` belong to tools and are skipped.
 fn listed(dir: &Path, keep: impl Fn(&Path) -> Option<PathBuf>) -> Result<Vec<PathBuf>> {
-    let entries =
-        std::fs::read_dir(dir).with_context(|| format!("cannot read {}", dir.display()))?;
-    let mut out = vec![];
-    for e in entries {
-        if let Some(p) = keep(&e?.path()) {
-            out.push(p);
+    fn walk(
+        dir: &Path,
+        keep: &dyn Fn(&Path) -> Option<PathBuf>,
+        out: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        let entries =
+            std::fs::read_dir(dir).with_context(|| format!("cannot read {}", dir.display()))?;
+        for e in entries {
+            let p = e?.path();
+            if p.is_dir() {
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned());
+                let tools = name.is_some_and(|n| n.starts_with('.') || n == "node_modules");
+                if !tools {
+                    walk(&p, keep, out)?;
+                }
+            } else if let Some(p) = keep(&p) {
+                out.push(p);
+            }
         }
+        Ok(())
     }
+    let mut out = vec![];
+    walk(dir, &keep, &mut out)?;
     out.sort();
+    Ok(out)
+}
+
+/// `files` by name, one per name: a second file of one name is an error
+/// naming both.
+fn named(
+    kind: &str,
+    files: impl IntoIterator<Item = (String, PathBuf)>,
+) -> Result<BTreeMap<String, PathBuf>> {
+    let mut out: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for (name, f) in files {
+        if let Some(first) = out.get(&name) {
+            bail!(
+                "two {kind}s named {name}: {} and {}",
+                first.display(),
+                f.display()
+            );
+        }
+        out.insert(name, f);
+    }
     Ok(out)
 }
 
@@ -214,6 +250,14 @@ fn executable(f: &Path) -> bool {
 }
 
 impl Workspace {
+    /// A path as people read it: from the workspace when it is in it.
+    pub fn shown(&self, p: &Path) -> String {
+        p.strip_prefix(&self.root)
+            .unwrap_or(p)
+            .display()
+            .to_string()
+    }
+
     /// Where the journal lives: local, never synced.
     pub fn journal(&self) -> PathBuf {
         self.root.join(".itero").join("journal.sqlite")
@@ -233,31 +277,32 @@ impl Workspace {
         size(&self.root.join(".itero"))
     }
 
-    /// Every workflow, as its file's JSON, by name (its file name), each
-    /// checked, and the built-in ones no file replaces. Two with one name
-    /// is an error naming the second; more than `limits.workflows`, the
-    /// internal ones apart, is an error too.
+    /// Every workflow's file, by name (its file name), in any subfolder of
+    /// the workflows folders. Two with one name is an error naming both.
+    pub fn flow_files(&self) -> Result<BTreeMap<String, PathBuf>> {
+        let mut files = vec![];
+        for dir in self.workflows.iter().filter(|d| d.exists()) {
+            for f in listed(dir, |p| {
+                (p.extension().is_some_and(|x| x == "json") && p.is_file()).then(|| p.to_path_buf())
+            })? {
+                files.push((stem(&f), f));
+            }
+        }
+        named("workflow", files)
+    }
+
+    /// Every workflow, as its file's JSON, by name, each checked, and the
+    /// built-in ones no file replaces. More than `limits.workflows`, the
+    /// internal ones apart, is an error.
     pub fn flow_values(&self) -> Result<BTreeMap<String, Value>> {
         let mut out = BTreeMap::new();
-        for dir in &self.workflows {
-            if !dir.exists() {
-                continue;
-            }
-            let files = listed(dir, |p| {
-                (p.extension().is_some_and(|x| x == "json") && p.is_file()).then(|| p.to_path_buf())
-            })?;
-            for f in files {
-                let text = std::fs::read_to_string(&f)
-                    .with_context(|| format!("cannot read {}", f.display()))?;
-                let v: Value =
-                    serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", f.display()))?;
-                crate::flow::from_value(&v).map_err(|e| anyhow!("{}: {e}", f.display()))?;
-                let name = stem(&f);
-                if out.contains_key(&name) {
-                    bail!("two workflows named {name}: the second is {}", f.display());
-                }
-                out.insert(name, v);
-            }
+        for (name, f) in self.flow_files()? {
+            let text = std::fs::read_to_string(&f)
+                .with_context(|| format!("cannot read {}", f.display()))?;
+            let v: Value =
+                serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", f.display()))?;
+            crate::flow::from_value(&v).map_err(|e| anyhow!("{}: {e}", f.display()))?;
+            out.insert(name, v);
         }
         for (name, text) in BUILT_IN {
             if !out.contains_key(name) {
@@ -299,23 +344,32 @@ impl Workspace {
             .collect())
     }
 
+    /// Every action's file, by its whole file name (`notify@0.2`), in any
+    /// subfolder of the actions folders.
+    pub fn action_files(&self) -> Result<BTreeMap<String, PathBuf>> {
+        let mut files = vec![];
+        for dir in self.actions.iter().filter(|d| d.exists()) {
+            for f in listed(dir, |p| p.is_file().then(|| p.to_path_buf()))? {
+                files.push((stem_with_ext(&f), f));
+            }
+        }
+        named("action", files)
+    }
+
     /// An action's file: `name@version` when pinned, else the highest
     /// version, else the plain `name`. It must be executable.
     pub fn action_file(&self, name: &str, version: Option<&str>) -> Result<PathBuf> {
         let mut found: Option<(Vec<u64>, PathBuf)> = None;
-        for dir in self.actions.iter().filter(|d| d.exists()) {
-            for f in listed(dir, |p| p.is_file().then(|| p.to_path_buf()))? {
-                let file = stem_with_ext(&f);
-                let key = match (version, file.split_once('@')) {
-                    (Some(v), Some((n, fv))) if n == name && fv == v => vec![],
-                    (None, Some((n, fv))) if n == name => crate::flow::version_key(fv),
-                    // a plain file is the latest only when nothing has a version
-                    (None, None) if file == name => vec![],
-                    _ => continue,
-                };
-                if found.as_ref().is_none_or(|(k, _)| key > *k) {
-                    found = Some((key, f));
-                }
+        for (file, f) in self.action_files()? {
+            let key = match (version, file.split_once('@')) {
+                (Some(v), Some((n, fv))) if n == name && fv == v => vec![],
+                (None, Some((n, fv))) if n == name => crate::flow::version_key(fv),
+                // a plain file is the latest only when nothing has a version
+                (None, None) if file == name => vec![],
+                _ => continue,
+            };
+            if found.as_ref().is_none_or(|(k, _)| key > *k) {
+                found = Some((key, f));
             }
         }
         let Some((_, f)) = found else {
@@ -333,7 +387,7 @@ impl Workspace {
     /// Every source in the simple form: an executable whose file name is
     /// the type of the messages it sends.
     pub fn source_files(&self) -> Result<Vec<(String, PathBuf)>> {
-        let mut out: Vec<(String, PathBuf)> = vec![];
+        let mut files = vec![];
         for dir in self.sources.iter().filter(|d| d.exists()) {
             for f in listed(dir, |p| p.is_file().then(|| p.to_path_buf()))? {
                 let kind = stem_with_ext(&f);
@@ -347,13 +401,10 @@ impl Workspace {
                 if !executable(&f) {
                     bail!("{} is not executable: chmod +x it", f.display());
                 }
-                if out.iter().any(|(k, _)| *k == kind) {
-                    bail!("two sources named {kind}: the second is {}", f.display());
-                }
-                out.push((kind, f));
+                files.push((kind, f));
             }
         }
-        Ok(out)
+        Ok(named("source", files)?.into_iter().collect())
     }
 
     /// An action's args, `args/<action>.json`: an object, or a list of

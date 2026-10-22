@@ -3,9 +3,10 @@ title: Actions
 description: An executable file that reads its values from the environment, prints JSON, and says with its exit code how it went.
 ---
 
-An action is an executable file in `actions/`, in any language its first
-line names (`#!/bin/sh`, `#!/usr/bin/env python3`). It has no extension
-and no description file; its name is its file name.
+An action is an executable file in `actions/` or any subfolder of it, in
+any language its first line names (`#!/bin/sh`, `#!/usr/bin/env python3`).
+It has no extension and no description file; its name is its file name,
+unique among the actions (`actions/mail/imap-check` is `#imap-check`).
 
 `actions/ship`:
 

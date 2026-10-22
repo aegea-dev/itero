@@ -278,12 +278,15 @@ async fn run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Json<Val
 async fn workflows(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
     blocking(&s, |ws| {
         let flows = ws.flows().map_err(internal)?;
+        let files = ws.flow_files().map_err(internal)?;
         Ok(Value::Array(
             flows
                 .iter()
                 .map(|(name, f)| {
                     json!({
                         "name": name,
+                        // none for a built-in one
+                        "path": files.get(name).map(|p| ws.shown(p)),
                         "internal": f.meta.internal,
                         "on": {
                             "events": f.on.events,

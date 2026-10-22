@@ -15,6 +15,13 @@ args/check-payment.json    data for an action (itero args)
 .itero/                    the journal, the log and each workflow's memory
 ```
 
+`workflows/`, `actions/` and `sources/` may have subfolders, to group files
+any way you like: `workflows/shop/order.json`, `actions/mail/imap-check`.
+A name stays its file name, unique within its kind: two workflows of one
+name are an error naming both files, but an action and a workflow may share
+one (`#ship` and `ship`). Hidden folders and `node_modules` are never
+looked into. [`itero which`](/commands/which/) says where a name is.
+
 **A workflow** says when it runs (`on`) and what it does (`steps`):
 
 ```json

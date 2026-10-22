@@ -107,5 +107,8 @@ there is not.
 ## GET /workflows
 
 ```json
-[ { "name": "order", "internal": false, "on": { "events": ["order.placed"], "schedules": [] } } ]
+[ { "name": "order", "path": "workflows/shop/order.json", "internal": false,
+    "on": { "events": ["order.placed"], "schedules": [] } } ]
 ```
+
+`path` is from the workspace, and `null` for a built-in workflow.

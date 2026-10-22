@@ -207,3 +207,91 @@ fn more_workflows_than_the_limit_is_an_error() {
     let e = format!("{:#}", ws.flows().unwrap_err());
     assert!(e.contains("3 workflows") && e.contains("limits"), "{e}");
 }
+
+#[test]
+fn subfolders_group_and_names_stay_the_file_names() {
+    #[cfg(unix)]
+    {
+        let d = tempfile::tempdir().unwrap();
+        let ws = simple(d.path());
+        write(
+            d.path(),
+            "workflows/siparişler/sipariş.json",
+            r##"{ "on": [{ "event": "sipariş.geldi" }], "steps": ["#gönder"] }"##,
+        );
+        write(
+            d.path(),
+            "workflows/posta/derin/uyarı.json",
+            r##"{ "steps": ["#gönder"] }"##,
+        );
+        executable(d.path(), "actions/kargo/gönder", "#!/bin/sh\n");
+        executable(d.path(), "actions/kargo/eski/gönder@0.1", "#!/bin/sh\n");
+        executable(d.path(), "sources/posta/posta.geldi", "#!/bin/sh\n");
+        // tools' folders are never looked into
+        executable(d.path(), "actions/.venv/bin/python", "#!/bin/sh\n");
+        executable(
+            d.path(),
+            "actions/web/node_modules/.bin/vite",
+            "#!/bin/sh\n",
+        );
+        executable(d.path(), "sources/.cache/eski.kaynak", "#!/bin/sh\n");
+        let names: Vec<String> = ws.flows().unwrap().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["keep", "logs", "sipariş", "uyarı"]);
+        let file = |n: &str, v: Option<&str>| ws.action_file(n, v).unwrap();
+        assert!(file("gönder", None).ends_with("actions/kargo/eski/gönder@0.1"));
+        assert!(file("gönder", Some("0.1")).ends_with("gönder@0.1"));
+        assert!(ws.action_file("python", None).is_err());
+        assert!(ws.action_file("vite", None).is_err());
+        let sources: Vec<String> = ws
+            .source_files()
+            .unwrap()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(sources, ["posta.geldi"]);
+    }
+}
+
+#[test]
+fn one_name_twice_in_a_kind_is_an_error_naming_both_files() {
+    #[cfg(unix)]
+    {
+        let d = tempfile::tempdir().unwrap();
+        let ws = simple(d.path());
+        write(
+            d.path(),
+            "workflows/a/sipariş.json",
+            r##"{ "steps": ["#gönder"] }"##,
+        );
+        write(
+            d.path(),
+            "workflows/b/sipariş.json",
+            r##"{ "steps": ["#gönder"] }"##,
+        );
+        let e = format!("{:#}", ws.flows().unwrap_err());
+        assert!(
+            e.contains("workflows/a/sipariş.json") && e.contains("workflows/b/sipariş.json"),
+            "{e}"
+        );
+        executable(d.path(), "actions/a/gönder", "#!/bin/sh\n");
+        executable(d.path(), "actions/b/gönder", "#!/bin/sh\n");
+        let e = format!("{:#}", ws.action_file("gönder", None).unwrap_err());
+        assert!(
+            e.contains("actions/a/gönder") && e.contains("actions/b/gönder"),
+            "{e}"
+        );
+        executable(d.path(), "sources/a/posta.geldi", "#!/bin/sh\n");
+        executable(d.path(), "sources/b/posta.geldi", "#!/bin/sh\n");
+        let e = format!("{:#}", ws.source_files().unwrap_err());
+        assert!(
+            e.contains("sources/a/posta.geldi") && e.contains("sources/b/posta.geldi"),
+            "{e}"
+        );
+        // an action and a workflow may share a name
+        std::fs::remove_file(d.path().join("workflows/b/sipariş.json")).unwrap();
+        std::fs::remove_file(d.path().join("actions/b/gönder")).unwrap();
+        executable(d.path(), "actions/sipariş", "#!/bin/sh\n");
+        assert!(ws.flows().is_ok());
+        assert!(ws.action_file("sipariş", None).is_ok());
+    }
+}

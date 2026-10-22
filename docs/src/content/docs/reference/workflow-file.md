@@ -3,8 +3,9 @@ title: Workflow files
 description: Every key of a workflow file, and every form of a step.
 ---
 
-`workflows/<name>.json`; the workflow's name is the file name. An unknown
-key is an error.
+`workflows/<name>.json`, or in any subfolder of `workflows/`; the
+workflow's name is the file name, unique among the workflows. An unknown key
+is an error.
 
 | Key | Is | |
 |---|---|---|
