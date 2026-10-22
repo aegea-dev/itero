@@ -57,18 +57,6 @@ export default defineConfig({
 					],
 				},
 				{
-					label: 'Guides',
-					items: [
-						{ label: 'Writing a workflow', slug: 'guides/workflows' },
-						{ label: 'Actions', slug: 'guides/actions' },
-						{ label: 'Messages and sources', slug: 'guides/messages' },
-						{ label: 'Args and secrets', slug: 'guides/secrets' },
-						{ label: 'The log, IDs and names', slug: 'guides/log' },
-						{ label: "The daemon's own workflows", slug: 'guides/maintenance' },
-						{ label: 'Start at login', slug: 'guides/service' },
-					],
-				},
-				{
 					label: 'Commands',
 					items: [
 						{ label: 'Overview', slug: 'commands' },
@@ -84,6 +72,18 @@ export default defineConfig({
 						{ label: 'itero service', slug: 'commands/service' },
 						{ label: 'itero watch', slug: 'commands/watch' },
 						{ label: 'itero help', slug: 'commands/help' },
+					],
+				},
+				{
+					label: 'Guides',
+					items: [
+						{ label: 'Writing a workflow', slug: 'guides/workflows' },
+						{ label: 'Actions', slug: 'guides/actions' },
+						{ label: 'Messages and sources', slug: 'guides/messages' },
+						{ label: 'Args and secrets', slug: 'guides/secrets' },
+						{ label: 'The log, IDs and names', slug: 'guides/log' },
+						{ label: "The daemon's own workflows", slug: 'guides/maintenance' },
+						{ label: 'Start at login', slug: 'guides/service' },
 					],
 				},
 				{
