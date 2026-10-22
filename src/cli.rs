@@ -928,11 +928,26 @@ fn dispatch(cli: Cli) -> Result<()> {
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
             let step: crate::engine::worker::StepRun =
                 serde_json::from_str(&text).map_err(|e| anyhow!("the worker's step: {e}"))?;
-            use crate::engine::worker::{Failure, LOST_EXIT, run_step};
+            use crate::engine::worker::{Failure, LOST_EXIT, run_step_telling};
+            use std::io::Write;
+            use std::time::{Duration, Instant};
             #[cfg(unix)]
             crate::engine::worker::stop_with_parent();
             crate::engine::die_at("worker");
-            match run_step(&step) {
+            // while the action prints, a blank line on stdout now and then
+            // tells the daemon it is working; the answer after them is read
+            // all the same. A daemon gone stops this worker anyway, so a
+            // line it cannot take is no error.
+            let last = std::sync::Mutex::new(None::<Instant>);
+            let printed = || {
+                let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+                if last.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
+                    *last = Some(Instant::now());
+                    let mut out = std::io::stdout().lock();
+                    let _ = out.write_all(b"\n").and_then(|()| out.flush());
+                }
+            };
+            match run_step_telling(&step, &printed) {
                 Ok(outcome) => {
                     // the step's effect is done; its answer is not yet given
                     crate::engine::die_at("worker-done");

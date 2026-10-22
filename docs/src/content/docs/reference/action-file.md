@@ -22,7 +22,8 @@ extension, in any language its first line names.
 | exit `75` | not yet: the run waits for a matching message, or the hourly retry |
 | any other exit | an error; the end of stderr says why |
 
-A step may take 10 minutes; a lost or timed-out step runs again, up to 3
-times. Built in, unless the workspace has an action of the name:
+A step may print nothing for 10 minutes and run for a day at most
+(`quiet` and `most` in [`[limits]`](/reference/itero-toml/#limits)); a
+lost or stopped step runs again, up to 3 times. Built in, unless the workspace has an action of the name:
 `#notify` (shows `$text` and `$title`), `#forget` and `#roll-log`. See
 [Actions](/guides/actions/).

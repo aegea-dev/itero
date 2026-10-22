@@ -34,6 +34,8 @@ struct RawLimits {
     keep: Option<String>,
     log: Option<String>,
     logs: Option<usize>,
+    quiet: Option<String>,
+    most: Option<String>,
 }
 
 /// How much a workspace may hold and do at once.
@@ -53,6 +55,10 @@ pub struct Limits {
     pub log: u64,
     /// Rolled logs kept.
     pub logs: usize,
+    /// How long a step may print nothing before it is stopped.
+    pub quiet: std::time::Duration,
+    /// How long a step may run at most, printing or not.
+    pub most: std::time::Duration,
 }
 
 impl RawLimits {
@@ -61,22 +67,32 @@ impl RawLimits {
             Some(0) => bail!("limits: {name} is at least 1"),
             v => Ok(v.unwrap_or(default)),
         };
-        let keep = match self.keep {
-            None => std::time::Duration::from_secs(24 * 60 * 60),
-            Some(t) => humantime::parse_duration(&t).map_err(|_| {
-                anyhow!("limits: keep: a duration is like 30m, 2h or 1d, not \"{t}\"")
-            })?,
-        };
+        const DAY: u64 = 24 * 60 * 60;
         Ok(Limits {
             workflows: count("workflows", self.workflows, 100)?,
             runs: count("runs", self.runs, 1000)?,
             steps: count("steps", self.steps, 8)?,
             space: size("space", self.space, 1 << 30)?,
-            keep,
+            keep: duration("keep", self.keep, DAY)?,
             log: size("log", self.log, 10 << 20)?,
             logs: count("logs", self.logs, 3)?,
+            quiet: duration("quiet", self.quiet, 10 * 60)?,
+            most: duration("most", self.most, DAY)?,
         })
     }
+}
+
+/// `"30m"`: a duration of at least a second; `default` is in seconds.
+fn duration(name: &str, v: Option<String>, default: u64) -> Result<std::time::Duration> {
+    let Some(t) = v else {
+        return Ok(std::time::Duration::from_secs(default));
+    };
+    let d = humantime::parse_duration(&t)
+        .map_err(|_| anyhow!("limits: {name}: a duration is like 30m, 2h or 1d, not \"{t}\""))?;
+    if d.as_secs() == 0 {
+        bail!("limits: {name} is at least 1s");
+    }
+    Ok(d)
 }
 
 /// `"10MB"`: a number and KB, MB or GB (of 1024).

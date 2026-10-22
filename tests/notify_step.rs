@@ -21,7 +21,8 @@ fn the_built_in_notify_shows_text() {
         state: Map::new(),
         memory: d.path().join("hafıza"),
         waiting_since: None,
-        timeout: 10,
+        quiet: 10,
+        most: 10,
         now: String::new(),
     };
     assert_eq!(

@@ -294,6 +294,64 @@ fn a_run_that_waits_past_its_timeout_ends_in_error() {
     assert_eq!(ws.runs()[0].runtime.state["why"], "waited 1m for data");
 }
 
+#[test]
+fn a_step_quiet_past_its_limit_is_stopped_and_run_again() {
+    let ws = Ws::with("[limits]\nquiet = \"1s\"\n");
+    ws.flow(
+        "sessiz",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#sessiz"]}),
+    );
+    ws.action("sessiz", "echo başladı >> denemeler.txt; sleep 30");
+    ws.emit("order.placed", json!({"order": 1}));
+    let started = std::time::Instant::now();
+    ws.pass(NOW);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(ws.statuses(), vec!["error"]);
+    // under load, a try may be stopped before the action's first line
+    assert!(ws.read("denemeler.txt").contains("başladı"));
+    assert_eq!(
+        ws.runs()[0].runtime.state["why"],
+        "lost 3 times: quiet for 1s"
+    );
+}
+
+#[test]
+fn a_step_that_prints_as_it_goes_runs_past_its_quiet_limit() {
+    let ws = Ws::with("[limits]\nquiet = \"1s\"\n");
+    ws.flow(
+        "uzun",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#uzun"]}),
+    );
+    ws.action(
+        "uzun",
+        "for i in 1 2 3 4 5 6 7 8 9 10; do echo \"adım $i\" >&2; sleep 0.25; done\necho '{\"bitti\": \"evet\"}'",
+    );
+    ws.emit("order.placed", json!({"order": 1}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(ws.runs()[0].runtime.state["bitti"], "evet");
+}
+
+#[test]
+fn a_step_past_its_most_is_stopped_even_while_it_prints() {
+    let ws = Ws::with("[limits]\nquiet = \"1s\"\nmost = \"1s\"\n");
+    ws.flow(
+        "döngü",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#döngü"]}),
+    );
+    ws.action(
+        "döngü",
+        "while true; do echo 'hâlâ çalışıyor' >&2; sleep 0.1; done",
+    );
+    ws.emit("order.placed", json!({"order": 1}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["error"]);
+    assert_eq!(
+        ws.runs()[0].runtime.state["why"],
+        "lost 3 times: ran for 1s"
+    );
+}
+
 /// An app's endpoint on 127.0.0.1: answers each request with the next of
 /// `statuses` (the last one again after them), and hands over each body.
 fn endpoint(statuses: Vec<u16>) -> (String, std::sync::mpsc::Receiver<Value>) {

@@ -26,7 +26,8 @@ mod steps {
             state: state.as_object().cloned().unwrap_or_default(),
             memory: dir.join(".itero/memory/sipariş"),
             waiting_since: None,
-            timeout: 10,
+            quiet: 10,
+            most: 10,
             now: String::new(),
         }
     }

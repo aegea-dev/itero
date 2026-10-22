@@ -419,6 +419,8 @@ space = "1GB"       # .itero/: the journal, the log, memory
 keep = "1d"         # how long ended runs and their messages are kept
 log = "10MB"        # past it, the log is rolled (see The daemon's own workflows)
 logs = 3            # rolled logs kept: itero.log.1 to itero.log.3
+quiet = "10m"       # a step printing nothing this long is stopped, then run again
+most = "1d"         # a step running this long is stopped, printing or not
 ```
 
 Each limit has the default shown. Past `space`, the daemon sends
@@ -490,8 +492,10 @@ workflow is internal; the rest depends on the event:
 - Each run has a UUIDv7 id, and keeps the workflow version it started
   with (also a UUIDv7): editing a file never changes a run under way.
 - Everything runs in parallel: every run, every workflow.
-- A step may take 10 minutes. Past that, or when the daemon stops while it
-  runs, it is tried again, up to 3 times; then it is an error.
+- A step may print nothing for 10 minutes (`quiet`); what it prints, on
+  stdout or stderr, starts that again, up to a day (`most`). Past either,
+  or when the daemon stops while it runs, it is tried again, up to 3
+  times; then it is an error.
 
 ## The daemon's own workflows
 

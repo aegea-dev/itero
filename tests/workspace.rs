@@ -161,10 +161,12 @@ fn meta_is_free_and_limits_have_defaults() {
     assert_eq!((l.workflows, l.runs, l.steps, l.logs), (100, 1000, 8, 3));
     assert_eq!((l.space, l.log), (1 << 30, 10 << 20));
     assert_eq!(l.keep, std::time::Duration::from_secs(86_400));
+    assert_eq!(l.quiet, std::time::Duration::from_secs(600));
+    assert_eq!(l.most, std::time::Duration::from_secs(86_400));
     write(
         d.path(),
         "itero.toml",
-        "[meta]\ndescription = \"Ev: posta ve siparişler\"\nsahibi = \"ayşe\"\netiketler = [\"ev\", \"küçük\"]\n\n[limits]\nruns = 5\nspace = \"500MB\"\nkeep = \"2h\"\nlog = \"64KB\"\n",
+        "[meta]\ndescription = \"Ev: posta ve siparişler\"\nsahibi = \"ayşe\"\netiketler = [\"ev\", \"küçük\"]\n\n[limits]\nruns = 5\nspace = \"500MB\"\nkeep = \"2h\"\nlog = \"64KB\"\nquiet = \"30m\"\nmost = \"6h\"\n",
     );
     let ws = workspace::find(d.path()).unwrap();
     assert_eq!(ws.meta["sahibi"], "ayşe");
@@ -174,6 +176,8 @@ fn meta_is_free_and_limits_have_defaults() {
     assert_eq!(ws.limits.space, 500 << 20);
     assert_eq!(ws.limits.log, 64 << 10);
     assert_eq!(ws.limits.keep, std::time::Duration::from_secs(7200));
+    assert_eq!(ws.limits.quiet, std::time::Duration::from_secs(1800));
+    assert_eq!(ws.limits.most, std::time::Duration::from_secs(6 * 3600));
 }
 
 #[test]
@@ -183,6 +187,11 @@ fn limit_mistakes_are_named() {
         ("[limits]\nspace = \"çok\"\n", "a size is like 10MB or 1GB"),
         ("[limits]\nkeep = \"bir gün\"\n", "a duration is like"),
         ("[limits]\nsteps = 0\n", "steps is at least 1"),
+        (
+            "[limits]\nquiet = \"sessiz\"\n",
+            "quiet: a duration is like",
+        ),
+        ("[limits]\nmost = \"0s\"\n", "most is at least 1s"),
         ("[meta]\nid = \"01a0\"\n", "id is given by itero"),
     ] {
         let d = tempfile::tempdir().unwrap();
