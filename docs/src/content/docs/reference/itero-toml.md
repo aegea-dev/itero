@@ -54,6 +54,8 @@ space = "1GB"
 keep = "1d"
 log = "10MB"
 logs = 3
+quiet = "10m"
+most = "1d"
 ```
 
 | Key | Is | Default |
@@ -65,5 +67,7 @@ logs = 3
 | `keep` | how long ended runs and their messages are kept | `"1d"` |
 | `log` | the log's size before it is rolled | `"10MB"` |
 | `logs` | rolled logs kept | `3` |
+| `quiet` | how long a step may print nothing; past it, it is stopped and runs again | `"10m"` |
+| `most` | how long a step may run, printing or not | `"1d"` |
 
 What happens at each: [The daemon's own workflows](/guides/maintenance/#limits).

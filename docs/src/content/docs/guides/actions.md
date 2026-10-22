@@ -46,8 +46,13 @@ to `null` is removed. Printing nothing adds nothing. Its exit code:
 | `75` | not yet: what it printed joins the state, and the run waits; the step runs again when a matching message comes, or every hour |
 | anything else | an error: the end of its stderr says why |
 
-A step may take 10 minutes. Past that, or when the daemon stops while it
-runs, it runs again, up to 3 times; then it is an error.
+A step may print nothing for 10 minutes, `quiet` in
+[`[limits]`](/reference/itero-toml/#limits). Anything it prints, on stdout
+or stderr, starts the 10 minutes again, so a long step that tells how it
+goes (`creating the cluster...` on stderr) runs as long as it needs, up to
+`most` (a day). Past either, or when the daemon stops while it runs, it
+runs again, up to 3 times; then it is an error, `quiet for 10m` or
+`ran for 1d`.
 
 ## Versions
 

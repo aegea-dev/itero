@@ -46,9 +46,6 @@ const MAX_TRIES: usize = 3;
 /// before its step is an error.
 const MAX_RUNS: i64 = 3;
 
-/// Seconds a step may take: past that it is stopped and tried again.
-const STEP_TIMEOUT: u64 = 600;
-
 /// What became of an event given to `deliver`.
 enum Delivered {
     /// Answered (or given up on with an error) and saved.
@@ -1109,7 +1106,8 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         state: run.runtime.state.clone(),
         memory: ws.root.join(".itero").join("memory").join(workflow),
         waiting_since: job.waiting_since.clone(),
-        timeout: STEP_TIMEOUT,
+        quiet: ws.limits.quiet.as_secs(),
+        most: ws.limits.most.as_secs(),
         now: now.into(),
     })
 }
@@ -1128,8 +1126,9 @@ fn stop(child: &mut std::process::Child) {
 }
 
 /// Runs `itero worker` on a step in its own process group, with the
-/// daemon's own folder first on its PATH. Past its time the group is
-/// killed and the job is lost: it runs again.
+/// daemon's own folder first on its PATH. Quiet past its `quiet`, or
+/// running past its `most`, the group is killed and the job is lost: it
+/// runs again.
 fn spawn_worker(exe: &Path, step: &StepRun) -> Result<Outcome, Failure> {
     let mut c = Command::new(exe);
     c.arg("worker")
@@ -1158,12 +1157,22 @@ fn spawn_worker(exe: &Path, step: &StepRun) -> Result<Outcome, Failure> {
             buf
         })
     };
-    let out = read(
-        child
-            .stdout
-            .take()
-            .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
-    );
+    // the worker's blank lines say the action printed: each is the latest
+    // sign of life; its answer is one line of JSON, kept without them
+    let started = std::time::Instant::now();
+    let heard = std::sync::Arc::new(Mutex::new(started));
+    let out = {
+        let heard = heard.clone();
+        let stdout = child.stdout.take();
+        std::thread::spawn(move || {
+            let mut buf = worker::read_telling(stdout, &|| {
+                *heard.lock().unwrap_or_else(PoisonError::into_inner) = std::time::Instant::now();
+            })
+            .unwrap_or_default();
+            buf.retain(|&b| b != b'\n');
+            buf
+        })
+    };
     let err = read(
         child
             .stderr
@@ -1172,14 +1181,30 @@ fn spawn_worker(exe: &Path, step: &StepRun) -> Result<Outcome, Failure> {
     );
     // when the group is killed, the readers end as its pipes close; they
     // are not waited for, in case something outside the group holds them
-    let limit = std::time::Duration::from_secs(step.timeout);
-    let Some(status) = child.wait_timeout(limit).map_err(|e| e.to_string())? else {
-        // still running, not yet reaped: its group's id is still its own
-        stop(&mut child);
-        return Err(Failure::Lost(format!(
-            "took longer than {}",
-            humantime::format_duration(limit)
-        )));
+    let quiet = std::time::Duration::from_secs(step.quiet);
+    let most = std::time::Duration::from_secs(step.most);
+    let status = loop {
+        let silent = heard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .elapsed();
+        let ran = started.elapsed();
+        let why = if ran >= most {
+            Some(format!("ran for {}", humantime::format_duration(most)))
+        } else if silent >= quiet {
+            Some(format!("quiet for {}", humantime::format_duration(quiet)))
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            // still running, not yet reaped: its group's id is still its own
+            stop(&mut child);
+            return Err(Failure::Lost(why));
+        }
+        let next = (quiet - silent).min(most - ran);
+        if let Some(status) = child.wait_timeout(next).map_err(|e| e.to_string())? {
+            break status;
+        }
     };
     let Some(code) = status.code() else {
         // killed from outside, and already reaped: its group is not killed,

@@ -291,8 +291,10 @@ pub struct StepRun {
     /// `$ITERO_WAITING_SINCE`, when it runs again after waiting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_since: Option<String>,
-    /// Seconds it may take (the daemon stops it after that).
-    pub timeout: u64,
+    /// Seconds it may print nothing (the daemon stops it after that).
+    pub quiet: u64,
+    /// Seconds it may take at most, printing or not.
+    pub most: u64,
     /// The daemon's pass time, for the built-in actions.
     #[serde(default)]
     pub now: String,
@@ -316,6 +318,12 @@ pub const NOT_YET: i32 = 75;
 /// Runs one step: the action with its values in its environment and the
 /// state on stdin; or a built-in one.
 pub fn run_step(r: &StepRun) -> Result<Outcome, Failure> {
+    run_step_telling(r, &|| ())
+}
+
+/// `run_step`, calling `printed` each time the action prints something, on
+/// stdout or stderr: how the daemon knows a long step is still working.
+pub fn run_step_telling(r: &StepRun, printed: &(dyn Fn() + Sync)) -> Result<Outcome, Failure> {
     if r.file == Path::new(FORGET) {
         return forget(r);
     }
@@ -364,15 +372,50 @@ pub fn run_step(r: &StepRun) -> Result<Outcome, Failure> {
     // an action that reads nothing closes its end early: not an error
     let _ = writeln!(stdin, "{}", Value::Object(r.state.clone()));
     drop(stdin);
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    let Some(exit) = out.status.code() else {
-        return Err(Failure::Lost(format!("killed ({})", out.status)));
+    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+    let (stdout, stderr) = std::thread::scope(|s| {
+        let out = s.spawn(|| read_telling(stdout, printed));
+        let err = s.spawn(|| read_telling(stderr, printed));
+        let join = |h: std::thread::ScopedJoinHandle<std::io::Result<Vec<u8>>>| {
+            h.join()
+                .unwrap_or_else(|_| Err(std::io::Error::other("its reader panicked")))
+                .map_err(|e| format!("cannot read the action's output: {e}"))
+        };
+        Ok::<_, String>((join(out)?, join(err)?))
+    })?;
+    let status = child.wait().map_err(|e| e.to_string())?;
+    let Some(exit) = status.code() else {
+        return Err(Failure::Lost(format!("killed ({status})")));
     };
     match exit {
-        0 => Ok(Outcome::Done(printed(&out.stdout)?)),
-        NOT_YET => Ok(Outcome::NotYet(printed(&out.stdout)?)),
-        _ => Err(Failure::Error(exit_why(exit, &out.stderr))),
+        0 => Ok(Outcome::Done(answer(&stdout)?)),
+        NOT_YET => Ok(Outcome::NotYet(answer(&stdout)?)),
+        _ => Err(Failure::Error(exit_why(exit, &stderr))),
     }
+}
+
+/// Reads a pipe to its end, calling `printed` for each piece read.
+pub fn read_telling(
+    pipe: Option<impl std::io::Read>,
+    printed: &(dyn Fn() + Sync),
+) -> std::io::Result<Vec<u8>> {
+    let mut all = vec![];
+    let Some(mut pipe) = pipe else {
+        return Ok(all);
+    };
+    let mut buf = [0; 8192];
+    loop {
+        match pipe.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                all.extend_from_slice(&buf[..n]);
+                printed();
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(all)
 }
 
 /// A file's first line, as text.
@@ -386,7 +429,7 @@ pub fn first_line(f: &Path) -> Option<String> {
 }
 
 /// What an action printed: nothing, or one JSON object.
-fn printed(stdout: &[u8]) -> Result<Map<String, Value>, Failure> {
+fn answer(stdout: &[u8]) -> Result<Map<String, Value>, Failure> {
     let text = String::from_utf8_lossy(stdout);
     let text = text.trim();
     if text.is_empty() {

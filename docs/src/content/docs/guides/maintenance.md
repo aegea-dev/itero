@@ -78,4 +78,6 @@ itero carries two internal workflows and runs them as if they were in
   `keep` forgets what it can, and until there is room no new run starts
   but internal ones;
 - past `log`, the daemon sends `itero.log.full` once, and again after the
-  log is rolled and fills up.
+  log is rolled and fills up;
+- a step quiet past `quiet`, or running past `most`, is stopped and runs
+  again, up to 3 times; then its run ends in error.
