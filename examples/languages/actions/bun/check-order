@@ -1,0 +1,20 @@
+#!/usr/bin/env -S bun --install=force
+// The order in the run's state, checked with zod: an order with a bad field
+// ends the run in error, its why saying which. Bun installs zod by itself,
+// at the version the import names: there is no package.json. --install=force,
+// since Bun turns that off when a node_modules folder sits in any folder
+// above (one in your home folder is enough).
+import { z } from "zod@3.23.8";
+
+const Order = z.object({
+  order: z.number().int().positive(),
+  email: z.string().email(),
+  total: z.number().positive(),
+});
+
+const checked = Order.safeParse(await Bun.stdin.json());
+if (!checked.success) {
+  console.error(checked.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+  process.exit(1);
+}
+console.log(JSON.stringify({ checked: true }));

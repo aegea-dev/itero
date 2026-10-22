@@ -1,0 +1,1 @@
+{ "on": [{ "event": "page.links" }, { "has": "$url" }], "steps": ["#links"] }

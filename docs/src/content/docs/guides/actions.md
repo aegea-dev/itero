@@ -98,18 +98,24 @@ from slugify import slugify
 print(json.dumps({"slug": slugify(os.environ["title"])}))
 ```
 
-`examples/slug` is this action, with a workflow around it.
+`examples/languages` has this action (`python/slugify`) and another
+(`python/parse-date`, with `dateparser`), each with a workflow around it,
+beside the Node, Bun and Docker ones below.
 
 ### JavaScript with Bun
 
-[Bun](https://bun.sh) installs a package an action imports when there is no
-`node_modules`; a version in the import pins it:
+[Bun](https://bun.sh) installs a package an action imports, at the version
+the import names, with no `package.json`:
 
 ```js
-#!/usr/bin/env bun
-import slugify from "slugify@1.6.6";
-console.log(JSON.stringify({ slug: slugify(process.env.title ?? "", { lower: true }) }));
+#!/usr/bin/env -S bun --install=force
+import { z } from "zod@3.23.8";
 ```
+
+`--install=force` matters: Bun turns this off when a `node_modules` folder
+sits in any folder above the action, and one in your home folder is enough.
+`examples/languages`'s `bun/check-order` validates an order with zod; a bad
+one ends the run in error, its why listing the fields.
 
 ### Node, and anything with a project folder
 
@@ -117,10 +123,13 @@ A program with its own `package.json`, `pyproject.toml` or build keeps its
 project in a folder, and the action starts it:
 
 ```
-actions/web/screenshot          #!/bin/sh
-                                cd "$(dirname "$0")/screenshot-app" && exec node main.js
-actions/web/screenshot-app/     package.json, node_modules/, main.js
+actions/node/links              #!/bin/sh
+                                cd "$(dirname "$0")/links-app" && exec node main.js
+actions/node/links-app/         package.json, package-lock.json, node_modules/, main.js
 ```
+
+That is `examples/languages`'s `node/links`: a page's title and links, with
+cheerio.
 
 Only executable files are actions. The rest of the folder (`package.json`,
 `main.js`, a `README.md`) is left alone, and `node_modules` and hidden folders
@@ -130,8 +139,21 @@ into its project before it starts the program.
 
 ### Docker
 
-A program that needs its own image runs it itself: `exec docker run --rm
--i -e order my/image`.
+A program that comes as an image runs in it, with Docker pulling it the
+first time. `examples/languages`'s `docker/to-markdown` turns a page's HTML
+into Markdown with pandoc, reading the page from the state on stdin:
+
+```sh
+#!/bin/sh
+jq -r '.page' |
+  docker run --rm -i pandoc/minimal:3.11.0 -f html -t gfm-raw_html --wrap=none |
+  jq -Rs '{page: .[0:20000]}'
+```
+
+Pin the image's version, as here, so a new release does not change what
+the action does. A value goes into the container as `-e name` (it takes
+the value from the action's environment, never from the command line) or
+on stdin.
 
 ## When something it needs is missing
 

@@ -1,0 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["dateparser>=1.2"]
+# ///
+"""$text, a time said in words ("yarın 15:00", "tomorrow 9am"), as an
+ISO time: {"at": "..."}. A text with no time in it ends the run in error.
+
+uv installs dateparser the first time, from the block above.
+"""
+import json
+import os
+import sys
+
+import dateparser
+
+text = os.environ["text"]
+at = dateparser.parse(
+    text,
+    settings={"PREFER_DATES_FROM": "future", "RETURN_AS_TIMEZONE_AWARE": True},
+)
+if at is None:
+    sys.exit(f"no time in: {text}")
+print(json.dumps({"at": at.isoformat()}))
