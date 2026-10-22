@@ -36,6 +36,8 @@ make check        # cargo check, every target
 make audit        # Cargo.lock against RustSec advisories (needs cargo-audit)
 make test-linux   # the tests and clippy on Linux, in Docker
 make test-docker  # the IMAP and POP3 examples against a mail server in Docker
+make docs         # the docs site at http://localhost:4321/itero/ (make docs-install once)
+make verify       # every gate before a release: fmt, check, clippy, tests, audit, docs
 ```
 
 On macOS, `make notifier` builds `Itero.app` next to the binary (and `make

@@ -59,6 +59,21 @@ check: ## Type-check every target (the binary, tests), without building them
 audit: ## Check Cargo.lock for known vulnerabilities (cargo-audit)
 	$(CARGO) audit
 
+.PHONY: verify
+verify: fmt-check check lint-check test audit docs-build ## Every gate CI runs before a release: formatting, check, clippy, tests, audit, docs
+
+.PHONY: docs
+docs: ## Serve the docs site at http://localhost:4321/itero/ with live reload
+	yarn --cwd docs dev
+
+.PHONY: docs-install
+docs-install: ## Install the docs site's dependencies (yarn 4, run once)
+	yarn --cwd docs install --immutable
+
+.PHONY: docs-build
+docs-build: ## Build the docs site into docs/dist, and check its local assets
+	yarn --cwd docs build
+
 # Itero.app around itero-notifier, next to the itero binary, where `itero
 # worker` looks for it: macOS shows notifications with a sender only when an
 # app sends them. Signed ad hoc (no developer account needed on this Mac).
