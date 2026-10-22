@@ -1,0 +1,8 @@
+{
+  "name": "itero-example-links",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "cheerio": "~1.0.0"
+  }
+}
