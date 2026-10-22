@@ -415,6 +415,51 @@ fn a_callback_no_app_takes_is_given_up_after_a_day() {
 }
 
 #[test]
+fn a_missing_program_is_named_in_the_runs_why() {
+    let w = Ws::new();
+    w.action("komut", "yok-böyle-komut --bir şey");
+    w.write("actions/dil", "#!/usr/bin/env yok-böyle-dil\n");
+    w.write("actions/yol", "#!/opt/yok-böyle/dil\n");
+    for a in ["dil", "yol"] {
+        use std::os::unix::fs::PermissionsExt;
+        let f = w.d.path().join("actions").join(a);
+        std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    for (name, action) in [("bir", "komut"), ("iki", "dil"), ("üç", "yol")] {
+        w.flow(
+            name,
+            json!({ "on": [{ "event": "dene.bunu" }], "steps": [format!("#{action}")] }),
+        );
+    }
+    w.emit("dene.bunu", json!({}));
+    w.pass(NOW);
+    let why = |workflow: &str| {
+        let run = w
+            .runs()
+            .into_iter()
+            .find(|r| r.workflow == workflow)
+            .unwrap();
+        assert_eq!(steps::status(&run.runtime), "error");
+        run.runtime.state["why"].as_str().unwrap().to_string()
+    };
+    assert!(
+        why("bir").starts_with("needs yok-böyle-komut: not found on PATH"),
+        "{}",
+        why("bir")
+    );
+    assert!(
+        why("iki").starts_with("needs yok-böyle-dil: not found on PATH"),
+        "{}",
+        why("iki")
+    );
+    assert!(
+        why("üç").contains("needs /opt/yok-böyle/dil"),
+        "{}",
+        why("üç")
+    );
+}
+
+#[test]
 fn a_value_too_big_for_the_environment_is_on_stdin_only() {
     let w = Ws::new();
     // stdin kept as it came: no jq, which not every system has

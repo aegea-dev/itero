@@ -521,3 +521,34 @@ fn which_says_where_each_kind_of_one_name_is() {
     let keep = list.lines().find(|l| l.starts_with("keep ")).unwrap();
     assert!(keep.contains("built in"), "{list}");
 }
+
+#[test]
+fn check_says_what_an_action_needs_that_is_not_there() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/dene.json",
+        r##"{ "steps": ["#kabuk", "#dil", "#tamam"] }"##,
+    );
+    file(
+        d.path(),
+        "actions/kabuk",
+        "#!/bin/sh\nyok-böyle-komut --bir | sort\necho \"$x\"\n",
+    );
+    file(d.path(), "actions/dil", "#!/usr/bin/env yok-böyle-dil\n");
+    file(d.path(), "actions/tamam", "#!/bin/sh\nsort dosya\n");
+    let o = itero(d.path(), &["check"]);
+    assert!(o.status.success(), "a hint, not an error: {o:?}");
+    let text = out(&o);
+    assert!(
+        text.contains("may need yok-böyle-komut: not found on PATH"),
+        "{text}"
+    );
+    assert!(
+        text.contains("needs yok-böyle-dil: not found on PATH"),
+        "{text}"
+    );
+    assert!(!text.contains("sort:"), "found: no line {text}");
+    let tamam = text.split("#tamam").nth(1).unwrap();
+    assert!(!tamam.contains("need"), "{text}");
+}

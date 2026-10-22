@@ -133,5 +133,30 @@ into its project before it starts the program.
 A program that needs its own image runs it itself: `exec docker run --rm
 -i -e order my/image`.
 
-When a program or a package is missing, the step ends in error with what the
-action printed, such as `docker: not found` or Python's `No module named …`.
+## When something it needs is missing
+
+itero finds what an action needs from the action itself, with no list to
+keep up to date:
+
+- **When a step fails,** it reads the exit code and stderr, and the run's
+  `why` (in `itero runs <name>` and `itero errors`) starts with what was
+  missing:
+
+  | The action printed | The run's why |
+  |---|---|
+  | exit 127, `docker: not found` (sh, bash, zsh, env) | `needs docker: not found on PATH` |
+  | `ModuleNotFoundError: No module named 'requests'` | `needs the Python module requests` |
+  | `Cannot find module 'axios'` (Node) | `needs the module axios` |
+  | `Cannot find package 'axios'` (Node, Bun) | `needs the package axios` |
+  | a first line naming a program that is not there | `needs /opt/python3 (the first line of …): not found` |
+
+- **Before anything runs,** [`itero check`](/commands/check/) lists, under
+  each action, what its first line needs and is not on the `PATH` actions
+  run with (`needs bun: not found on PATH`). For a shell script it also
+  reads the commands it runs, and lists the missing ones as `may need`: a
+  hint, since a script can build a command at run time or guard one with
+  `command -v`.
+
+Versions (`python >= 3.11`) and whether a service is up (Docker's daemon, a
+model server) are left to the action: it checks them itself, and exits 75 to
+try again later.

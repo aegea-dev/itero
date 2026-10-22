@@ -23,6 +23,19 @@ greet
   #notify  built in
 ```
 
+Under an action, it notes what the action needs and the `PATH` lacks:
+
+```
+  #make-thumbnails  /Users/me/home/actions/photos/make-thumbnails
+    may need magick: not found on PATH
+  #summarize  /Users/me/home/actions/python/summarize
+    needs uv: not found on PATH
+```
+
+`needs` is the program its first line names; `may need`, for a shell script,
+a command it runs (a hint: the script may guard it). Neither fails the
+check. See [Actions](/guides/actions/#when-something-it-needs-is-missing).
+
 Anything wrong is an error naming the file: a key it does not know, a
 message type of one word, an action or a workflow that is not there, an
 action that is not executable. Run it after every edit.
