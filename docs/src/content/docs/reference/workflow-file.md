@@ -52,7 +52,7 @@ one is an error.
 | `"#name@0.2"` | an action at a version |
 | `"name"` | a workflow, run here with the same state |
 | `["#a", "b"]` | side by side; the next step waits for all |
-| `{"#name": {...}}` | with data for it; `on` in it is when it runs |
+| `{"#name": {...}}` | with data for it; `on` in it is when it runs, `undo` what takes it back when a later step breaks |
 
 In a step's data, `"$name"` is the state's value, `"$$NAME"` a secret's.
 See [Writing a workflow](/guides/workflows/).

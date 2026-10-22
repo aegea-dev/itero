@@ -243,6 +243,43 @@ fn runs_with_a_name_or_id_tells_the_runs_story() {
 }
 
 #[test]
+fn a_step_that_breaks_undoes_those_before_it_and_the_story_says_so() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/kurulum.json",
+        r##"{ "on": [{ "event": "küme.istendi" }],
+              "steps": [{ "#kur": { "undo": "#sil" } }, "#dene"],
+              "error": ["#bildir"] }"##,
+    );
+    file(d.path(), "actions/kur", "#!/bin/sh\necho kur >> sıra.txt\n");
+    file(
+        d.path(),
+        "actions/dene",
+        "#!/bin/sh\necho 'yanıt yok' >&2; exit 1\n",
+    );
+    file(
+        d.path(),
+        "actions/sil",
+        "#!/bin/sh\necho \"sil $failed_step\" >> sıra.txt\n",
+    );
+    file(
+        d.path(),
+        "actions/bildir",
+        "#!/bin/sh\necho bildir >> sıra.txt\n",
+    );
+    itero(d.path(), &["emit", "küme.istendi", r#"{"ad": "deneme"}"#]);
+    itero(d.path(), &["daemon", "--once"]);
+    let order = std::fs::read_to_string(d.path().join("sıra.txt")).unwrap();
+    assert_eq!(order, "kur\nsil #dene\nbildir\n");
+    let list = out(&itero(d.path(), &["runs"]));
+    let id = list.split_whitespace().next().unwrap();
+    let story = out(&itero(d.path(), &["runs", id]));
+    assert!(story.contains("#sil (undo)  done"), "{story}");
+    assert!(story.contains("#dene  error"), "{story}");
+}
+
+#[test]
 fn info_shows_the_workspace_and_check_each_workflows_identity() {
     let d = workspace();
     file(

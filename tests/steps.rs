@@ -296,6 +296,132 @@ fn an_error_stops_the_steps_and_runs_the_error_list() {
     );
 }
 
+/// A cluster made, a plan applied and checked: the steps with something to
+/// take back name their undo.
+fn cluster() -> Value {
+    json!({"steps": [{ "#küme-kur": { "undo": "#küme-sil" } },
+                     "#plan",
+                     { "#uygula": { "undo": "#geri-al" } },
+                     "#dene"],
+           "error": ["#bildir"]})
+}
+
+#[test]
+fn on_error_the_finished_steps_are_undone_newest_first_then_the_error_list() {
+    let mut r = Run::new(&[("küme", cluster())]);
+    let mut a = r.start(json!({"ad": "deneme"}));
+    for step in ["küme-kur", "plan", "uygula"] {
+        assert_eq!(names(&a), vec![step]);
+        a = r.done(&a.jobs[0], json!({}));
+    }
+    let a = r.failed(&a.jobs[0], "exit 1: yanıt yok");
+    assert_eq!(names(&a), vec!["geri-al"]);
+    assert_eq!(r.rt.phase, Phase::Undo);
+    // the undos are told what broke, as the error list is
+    assert_eq!(r.rt.state["why"], "exit 1: yanıt yok");
+    assert_eq!(r.rt.state["failed_step"], "#dene");
+    let a = r.done(&a.jobs[0], json!({}));
+    assert_eq!(names(&a), vec!["küme-sil"]);
+    let a = r.done(&a.jobs[0], json!({}));
+    assert_eq!(names(&a), vec!["bildir"]);
+    assert_eq!(r.rt.phase, Phase::Error);
+    r.done(&a.jobs[0], json!({}));
+    assert_eq!(
+        r.rt.ended,
+        Some(Ended::Error {
+            why: "exit 1: yanıt yok".into()
+        })
+    );
+}
+
+#[test]
+fn only_the_steps_that_finished_are_undone() {
+    let mut r = Run::new(&[("küme", cluster())]);
+    let a = r.start(json!({"ad": "deneme"}));
+    let a = r.done(&a.jobs[0], json!({}));
+    // #plan breaks: the cluster is deleted, nothing was applied
+    let a = r.failed(&a.jobs[0], "exit 1: plan reddedildi");
+    assert_eq!(names(&a), vec!["küme-sil"]);
+
+    // the first step breaks: nothing to undo, straight to the error list
+    let mut r = Run::new(&[("küme", cluster())]);
+    let a = r.start(json!({"ad": "deneme"}));
+    let a = r.failed(&a.jobs[0], "exit 1: docker yok");
+    assert_eq!(names(&a), vec!["bildir"]);
+    assert_eq!(r.rt.phase, Phase::Error);
+}
+
+#[test]
+fn an_undo_that_breaks_is_noted_and_the_others_still_run() {
+    let mut r = Run::new(&[("küme", cluster())]);
+    let mut a = r.start(json!({"ad": "deneme"}));
+    for _ in 0..3 {
+        a = r.done(&a.jobs[0], json!({}));
+    }
+    let a = r.failed(&a.jobs[0], "exit 1: yanıt yok");
+    let a = r.failed(&a.jobs[0], "exit 2: kilitli");
+    assert_eq!(names(&a), vec!["küme-sil"]);
+    assert_eq!(
+        a.notes,
+        vec![json!({"event": "undo.failed", "step": "#geri-al", "why": "exit 2: kilitli"})]
+    );
+    let a = r.done(&a.jobs[0], json!({}));
+    assert_eq!(names(&a), vec!["bildir"]);
+    r.done(&a.jobs[0], json!({}));
+    // the run's why stays what broke first
+    assert_eq!(
+        r.rt.ended,
+        Some(Ended::Error {
+            why: "exit 1: yanıt yok".into()
+        })
+    );
+    assert_eq!(r.rt.state["failed_step"], "#dene");
+}
+
+#[test]
+fn a_failure_is_no_error_and_undoes_nothing() {
+    let mut f = cluster();
+    f["failure"] = json!(["#bildir"]);
+    let mut r = Run::new(&[("küme", f)]);
+    let mut a = r.start(json!({"ad": "deneme"}));
+    for _ in 0..3 {
+        a = r.done(&a.jobs[0], json!({}));
+    }
+    let a = r.done(&a.jobs[0], json!({"success": false}));
+    assert_eq!(names(&a), vec!["bildir"]);
+    assert_eq!(r.rt.phase, Phase::Failure);
+}
+
+#[test]
+fn a_workflow_as_a_step_has_its_steps_undone_and_its_own_undo() {
+    let mut r = Run::new(&[
+        (
+            "kurulum",
+            json!({"steps": [{ "altyapı": { "undo": "#hepsini-sil" } }, "#dene"]}),
+        ),
+        (
+            "altyapı",
+            json!({"steps": [{ "#ağ-kur": { "undo": "#ağ-sil" } }, "#disk-kur"]}),
+        ),
+    ]);
+    let a = r.start(json!({"ad": "deneme"}));
+    let a = r.done(&a.jobs[0], json!({}));
+    let a = r.done(&a.jobs[0], json!({}));
+    assert_eq!(names(&a), vec!["dene"]);
+    let a = r.failed(&a.jobs[0], "exit 1");
+    assert_eq!(names(&a), vec!["hepsini-sil"]);
+    let a = r.done(&a.jobs[0], json!({}));
+    assert_eq!(names(&a), vec!["ağ-sil"]);
+    let a = r.done(&a.jobs[0], json!({}));
+    assert!(a.jobs.is_empty());
+    assert_eq!(
+        r.rt.ended,
+        Some(Ended::Error {
+            why: "exit 1".into()
+        })
+    );
+}
+
 #[test]
 fn success_false_runs_failure_otherwise_success() {
     let flow = json!({"steps": ["#remind-stock"], "success": ["#teşekkür"], "failure": ["#log"]});

@@ -89,7 +89,9 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
             ["#check-payment", "stock-check"],
             "order-process",
             "#notify@0.2",
-            { "#ship": { "carrier": "PTT Kargo", "on": [{ "$paid": true }] } }
+            { "#ship": { "carrier": "PTT Kargo", "on": [{ "$paid": true }] } },
+            { "#küme-kur": { "undo": "#küme-sil" } },
+            { "altyapı": { "undo": "yıkım" } }
           ],
           "success": ["#log-result"],
           "failure": ["#log-result"],
@@ -110,7 +112,8 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
         Step::One {
             name: Name::Workflow("order-process".into()),
             data: Map::new(),
-            on: None
+            on: None,
+            undo: None
         }
     );
     let Step::One { name, .. } = &f.steps[2] else {
@@ -123,12 +126,29 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
             version: Some("0.2".into())
         }
     );
-    let Step::One { name, data, on } = &f.steps[3] else {
+    let Step::One {
+        name,
+        data,
+        on,
+        undo,
+    } = &f.steps[3]
+    else {
         panic!()
     };
     assert_eq!(*name, action("ship"));
     assert_eq!(*data, obj(json!({"carrier": "PTT Kargo"})));
     assert_eq!(on.as_ref().unwrap().equal, obj(json!({"paid": true})));
+    assert_eq!(*undo, None);
+    // undo is taken out of the step's data
+    let Step::One { data, undo, .. } = &f.steps[4] else {
+        panic!()
+    };
+    assert!(data.is_empty());
+    assert_eq!(*undo, Some(action("küme-sil")));
+    let Step::One { undo, .. } = &f.steps[5] else {
+        panic!()
+    };
+    assert_eq!(*undo, Some(Name::Workflow("yıkım".into())));
     assert_eq!(f.success.len(), 1);
     assert_eq!(f.failure.len(), 1);
     assert_eq!(f.error.len(), 2);
@@ -190,6 +210,8 @@ fn mistakes_are_named() {
         (r##"{ "steps": [["#a", { "#b": {} }]] }"##, "side by side"),
         (r##"{ "steps": ["#"] }"##, "\"#\""),
         (r##"{ "steps": ["#a@x.1"] }"##, "version"),
+        (r##"{ "steps": [{ "#a": { "undo": 3 } }] }"##, "undo"),
+        (r##"{ "steps": [{ "#a": { "undo": "#" } }] }"##, "\"#\""),
         (r##"[]"##, "an object"),
     ] {
         let e = err(text);

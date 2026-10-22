@@ -89,7 +89,8 @@ Steps run in order. A step is:
   { "#ship": { "carrier": "PTT Kargo", "on": [{ "$paid": true, "$stock": true }] } }
   ```
 
-  The step runs only if its `on` holds; otherwise it is skipped. The other
+  The step runs only if its `on` holds; otherwise it is skipped. `undo`
+  names what takes it back ([Undo](#undo-taking-steps-back)). The other
   keys are data for the action. A value that is exactly `"$name"` takes the
   state's value, `"$$NAME"` the secret's: `{"#ask-ai": {"key":
   "$$ANTHROPIC_KEY"}}`.
@@ -119,12 +120,45 @@ Steps run at the end, by the outcome:
   business outcome such as out of stock. `failure` runs.
 - **success**: anything else.
 
-These steps get `$why` and `$failed_step`. The run ends as `done`,
+These steps get `$why` and `$failed_step`. Before `error`, the steps
+that finished are undone ([Undo](#undo-taking-steps-back)). The run ends as `done`,
 `failed` or `error`; if one of these steps breaks, it ends as `error` and
 no other list runs. A run ending in error or failed also sends
 `itero.run.error` or `itero.run.failed`, for workflows that watch over
 others ([The daemon's own workflows](/guides/maintenance/)). A workflow used as a step has no end lists of its own:
 the run's own workflow has them.
+
+## Undo: taking steps back
+
+A step that makes something (a cluster, an order, a booking) can name
+what takes it back, with `undo` in its data:
+
+```json
+{
+  "on": [{ "event": "cluster.requested" }],
+  "steps": [
+    { "#cluster-create": { "undo": "#cluster-delete" } },
+    "#tf-plan",
+    { "#tf-apply": { "undo": "#tf-destroy" } },
+    "#web-check"
+  ]
+}
+```
+
+When a step breaks, the undos of the steps that finished run, newest
+first, then the `error` list. If `#web-check` breaks: `#tf-destroy`,
+then `#cluster-delete`. If `#tf-plan` breaks: only `#cluster-delete`.
+
+- An undo is an action or a workflow. It gets the state, with `$why` and
+  `$failed_step`.
+- Only steps that finished are undone: a step that broke half way cleans
+  up after itself, or the `error` list does.
+- A workflow used as a step can have an undo, and its own steps can too:
+  each finished step counts.
+- An undo that breaks is noted in the log (`undo.failed`); the others
+  still run, and the run ends as `error` with the first `$why`.
+- A `failure` (`"success": false`) undoes nothing: the steps all worked.
+- `itero runs <run>` marks them: `#cluster-delete (undo)  done`.
 
 ## Waiting: `timeout`
 
