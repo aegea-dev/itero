@@ -1,0 +1,9 @@
+#!/bin/sh
+# Applies exactly the plan #tf-plan saved for the cluster $name, and waits
+# until the app's pods are up.
+set -eu
+dir="$PWD/.itero/clusters/$name"
+export TF_DATA_DIR="$dir/.terraform" TF_IN_AUTOMATION=1
+export TF_PLUGIN_CACHE_DIR="$PWD/.itero/tofu-plugins"
+tofu -chdir=web apply -input=false -state="$dir/terraform.tfstate" "$dir/plan" 1>&2
+echo '{"applied": true}'

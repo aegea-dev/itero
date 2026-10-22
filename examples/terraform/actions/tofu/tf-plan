@@ -1,0 +1,18 @@
+#!/bin/sh
+# Plans the web app (web/, OpenTofu) for the cluster $name. Each cluster has
+# its own state and plan in .itero/clusters/$name/; the plan is saved there,
+# for #tf-apply to apply exactly. Prints what it would do:
+# {"plan": {"add": n, "change": n, "destroy": n}}.
+set -eu
+dir="$PWD/.itero/clusters/$name"
+export TF_DATA_DIR="$dir/.terraform" TF_IN_AUTOMATION=1
+export TF_PLUGIN_CACHE_DIR="$PWD/.itero/tofu-plugins"
+mkdir -p "$TF_PLUGIN_CACHE_DIR"
+tofu -chdir=web init -input=false 1>&2
+tofu -chdir=web plan -input=false -state="$dir/terraform.tfstate" \
+  -var "kubeconfig=$dir/kubeconfig" -out="$dir/plan" 1>&2
+tofu -chdir=web show -json "$dir/plan" | jq '{plan: {
+  add: [.resource_changes[] | select(.change.actions | index("create"))] | length,
+  change: [.resource_changes[] | select(.change.actions | index("update"))] | length,
+  destroy: [.resource_changes[] | select(.change.actions | index("delete"))] | length
+}}'

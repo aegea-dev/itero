@@ -1,0 +1,6 @@
+#!/bin/sh
+# Installs what the Brewfile lists and this machine lacks, with Homebrew.
+# It changes the machine, so it runs only when asked: tools.requested.
+set -eu
+brew bundle --file Brewfile --no-upgrade 1>&2
+echo '{"tools": "installed"}'

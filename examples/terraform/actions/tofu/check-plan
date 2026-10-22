@@ -1,0 +1,13 @@
+#!/bin/sh
+# A guard between the plan and the apply: the run stops before anything
+# changes when the plan destroys something, or adds more than $max_add
+# resources (10 unless given). The plan is in the run's state, on stdin.
+set -eu
+state=$(cat)
+max=${max_add:-10}
+if ! printf '%s' "$state" | jq -e --argjson max "$max" \
+  '.plan.destroy == 0 and .plan.add <= $max' >/dev/null; then
+  echo "the plan is refused: $(printf '%s' "$state" | jq -c .plan), at most $max to add and none to destroy" >&2
+  exit 1
+fi
+echo '{"plan_checked": true}'

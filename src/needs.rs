@@ -152,7 +152,8 @@ pub fn commands(script: &str) -> Vec<String> {
     let mut functions = vec![];
     let mut found: Vec<String> = vec![];
     for line in code(&without_heredocs(script)).lines() {
-        let code = line.trim();
+        let code = plain(line);
+        let code = code.trim();
         if let Some(name) = code.split_once("()").map(|(n, _)| n.trim())
             && word(name)
         {
@@ -173,6 +174,23 @@ pub fn commands(script: &str) -> Vec<String> {
     }
     found.retain(|c| !functions.contains(c));
     found
+}
+
+/// A line without what only looks like commands: arithmetic (`$((n + 1))`)
+/// and the `&` of redirections (`2>&1`, `1>&2`, `&>`), which is no `&`
+/// between commands.
+fn plain(line: &str) -> String {
+    let mut out = line
+        .replace("&>", ">")
+        .replace(">&", ">")
+        .replace("<&", "<");
+    while let Some(start) = out.find("((") {
+        match out[start..].find("))") {
+            Some(end) => out.replace_range(start..start + end + 2, ""),
+            None => break,
+        }
+    }
+    out
 }
 
 /// A word that can name a program on the PATH.
@@ -367,11 +385,14 @@ perl -ne '
   print "başlık: $1\n" if /<title>(.*?)</;
   my ($x) = @_;
 ' | wc -l
+k3d cluster create "$name" 1>&2
+curl -fsS "$url" >/dev/null 2>&1 && tries=$((tries + 1))
+tofu init &>/dev/null
 "#;
         assert_eq!(
             commands(script),
             [
-                "mktemp", "jq", "curl", "docker", "cat", "sort", "perl", "wc"
+                "mktemp", "jq", "curl", "docker", "cat", "sort", "perl", "wc", "k3d", "tofu"
             ]
         );
     }

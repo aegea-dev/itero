@@ -1,0 +1,7 @@
+#!/bin/sh
+# Deletes the k3d cluster $name and what this example kept for it: the
+# rollback when a step fails, and what cluster.removed asks for.
+set -eu
+k3d cluster delete "$name" 1>&2
+rm -rf ".itero/clusters/$name"
+echo '{"deleted": true}'

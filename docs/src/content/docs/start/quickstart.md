@@ -65,5 +65,6 @@ itero runs <name>      # the run step by step
 - [The log, IDs and names](/guides/log/): what happened, and how to find
   it.
 - The examples in the repository: `mail-alert`, `mail-servers`, `order`,
-  `page-digest`, `page-summary` (a local model), `photos`, and `languages`
-  (actions in Python, Node, Bun and Docker).
+  `page-digest`, `page-summary` (a local model), `photos`, `languages`
+  (actions in Python, Node, Bun and Docker) and `terraform` (a k3d cluster
+  with a web app, rolled back when a step fails).

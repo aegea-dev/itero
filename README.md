@@ -99,6 +99,9 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
 - [`examples/languages`](examples/languages): actions in Python (uv), Node,
   Bun and Docker, each in its subfolder and bringing its own packages,
   answering `itero emit --wait`.
+- [`examples/terraform`](examples/terraform): a k3d cluster of 3 machines
+  with a web app applied by OpenTofu, a guard on the plan, and the cluster
+  deleted when a step fails.
 
 ## Design
 
