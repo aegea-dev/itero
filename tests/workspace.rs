@@ -295,3 +295,34 @@ fn one_name_twice_in_a_kind_is_an_error_naming_both_files() {
         assert!(ws.action_file("sipariş", None).is_ok());
     }
 }
+
+#[test]
+fn files_that_are_not_executable_beside_actions_and_sources_are_left_alone() {
+    #[cfg(unix)]
+    {
+        let d = tempfile::tempdir().unwrap();
+        let ws = simple(d.path());
+        // two projects, each with its own files: none of them an action
+        executable(d.path(), "actions/web/ekran", "#!/bin/sh\n");
+        write(d.path(), "actions/web/package.json", "{}");
+        write(d.path(), "actions/web/README.md", "# ekran görüntüsü\n");
+        executable(d.path(), "actions/çeviri/çevir", "#!/bin/sh\n");
+        write(d.path(), "actions/çeviri/package.json", "{}");
+        write(d.path(), "actions/çeviri/README.md", "# çeviri\n");
+        let names: Vec<String> = ws.action_files().unwrap().into_keys().collect();
+        assert_eq!(names, ["ekran", "çevir"]);
+        // a source's folder may hold notes too
+        executable(d.path(), "sources/posta/posta.geldi", "#!/bin/sh\n");
+        write(d.path(), "sources/posta/README.md", "# posta\n");
+        let sources: Vec<String> = ws
+            .source_files()
+            .unwrap()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(sources, ["posta.geldi"]);
+        // a step naming one that is not executable still says so
+        let e = format!("{:#}", ws.action_file("package.json", None).unwrap_err());
+        assert!(e.contains("not executable"), "{e}");
+    }
+}
