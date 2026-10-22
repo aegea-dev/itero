@@ -1,9 +1,9 @@
 ---
-title: itero
-description: Runs workflows when something happens or on a schedule, with small programs and the command line tools already on the machine.
+title: "itero: everything iterated"
+description: Chain any program into workflows that run on their own, with waiting, retries, guards, undo and a record of every run.
 template: splash
 hero:
-  tagline: Runs workflows when something happens or on a schedule, with small programs and the command line tools already on the machine.
+  tagline: Chain any program into workflows that run on their own. If it runs on your machine, it is a step.
   actions:
     - text: Install
       link: start/install/
@@ -13,11 +13,76 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-itero (Latin: "I repeat") runs workflows on one machine. A workflow is a
-few lines of JSON: what starts it, and the steps it takes. A step is an
-action, a small executable file in any language, or another workflow.
+A step is any program: a shell script, a command line tool, a container,
+an API call, a model. You write the chain in a small JSON file, by hand
+or with AI; itero (Latin: "I repeat") runs it when something happens or
+on a schedule, with waiting, retries, guards, undo and a record of every
+run.
+
+## In a minute: a beacon
+
+Something to keep an eye on: a site, a local server, a backup. Every
+minute itero asks it; when it does not answer, you get a notification
+saying why. An action, `actions/check-site`:
+
+```sh
+#!/bin/sh
+curl -fs --max-time 10 -o /dev/null "$url" || { echo "$url is down" >&2; exit 1; }
+```
+
+and a workflow, `workflows/beacon.json`:
+
+```json
+{ "on": [{ "schedule": "* * * * *" }],
+  "steps": [{ "#check-site": { "url": "http://localhost:3000" } }],
+  "error": [{ "#notify": { "title": "beacon", "text": "$why" } }] }
+```
+
+With an empty `itero.toml` beside them, `itero daemon` runs it. The
+[beacon example](https://github.com/aegea-dev/itero/tree/main/examples/beacon)
+goes further: many sites and the disk's free space, told only when
+something changes.
+
+## What people chain
+
+<CardGrid>
+	<LinkCard
+		title="Tell me when a mail arrives, and only the important ones"
+		description="A source for new mail and a notification; a model step to rate them (below) decides which you hear about."
+		href="https://github.com/aegea-dev/itero/tree/main/examples/mail-alert"
+	/>
+	<LinkCard
+		title="Process every file dropped in this folder"
+		description="A watched folder, one run per burst of files: thumbnails, conversions, uploads."
+		href="https://github.com/aegea-dev/itero/tree/main/examples/photos"
+	/>
+	<LinkCard
+		title="Wait for a payment, then ship"
+		description="A step that waits for a message that comes later, minutes or days."
+		href="https://github.com/aegea-dev/itero/tree/main/examples/order"
+	/>
+	<LinkCard
+		title="Make the cluster, refuse a dangerous plan, roll back on failure"
+		description="terraform and kubectl chained, a guard step, and undo."
+		href="https://github.com/aegea-dev/itero/tree/main/examples/terraform"
+	/>
+	<LinkCard
+		title="My app needs a job done and wants the result"
+		description="itero emit --wait answers with the run's state, or a callback when it ends."
+		href="https://github.com/aegea-dev/itero/tree/main/examples/languages"
+	/>
+	<LinkCard
+		title="Every morning, a summary of these pages"
+		description="A schedule, a fetch, a model, a mail."
+		href="https://github.com/aegea-dev/itero/tree/main/examples/page-digest"
+	/>
+</CardGrid>
+
+### A model as one step
+
+A model is one more program to chain, used only where judgment is needed:
 
 ```json
 {
@@ -29,30 +94,40 @@ action, a small executable file in any language, or another workflow.
 }
 ```
 
-A mail arrives; `#ai`, a few lines of shell around `curl`, asks an AI
-assistant to read and rate it, and prints
-`{"summary": "...", "rating": "important"}` into the run's state. The
-rating decides the rest: you hear only about the important mails, and
-the spam and the ads pass quietly.
+A mail arrives; `#ai`, a few lines of shell around `curl`, asks a model to
+read and rate it, and prints `{"summary": "...", "rating": "important"}`
+into the run's state. The rating decides the rest: you hear only about
+the important mails, and the spam and the ads pass quietly.
+
+## Why itero
 
 <CardGrid>
-	<Card title="Small files" icon="document">
-		A workspace is a folder: workflows as JSON, actions as executables,
-		sources as executables. No action descriptions, no expressions.
+	<Card title="Anything is a step" icon="seti:shell">
+		An action is an executable in any language. It reads its values as
+		environment variables, prints JSON, and its exit code says how it
+		went: done, not yet, or broken.
 	</Card>
-	<Card title="Messages, schedules and files" icon="rocket">
-		A message from an app, a source or `itero emit` starts runs, and
-		reaches the runs waiting for it; a schedule or a watched file starts
-		them too.
+	<Card title="Plain files in git" icon="document">
+		Nothing lost, everything iterated: workflows and actions are plain
+		files you keep in git, share as folders and improve. A run keeps the
+		version it started with.
 	</Card>
-	<Card title="The Unix way" icon="seti:shell">
-		An action reads its values as environment variables and prints JSON;
-		its exit code says how it went. `curl`, `jq` and the shell do most of
-		the work.
+	<Card title="Runs on its own" icon="rocket">
+		Messages, schedules and watched files start runs. A step can wait for
+		a message that comes later; a lost step runs again; a broken one is
+		undone.
 	</Card>
-	<Card title="Kept up" icon="approve-check">
-		Every message and answer is in a SQLite journal, and every step in a
-		JSON log. A lost step runs again; a watchdog restarts the daemon,
-		which starts at login.
+	<Card title="A record of everything" icon="approve-check">
+		Every message and answer is in a SQLite journal, every step in a JSON
+		log. `itero runs` tells a run's story, step by step.
 	</Card>
 </CardGrid>
+
+## Next to the others
+
+- **cron** runs a command at a time; itero chains steps, waits for
+  messages, retries, undoes and keeps a record.
+- **n8n, Zapier** offer the nodes they built; in itero any program is a
+  step, and the workflow is a file you keep.
+- **Temporal, Airflow** need their SDK and a server; itero is one binary,
+  and a step is whatever runs on your machine.

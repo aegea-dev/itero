@@ -1,0 +1,11 @@
+# A beacon: health checks on a schedule, and a notification only when
+# something changes. Every minute each site in sites.txt is asked; every 10
+# minutes the disk's free space is checked. When a site goes down, comes
+# back, or the disk runs low, you hear about it once.
+#
+# Run `itero daemon` in this folder and leave it running. The first check
+# tells you what it watches; after that, only changes. Add your own sites
+# to sites.txt, and your own checks: an action that prints
+# {"status": {"<what>": "<how it is>"}} followed by #changed and #notify.
+# The actions need curl, jq, df and awk.
+port = 8796

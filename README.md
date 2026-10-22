@@ -1,15 +1,78 @@
-# itero
+# itero: everything iterated
 
-itero (Latin: "I repeat") runs workflows on one machine, when something
-happens or on a schedule. A workflow is a few lines of JSON; its steps are
-small executable files in any language, leaning on the command line tools
-already there (`sh`, `curl`, `jq`).
-
-```json
-{ "on": [{ "event": "order.placed" }], "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"] }
-```
+Chain any program into workflows that run on their own: scripts, command
+line tools, containers, API calls, models. If it runs on your machine, it
+is a step. You write the chain in a small JSON file, by hand or with AI;
+itero runs it when something happens or on a schedule, with waiting,
+retries, guards, undo and a record of every run.
 
 Documentation: <https://aegea-dev.github.io/itero/>.
+
+## In a minute: a beacon
+
+Something to keep an eye on: a site, a local server, a backup. Every
+minute itero asks it; when it does not answer, you get a notification
+saying why.
+
+```bash
+mkdir beacon && cd beacon && touch itero.toml && mkdir actions workflows
+
+cat > actions/check-site <<'EOF'
+#!/bin/sh
+curl -fs --max-time 10 -o /dev/null "$url" || { echo "$url is down" >&2; exit 1; }
+EOF
+chmod +x actions/check-site
+
+cat > workflows/beacon.json <<'EOF'
+{ "on": [{ "schedule": "* * * * *" }],
+  "steps": [{ "#check-site": { "url": "http://localhost:3000" } }],
+  "error": [{ "#notify": { "title": "beacon", "text": "$why" } }] }
+EOF
+
+itero daemon
+```
+
+Two small files and one command. [`examples/beacon`](examples/beacon) goes
+further: many sites and the disk's free space, told only when something
+changes (down, then back up).
+
+## What people chain
+
+- **Tell me when a mail arrives, and only the important ones**: a source
+  for new mail and a notification; a model step to rate it decides which
+  you hear about. [`mail-alert`](examples/mail-alert), a model on this
+  machine in [`page-summary`](examples/page-summary)
+- **Process every file dropped in this folder**: a watched folder, one run
+  per burst of files. [`photos`](examples/photos)
+- **Wait for a payment, then ship**: a step that waits for a message that
+  comes later, minutes or days. [`order`](examples/order)
+- **Make the cluster, refuse a dangerous plan, roll back on failure**:
+  terraform and kubectl chained, a guard step, and undo.
+  [`terraform`](examples/terraform)
+- **My app needs a job done and wants the result**: `itero emit --wait`
+  answers with the run's state, or a callback when it ends.
+  [`languages`](examples/languages)
+- **Every morning, a summary of these pages**: a schedule, a fetch, a
+  model, a mail. [`page-digest`](examples/page-digest)
+- **Is everything still up?**: health checks, told when something changes.
+  [`beacon`](examples/beacon)
+
+## Plain files in git: nothing lost, everything iterated
+
+A workspace is a folder of plain files: workflows as JSON, actions as
+executables. Keep it in git, share an action or a whole workflow as a
+folder, clone someone's and improve it. A run keeps the version of the
+workflow it started with, so editing a file never changes a run under
+way.
+
+## Next to the others
+
+- **cron** runs a command at a time; itero chains steps, waits for
+  messages, retries, undoes and keeps a record.
+- **n8n, Zapier** offer the nodes they built; in itero any program is a
+  step, and the workflow is a file you keep.
+- **Temporal, Airflow** need their SDK and a server; itero is one binary,
+  and a step is whatever runs on your machine.
 
 ## Install
 
@@ -83,6 +146,8 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
 
 ## Examples
 
+- [`examples/beacon`](examples/beacon): sites and the disk's free space
+  checked on a schedule, with a notification when something changes.
 - [`examples/mail-alert`](examples/mail-alert): a notification for each
   new mail in the local mailbox, as it arrives.
 - [`examples/mail-servers`](examples/mail-servers): new mail on an IMAP or

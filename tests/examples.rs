@@ -80,3 +80,44 @@ fn the_order_example_waits_for_its_payment_then_ships() {
     );
     assert_eq!(read(".itero/results.log"), "order 43: done\n");
 }
+
+/// An action of an example, run by hand: `env` and `stdin` given, what it
+/// printed returned.
+fn run_action(ws: &Path, name: &str, env: &[(&str, &str)], stdin: &str) -> String {
+    use std::io::Write;
+    let mut c = std::process::Command::new(ws.join("actions").join(name))
+        .current_dir(ws)
+        .envs(env.iter().copied())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    c.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+    let o = c.wait_with_output().unwrap();
+    assert!(o.status.success(), "#{name}: {o:?}");
+    String::from_utf8(o.stdout).unwrap().trim().to_string()
+}
+
+#[test]
+fn the_beacon_tells_only_what_changed() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = copy("beacon", d.path());
+    // a port nothing listens on: down, without the network
+    std::fs::write(ws.join("sites.txt"), "# ölçülen\nhttp://127.0.0.1:9\n").unwrap();
+    let sites = run_action(&ws, "check-sites", &[], "{}");
+    assert_eq!(sites, r#"{"status": {"http://127.0.0.1:9":"down"}}"#);
+    let memory = d.path().join("hafıza");
+    let memory = memory.to_str().unwrap();
+    let changed = |state: &str| run_action(&ws, "changed", &[("ITERO_MEMORY", memory)], state);
+    // the first run tells what it watches, then only changes
+    assert_eq!(changed(&sites), r#"{"text":"http://127.0.0.1:9: down"}"#);
+    assert_eq!(changed(&sites), "{}");
+    let back = r#"{"status": {"http://127.0.0.1:9": "up", "disk": "ok"}}"#;
+    assert_eq!(
+        changed(back),
+        r#"{"text":"http://127.0.0.1:9: up\ndisk: ok"}"#
+    );
+    let disk = |min: &str| run_action(&ws, "check-disk", &[("min_free", min)], "{}");
+    assert_eq!(disk("0"), r#"{"status":{"disk":"ok"}}"#);
+    assert_eq!(disk("101"), r#"{"status":{"disk":"under 101% free"}}"#);
+}
