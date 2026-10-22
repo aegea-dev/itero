@@ -367,3 +367,112 @@ fn emit_says_what_a_message_starts() {
     let j = itero::engine::journal::Journal::open(&ws).unwrap();
     assert_eq!(j.events(Some("itero.app")).unwrap().len(), 3);
 }
+
+/// A daemon serving the workspace in `d`, killed however the test ends.
+struct Daemon(std::process::Child);
+
+impl Daemon {
+    fn start(d: &Path, port: u16) -> Daemon {
+        let child = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .arg("daemon")
+            .current_dir(d)
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        // ready once it answers on its port
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(std::time::Instant::now() < end, "the daemon never answered");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        Daemon(child)
+    }
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn emit_wait_answers_with_the_runs_end() {
+    let d = workspace();
+    file(d.path(), "itero.toml", "port = 8802\n");
+    file(
+        d.path(),
+        "workflows/selam.json",
+        r##"{ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }"##,
+    );
+    file(
+        d.path(),
+        "workflows/kötü.json",
+        r##"{ "on": [{ "event": "kişi.bozuk" }], "steps": ["#kır"] }"##,
+    );
+    file(
+        d.path(),
+        "workflows/bekle.json",
+        r##"{ "on": [{ "event": "kişi.bekler" }], "steps": ["#bekle"] }"##,
+    );
+    file(
+        d.path(),
+        "actions/selamla",
+        "#!/bin/sh\necho \"{\\\"selam\\\": \\\"merhaba $kim\\\"}\"\n",
+    );
+    file(
+        d.path(),
+        "actions/kır",
+        "#!/bin/sh\necho çöktü >&2\nexit 3\n",
+    );
+    file(d.path(), "actions/bekle", "#!/bin/sh\nexit 75\n");
+    let o = itero(
+        d.path(),
+        &["emit", "--reply", "ftp://örnek.test", "kişi.geldi", "{}"],
+    );
+    assert!(!o.status.success() && err(&o).contains("http"), "{o:?}");
+    // no daemon: nothing would answer, so it says so at once
+    let o = itero(d.path(), &["emit", "--wait", "kişi.geldi", "{}"]);
+    assert!(
+        !o.status.success() && err(&o).contains("no daemon is running"),
+        "{o:?}"
+    );
+
+    let _daemon = Daemon::start(d.path(), 8802);
+    let o = itero(
+        d.path(),
+        &["emit", "--wait", "kişi.geldi", r#"{"kim": "ayşe"}"#],
+    );
+    assert_eq!(o.status.code(), Some(0), "{o:?}");
+    let answer: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(answer["message"].as_str().unwrap().len(), 36, "{answer}");
+    let run = &answer["runs"][0];
+    assert_eq!(run["workflow"], "selam");
+    assert_eq!(run["status"], "done");
+    assert_eq!(run["state"]["selam"], "merhaba ayşe");
+    assert!(run["name"].as_str().unwrap().contains('-'));
+
+    let o = itero(d.path(), &["emit", "--wait", "kişi.bozuk", "{}"]);
+    assert_eq!(o.status.code(), Some(1), "an error is exit 1: {o:?}");
+    let answer: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(answer["runs"][0]["status"], "error");
+
+    let o = itero(
+        d.path(),
+        &["emit", "--wait", "--timeout", "2s", "kişi.bekler", "{}"],
+    );
+    assert_eq!(
+        o.status.code(),
+        Some(2),
+        "past the timeout is exit 2: {o:?}"
+    );
+    let answer: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(answer["runs"][0]["status"], "waiting");
+
+    let o = itero(d.path(), &["emit", "--wait", "kimse.istemez", "{}"]);
+    assert_eq!(o.status.code(), Some(0), "{o:?}");
+    let answer: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(answer["runs"], serde_json::json!([]));
+}

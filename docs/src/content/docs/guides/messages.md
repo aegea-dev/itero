@@ -52,6 +52,23 @@ it may reach when some are waiting.
 
 Messages are kept until their runs end, then `keep` more (a day).
 
+## Getting an answer
+
+A message is sent and forgotten unless its sender asks for what came of
+it, one of two ways:
+
+- **Wait for it**, for runs that end soon: `itero emit --wait` returns when
+  the runs it started have ended and prints them as JSON, each with its
+  status and state; `POST /events?wait=60` answers the same
+  ([`itero emit`](/commands/emit/#waiting-for-the-answer)).
+- **Be called back**, for runs that may wait for days: `--reply <url>`, or
+  `"reply"` in `POST /events`. Each run the message starts is posted to the
+  URL when it ends, and tried again until the app takes it
+  ([Callbacks](/reference/http/#callbacks)).
+
+Either way the workflow files stay as they are: the answer is how the runs
+ended, and their state.
+
 ## Where messages come from
 
 - **Push**: an app or a webhook posts to `/events`, or a source holds a

@@ -52,10 +52,38 @@ curl -s -X POST http://127.0.0.1:8787/events -H 'content-type: application/json'
 |---|---|
 | `type` | the message's type, two or more words joined by dots (needed) |
 | `data` | a JSON object |
+| `reply` | an `http://` or `https://` URL: each run it starts is posted there when it ends |
 
-Answers 202 `{"id": "..."}`; 400 for a bad message, or one of the
-engine's own types (`itero.*`, `action.*`, `timer.*`, `run.*`,
-`workflow.*`, `source.*`). See [Messages and sources](/guides/messages/).
+Answers 202 `{"id": "..."}`; 400 for a bad message, one of the engine's
+own types (`itero.*`, `action.*`, `timer.*`, `run.*`, `workflow.*`,
+`source.*`), or a `reply` that is not an http(s) URL. See
+[Messages and sources](/guides/messages/).
+
+With `?wait=N` (seconds, up to 600) it holds the request until the runs
+the message started have ended, and answers 200 with them:
+
+```json
+{ "id": "01a1…", "message": "01a1…",
+  "runs": [ { "run": "01a1…", "name": "misty-lake", "workflow": "order",
+              "status": "done", "state": { "order": 43, "tracking": "TR-43" } } ] }
+```
+
+When the time runs out first, it answers 202 with the runs so far.
+
+## Callbacks
+
+A message sent with `reply` has each run it starts posted to that URL when
+the run ends, as `application/json`:
+
+```json
+{ "message": "01a1…", "run": "01a1…", "name": "misty-lake", "workflow": "order",
+  "status": "done", "state": { "order": 43, "tracking": "TR-43" } }
+```
+
+An answer of 2xx takes it. Anything else, or no answer within 10 seconds,
+is tried again on a later pass, waiting twice as long each time (10
+seconds to an hour); a day after the first try it is given up on, with an
+`error` line in the log. A run that waits for days is posted days later.
 
 ## GET /runs
 

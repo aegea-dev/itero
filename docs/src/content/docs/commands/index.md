@@ -10,7 +10,7 @@ command's options.
 | Command | Does |
 |---|---|
 | [`itero daemon`](/commands/daemon/) | runs the workspace: messages, schedules, watched files, steps |
-| [`itero emit`](/commands/emit/) | sends a message, and says what it starts |
+| [`itero emit`](/commands/emit/) | sends a message, and says what it starts; `--wait` for its answer |
 | [`itero workflows`](/commands/workflows/) | each workflow, its runs and the last; whether the daemon runs |
 | [`itero runs`](/commands/runs/) | the runs, or one run step by step |
 | [`itero errors`](/commands/errors/) | the runs that ended in error, and why |

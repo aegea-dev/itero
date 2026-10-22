@@ -110,6 +110,53 @@ fn distance(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
+/// How waiting for a message's answer ended.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Waited {
+    /// Every run it started ended, none failed or in error.
+    Done,
+    /// They all ended; one failed or ended in error.
+    Failed,
+    /// Time ran out: the answer has the runs so far.
+    TimedOut,
+}
+
+/// Waits up to `timeout` for the runs `message` started to end, and
+/// answers `{"message", "runs": [...]}`, each run as `journal::answer`
+/// says. A message that starts nothing is answered once a daemon has
+/// taken it.
+pub fn wait_for(
+    ws: &Workspace,
+    message: &str,
+    timeout: std::time::Duration,
+) -> anyhow::Result<(Value, Waited)> {
+    let j = Journal::open(ws)?;
+    let end = std::time::Instant::now() + timeout;
+    loop {
+        let runs = j.runs_of(message)?;
+        let ended = runs
+            .as_ref()
+            .is_some_and(|rs| rs.iter().all(|r| r.ended.is_some()));
+        if ended || std::time::Instant::now() >= end {
+            let runs = runs.unwrap_or_default();
+            let failed = runs
+                .iter()
+                .any(|r| matches!(super::steps::status(&r.runtime), "failed" | "error"));
+            let answer = serde_json::json!({
+                "message": message,
+                "runs": runs.iter().map(|r| journal::answer(r, &r.runtime)).collect::<Vec<_>>(),
+            });
+            let how = match (ended, failed) {
+                (false, _) => Waited::TimedOut,
+                (true, true) => Waited::Failed,
+                (true, false) => Waited::Done,
+            };
+            return Ok((answer, how));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
 /// Saves a message for the workspace, where it may start runs and reach
 /// waiting ones; returns its id.
 pub fn emit(
@@ -118,6 +165,25 @@ pub fn emit(
     data: Option<Value>,
     now: &str,
 ) -> Result<String, EmitError> {
+    emit_with(ws, kind, data, None, now)
+}
+
+/// `emit`, with where the ends of the runs it starts are posted: an
+/// `http://` or `https://` URL.
+pub fn emit_with(
+    ws: &Workspace,
+    kind: &str,
+    data: Option<Value>,
+    reply: Option<&str>,
+    now: &str,
+) -> Result<String, EmitError> {
+    if let Some(url) = reply
+        && !(url.starts_with("http://") || url.starts_with("https://"))
+    {
+        return Err(EmitError::Bad(format!(
+            "reply is an http:// or https:// URL, not {url}"
+        )));
+    }
     if !crate::flow::is_message_type(kind) {
         return Err(EmitError::Bad(format!(
             "a message type is two or more words joined by dots, like order.placed, not {kind}"
@@ -134,8 +200,12 @@ pub fn emit(
         Some(_) => return Err(EmitError::Bad("data must be a JSON object".into())),
     };
     let internal = |e: anyhow::Error| EmitError::Internal(format!("{e:#}"));
-    let j = Journal::open(ws).map_err(internal)?;
+    let mut j = Journal::open(ws).map_err(internal)?;
     let e = Envelope::new("outside", kind, &journal::subject("app"), now, None, data);
-    j.publish(&e).map_err(internal)?;
+    match reply {
+        Some(url) => j.publish_replying(&e, url),
+        None => j.publish(&e),
+    }
+    .map_err(internal)?;
     Ok(e.id)
 }

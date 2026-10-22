@@ -110,10 +110,23 @@ struct Posted {
     kind: String,
     #[serde(default)]
     data: Option<Value>,
+    /// Where each run's end is posted.
+    #[serde(default)]
+    reply: Option<String>,
 }
+
+#[derive(serde::Deserialize)]
+struct EventQuery {
+    /// Seconds to wait for the runs it starts to end.
+    wait: Option<u64>,
+}
+
+/// The longest an answer is waited for, in seconds.
+const MAX_WAIT: u64 = 600;
 
 async fn event(
     State(s): State<Shared>,
+    Query(q): Query<EventQuery>,
     body: Result<Json<Posted>, JsonRejection>,
 ) -> Result<Reply, Reply> {
     // Json refuses any Content-Type but application/json (415): a page on
@@ -122,20 +135,39 @@ async fn event(
     let ws = s.ws.clone();
     let now = super::daemon::stamp(chrono::Utc::now());
     // the journal may wait on a busy SQLite: off the async threads
-    let id = tokio::task::spawn_blocking(move || super::events::emit(&ws, &p.kind, p.data, &now))
-        .await
-        .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|e| {
-            use super::events::EmitError::*;
-            let code = match &e {
-                Bad(_) => StatusCode::BAD_REQUEST,
-                Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            fail(code, e.to_string())
-        })?;
+    let id = tokio::task::spawn_blocking(move || {
+        super::events::emit_with(&ws, &p.kind, p.data, p.reply.as_deref(), &now)
+    })
+    .await
+    .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| {
+        use super::events::EmitError::*;
+        let code = match &e {
+            Bad(_) => StatusCode::BAD_REQUEST,
+            Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        fail(code, e.to_string())
+    })?;
     // a loop that has stopped finds the event in the journal when it starts
     let _ = s.engine.wake.send(());
-    Ok((StatusCode::ACCEPTED, Json(json!({ "id": id }))))
+    let Some(secs) = q.wait else {
+        return Ok((StatusCode::ACCEPTED, Json(json!({ "id": id }))));
+    };
+    // its runs' end: 200 once they all ended, 202 with those so far when
+    // the time ran out
+    let ws = s.ws.clone();
+    let wait = std::time::Duration::from_secs(secs.min(MAX_WAIT));
+    let (mut answer, how) =
+        tokio::task::spawn_blocking(move || super::events::wait_for(&ws, &id, wait))
+            .await
+            .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .map_err(internal)?;
+    answer["id"] = answer["message"].clone();
+    let code = match how {
+        super::events::Waited::TimedOut => StatusCode::ACCEPTED,
+        _ => StatusCode::OK,
+    };
+    Ok((code, Json(answer)))
 }
 
 /// Runs `f` on the workspace off the async threads (the journal may wait
