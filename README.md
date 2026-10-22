@@ -31,7 +31,9 @@ are its options (`sh -s -- --help`).
 cargo build
 make test         # the test suite
 make lint-check   # clippy, warnings fail
-make fmt-check
+make fmt-check    # rustfmt
+make check        # cargo check, every target
+make audit        # Cargo.lock against RustSec advisories (needs cargo-audit)
 make test-linux   # the tests and clippy on Linux, in Docker
 make test-docker  # the IMAP and POP3 examples against a mail server in Docker
 ```
