@@ -36,4 +36,21 @@ fn the_built_in_notify_shows_text() {
     );
     let e = worker::run_step(&step(&[])).unwrap_err();
     assert!(e.to_string().contains("$text"), "{e}");
+
+    // a url, opened on a click: http or https only, as it may come from a
+    // message
+    std::fs::remove_file(&log).unwrap();
+    let url = "https://örnek.test/sipariş/43";
+    worker::run_step(&step(&[("text", "43 kargoda"), ("url", url)])).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        format!("itero\t43 kargoda\t{url}\n")
+    );
+    for bad in ["file:///etc/passwd", "javascript:alert(1)", "örnek.test"] {
+        let e = worker::run_step(&step(&[("text", "çay"), ("url", bad)])).unwrap_err();
+        assert!(e.to_string().contains("http or https"), "{bad}: {e}");
+    }
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1);
+    assert!(worker::openable("http://localhost:3000/"));
+    assert!(!worker::openable("HTTPS-but-not://x"));
 }

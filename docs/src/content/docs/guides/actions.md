@@ -63,7 +63,10 @@ secrets are the action's, whatever the version.
 ## Built in
 
 `#notify` shows `$text` (and `$title`) as a desktop notification: through
-Itero.app on macOS (`osascript` without it), `notify-send` on Linux.
+Itero.app on macOS (`osascript` without it), `notify-send` on Linux. With a
+`$url` (http or https), a click on it opens that page, on macOS through
+Itero.app; a url of another kind is an error, as it may come from a
+message.
 
 `#forget` forgets ended runs and their messages past `keep`, and
 `#roll-log` rolls the log; the built-in workflows use them

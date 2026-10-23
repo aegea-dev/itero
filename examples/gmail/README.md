@@ -3,7 +3,8 @@
 A notification for each new Gmail mail, the moment it arrives: no polling.
 `sources/gmail.received` keeps a connection to Gmail open with IMAP
 IDLE, and Gmail tells it when a mail comes; it prints one line per mail,
-and `workflows/gmail.json` shows it with `#notify`.
+and `workflows/gmail.json` shows it with `#notify`. On macOS a click on
+the notification opens the mail in Gmail on the web.
 
 It needs Python 3.14 or later, and a Gmail app password: turn on 2-Step
 Verification for your Google account, then make one at

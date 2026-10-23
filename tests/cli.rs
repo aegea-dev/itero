@@ -406,11 +406,19 @@ fn a_step_that_breaks_undoes_those_before_it_and_the_story_says_so() {
 #[test]
 fn info_shows_the_workspace_and_check_each_workflows_identity() {
     let d = workspace();
+    // a port nothing listens on, so no daemon of this machine answers
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
     file(
         d.path(),
         "itero.config.json",
-        r#"{"name": "dükkân-işleri", "port": 8797, "sahibi": "ayşe", "limits": {"runs": 7},
-             "workflow": {"sipariş": {"description": "Dükkân", "ekip": "ödeme"}}}"#,
+        &format!(
+            r#"{{"name": "dükkân-işleri", "port": {port}, "sahibi": "ayşe", "limits": {{"runs": 7}},
+                 "workflow": {{"sipariş": {{"description": "Dükkân", "ekip": "ödeme"}}}}}}"#
+        ),
     );
     file(
         d.path(),
