@@ -177,9 +177,10 @@ struct Flows {
 impl Flows {
     fn load(ws: &Workspace) -> Result<Flows> {
         let values = ws.flow_values()?;
+        let entries = ws.entries("workflow")?;
         let mut read = BTreeMap::new();
         for (n, v) in &values {
-            read.insert(n.clone(), ws.read_flow(n, v)?);
+            read.insert(n.clone(), ws.read_flow(n, v, &entries)?);
         }
         Ok(Flows { values, read })
     }
@@ -793,10 +794,12 @@ fn deliver(
         run: &run,
         internal: false,
     };
+    // whether it is internal is its entry's (or a built-in's own meta)
+    let entries = ws.entries("workflow")?;
     for (n, v) in &values {
-        let f = match flow::from_value(v) {
+        let f = match ws.read_flow(n, v, &entries) {
             Ok(f) => f,
-            Err(e) => return give_up(log, j, r.seq, &at, format!("{n}: {e}")),
+            Err(e) => return give_up(log, j, r.seq, &at, format!("{e:#}")),
         };
         if *n == root {
             who.internal = f.meta.internal;

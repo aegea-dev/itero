@@ -159,23 +159,29 @@ fn args_are_an_object_or_a_list_of_objects() {
     assert_eq!(ws.args("kargola").unwrap(), None);
     write(
         d.path(),
-        "args/kargola.json",
-        r##"{ "firma": "PTT Kargo" }"##,
+        "itero.config.json",
+        r##"{ "action": {
+              "kargola": { "description": "Kargoya verir", "args": { "firma": "PTT Kargo" } },
+              "posta": { "args": [ { "user": "ayşe@örnek.test" }, { "user": "can@örnek.test" } ] },
+              "sade": { "description": "Args yok" } } }"##,
     );
     assert_eq!(
         ws.args("kargola").unwrap(),
         Some(serde_json::json!({"firma": "PTT Kargo"}))
     );
-    write(
-        d.path(),
-        "args/posta.json",
-        r##"[ { "user": "ayşe@örnek.test" }, { "user": "can@örnek.test" } ]"##,
-    );
     assert!(ws.args("posta").unwrap().unwrap().is_array());
-    for (text, name) in [("[1, 2]", "bir"), (r#""çay""#, "iki"), ("{", "üç")] {
-        write(d.path(), &format!("args/{name}.json"), text);
+    assert_eq!(ws.args("sade").unwrap(), None);
+    for (args, name) in [("[1, 2]", "bir"), (r#""çay""#, "iki")] {
+        write(
+            d.path(),
+            "itero.config.json",
+            &format!(r#"{{"action": {{"{name}": {{"args": {args}}}}}}}"#),
+        );
         let e = format!("{:#}", ws.args(name).unwrap_err());
-        assert!(e.contains(&format!("{name}.json")), "{text}: {e}");
+        assert!(
+            e.contains(&format!("action.{name}.args")) && e.contains("itero.config.json"),
+            "{args}: {e}"
+        );
     }
 }
 
@@ -376,62 +382,73 @@ fn flow(ws: &workspace::Workspace, name: &str) -> itero::flow::Flow {
 }
 
 #[test]
-fn a_workflows_config_gives_its_settings_and_switches() {
+fn a_workflows_entry_gives_what_it_is_and_its_settings() {
     let d = tempfile::tempdir().unwrap();
     let ws = simple(d.path());
     write(
         d.path(),
         "workflows/gözcü.json",
-        r##"{ "meta": { "description": "Siteler" }, "on": [{ "event": "saat.geldi" }], "steps": ["#bak"] }"##,
+        r##"{ "on": [{ "event": "saat.geldi" }], "steps": ["#bak"] }"##,
     );
-    // no config: no settings, its meta as written
+    // no entry: nothing said, no settings
     let f = flow(&ws, "gözcü");
-    assert!(f.settings.is_empty());
-    assert!(!f.meta.off);
+    assert!(f.settings.is_empty() && f.meta.description.is_none());
     write(
         d.path(),
-        "config/gözcü.json",
-        r#"{ "siteler": ["https://örnek.test"], "en_az": 10, "off": true, "until": "2026-12-31" }"#,
+        "itero.config.json",
+        r#"{ "workflow": { "gözcü": { "description": "Siteler", "off": true, "until": "2026-12-31",
+             "settings": { "siteler": ["https://örnek.test"], "en_az": 10 } } } }"#,
     );
+    // read as it is now: the manifest is read again
     let f = flow(&ws, "gözcü");
     assert_eq!(
         serde_json::Value::Object(f.settings),
-        serde_json::json!({ "siteler": ["https://örnek.test"], "en_az": 10 }),
-        "the switches are not values"
+        serde_json::json!({ "siteler": ["https://örnek.test"], "en_az": 10 })
     );
     assert!(f.meta.off);
+    assert_eq!(f.meta.description.as_deref(), Some("Siteler"));
     assert_eq!(
         f.meta.until.unwrap().to_rfc3339(),
         "2027-01-01T00:00:00+00:00"
     );
-    assert_eq!(f.meta.description.as_deref(), Some("Siteler"));
-    // a config turns on a workflow its meta turns off
-    write(
-        d.path(),
-        "workflows/kapalı.json",
-        r##"{ "meta": { "off": true }, "steps": ["#bak"] }"##,
-    );
-    write(d.path(), "config/kapalı.json", r#"{ "off": false }"#);
-    assert!(!flow(&ws, "kapalı").meta.off);
 }
 
 #[test]
-fn config_mistakes_are_named() {
-    for (text, says) in [
-        ("[\"ş\"]", "an object"),
-        ("{ \"off\": \"evet\" }", "off is true or false"),
-        ("{ \"until\": \"yarın\" }", "until"),
-        ("{ bozuk", "config/gözcü.json"),
+fn a_workflow_files_meta_is_refused_and_built_ins_are_internal() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = simple(d.path());
+    let keep = flow(&ws, "keep");
+    assert!(keep.meta.internal && keep.meta.description.is_some());
+    write(d.path(), "itero.config.json", r#"{"workflow": {"keep": {"off": true}}}"#);
+    let keep = flow(&ws, "keep");
+    assert!(keep.meta.internal && keep.meta.off, "an entry turns a built-in off");
+    write(
+        d.path(),
+        "workflows/eski.json",
+        r##"{ "meta": { "description": "Eski" }, "steps": ["#bak"] }"##,
+    );
+    let e = format!("{:#}", ws.flows().unwrap_err());
+    assert!(
+        e.contains("eski.json") && e.contains("itero.config.json"),
+        "{e}"
+    );
+}
+
+#[test]
+fn entry_mistakes_name_the_manifest_and_the_workflow() {
+    for (manifest, says) in [
+        (r#"{"workflow": {"gözcü": {"off": "evet"}}}"#, "off is true or false"),
+        (r#"{"workflow": {"gözcü": {"settings": 3}}}"#, "settings are an object"),
+        (r#"{"workflow": ["gözcü"]}"#, "workflow is an object"),
     ] {
         let d = tempfile::tempdir().unwrap();
         let ws = simple(d.path());
-        write(
-            d.path(),
-            "workflows/gözcü.json",
-            r##"{ "steps": ["#bak"] }"##,
-        );
-        write(d.path(), "config/gözcü.json", text);
+        write(d.path(), "workflows/gözcü.json", r##"{ "steps": ["#bak"] }"##);
+        write(d.path(), "itero.config.json", manifest);
         let e = format!("{:#}", ws.flows().unwrap_err());
-        assert!(e.contains(says) && e.contains("gözcü"), "{text}: {e}");
+        assert!(
+            e.contains(says) && e.contains("itero.config.json"),
+            "{manifest}: {e}"
+        );
     }
 }

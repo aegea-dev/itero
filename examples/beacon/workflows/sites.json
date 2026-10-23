@@ -1,5 +1,4 @@
 {
-  "meta": { "description": "Each site in its settings, every minute; a notification when one goes down or comes back" },
   "on": [{ "schedule": "* * * * *" }],
   "steps": [
     { "#check-sites": { "sites": "$sites" } },

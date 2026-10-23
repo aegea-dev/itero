@@ -53,8 +53,12 @@ impl Ws {
         std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    /// An action's args, in the manifest; `Null` takes them out.
     fn args(&self, action: &str, v: Value) {
-        self.write(&format!("args/{action}.json"), &v.to_string());
+        let f = self.d.path().join("itero.config.json");
+        let mut m: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        m["action"][action]["args"] = v;
+        std::fs::write(f, m.to_string()).unwrap();
     }
 
     fn emit(&self, kind: &str, data: Value) {
@@ -259,7 +263,7 @@ fn a_value_comes_from_the_step_then_args_then_the_state() {
     );
     ws.emit("renk.sor", json!({"renk": "durumun"}));
     ws.pass(NOW);
-    std::fs::remove_file(ws.d.path().join("args/renk.json")).unwrap();
+    ws.args("renk", Value::Null);
     ws.emit("renk.sor", json!({"renk": "durumun"}));
     ws.pass(NOW);
     assert_eq!(ws.read("renkler.log"), "adımın\nargs'ın\ndurumun\n");
@@ -610,8 +614,8 @@ fn a_run_starts_with_its_workflows_settings_then_the_message() {
     );
     ws.action("bak", r#"echo "$liste $en_az" >> görülen.txt"#);
     ws.write(
-        "config/gözcü.json",
-        r#"{"siteler": ["https://örnek.test"], "en_az": 10, "bölge": "avrupa"}"#,
+        "itero.config.json",
+        r#"{"workflow": {"gözcü": {"settings": {"siteler": ["https://örnek.test"], "en_az": 10, "bölge": "avrupa"}}}}"#,
     );
     ws.emit("saat.geldi", json!({"en_az": 5}));
     ws.pass(NOW);
@@ -623,27 +627,36 @@ fn a_run_starts_with_its_workflows_settings_then_the_message() {
     assert_eq!(ws.read("görülen.txt"), "[\"https://örnek.test\"] 5\n");
 
     // a setting the on condition needs, and it does not hold
-    ws.write("config/gözcü.json", r#"{"bölge": "asya"}"#);
+    ws.write(
+        "itero.config.json",
+        r#"{"workflow": {"gözcü": {"settings": {"bölge": "asya"}}}}"#,
+    );
     ws.emit("saat.geldi", json!({}));
     ws.pass(NOW);
     assert_eq!(ws.runs().len(), 1);
 }
 
 #[test]
-fn a_scheduled_run_gets_its_settings_and_a_config_can_turn_it_off() {
+fn a_scheduled_run_gets_its_settings_and_its_entry_can_turn_it_off() {
     let ws = Ws::new();
     ws.flow(
         "saatlik",
         json!({"on": [{ "schedule": "0 * * * *" }], "steps": ["#say"]}),
     );
     ws.action("say", r#"echo "$ad" >> sayaç.log"#);
-    ws.write("config/saatlik.json", r#"{"ad": "şükrü"}"#);
+    ws.write(
+        "itero.config.json",
+        r#"{"workflow": {"saatlik": {"settings": {"ad": "şükrü"}}}}"#,
+    );
     ws.pass("2026-10-21T14:01:00Z");
     ws.pass("2026-10-21T15:00:10Z");
     assert_eq!(ws.read("sayaç.log"), "şükrü\n");
-    ws.write("config/saatlik.json", r#"{"ad": "şükrü", "off": true}"#);
+    ws.write(
+        "itero.config.json",
+        r#"{"workflow": {"saatlik": {"settings": {"ad": "şükrü"}, "off": true}}}"#,
+    );
     ws.pass("2026-10-21T16:00:10Z");
-    assert_eq!(ws.read("sayaç.log"), "şükrü\n", "off in its config");
+    assert_eq!(ws.read("sayaç.log"), "şükrü\n", "off in its entry");
 }
 
 #[test]
@@ -708,17 +721,20 @@ fn a_daemon_killed_anywhere_carries_on_with_nothing_lost_or_repeated() {
 
 #[test]
 fn a_workflow_off_or_outside_its_dates_starts_nothing() {
-    let w = Ws::new();
-    w.action("yaz", "echo \"$kim\" >> yazılan.txt");
-    let flow =
-        |meta: Value| json!({ "meta": meta, "on": [{ "event": "selam.ver" }], "steps": ["#yaz"] });
-    w.flow("kapalı", flow(json!({ "off": true })));
-    w.flow("erken", flow(json!({ "from": "2026-10-22" })));
-    w.flow("geç", flow(json!({ "until": "2026-10-20" })));
-    w.flow(
-        "açık",
-        flow(json!({ "from": "2026-10-21", "until": "2026-10-21" })),
+    let w = Ws::with(
+        r#"{"workflow": {
+             "kapalı": { "off": true },
+             "erken": { "from": "2026-10-22" },
+             "geç": { "until": "2026-10-20" },
+             "açık": { "from": "2026-10-21", "until": "2026-10-21" } }}"#,
     );
+    w.action("yaz", "echo \"$kim\" >> yazılan.txt");
+    for name in ["kapalı", "erken", "geç", "açık"] {
+        w.flow(
+            name,
+            json!({ "on": [{ "event": "selam.ver" }], "steps": ["#yaz"] }),
+        );
+    }
     w.emit("selam.ver", json!({ "kim": "ayşe" }));
     w.pass(NOW);
     let names: Vec<String> = w.runs().into_iter().map(|r| r.workflow).collect();
@@ -791,7 +807,9 @@ fn itero_messages_cannot_be_sent_from_outside() {
 
 #[test]
 fn internal_runs_are_outside_the_runs_limit_and_say_so_in_the_log() {
-    let w = Ws::with(r#"{"limits": {"runs": 1, "workflows": 1}}"#);
+    let w = Ws::with(
+        r#"{"limits": {"runs": 1, "workflows": 1}, "workflow": {"bakım": {"internal": true}}}"#,
+    );
     w.action("bekle", "exit 75");
     w.action("bak", "true");
     w.flow(
@@ -800,7 +818,7 @@ fn internal_runs_are_outside_the_runs_limit_and_say_so_in_the_log() {
     );
     w.flow(
         "bakım",
-        json!({ "meta": { "internal": true }, "on": [{ "event": "bakım.zamanı" }], "steps": ["#bak"] }),
+        json!({ "on": [{ "event": "bakım.zamanı" }], "steps": ["#bak"] }),
     );
     w.emit("iş.geldi", json!({}));
     w.emit("bakım.zamanı", json!({}));
@@ -880,12 +898,8 @@ fn past_its_size_the_log_is_rolled() {
 }
 
 #[test]
-fn a_built_in_workflow_is_replaced_or_turned_off_by_a_file_of_its_name() {
-    let w = Ws::with(r#"{"limits": {"log": "1KB"}}"#);
-    w.flow(
-        "logs",
-        json!({ "meta": { "off": true }, "on": [{ "event": "itero.log.full" }], "steps": ["#roll-log"] }),
-    );
+fn a_built_in_workflow_is_turned_off_by_its_entry() {
+    let w = Ws::with(r#"{"limits": {"log": "1KB"}, "workflow": {"logs": {"off": true}}}"#);
     for _ in 0..3 {
         w.emit(
             "iş.geldi",
