@@ -1,0 +1,11 @@
+{
+  "name": "gmail",
+  "description": "A notification for each new Gmail mail, the moment it arrives",
+  "port": 8797,
+  "source": {
+    "gmail.push.received": {
+      "description": "New mail in the Gmail inbox, pushed by IMAP IDLE",
+      "args": { "user": "me@gmail.com", "password": "$$GMAIL_PASS" }
+    }
+  }
+}
