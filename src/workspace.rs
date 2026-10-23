@@ -342,11 +342,62 @@ impl Workspace {
     pub fn flows(&self) -> Result<Vec<(String, crate::flow::Flow)>> {
         self.flow_values()?
             .into_iter()
-            .map(|(n, v)| {
-                let f = crate::flow::from_value(&v).map_err(|e| anyhow!("{n}: {e}"))?;
-                Ok((n, f))
-            })
+            .map(|(n, v)| Ok((n.clone(), self.read_flow(&n, &v)?)))
             .collect()
+    }
+
+    /// The workflow `name`, its file read as `v`, with its config applied.
+    pub fn read_flow(&self, name: &str, v: &Value) -> Result<crate::flow::Flow> {
+        let mut f = crate::flow::from_value(v).map_err(|e| anyhow!("{name}: {e}"))?;
+        if let Some(config) = self.config(name)? {
+            crate::flow::configure(&mut f, config)
+                .map_err(|e| anyhow!("{}: {e}", self.config_file(name).display()))?;
+        }
+        Ok(f)
+    }
+
+    /// Where a workflow's config is: `config/<workflow>.json`.
+    pub fn config_file(&self, workflow: &str) -> PathBuf {
+        self.root.join("config").join(format!("{workflow}.json"))
+    }
+
+    /// A workflow's config, `config/<workflow>.json`: an object. None when
+    /// there is no file.
+    pub fn config(&self, workflow: &str) -> Result<Option<Map<String, Value>>> {
+        let f = self.config_file(workflow);
+        if !f.exists() {
+            return Ok(None);
+        }
+        let text =
+            std::fs::read_to_string(&f).with_context(|| format!("cannot read {}", f.display()))?;
+        match serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", f.display()))? {
+            Value::Object(m) => Ok(Some(m)),
+            _ => bail!(
+                "{}: a config is an object: {{\"name\": value}}",
+                f.display()
+            ),
+        }
+    }
+
+    /// The workflows with a file in `config/`, by name.
+    pub fn configs(&self) -> Result<Vec<String>> {
+        let dir = self.root.join("config");
+        if !dir.exists() {
+            return Ok(vec![]);
+        }
+        let mut names = vec![];
+        for e in
+            std::fs::read_dir(&dir).with_context(|| format!("cannot read {}", dir.display()))?
+        {
+            let p = e?.path();
+            if p.extension().is_some_and(|x| x == "json")
+                && let Some(n) = p.file_stem().and_then(|s| s.to_str())
+            {
+                names.push(n.to_string());
+            }
+        }
+        names.sort();
+        Ok(names)
     }
 
     /// The names of the internal workflows: whose runs lists leave out

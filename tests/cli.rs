@@ -100,6 +100,55 @@ fn out(o: &Output) -> String {
 }
 
 #[test]
+fn config_is_written_shown_and_checked_for_the_workflow() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/gözcü.json",
+        r##"{ "on": [{ "event": "saat.geldi" }], "steps": ["#bak"] }"##,
+    );
+    file(d.path(), "actions/bak", "#!/bin/sh\n");
+    let o = itero(
+        d.path(),
+        &[
+            "config",
+            "gözcü",
+            r#"{"siteler": ["https://örnek.test"], "off": false}"#,
+        ],
+    );
+    assert!(o.status.success(), "{o:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(d.path().join("config/gözcü.json")).unwrap())
+            .unwrap();
+    assert_eq!(v["siteler"][0], "https://örnek.test");
+    // without data, it is shown
+    let shown = out(&itero(d.path(), &["config", "gözcü"]));
+    assert!(shown.contains("örnek.test"), "{shown}");
+    for (name, data, says) in [
+        ("../dışarı", "{}", "not a workflow's name"),
+        ("gözcü", "[1]", "an object"),
+        ("gözcü", r#"{"off": "evet"}"#, "off is true or false"),
+    ] {
+        let o = itero(d.path(), &["config", name, data]);
+        assert!(
+            !o.status.success() && err(&o).contains(says),
+            "{data}: {o:?}"
+        );
+    }
+    // check: a config for no workflow is a note; a bad one an error
+    file(d.path(), "config/yok-böyle.json", "{}");
+    let o = itero(d.path(), &["check"]);
+    assert!(o.status.success(), "{o:?}");
+    assert!(
+        err(&o).contains("config/yok-böyle.json: no workflow yok-böyle"),
+        "{o:?}"
+    );
+    file(d.path(), "config/gözcü.json", r#"{"until": "yarın"}"#);
+    let o = itero(d.path(), &["check"]);
+    assert!(!o.status.success() && err(&o).contains("until"), "{o:?}");
+}
+
+#[test]
 fn check_says_what_each_workflow_uses_and_what_is_not_there() {
     let d = workspace();
     file(

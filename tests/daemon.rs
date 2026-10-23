@@ -601,6 +601,52 @@ fn a_schedule_starts_a_run_once_per_slot() {
 }
 
 #[test]
+fn a_run_starts_with_its_workflows_settings_then_the_message() {
+    let ws = Ws::new();
+    ws.flow(
+        "gözcü",
+        json!({"on": [{ "event": "saat.geldi" }, { "$bölge": "avrupa" }],
+               "steps": [{ "#bak": { "liste": "$siteler" } }]}),
+    );
+    ws.action("bak", r#"echo "$liste $en_az" >> görülen.txt"#);
+    ws.write(
+        "config/gözcü.json",
+        r#"{"siteler": ["https://örnek.test"], "en_az": 10, "bölge": "avrupa"}"#,
+    );
+    ws.emit("saat.geldi", json!({"en_az": 5}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
+    let state = &ws.runs()[0].runtime.state;
+    assert_eq!(state["siteler"], json!(["https://örnek.test"]));
+    assert_eq!(state["en_az"], 5, "the message wins over a setting");
+    // a step names a setting as "$siteler"; an action gets one as $en_az
+    assert_eq!(ws.read("görülen.txt"), "[\"https://örnek.test\"] 5\n");
+
+    // a setting the on condition needs, and it does not hold
+    ws.write("config/gözcü.json", r#"{"bölge": "asya"}"#);
+    ws.emit("saat.geldi", json!({}));
+    ws.pass(NOW);
+    assert_eq!(ws.runs().len(), 1);
+}
+
+#[test]
+fn a_scheduled_run_gets_its_settings_and_a_config_can_turn_it_off() {
+    let ws = Ws::new();
+    ws.flow(
+        "saatlik",
+        json!({"on": [{ "schedule": "0 * * * *" }], "steps": ["#say"]}),
+    );
+    ws.action("say", r#"echo "$ad" >> sayaç.log"#);
+    ws.write("config/saatlik.json", r#"{"ad": "şükrü"}"#);
+    ws.pass("2026-10-21T14:01:00Z");
+    ws.pass("2026-10-21T15:00:10Z");
+    assert_eq!(ws.read("sayaç.log"), "şükrü\n");
+    ws.write("config/saatlik.json", r#"{"ad": "şükrü", "off": true}"#);
+    ws.pass("2026-10-21T16:00:10Z");
+    assert_eq!(ws.read("sayaç.log"), "şükrü\n", "off in its config");
+}
+
+#[test]
 fn an_action_that_reads_nothing_runs_once() {
     let ws = Ws::new();
     ws.flow(

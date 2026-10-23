@@ -1,8 +1,8 @@
 {
-  "meta": { "description": "Each site in sites.txt, every minute; a notification when one goes down or comes back" },
+  "meta": { "description": "Each site in its settings, every minute; a notification when one goes down or comes back" },
   "on": [{ "schedule": "* * * * *" }],
   "steps": [
-    "#check-sites",
+    { "#check-sites": { "sites": "$sites" } },
     "#changed",
     { "#notify": { "on": [{ "has": "$text" }], "title": "beacon: sites" } }
   ]

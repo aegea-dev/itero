@@ -98,6 +98,11 @@ step whose `on` does not hold is skipped.
 Data for an action, `args/<action>.json`, set with `itero args`. A list
 runs the step once per item.
 
+### settings
+
+A workflow's values, `config/<workflow>.json`, set with `itero config`: a
+run's state starts with them. `off`, `from` and `until` there are switches.
+
 ### secret
 
 `$$NAME`: from the OS secret store, else the daemon's environment, bound

@@ -102,9 +102,16 @@ fn run_action(ws: &Path, name: &str, env: &[(&str, &str)], stdin: &str) -> Strin
 fn the_beacon_tells_only_what_changed() {
     let d = tempfile::tempdir().unwrap();
     let ws = copy("beacon", d.path());
-    // a port nothing listens on: down, without the network
-    std::fs::write(ws.join("sites.txt"), "# ölçülen\nhttp://127.0.0.1:9\n").unwrap();
-    let sites = run_action(&ws, "check-sites", &[], "{}");
+    // its sites are a setting, a JSON list in $sites as a run gives it; a
+    // port nothing listens on is down, without the network
+    let config = std::fs::read_to_string(ws.join("config/sites.json")).unwrap();
+    assert!(config.contains("\"sites\""), "{config}");
+    let sites = run_action(
+        &ws,
+        "check-sites",
+        &[("sites", r#"["http://127.0.0.1:9"]"#)],
+        "{}",
+    );
     assert_eq!(sites, r#"{"status": {"http://127.0.0.1:9":"down"}}"#);
     let memory = d.path().join("hafıza");
     let memory = memory.to_str().unwrap();

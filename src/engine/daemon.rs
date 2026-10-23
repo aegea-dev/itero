@@ -179,10 +179,7 @@ impl Flows {
         let values = ws.flow_values()?;
         let mut read = BTreeMap::new();
         for (n, v) in &values {
-            read.insert(
-                n.clone(),
-                flow::from_value(v).map_err(|e| anyhow!("{n}: {e}"))?,
-            );
+            read.insert(n.clone(), ws.read_flow(n, v)?);
         }
         Ok(Flows { values, read })
     }
@@ -587,11 +584,11 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log)
             }
             let pinned = flows.pinned(name);
             match pinned {
-                Ok(pinned) if flow::holds(&f.on, &Map::new(), &defined) => {
+                Ok(pinned) if flow::holds(&f.on, &f.settings, &defined) => {
                     let start = Start {
                         workflow: name.clone(),
                         flows: pinned,
-                        input: json!({}),
+                        input: Value::Object(f.settings.clone()),
                         cause: None,
                         reply: None,
                     };
@@ -649,9 +646,13 @@ fn route(
     let reply = j.reply_of(r.seq)?;
     let mut starts = vec![];
     for (name, f) in &flows.read {
+        // a run's state starts with its workflow's settings, the message's
+        // data on top
+        let mut first = f.settings.clone();
+        first.extend(data.clone());
         if !(f.on.events.contains(&r.event.kind) || names_it(f))
             || !flow::active(&f.meta, now)
-            || !flow::holds(&f.on, &data, &defined)
+            || !flow::holds(&f.on, &first, &defined)
             || (on_a_run && data.get("workflow") == Some(&json!(name)))
         {
             continue;
@@ -660,7 +661,7 @@ fn route(
             Ok(pinned) => starts.push(Start {
                 workflow: name.clone(),
                 flows: pinned,
-                input: Value::Object(data.clone()),
+                input: Value::Object(first),
                 cause: Some(r.event.id.clone()),
                 reply: reply.clone(),
             }),

@@ -12,6 +12,7 @@ workflows/order.json       a workflow: its name is its file name
 actions/check-payment      an action: an executable, its name its file name
 sources/mail.received      a source: its messages are of this type
 args/check-payment.json    data for an action (itero args)
+config/order.json          a workflow's settings (itero config)
 .itero/                    the journal, the log and each workflow's memory
 ```
 

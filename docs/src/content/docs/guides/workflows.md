@@ -128,6 +128,34 @@ no other list runs. A run ending in error or failed also sends
 others ([The daemon's own workflows](/guides/maintenance/)). A workflow used as a step has no end lists of its own:
 the run's own workflow has them.
 
+## Settings: `config/`
+
+A workflow you share, or take from someone, is used as it is. What
+changes from one person to another goes apart from it, in the workspace:
+its settings, `config/<workflow>.json`, set with
+[`itero config`](/commands/config/).
+
+```json
+{ "on": [{ "schedule": "* * * * *" }],
+  "steps": [{ "#check-sites": { "sites": "$sites" } }, "#changed", "#notify"] }
+```
+
+```sh
+itero config sites '{"sites": ["https://example.com", "http://localhost:3000"]}'
+```
+
+- A run's state starts with the settings, then the message's data on top:
+  `itero emit` can override a setting for one run. A step names one as
+  `"$sites"`, an action gets it as `$sites`, and `on` conditions see it.
+- `off`, `from` and `until` there are switches, not values: they turn the
+  workflow off or bound it in time, and win over its `meta`, so a workflow
+  from someone else is turned off without editing it.
+- Only the run's own workflow's settings: a workflow used as a step runs
+  with the run's state.
+- They are read when a run starts: editing them changes the next runs.
+
+Args are an action's settings; config is a workflow's.
+
 ## Undo: taking steps back
 
 A step that makes something (a cluster, an order, a booking) can name

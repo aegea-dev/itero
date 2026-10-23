@@ -69,6 +69,7 @@ export default defineConfig({
 						{ label: 'itero which', slug: 'commands/which' },
 						{ label: 'itero info', slug: 'commands/info' },
 						{ label: 'itero args', slug: 'commands/args' },
+						{ label: 'itero config', slug: 'commands/config' },
 						{ label: 'itero secret', slug: 'commands/secret' },
 						{ label: 'itero service', slug: 'commands/service' },
 						{ label: 'itero watch', slug: 'commands/watch' },

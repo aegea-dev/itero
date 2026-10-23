@@ -65,6 +65,17 @@ pub enum Cmd {
         #[arg(long)]
         file: Option<std::path::PathBuf>,
     },
+    /// Set a workflow's settings, or show them: a JSON object its runs start with
+    Config {
+        /// The workflow
+        workflow: String,
+        /// The settings, as JSON; without them, they are shown
+        #[arg(value_name = "DATA", conflicts_with = "file")]
+        data: Option<String>,
+        /// Read the settings from this file
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
     /// Keep a secret in the OS secret store, for $$NAME (asks for it, without echo)
     Secret {
         /// Its name: a letter or _, then letters, digits or _
@@ -530,6 +541,43 @@ fn dispatch(cli: Cli) -> Result<()> {
             std::fs::write(&f, serde_json::to_string_pretty(&v)? + "\n")?;
             println!("{}", f.display());
         }
+        Cmd::Config {
+            workflow,
+            data,
+            file,
+        } => {
+            let ws = workspace()?;
+            let bad_name = workflow.is_empty()
+                || workflow.contains(['/', '\\', '#', '@', '$'])
+                || workflow.starts_with('.');
+            if bad_name {
+                bail!("{workflow} is not a workflow's name");
+            }
+            let f = ws.config_file(&workflow);
+            let text = match (data, file) {
+                (Some(d), _) => d,
+                (None, Some(path)) => std::fs::read_to_string(&path)
+                    .map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?,
+                (None, None) => {
+                    match ws.config(&workflow)? {
+                        Some(c) => println!("{}", serde_json::to_string_pretty(&c)?),
+                        None => {
+                            eprintln!("{workflow} has no settings: {} is not there", ws.shown(&f))
+                        }
+                    }
+                    return Ok(());
+                }
+            };
+            let Ok(serde_json::Value::Object(config)) = serde_json::from_str(&text) else {
+                bail!("settings are an object, as JSON: {{\"name\": value}}");
+            };
+            // the switches are checked as the daemon will read them
+            crate::flow::configure(&mut crate::flow::Flow::default(), config.clone())
+                .map_err(|e| anyhow!(e))?;
+            std::fs::create_dir_all(f.parent().expect("config/"))?;
+            std::fs::write(&f, serde_json::to_string_pretty(&config)? + "\n")?;
+            println!("{}", f.display());
+        }
         Cmd::Secret { name, file } => {
             crate::engine::secrets::ready(&name)?;
             let value = match file {
@@ -555,6 +603,12 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
             }
             let mut flows = ws.flows()?;
+            for name in ws.configs()? {
+                if !flows.iter().any(|(n, _)| *n == name) {
+                    let f = ws.config_file(&name);
+                    eprintln!("note: {}: no workflow {name}", ws.shown(&f));
+                }
+            }
             // the internal ones last, apart
             flows.sort_by_key(|(_, f)| f.meta.internal);
             let j = crate::engine::journal::Journal::open(&ws)?;
@@ -572,6 +626,12 @@ fn dispatch(cli: Cli) -> Result<()> {
                 match files.get(name) {
                     Some(file) => println!("  file {}", ws.shown(file)),
                     None => println!("  file built in"),
+                }
+                if !f.settings.is_empty() {
+                    println!(
+                        "  settings {}",
+                        serde_json::Value::Object(f.settings.clone())
+                    );
                 }
                 let m = &f.meta;
                 if let Some(d) = &m.description {
