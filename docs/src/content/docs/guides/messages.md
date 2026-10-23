@@ -113,7 +113,9 @@ messages.
 exec itero watch "$HOME/notes.txt"
 ```
 
-It runs in the workspace, with the daemon's `itero` first on its `PATH`.
+It runs in the workspace, with the daemon's `itero` first on its `PATH`
+and its args (`source.<name>.args` in `itero.config.json`) as environment
+variables, secrets among them: [A source's args](/guides/secrets/#a-sources-args).
 Its stdin closes when the daemon goes; its stderr goes to the daemon's
 stderr. The daemon starts it again when it ends, waiting longer each time,
 and gives up on one that keeps ending (`itero.source.gave-up`); the log

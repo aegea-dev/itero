@@ -50,10 +50,10 @@ pub enum Cmd {
         #[arg(long, value_name = "URL")]
         reply: Option<String>,
     },
-    /// Set an action's args: a JSON object, or a list of objects (its step runs once per item)
+    /// Set an action's args (a JSON object, or a list of objects: its step runs once per item), or a source's (an object)
     Args {
-        /// The action, without # or a version
-        action: String,
+        /// The action, without # or a version; or the source
+        name: String,
         /// The args, as JSON
         #[arg(
             value_name = "DATA",
@@ -370,6 +370,11 @@ fn check_manifest(
         )
         .collect();
     let sources: Vec<String> = ws.source_files()?.into_iter().map(|(n, _)| n).collect();
+    for name in ws.entries("source")?.keys() {
+        if let Err(why) = crate::engine::daemon::source_args(ws, name) {
+            wrong.push(why);
+        }
+    }
     for (kind, known) in [
         (
             "workflow",
@@ -558,7 +563,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 eprintln!("no daemon is running: it waits for itero daemon");
             }
         }
-        Cmd::Args { action, data, file } => {
+        Cmd::Args { name, data, file } => {
             let ws = workspace()?;
             let text = match (data, file) {
                 (Some(d), _) => d,
@@ -566,23 +571,35 @@ fn dispatch(cli: Cli) -> Result<()> {
                     .map_err(|e| anyhow!("cannot read {}: {e}", f.display()))?,
                 (None, None) => bail!("give the args as JSON, or --file"),
             };
-            let bad_name = action.is_empty()
-                || action.contains(['/', '\\', '#', '@', '$'])
-                || action.starts_with('.');
+            let bad_name = name.is_empty()
+                || name.contains(['/', '\\', '#', '@', '$'])
+                || name.starts_with('.');
             if bad_name {
-                bail!("{action} is not an action's name");
+                bail!("{name} is not an action's or a source's name");
+            }
+            // a source's when the workspace has a source of that name
+            let source = ws.source_files()?.iter().any(|(n, _)| *n == name);
+            if source && ws.action_file(&name, None).is_ok() {
+                bail!(
+                    "{name} is an action and a source: set its args in {}",
+                    crate::workspace::MANIFEST
+                );
             }
             let v: serde_json::Value = serde_json::from_str(&text)
                 .map_err(|_| anyhow!("args are an object, or a list of objects, as JSON"))?;
             let ok = match &v {
                 serde_json::Value::Object(_) => true,
-                serde_json::Value::Array(items) => items.iter().all(|i| i.is_object()),
+                serde_json::Value::Array(items) => !source && items.iter().all(|i| i.is_object()),
                 _ => false,
             };
+            if !ok && source {
+                bail!("a source's args are an object, as JSON: a source runs once");
+            }
             if !ok {
                 bail!("args are an object, or a list of objects, as JSON");
             }
-            let f = ws.write_entry("action", &action, "args", v)?;
+            let kind = if source { "source" } else { "action" };
+            let f = ws.write_entry(kind, &name, "args", v)?;
             println!("{}", f.display());
         }
         Cmd::Config {

@@ -75,7 +75,8 @@ pub fn path_with(exe: &Path) -> std::ffi::OsString {
     std::env::join_paths(dirs).unwrap_or_default()
 }
 
-/// One start of the source, until it ends: how it ended.
+/// One start of the source, until it ends: how it ended. Its args are
+/// read at each start, so a change to them is taken on its next.
 fn once(
     ws: &Workspace,
     exe: &Path,
@@ -84,8 +85,10 @@ fn once(
     log: &Log,
 ) -> anyhow::Result<String> {
     let j = Journal::open(ws)?;
+    let env = crate::engine::daemon::source_env(ws, s.kind).map_err(anyhow::Error::msg)?;
     let mut child = Command::new(s.file)
         .current_dir(&ws.root)
+        .envs(env)
         .env("PATH", path_with(exe))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

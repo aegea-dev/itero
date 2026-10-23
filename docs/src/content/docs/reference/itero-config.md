@@ -86,7 +86,10 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 | `description`, `tags`, your own keys | what it is |
 | `args` | data for the action, whatever workflow runs it: an object, or a list of objects (the step runs once per item); [Args and secrets](/guides/secrets/) |
 
-A `source` entry holds `description`, `tags` and your own keys.
+| In a `source` entry | Is |
+|---|---|
+| `description`, `tags`, your own keys | what it is |
+| `args` | data for the source, as environment variables: an object; [A source's args](/guides/secrets/#a-sources-args) |
 
 `itero args` and `itero config` write `args` and `settings` here, keeping
 the rest of the file as it was. A workflow file has no `meta`: one is an

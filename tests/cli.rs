@@ -79,6 +79,52 @@ fn args_that_are_not_an_object_or_a_list_of_objects_are_refused() {
 }
 
 #[test]
+#[cfg(unix)]
+fn args_are_written_for_the_source_and_checked() {
+    let d = workspace();
+    file(d.path(), "sources/posta.geldi", "#!/bin/sh\n");
+    let o = itero(
+        d.path(),
+        &["args", "posta.geldi", r#"{"user": "ayşe@örnek.test"}"#],
+    );
+    assert!(o.status.success(), "{o:?}");
+    let m = manifest(d.path());
+    assert_eq!(
+        m["source"]["posta.geldi"]["args"]["user"],
+        "ayşe@örnek.test"
+    );
+    assert!(m.get("action").is_none(), "{m}");
+    assert!(itero(d.path(), &["check"]).status.success());
+    // a source runs once: no list
+    let o = itero(
+        d.path(),
+        &["args", "posta.geldi", r#"[{"user": "can@örnek.test"}]"#],
+    );
+    assert!(!o.status.success());
+    assert!(
+        err(&o).contains("a source's args are an object"),
+        "{}",
+        err(&o)
+    );
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"source": {"posta.geldi": {"args": [{"user": "can@örnek.test"}]}}}"#,
+    );
+    let o = itero(d.path(), &["check"]);
+    assert!(
+        !o.status.success() && err(&o).contains("source.posta.geldi.args"),
+        "{o:?}"
+    );
+    // an action of the same name: which one is meant is not known
+    file(d.path(), "itero.config.json", "{}");
+    file(d.path(), "actions/posta.geldi", "#!/bin/sh\n");
+    let o = itero(d.path(), &["args", "posta.geldi", "{}"]);
+    assert!(!o.status.success());
+    assert!(err(&o).contains("an action and a source"), "{}", err(&o));
+}
+
+#[test]
 fn a_secret_needs_the_store_and_a_name_like_an_environment_variable() {
     let d = workspace();
     let o = itero(d.path(), &["secret", "API_KEY"]);

@@ -1055,6 +1055,48 @@ pub fn bind(
             values.insert(k, resolve(&v, state)?);
         }
     }
+    to_env(values, state)
+}
+
+/// A source's args (`source.<name>.args`), each one an environment
+/// variable: a name no environment variable can have is an error, and so
+/// is a `"$name"`, as a source has no run state.
+pub fn source_args(ws: &Workspace, source: &str) -> Result<Map<String, Value>, String> {
+    let args = ws
+        .source_args(source)
+        .map_err(|e| format!("{e:#}"))?
+        .unwrap_or_default();
+    for (k, v) in &args {
+        let at = format!("source.{source}.args.{k}");
+        if !env_name(k) {
+            return Err(format!("{at}: not a name an environment variable can have"));
+        }
+        if flow::state_ref(v).is_some() {
+            return Err(format!("{at}: a source has no run state for {v}"));
+        }
+    }
+    Ok(args)
+}
+
+/// A source's environment: its args, `$$NAME` the secret's (or the
+/// environment variable's).
+pub fn source_env(ws: &Workspace, source: &str) -> Result<BTreeMap<String, String>, String> {
+    let none = Map::new();
+    let mut values = Map::new();
+    for (k, v) in source_args(ws, source)? {
+        let v = resolve(&v, &none).map_err(|why| format!("source.{source}.args.{k}: {why}"))?;
+        values.insert(k, v);
+    }
+    to_env(values, &none)
+}
+
+/// Values as environment variables, as text. A name that cannot be one,
+/// and a `null`, are left out; a value past `ENV_MAX` is an error, unless
+/// it is the run's state's own (on stdin only).
+fn to_env(
+    values: Map<String, Value>,
+    state: &Map<String, Value>,
+) -> Result<BTreeMap<String, String>, String> {
     let mut env = BTreeMap::new();
     for (k, v) in values {
         if !env_name(&k) {
