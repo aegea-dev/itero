@@ -18,6 +18,9 @@ pub struct Flow {
     /// How long a run may wait for data; `None` is `WAIT`.
     pub timeout: Option<Duration>,
     pub meta: Meta,
+    /// The workspace's values for it (`config/<name>.json`), not its file's:
+    /// a run's state starts with them.
+    pub settings: Map<String, Value>,
 }
 
 /// What a person says about a workflow: a few keys itero knows, and any
@@ -59,6 +62,8 @@ fn meta(v: &Value) -> Result<Meta, String> {
         return Err("meta is an object: { \"description\": \"...\" }".into());
     };
     let flag = |k: &str, v: &Value| v.as_bool().ok_or(format!("meta: {k} is true or false"));
+    let moment =
+        |k: &str, v: &Value, end: bool| moment(k, v, end).map_err(|e| format!("meta: {e}"));
     let mut out = Meta::default();
     for (k, v) in m {
         given_by_itero(k)?;
@@ -81,7 +86,7 @@ fn meta(v: &Value) -> Result<Meta, String> {
 /// A date or an RFC 3339 time. A date is a whole day: `from` it starts at
 /// its first second, `until` it ends after its last.
 fn moment(key: &str, v: &Value, end: bool) -> Result<DateTime<Utc>, String> {
-    let wrong = || format!("meta: {key}: a date (2026-11-01) or a time (2026-11-01T09:00:00Z)");
+    let wrong = || format!("{key}: a date (2026-11-01) or a time (2026-11-01T09:00:00Z)");
     let s = v.as_str().ok_or_else(wrong)?;
     if let Ok(t) = DateTime::parse_from_rfc3339(s) {
         return Ok(t.with_timezone(&Utc));
@@ -93,6 +98,23 @@ fn moment(key: &str, v: &Value, end: bool) -> Result<DateTime<Utc>, String> {
         day
     };
     Ok(day.and_time(chrono::NaiveTime::MIN).and_utc())
+}
+
+/// A workflow's config, `config/<name>.json`, applied to it: the switches
+/// `off`, `from` and `until` win over its `meta`; the rest are its
+/// settings.
+pub fn configure(f: &mut Flow, mut config: Map<String, Value>) -> Result<(), String> {
+    if let Some(v) = config.remove("off") {
+        f.meta.off = v.as_bool().ok_or("off is true or false")?;
+    }
+    if let Some(v) = config.remove("from") {
+        f.meta.from = Some(moment("from", &v, false)?);
+    }
+    if let Some(v) = config.remove("until") {
+        f.meta.until = Some(moment("until", &v, true)?);
+    }
+    f.settings = config;
+    Ok(())
 }
 
 /// When a workflow or a step runs. Messages and schedules are

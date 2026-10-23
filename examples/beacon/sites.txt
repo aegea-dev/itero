@@ -1,3 +1,0 @@
-# The sites #check-sites asks every minute, one URL a line.
-https://example.com
-http://localhost:3000

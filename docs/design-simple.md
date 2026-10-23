@@ -19,6 +19,7 @@ actions/check-payment         an action: an executable; its name is the file nam
 actions/notify@0.2            a version, in the name
 sources/imap-idle             a source: an executable holding a connection open
 args/check-payment.json       data for an action, written by `itero args`
+config/order.json             a workflow's settings, written by `itero config`
 .itero/                       what itero keeps: the journal, the log, memory
 ```
 

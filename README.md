@@ -120,6 +120,7 @@ workflows/order.json       a workflow: when it runs (on) and its steps
 actions/check-payment      an action: an executable, its name its file name
 sources/mail.received      a source: each line it prints is a message of this type
 args/check-payment.json    data for an action (itero args)
+config/order.json          a workflow's settings (itero config)
 .itero/                    the journal, the log (itero.log) and memory
 ```
 
@@ -141,7 +142,7 @@ a name stays its file name, and `itero which <name>` says where it is.
 - **A message** starts runs of the workflows on its type, and reaches the
   runs waiting for it that it matches by their data.
 
-Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero args`,
+Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero args`, `itero config`,
 `itero secret`, `itero check`, `itero which`, `itero workflows`, `itero info`, `itero runs [<run>]`,
 `itero errors`, `itero watch`, `itero service install|status|uninstall`.
 What the daemon does is in `.itero/itero.log`, one JSON line each.

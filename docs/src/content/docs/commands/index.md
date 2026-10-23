@@ -18,6 +18,7 @@ command's options.
 | [`itero which`](/commands/which/) | where a workflow, action or source of a name is |
 | [`itero info`](/commands/info/) | the workspace and its daemon: IDs, names, limits |
 | [`itero args`](/commands/args/) | sets an action's data |
+| [`itero config`](/commands/config/) | sets a workflow's settings, or shows them |
 | [`itero secret`](/commands/secret/) | keeps a secret in the OS secret store |
 | [`itero service`](/commands/service/) | runs the daemon from login on |
 | [`itero watch`](/commands/watch/) | for sources: a line per change to a file or folder |

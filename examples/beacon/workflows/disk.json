@@ -2,7 +2,7 @@
   "meta": { "description": "The disk's free space, every 10 minutes; a notification when it runs low or has room again" },
   "on": [{ "schedule": "*/10 * * * *" }],
   "steps": [
-    { "#check-disk": { "min_free": 10 } },
+    { "#check-disk": { "min_free": "$min_free" } },
     "#changed",
     { "#notify": { "on": [{ "has": "$text" }], "title": "beacon: disk" } }
   ]

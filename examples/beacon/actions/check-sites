@@ -1,13 +1,14 @@
 #!/bin/sh
-# Each site in sites.txt, up or down: {"status": {"<url>": "up"}}.
+# Each site in $sites (a JSON list, the workflow's setting), up or down:
+# {"status": {"<url>": "up"}}.
+urls=$(printf '%s' "${sites:-[]}" | jq -r '.[]')
 status='{}'
-while read -r url; do
-  case "$url" in '' | '#'*) continue ;; esac
+for url in $urls; do
   if curl -fsS --max-time 10 -o /dev/null "$url" 2>/dev/null; then
     s=up
   else
     s=down
   fi
   status=$(printf '%s' "$status" | jq -c --arg u "$url" --arg s "$s" '. + {($u): $s}')
-done < sites.txt
+done
 printf '{"status": %s}\n' "$status"

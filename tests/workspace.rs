@@ -335,3 +335,74 @@ fn files_that_are_not_executable_beside_actions_and_sources_are_left_alone() {
         assert!(e.contains("not executable"), "{e}");
     }
 }
+
+/// The workflow `name` as the workspace reads it.
+fn flow(ws: &workspace::Workspace, name: &str) -> itero::flow::Flow {
+    ws.flows()
+        .unwrap()
+        .into_iter()
+        .find(|(n, _)| n == name)
+        .unwrap()
+        .1
+}
+
+#[test]
+fn a_workflows_config_gives_its_settings_and_switches() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = simple(d.path());
+    write(
+        d.path(),
+        "workflows/gözcü.json",
+        r##"{ "meta": { "description": "Siteler" }, "on": [{ "event": "saat.geldi" }], "steps": ["#bak"] }"##,
+    );
+    // no config: no settings, its meta as written
+    let f = flow(&ws, "gözcü");
+    assert!(f.settings.is_empty());
+    assert!(!f.meta.off);
+    write(
+        d.path(),
+        "config/gözcü.json",
+        r#"{ "siteler": ["https://örnek.test"], "en_az": 10, "off": true, "until": "2026-12-31" }"#,
+    );
+    let f = flow(&ws, "gözcü");
+    assert_eq!(
+        serde_json::Value::Object(f.settings),
+        serde_json::json!({ "siteler": ["https://örnek.test"], "en_az": 10 }),
+        "the switches are not values"
+    );
+    assert!(f.meta.off);
+    assert_eq!(
+        f.meta.until.unwrap().to_rfc3339(),
+        "2027-01-01T00:00:00+00:00"
+    );
+    assert_eq!(f.meta.description.as_deref(), Some("Siteler"));
+    // a config turns on a workflow its meta turns off
+    write(
+        d.path(),
+        "workflows/kapalı.json",
+        r##"{ "meta": { "off": true }, "steps": ["#bak"] }"##,
+    );
+    write(d.path(), "config/kapalı.json", r#"{ "off": false }"#);
+    assert!(!flow(&ws, "kapalı").meta.off);
+}
+
+#[test]
+fn config_mistakes_are_named() {
+    for (text, says) in [
+        ("[\"ş\"]", "an object"),
+        ("{ \"off\": \"evet\" }", "off is true or false"),
+        ("{ \"until\": \"yarın\" }", "until"),
+        ("{ bozuk", "config/gözcü.json"),
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        let ws = simple(d.path());
+        write(
+            d.path(),
+            "workflows/gözcü.json",
+            r##"{ "steps": ["#bak"] }"##,
+        );
+        write(d.path(), "config/gözcü.json", text);
+        let e = format!("{:#}", ws.flows().unwrap_err());
+        assert!(e.contains(says) && e.contains("gözcü"), "{text}: {e}");
+    }
+}
