@@ -218,10 +218,16 @@ fn meta_is_free_and_limits_have_defaults() {
 fn limit_mistakes_are_named() {
     for (manifest, says) in [
         (r#"{"limits": {"koşu": 5}}"#, "koşu"),
-        (r#"{"limits": {"space": "çok"}}"#, "a size is like 10MB or 1GB"),
+        (
+            r#"{"limits": {"space": "çok"}}"#,
+            "a size is like 10MB or 1GB",
+        ),
         (r#"{"limits": {"keep": "bir gün"}}"#, "a duration is like"),
         (r#"{"limits": {"steps": 0}}"#, "steps is at least 1"),
-        (r#"{"limits": {"quiet": "sessiz"}}"#, "quiet: a duration is like"),
+        (
+            r#"{"limits": {"quiet": "sessiz"}}"#,
+            "quiet: a duration is like",
+        ),
         (r#"{"limits": {"most": "0s"}}"#, "most is at least 1s"),
         (r#"{"id": "01a0"}"#, "id is given by itero"),
         (r#"{"port": "sekiz"}"#, "port"),
@@ -239,7 +245,11 @@ fn limit_mistakes_are_named() {
 #[test]
 fn more_workflows_than_the_limit_is_an_error() {
     let d = tempfile::tempdir().unwrap();
-    write(d.path(), "itero.config.json", r#"{"limits": {"workflows": 2}}"#);
+    write(
+        d.path(),
+        "itero.config.json",
+        r#"{"limits": {"workflows": 2}}"#,
+    );
     let ws = workspace::find(d.path()).unwrap();
     for n in ["bir", "iki", "üç"] {
         write(
@@ -419,9 +429,16 @@ fn a_workflow_files_meta_is_refused_and_built_ins_are_internal() {
     let ws = simple(d.path());
     let keep = flow(&ws, "keep");
     assert!(keep.meta.internal && keep.meta.description.is_some());
-    write(d.path(), "itero.config.json", r#"{"workflow": {"keep": {"off": true}}}"#);
+    write(
+        d.path(),
+        "itero.config.json",
+        r#"{"workflow": {"keep": {"off": true}}}"#,
+    );
     let keep = flow(&ws, "keep");
-    assert!(keep.meta.internal && keep.meta.off, "an entry turns a built-in off");
+    assert!(
+        keep.meta.internal && keep.meta.off,
+        "an entry turns a built-in off"
+    );
     write(
         d.path(),
         "workflows/eski.json",
@@ -437,13 +454,23 @@ fn a_workflow_files_meta_is_refused_and_built_ins_are_internal() {
 #[test]
 fn entry_mistakes_name_the_manifest_and_the_workflow() {
     for (manifest, says) in [
-        (r#"{"workflow": {"gözcü": {"off": "evet"}}}"#, "off is true or false"),
-        (r#"{"workflow": {"gözcü": {"settings": 3}}}"#, "settings are an object"),
+        (
+            r#"{"workflow": {"gözcü": {"off": "evet"}}}"#,
+            "off is true or false",
+        ),
+        (
+            r#"{"workflow": {"gözcü": {"settings": 3}}}"#,
+            "settings are an object",
+        ),
         (r#"{"workflow": ["gözcü"]}"#, "workflow is an object"),
     ] {
         let d = tempfile::tempdir().unwrap();
         let ws = simple(d.path());
-        write(d.path(), "workflows/gözcü.json", r##"{ "steps": ["#bak"] }"##);
+        write(
+            d.path(),
+            "workflows/gözcü.json",
+            r##"{ "steps": ["#bak"] }"##,
+        );
         write(d.path(), "itero.config.json", manifest);
         let e = format!("{:#}", ws.flows().unwrap_err());
         assert!(

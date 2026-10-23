@@ -5,14 +5,14 @@ description: itero's terms in plain words.
 
 ### workspace
 
-A folder with an `itero.toml`. One daemon and one port per workspace.
+A folder with an `itero.config.json`, its manifest. One daemon and one port per workspace.
 itero finds the workspace from the folder it runs in; nothing is
 machine-wide.
 
 ### workflow
 
 A JSON file in `workflows/` or a subfolder of it, named by its file name:
-when it runs (`on`) and its `steps`, with optional `meta`, `success`,
+when it runs (`on`) and its `steps`, with optional `success`,
 `failure` and `error` lists and a `timeout`. A workflow can be a step of another. See
 [Writing a workflow](/guides/workflows/).
 
@@ -95,12 +95,12 @@ step whose `on` does not hold is skipped.
 
 ### args
 
-Data for an action, `args/<action>.json`, set with `itero args`. A list
+Data for an action, `action.<name>.args` in `itero.config.json`, set with `itero args`. A list
 runs the step once per item.
 
 ### settings
 
-A workflow's values, `config/<workflow>.json`, set with `itero config`: a
+A workflow's values, `workflow.<name>.settings` in `itero.config.json`, set with `itero config`: a
 run's state starts with them. `off`, `from` and `until` there are switches.
 
 ### secret
@@ -139,13 +139,13 @@ name). Commands take either: `itero runs misty-lake`.
 
 ### meta
 
-What a person says about a workflow (`meta`) or a workspace (`[meta]`):
+What a person says about a workflow (its entry) or a workspace (the manifest's top), in `itero.config.json`:
 a description, `from` and `until`, `off`, `internal`, and keys of their
 own.
 
 ### internal
 
-A workflow with `"meta": {"internal": true}`: it looks after the
+A workflow whose entry says `"internal": true`: it looks after the
 workspace. Listed apart, outside the limits. `keep` and `logs` are built
 in. See [The daemon's own workflows](/guides/maintenance/).
 

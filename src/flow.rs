@@ -68,7 +68,9 @@ pub fn entry(v: &Value) -> Result<(Meta, Map<String, Value>), String> {
     for (k, v) in m {
         given_by_itero(k)?;
         match k.as_str() {
-            "description" => out.description = Some(v.as_str().ok_or("description is text")?.into()),
+            "description" => {
+                out.description = Some(v.as_str().ok_or("description is text")?.into())
+            }
             "settings" => match v {
                 Value::Object(s) => settings = s.clone(),
                 _ => return Err("settings are an object: { \"name\": value }".into()),

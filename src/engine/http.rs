@@ -308,7 +308,7 @@ pub fn serve(router: Router, port: u16) -> anyhow::Result<()> {
             .await
             .map_err(|e| {
                 anyhow::anyhow!(
-                    "cannot listen on 127.0.0.1:{port}: {e} (another itero daemon? set port in itero.toml)"
+                    "cannot listen on 127.0.0.1:{port}: {e} (another itero daemon? set port in itero.config.json)"
                 )
             })?;
         axum::serve(listener, router).await?;

@@ -4,7 +4,7 @@ description: Every itero command, at a glance.
 ---
 
 Every command works in the workspace of the folder it runs in: the nearest
-folder upwards with an `itero.toml`. `itero help <command>` shows a
+folder upwards with an `itero.config.json`. `itero help <command>` shows a
 command's options.
 
 | Command | Does |

@@ -13,13 +13,11 @@ The rule is KISS:
 ## A workspace
 
 ```
-itero.toml                    the daemon's settings (the port)
+itero.config.json             the manifest: what it is, how it runs, each workflow, action and source
 workflows/order.json          a workflow; its name is the file name
 actions/check-payment         an action: an executable; its name is the file name
 actions/notify@0.2            a version, in the name
 sources/imap-idle             a source: an executable holding a connection open
-args/check-payment.json       data for an action, written by `itero args`
-config/order.json             a workflow's settings, written by `itero config`
 .itero/                       what itero keeps: the journal, the log, memory
 ```
 
@@ -197,7 +195,7 @@ An action's environment variables come from, in this order (the first
 found wins):
 
 1. **the step's data** in the workflow;
-2. **its args**, `args/<action>.json`;
+2. **its args**, `action.<name>.args` in `itero.config.json`;
 3. **the run's state.**
 
 Secrets and environment variables enter only by name, with `$$`, in a
@@ -385,53 +383,57 @@ it, which nobody edits, and a few settings a person may give it.
 Metadata is the read-only part above, plus what a person adds: a few keys
 itero knows, and any others they like.
 
-**A workflow:** an optional `meta` object, so the top level stays `on`
-and `steps`:
+**One manifest:** `itero.config.json` at the workspace's root, like
+`package.json`, holds all of it, so the folders keep only the things
+themselves (plan 9). Its top says what the workspace is and how it runs;
+an entry per workflow, action and source says what each is:
 
 ```json
 {
-  "meta": {
-    "description": "Orders from the shop",
-    "from": "2026-11-01", "until": "2026-12-31", "off": false,
-    "owner": "ayşe", "team": "shop", "tags": ["orders", "payments"]
+  "name": "home",
+  "description": "Home: mail and orders",
+  "owner": "ayşe",
+  "port": 8787,
+  "limits": { "runs": 1000, "keep": "1d", "quiet": "10m" },
+  "workflow": {
+    "order": {
+      "description": "Orders from the shop",
+      "from": "2026-11-01", "until": "2026-12-31", "off": false,
+      "team": "shop", "tags": ["orders", "payments"],
+      "settings": { "carrier": "PTT Kargo" }
+    }
   },
-  "on": [{ "event": "order.placed" }],
-  "steps": ["#check-payment", "#ship"]
+  "action": { "imap-check": { "args": { "host": "imap.example.com" } } }
 }
 ```
 
-| Key | Means |
+| In a workflow's entry | Means |
 |---|---|
 | `description` | text for people |
 | `from`, `until` | dates, or times in RFC 3339: outside them nothing starts it; runs under way finish |
 | `off` | `true`: nothing starts it, without deleting it |
 | `internal` | `true`: it looks after the workspace; listed apart, its runs hidden unless asked, outside the limits (see The daemon's own workflows) |
+| `settings` | the person's values its runs start with |
 | any other | the person's own: text, a number, a list or an object; itero keeps it and shows it, and does nothing with it |
 
 The read-only names (`id`, `name`, `created`, `path`, `version`) cannot be
-set: `itero check` refuses them, naming the file.
+set in an entry; at the top, `name` and `version` are the workspace's own,
+like a package's. An entry names a workflow, action or source that
+exists: it describes, never creates.
 
-**The workspace:** `itero.toml`, its `[meta]` the same way:
+The limits:
 
-```toml
-port = 8787
-
-[meta]
-description = "Home: mail and orders"
-owner = "ayşe"
-machine = "the mini in the hall"
-
-[limits]
-workflows = 100     # more is refused by itero check and at the daemon's start
-runs = 1000         # runs under way at once; past it, messages wait their turn
-steps = 8           # steps running at once
-space = "1GB"       # .itero/: the journal, the log, memory
-keep = "1d"         # how long ended runs and their messages are kept
-log = "10MB"        # past it, the log is rolled (see The daemon's own workflows)
-logs = 3            # rolled logs kept: itero.log.1 to itero.log.3
-quiet = "10m"       # a step printing nothing this long is stopped, then run again
-most = "1d"         # a step running this long is stopped, printing or not
-```
+| Limit | Default | Means |
+|---|---|---|
+| `workflows` | 100 | more is refused by itero check and at the daemon's start |
+| `runs` | 1000 | runs under way at once; past it, messages wait their turn |
+| `steps` | 8 | steps running at once |
+| `space` | "1GB" | .itero/: the journal, the log, memory |
+| `keep` | "1d" | how long ended runs and their messages are kept |
+| `log` | "10MB" | past it, the log is rolled (see The daemon's own workflows) |
+| `logs` | 3 | rolled logs kept: itero.log.1 to itero.log.3 |
+| `quiet` | "10m" | a step printing nothing this long is stopped, then run again |
+| `most` | "1d" | a step running this long is stopped, printing or not |
 
 Each limit has the default shown. Past `space`, the daemon sends
 `itero.space.full` and logs an `error` line, once, and its `keep`
@@ -441,8 +443,8 @@ internal ones, and the messages that would start one wait their turn.
 
 ### Where to see them
 
-- `itero info`: the workspace (its read-only part and its `[meta]`) and the daemon running it, if any.
-- `itero check`: each workflow's read-only part and its `meta`, the person's keys included.
+- `itero info`: the workspace (its read-only part and what its manifest says it is) and the daemon running it, if any.
+- `itero check`: each workflow's read-only part and its entry, the person's keys included.
 - `/health`: the workspace and the daemon.
 - The log: `daemon.started` carries every field of the workspace and the
   daemon; other lines carry their IDs, and their names too.
@@ -533,7 +535,7 @@ off again and again. No run waits for the daemon's own messages: they
 only start workflows. `itero.path.changed` `{"path", "kind"}` is one too:
 the change of a watched path (see Watching files).
 
-**Internal workflows.** A workflow with `"meta": {"internal": true}` looks
+**Internal workflows.** A workflow whose entry says `"internal": true` looks
 after the workspace rather than doing its work. Nothing in its name says
 so: any workflow can be internal. Being internal:
 
@@ -564,11 +566,11 @@ Their steps are built-in actions, like `#notify`: `#forget` and
 
 A workspace's own maintenance is the same thing: for example, rolling the
 log and then compressing and sending away the oldest, with its own
-`workflows/logs.json`:
+`workflows/logs.json` (and `"workflow": {"logs": {"internal": true}}` in
+the manifest):
 
 ```json
-{ "meta": { "internal": true },
-  "on": [{ "event": "itero.log.full" }],
+{ "on": [{ "event": "itero.log.full" }],
   "steps": ["#roll-log", "#compress-old-logs", "#upload-old-logs"] }
 ```
 
@@ -582,7 +584,7 @@ messages, written like any other:
 
 - **Changing a built-in workflow:** a file of its name in `workflows/`
   (`workflows/keep.json`) is used instead.
-- **Turning one off:** that file with `"meta": {"off": true}`.
+- **Turning one off:** its entry, `"workflow": {"keep": {"off": true}}`.
 
 Later, more of them, as real needs come: a doctor that asks an AI
 assistant what went wrong in a failed run and proposes a fix, as the

@@ -172,11 +172,14 @@ fn folder(root: &Path, s: &str) -> PathBuf {
 
 /// The manifest at `path`: a JSON object.
 fn read_manifest(path: &Path) -> Result<Map<String, Value>> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     match serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", path.display()))? {
         Value::Object(m) => Ok(m),
-        _ => bail!("{}: the manifest is an object: {{\"port\": 8787}}", path.display()),
+        _ => bail!(
+            "{}: the manifest is an object: {{\"port\": 8787}}",
+            path.display()
+        ),
     }
 }
 
@@ -190,7 +193,9 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
                 old.join("itero.toml").display()
             );
         }
-        bail!("no {MANIFEST} here or above: write one ({{}} will do) to make this folder a workspace");
+        bail!(
+            "no {MANIFEST} here or above: write one ({{}} will do) to make this folder a workspace"
+        );
     };
     let path = root.join(MANIFEST);
     let mut m = read_manifest(&path)?;
@@ -207,10 +212,16 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
         Some(v) => serde_json::from_value(v).map_err(|e| at(e, "limits"))?,
         None => RawLimits::default(),
     };
-    let meta: Map<String, Value> = m.into_iter().filter(|(k, _)| !RUNNING.contains(&k.as_str())).collect();
+    let meta: Map<String, Value> = m
+        .into_iter()
+        .filter(|(k, _)| !RUNNING.contains(&k.as_str()))
+        .collect();
     for k in meta.keys() {
         if matches!(k.as_str(), "id" | "created" | "path") {
-            bail!("{}: {k} is given by itero and cannot be set", path.display());
+            bail!(
+                "{}: {k} is given by itero and cannot be set",
+                path.display()
+            );
         }
     }
     Ok(Workspace {
@@ -220,7 +231,9 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
         actions: folders.actions.iter().map(|a| folder(root, a)).collect(),
         sources: folders.sources.iter().map(|x| folder(root, x)).collect(),
         meta,
-        limits: limits.read().with_context(|| format!("{}", path.display()))?,
+        limits: limits
+            .read()
+            .with_context(|| format!("{}", path.display()))?,
     })
 }
 
@@ -411,7 +424,10 @@ impl Workspace {
             entry.extend(e.clone());
         }
         let (meta, settings) = crate::flow::entry(&Value::Object(entry)).map_err(|e| {
-            anyhow!("{}: workflow.{name}: {e}", self.root.join(MANIFEST).display())
+            anyhow!(
+                "{}: workflow.{name}: {e}",
+                self.root.join(MANIFEST).display()
+            )
         })?;
         f.meta = meta;
         f.settings = settings;
@@ -452,24 +468,20 @@ impl Workspace {
     pub fn write_entry(&self, kind: &str, name: &str, key: &str, v: Value) -> Result<PathBuf> {
         let path = self.root.join(MANIFEST);
         let mut m = self.manifest()?;
-        let Value::Object(all) = m
-            .entry(kind)
-            .or_insert_with(|| Value::Object(Map::new()))
-        else {
+        let Value::Object(all) = m.entry(kind).or_insert_with(|| Value::Object(Map::new())) else {
             bail!("{}: {kind} is an object", path.display());
         };
-        let Value::Object(e) = all
-            .entry(name)
-            .or_insert_with(|| Value::Object(Map::new()))
-        else {
+        let Value::Object(e) = all.entry(name).or_insert_with(|| Value::Object(Map::new())) else {
             bail!("{}: {kind}.{name} is an object", path.display());
         };
         e.insert(key.into(), v);
         let tmp = path.with_extension("json.new");
-        std::fs::write(&tmp, serde_json::to_string_pretty(&Value::Object(m))? + "\n")
-            .with_context(|| format!("cannot write {}", tmp.display()))?;
-        std::fs::rename(&tmp, &path)
-            .with_context(|| format!("cannot write {}", path.display()))?;
+        std::fs::write(
+            &tmp,
+            serde_json::to_string_pretty(&Value::Object(m))? + "\n",
+        )
+        .with_context(|| format!("cannot write {}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))?;
         Ok(path)
     }
 

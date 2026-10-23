@@ -345,7 +345,10 @@ fn story(j: &crate::engine::journal::Journal, r: &crate::engine::journal::Run) -
 
 /// What `itero check` refuses in the manifest: an entry naming no workflow,
 /// action or source, and the folders from before it (`args/`, `config/`).
-fn check_manifest(ws: &crate::workspace::Workspace, flows: &[(String, crate::flow::Flow)]) -> Result<()> {
+fn check_manifest(
+    ws: &crate::workspace::Workspace,
+    flows: &[(String, crate::flow::Flow)],
+) -> Result<()> {
     let manifest = crate::workspace::MANIFEST;
     let mut wrong = vec![];
     for (dir, now) in [
@@ -360,11 +363,18 @@ fn check_manifest(ws: &crate::workspace::Workspace, flows: &[(String, crate::flo
         .action_files()?
         .into_keys()
         .map(|f| f.split('@').next().unwrap_or(&f).to_string())
-        .chain(crate::engine::worker::BUILT_IN.iter().map(|b| b.to_string()))
+        .chain(
+            crate::engine::worker::BUILT_IN
+                .iter()
+                .map(|b| b.to_string()),
+        )
         .collect();
     let sources: Vec<String> = ws.source_files()?.into_iter().map(|(n, _)| n).collect();
     for (kind, known) in [
-        ("workflow", flows.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>()),
+        (
+            "workflow",
+            flows.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
+        ),
         ("action", actions),
         ("source", sources),
     ] {
@@ -375,11 +385,7 @@ fn check_manifest(ws: &crate::workspace::Workspace, flows: &[(String, crate::flo
         }
     }
     if !wrong.is_empty() {
-        bail!(
-            "{}: {}",
-            ws.root.join(manifest).display(),
-            wrong.join("; ")
-        );
+        bail!("{}: {}", ws.root.join(manifest).display(), wrong.join("; "));
     }
     Ok(())
 }
@@ -863,13 +869,16 @@ fn dispatch(cli: Cli) -> Result<()> {
             let w = j.workspace()?;
             println!("workspace");
             println!("  id {}", w.id);
-            println!("  name {}", w.name);
+            // the manifest's name, once given; until then, itero's
+            let named = ws.meta.get("name").and_then(|n| n.as_str());
+            println!("  name {}", named.unwrap_or(&w.name));
             println!("  created {}", w.created);
             println!("  path {}", ws.root.display());
             println!("  itero {}", w.itero);
-            if !ws.meta.is_empty() {
+            let about: Vec<_> = ws.meta.iter().filter(|(k, _)| *k != "name").collect();
+            if !about.is_empty() {
                 println!("  meta");
-                for (k, v) in &ws.meta {
+                for (k, v) in about {
                     println!("    {k} {v}");
                 }
             }

@@ -3,11 +3,11 @@ title: Quickstart
 description: A workspace with one workflow and one action, a message, and a run.
 ---
 
-A workspace is a folder with an `itero.toml`; an empty one will do.
+A workspace is a folder with an `itero.config.json`; `{}` will do.
 
 ```sh
 mkdir hello && cd hello
-touch itero.toml
+echo '{}' > itero.config.json
 mkdir workflows actions
 ```
 

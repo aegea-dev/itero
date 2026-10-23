@@ -8,7 +8,7 @@ description: Where an action's values come from, and how tokens and passwords st
 An action's environment variables are found by name, the first in:
 
 1. **the step's data** in the workflow: `{"#imap-check": {"host": "imap.example.com"}}`;
-2. **the action's args**, `args/<action>.json`;
+2. **the action's args**, `action.<name>.args` in `itero.config.json`;
 3. **the run's state**: the message that started it, messages since, and
    what earlier steps printed.
 
@@ -22,7 +22,7 @@ itero args imap-check '{"host": "imap.example.com", "port": 993}'
 itero args imap-check --file accounts.json
 ```
 
-Either writes `args/imap-check.json`, which you can also edit. A list runs
+Either writes `action.imap-check.args` in `itero.config.json`, which you can also edit. A list runs
 the step once per item, each with its own copy of the state for the rest
 of the run:
 

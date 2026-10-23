@@ -9,7 +9,6 @@ is an error.
 
 | Key | Is | |
 |---|---|---|
-| `meta` | about it: `description`, `from`, `until`, `off`, `internal`, and keys of your own | |
 | `on` | when it runs: a list of objects (below) | none: it runs only as a step |
 | `steps` | what it does, in order | needed |
 | `success` | steps run when it went well | |
@@ -31,18 +30,9 @@ is an error.
 `event`, `schedule` and `path` are alternatives, each alone in its
 object; conditions must all hold. Any other key is an error naming it.
 
-## `meta`
-
-| Key | Means |
-|---|---|
-| `description` | text |
-| `from`, `until` | a date (`2026-11-01`, a whole day) or an RFC 3339 time: outside them nothing starts it |
-| `off` | `true`: nothing starts it |
-| `internal` | `true`: it looks after the workspace; its runs are left out of lists unless asked, and outside the limits |
-| any other | kept and shown |
-
-`id`, `name`, `created`, `path` and `version` are given by itero; setting
-one is an error.
+What a workflow is (its description, `off`, `from`, `until`, `internal`,
+its settings) is in its entry in
+[`itero.config.json`](/reference/itero-config/), not in its file.
 
 ## A step
 

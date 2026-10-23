@@ -131,7 +131,10 @@ fn config_is_written_shown_and_checked_for_the_workflow() {
     );
     assert!(o.status.success(), "{o:?}");
     let m = manifest(d.path());
-    assert_eq!(m["workflow"]["gözcü"]["settings"]["siteler"][0], "https://örnek.test");
+    assert_eq!(
+        m["workflow"]["gözcü"]["settings"]["siteler"][0],
+        "https://örnek.test"
+    );
     assert_eq!(m["workflow"]["gözcü"]["description"], "Siteler");
     // without data, they are shown
     let shown = out(&itero(d.path(), &["config", "gözcü"]));
@@ -141,7 +144,10 @@ fn config_is_written_shown_and_checked_for_the_workflow() {
         ("gözcü", "[1]", "an object"),
     ] {
         let o = itero(d.path(), &["config", name, data]);
-        assert!(!o.status.success() && err(&o).contains(says), "{data}: {o:?}");
+        assert!(
+            !o.status.success() && err(&o).contains(says),
+            "{data}: {o:?}"
+        );
     }
     assert!(itero(d.path(), &["check"]).status.success());
     // check: an entry naming nothing, and folders from before, are refused
@@ -152,7 +158,9 @@ fn config_is_written_shown_and_checked_for_the_workflow() {
     );
     let o = itero(d.path(), &["check"]);
     assert!(
-        !o.status.success() && err(&o).contains("workflow.yok-böyle") && err(&o).contains("action.hayalet"),
+        !o.status.success()
+            && err(&o).contains("workflow.yok-böyle")
+            && err(&o).contains("action.hayalet"),
         "{o:?}"
     );
     file(d.path(), "itero.config.json", "{}");
@@ -355,7 +363,7 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
     file(
         d.path(),
         "itero.config.json",
-        r#"{"port": 8797, "sahibi": "ayşe", "limits": {"runs": 7},
+        r#"{"name": "dükkân-işleri", "port": 8797, "sahibi": "ayşe", "limits": {"runs": 7},
              "workflow": {"sipariş": {"description": "Dükkân", "ekip": "ödeme"}}}"#,
     );
     file(
@@ -367,7 +375,7 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
     let info = out(&itero(d.path(), &["info"]));
     for says in [
         "id ",
-        "name ",
+        "name dükkân-işleri",
         "created ",
         "path ",
         "sahibi",

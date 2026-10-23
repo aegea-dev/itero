@@ -404,7 +404,7 @@ Check your network connection and try again."
 	check_shadowing "$DEST/itero"
 
 	say ""
-	say "Next:  mkdir my-workflows && cd my-workflows && echo 'port = 8787' > itero.toml && itero daemon"
+	say "Next:  mkdir my-workflows && cd my-workflows && echo '{}' > itero.config.json && itero daemon"
 	say "       and to start it at login, in that folder:  itero service install"
 }
 
