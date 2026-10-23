@@ -46,19 +46,20 @@ in its object.
 A workflow with no `event`, `schedule` or `path` never starts by itself:
 it runs only as a step of another.
 
-## About it: `meta`
+## About it: its entry
 
-An optional object for what is not the work itself:
+What a workflow is, apart from its work, is in the workspace's
+`itero.config.json`, under its name, not in its file:
 
 ```json
 {
-  "meta": {
-    "description": "Orders from the shop",
-    "from": "2026-11-01", "until": "2026-12-31",
-    "owner": "ayşe", "tags": ["orders", "payments"]
-  },
-  "on": [{ "event": "order.placed" }],
-  "steps": ["#check-payment", "#ship"]
+  "workflow": {
+    "order": {
+      "description": "Orders from the shop",
+      "from": "2026-11-01", "until": "2026-12-31",
+      "owner": "ayşe", "tags": ["orders", "payments"]
+    }
+  }
 }
 ```
 
@@ -68,10 +69,12 @@ An optional object for what is not the work itself:
 | `from`, `until` | a date or an RFC 3339 time: outside them nothing starts it; runs under way finish. A date is a whole day. |
 | `off` | `true`: nothing starts it, without deleting it |
 | `internal` | `true`: it looks after the workspace ([The daemon's own workflows](/guides/maintenance/)) |
+| `settings` | values its runs start with ([Settings](#settings)) |
 | any other | yours: itero keeps it, `itero check` shows it, and nothing more |
 
 `id`, `name`, `created`, `path` and `version` are itero's and cannot be
-set ([The log, IDs and names](/guides/log/)).
+set ([The log, IDs and names](/guides/log/)). A `meta` in a workflow file
+is an error saying where it goes.
 
 ## What it does: `steps`
 
@@ -128,11 +131,11 @@ no other list runs. A run ending in error or failed also sends
 others ([The daemon's own workflows](/guides/maintenance/)). A workflow used as a step has no end lists of its own:
 the run's own workflow has them.
 
-## Settings: `config/`
+## Settings
 
 A workflow you share, or take from someone, is used as it is. What
-changes from one person to another goes apart from it, in the workspace:
-its settings, `config/<workflow>.json`, set with
+changes from one person to another goes apart from it: its settings, in
+its entry in `itero.config.json`, set with
 [`itero config`](/commands/config/).
 
 ```json
@@ -144,17 +147,20 @@ its settings, `config/<workflow>.json`, set with
 itero config sites '{"sites": ["https://example.com", "http://localhost:3000"]}'
 ```
 
+writes:
+
+```json
+{ "workflow": { "sites": { "settings": { "sites": ["https://example.com", "http://localhost:3000"] } } } }
+```
+
 - A run's state starts with the settings, then the message's data on top:
   `itero emit` can override a setting for one run. A step names one as
   `"$sites"`, an action gets it as `$sites`, and `on` conditions see it.
-- `off`, `from` and `until` there are switches, not values: they turn the
-  workflow off or bound it in time, and win over its `meta`, so a workflow
-  from someone else is turned off without editing it.
 - Only the run's own workflow's settings: a workflow used as a step runs
   with the run's state.
 - They are read when a run starts: editing them changes the next runs.
 
-Args are an action's settings; config is a workflow's.
+Args are an action's settings; settings are a workflow's.
 
 ## Undo: taking steps back
 

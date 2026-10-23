@@ -8,7 +8,7 @@ use tower::ServiceExt;
 
 /// A workspace on port 8790, its router, and the receiver the router wakes.
 fn app(d: &std::path::Path) -> (axum::Router, std::sync::mpsc::Receiver<()>) {
-    std::fs::write(d.join("itero.toml"), "port = 8790\n").unwrap();
+    std::fs::write(d.join("itero.config.json"), r#"{"port": 8790}"#).unwrap();
     let ws = itero::workspace::find(d).unwrap();
     let (wake, woken) = std::sync::mpsc::channel();
     let engine = Arc::new(Engine {
@@ -88,7 +88,7 @@ async fn runs_and_workflows_can_be_read() {
     .unwrap();
     std::fs::write(
         d.path().join("workflows/bakım.json"),
-        r##"{ "meta": { "internal": true }, "on": [{ "event": "say.bir" }], "steps": ["#yaz"] }"##,
+        r##"{ "on": [{ "event": "say.bir" }], "steps": ["#yaz"] }"##,
     )
     .unwrap();
     let action = d.path().join("actions/yaz");
@@ -99,6 +99,11 @@ async fn runs_and_workflows_can_be_read() {
         std::fs::set_permissions(&action, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let (app, _w) = app(d.path());
+    std::fs::write(
+        d.path().join("itero.config.json"),
+        r#"{"port": 8790, "workflow": {"bakım": {"internal": true}}}"#,
+    )
+    .unwrap();
     let ws = itero::workspace::find(d.path()).unwrap();
     let now = "2026-10-15T14:00:00Z";
     itero::engine::events::emit(&ws, "say.bir", Some(json!({"kim": "ayşe"})), now).unwrap();

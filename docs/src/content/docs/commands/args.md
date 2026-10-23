@@ -8,7 +8,7 @@ itero args <action> '<data>'
 itero args <action> --file <path>
 ```
 
-Writes `args/<action>.json`: the data an action gets whatever workflow
+Writes `action.<action>.args` in `itero.config.json`: the data an action gets whatever workflow
 runs it. An object, or a list of objects: then the step runs once per
 item. The action's name goes without `#` or a version.
 

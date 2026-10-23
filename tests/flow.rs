@@ -237,43 +237,39 @@ fn message_types_are_two_words_or_more() {
 }
 
 #[test]
-fn meta_keeps_the_known_keys_and_the_persons_own() {
-    let f = flow::from_value(&json!({
-        "meta": {
-            "description": "Siparişler dükkândan",
-            "from": "2026-11-01", "until": "2026-12-31",
-            "internal": true,
-            "sahibi": "ayşe", "etiketler": ["ödeme", "kargo"]
-        },
-        "steps": ["#gönder"]
+fn an_entry_keeps_the_known_keys_and_the_persons_own() {
+    let (meta, settings) = flow::entry(&json!({
+        "description": "Siparişler dükkândan",
+        "from": "2026-11-01", "until": "2026-12-31",
+        "internal": true,
+        "sahibi": "ayşe", "etiketler": ["ödeme", "kargo"],
+        "settings": { "kargo": "PTT Kargo" }
     }))
     .unwrap();
-    assert_eq!(f.meta.description.as_deref(), Some("Siparişler dükkândan"));
-    assert!(f.meta.internal && !f.meta.off);
-    assert_eq!(f.meta.other["sahibi"], "ayşe");
-    assert_eq!(f.meta.other["etiketler"], json!(["ödeme", "kargo"]));
+    assert_eq!(meta.description.as_deref(), Some("Siparişler dükkândan"));
+    assert!(meta.internal && !meta.off);
+    assert_eq!(meta.other["sahibi"], "ayşe");
+    assert_eq!(meta.other["etiketler"], json!(["ödeme", "kargo"]));
+    assert_eq!(settings["kargo"], "PTT Kargo");
     let at = |s: &str| s.parse().unwrap();
     // a date is a whole day: from its start, until its end
-    assert!(!flow::active(&f.meta, at("2026-10-31T23:59:59Z")));
-    assert!(flow::active(&f.meta, at("2026-11-01T00:00:00Z")));
-    assert!(flow::active(&f.meta, at("2026-12-31T23:59:59Z")));
-    assert!(!flow::active(&f.meta, at("2027-01-01T00:00:00Z")));
-    let timed = flow::from_value(&json!({
-        "meta": { "until": "2026-12-31T18:00:00+03:00" }, "steps": ["#gönder"]
-    }))
-    .unwrap();
-    assert!(flow::active(&timed.meta, at("2026-12-31T14:59:59Z")));
-    assert!(!flow::active(&timed.meta, at("2026-12-31T15:00:00Z")));
-    let off = flow::from_value(&json!({ "meta": { "off": true }, "steps": ["#gönder"] })).unwrap();
-    assert!(!flow::active(&off.meta, at("2026-11-01T00:00:00Z")));
-    let plain = flow::from_value(&json!({ "steps": ["#gönder"] })).unwrap();
-    assert!(flow::active(&plain.meta, at("2026-11-01T00:00:00Z")));
+    assert!(!flow::active(&meta, at("2026-10-31T23:59:59Z")));
+    assert!(flow::active(&meta, at("2026-11-01T00:00:00Z")));
+    assert!(flow::active(&meta, at("2026-12-31T23:59:59Z")));
+    assert!(!flow::active(&meta, at("2027-01-01T00:00:00Z")));
+    let (timed, _) = flow::entry(&json!({ "until": "2026-12-31T18:00:00+03:00" })).unwrap();
+    assert!(flow::active(&timed, at("2026-12-31T14:59:59Z")));
+    assert!(!flow::active(&timed, at("2026-12-31T15:00:00Z")));
+    let (off, _) = flow::entry(&json!({ "off": true })).unwrap();
+    assert!(!flow::active(&off, at("2026-11-01T00:00:00Z")));
+    let (plain, none) = flow::entry(&json!({})).unwrap();
+    assert!(flow::active(&plain, at("2026-11-01T00:00:00Z")) && none.is_empty());
 }
 
 #[test]
-fn meta_mistakes_are_named() {
-    for (meta, says) in [
-        (json!("açıklama"), "meta is an object"),
+fn entry_mistakes_are_named() {
+    for (entry, says) in [
+        (json!("açıklama"), "is an object"),
         (json!({ "id": "01a0" }), "id is given by itero"),
         (json!({ "name": "sipariş" }), "name is given by itero"),
         (
@@ -293,8 +289,9 @@ fn meta_mistakes_are_named() {
         (json!({ "off": "evet" }), "off is true or false"),
         (json!({ "internal": 1 }), "internal is true or false"),
         (json!({ "description": ["ü"] }), "description is text"),
+        (json!({ "settings": ["ü"] }), "settings are an object"),
     ] {
-        let e = flow::from_value(&json!({ "meta": meta, "steps": ["#gönder"] })).unwrap_err();
-        assert!(e.contains(says), "{meta}: {e}");
+        let e = flow::entry(&entry).unwrap_err();
+        assert!(e.contains(says), "{entry}: {e}");
     }
 }

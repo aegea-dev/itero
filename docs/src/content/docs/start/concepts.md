@@ -3,16 +3,14 @@ title: Workspaces, workflows and runs
 description: The few things itero is made of.
 ---
 
-**A workspace** is a folder with an `itero.toml`. One daemon runs one
+**A workspace** is a folder with an `itero.config.json`. One daemon runs one
 workspace:
 
 ```
-itero.toml                 settings: the port, [meta], [limits]
+itero.config.json          the manifest: what it is, port, limits, and each workflow, action and source
 workflows/order.json       a workflow: its name is its file name
 actions/check-payment      an action: an executable, its name its file name
 sources/mail.received      a source: its messages are of this type
-args/check-payment.json    data for an action (itero args)
-config/order.json          a workflow's settings (itero config)
 .itero/                    the journal, the log and each workflow's memory
 ```
 

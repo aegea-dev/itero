@@ -13,7 +13,7 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
     // SAFETY: the only test in this binary; no thread runs yet
     unsafe { std::env::set_var("ITERO_NO_SECRET_STORE", "1") };
     let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("itero.toml"), "").unwrap();
+    std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
     std::fs::create_dir_all(d.path().join("workflows")).unwrap();
     std::fs::create_dir_all(d.path().join("actions")).unwrap();
     std::fs::write(

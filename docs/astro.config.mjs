@@ -92,7 +92,7 @@ export default defineConfig({
 					label: 'Reference',
 					items: [
 						{ label: 'Glossary', slug: 'reference/glossary' },
-						{ label: 'itero.toml', slug: 'reference/itero-toml' },
+						{ label: 'itero.config.json', slug: 'reference/itero-config' },
 						{ label: 'Workflow files', slug: 'reference/workflow-file' },
 						{ label: 'Actions', slug: 'reference/action-file' },
 						{ label: 'HTTP API', slug: 'reference/http' },

@@ -69,7 +69,7 @@ with a new workspace id.
 
 ```sh
 itero workflows            # each workflow: what starts it, its runs, the last; the daemon
-itero info                 # the workspace: id, name, [meta], limits; and its daemon
+itero info                 # the workspace: id, name, what it is, limits; and its daemon
 itero runs                 # every run: id, name, workflow, status, started, ended
 itero runs misty-lake      # one run, by name or id, step by step
 itero check                # each workflow: its id, meta, runs so far, last run

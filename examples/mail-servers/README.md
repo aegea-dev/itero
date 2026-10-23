@@ -1,0 +1,6 @@
+# mail-servers
+
+Mail servers: a notification for new mail in an IMAP or a POP3 mailbox,
+checked every minute with curl. Set the host and user in each workflow,
+and keep the password as a secret: `itero secret IMAP_PASS` (or
+POP3_PASS). Run `itero daemon` in this folder.

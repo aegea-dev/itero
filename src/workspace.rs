@@ -1,29 +1,42 @@
-//! The workspace: the folder with itero.toml, and the folders it lists for
-//! workflows, actions and sources. One daemon runs one workspace.
+//! The workspace: the folder with itero.config.json, and the folders it
+//! lists for workflows, actions and sources. One daemon runs one workspace.
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// The workspace's manifest: what it is, how it runs, and what its
+/// workflows, actions and sources are.
+pub const MANIFEST: &str = "itero.config.json";
+
+/// The manifest's keys for how the workspace runs, and for its entries:
+/// every other key at its top says what the workspace is.
+const RUNNING: [&str; 6] = ["port", "folders", "limits", "workflow", "action", "source"];
+
+/// `folders` as written.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Settings {
-    #[serde(default = "default_port")]
-    port: u16,
+struct Folders {
     #[serde(default = "default_workflows")]
     workflows: Vec<String>,
     #[serde(default = "default_actions")]
     actions: Vec<String>,
     #[serde(default = "default_sources")]
     sources: Vec<String>,
-    #[serde(default)]
-    meta: Map<String, Value>,
-    #[serde(default)]
-    limits: RawLimits,
 }
 
-/// `[limits]` as written: sizes and durations are text, `"1GB"`, `"1d"`.
+impl Default for Folders {
+    fn default() -> Folders {
+        Folders {
+            workflows: default_workflows(),
+            actions: default_actions(),
+            sources: default_sources(),
+        }
+    }
+}
+
+/// `limits` as written: sizes and durations are text, `"1GB"`, `"1d"`.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct RawLimits {
@@ -116,10 +129,6 @@ fn default_sources() -> Vec<String> {
     vec!["sources".into()]
 }
 
-fn default_port() -> u16 {
-    8787
-}
-
 fn default_workflows() -> Vec<String> {
     vec!["workflows".into()]
 }
@@ -143,7 +152,8 @@ pub struct Workspace {
     pub actions: Vec<PathBuf>,
     /// The folders with the workspace's sources.
     pub sources: Vec<PathBuf>,
-    /// `[meta]`: what a person says about the workspace.
+    /// What the manifest says the workspace is: `name`, `version`,
+    /// `description` and the person's own keys.
     pub meta: Map<String, Value>,
     pub limits: Limits,
 }
@@ -160,29 +170,68 @@ fn folder(root: &Path, s: &str) -> PathBuf {
     }
 }
 
-/// The workspace `cwd` is in: the nearest folder upwards with itero.toml.
+/// The manifest at `path`: a JSON object.
+fn read_manifest(path: &Path) -> Result<Map<String, Value>> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    match serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", path.display()))? {
+        Value::Object(m) => Ok(m),
+        _ => bail!(
+            "{}: the manifest is an object: {{\"port\": 8787}}",
+            path.display()
+        ),
+    }
+}
+
+/// The workspace `cwd` is in: the nearest folder upwards with
+/// itero.config.json.
 pub fn find(cwd: &Path) -> Result<Workspace> {
-    let Some(root) = cwd.ancestors().find(|d| d.join("itero.toml").is_file()) else {
+    let Some(root) = cwd.ancestors().find(|d| d.join(MANIFEST).is_file()) else {
+        if let Some(old) = cwd.ancestors().find(|d| d.join("itero.toml").is_file()) {
+            bail!(
+                "{}: itero reads {MANIFEST} now: write its port, [limits] and [meta] there (meta's keys at the top)",
+                old.join("itero.toml").display()
+            );
+        }
         bail!(
-            "no itero.toml here or above: write one (port, workflows, actions) to make this folder a workspace"
+            "no {MANIFEST} here or above: write one ({{}} will do) to make this folder a workspace"
         );
     };
-    let path = root.join("itero.toml");
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
-    let s: Settings = toml::from_str(&text).with_context(|| format!("{}", path.display()))?;
-    for k in s.meta.keys() {
-        crate::flow::given_by_itero(k).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let path = root.join(MANIFEST);
+    let mut m = read_manifest(&path)?;
+    let at = |e: serde_json::Error, key: &str| anyhow!("{}: {key}: {e}", path.display());
+    let port = match m.remove("port") {
+        Some(v) => serde_json::from_value(v).map_err(|e| at(e, "port"))?,
+        None => 8787,
+    };
+    let folders: Folders = match m.remove("folders") {
+        Some(v) => serde_json::from_value(v).map_err(|e| at(e, "folders"))?,
+        None => Folders::default(),
+    };
+    let limits: RawLimits = match m.remove("limits") {
+        Some(v) => serde_json::from_value(v).map_err(|e| at(e, "limits"))?,
+        None => RawLimits::default(),
+    };
+    let meta: Map<String, Value> = m
+        .into_iter()
+        .filter(|(k, _)| !RUNNING.contains(&k.as_str()))
+        .collect();
+    for k in meta.keys() {
+        if matches!(k.as_str(), "id" | "created" | "path") {
+            bail!(
+                "{}: {k} is given by itero and cannot be set",
+                path.display()
+            );
+        }
     }
     Ok(Workspace {
         root: root.to_path_buf(),
-        port: s.port,
-        workflows: s.workflows.iter().map(|w| folder(root, w)).collect(),
-        actions: s.actions.iter().map(|a| folder(root, a)).collect(),
-        sources: s.sources.iter().map(|x| folder(root, x)).collect(),
-        meta: s.meta,
-        limits: s
-            .limits
+        port,
+        workflows: folders.workflows.iter().map(|w| folder(root, w)).collect(),
+        actions: folders.actions.iter().map(|a| folder(root, a)).collect(),
+        sources: folders.sources.iter().map(|x| folder(root, x)).collect(),
+        meta,
+        limits: limits
             .read()
             .with_context(|| format!("{}", path.display()))?,
     })
@@ -317,6 +366,12 @@ impl Workspace {
                 .with_context(|| format!("cannot read {}", f.display()))?;
             let v: Value =
                 serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", f.display()))?;
+            if v.get("meta").is_some() {
+                bail!(
+                    "{}: meta goes in {MANIFEST} now: \"workflow\": {{\"{name}\": {{\"description\": ...}}}}",
+                    f.display()
+                );
+            }
             crate::flow::from_value(&v).map_err(|e| anyhow!("{}: {e}", f.display()))?;
             out.insert(name, v);
         }
@@ -325,13 +380,16 @@ impl Workspace {
                 out.insert(name.to_string(), serde_json::from_str(text)?);
             }
         }
-        let counted = out
-            .values()
-            .filter(|v| v.pointer("/meta/internal") != Some(&Value::Bool(true)))
-            .count();
+        let entries = self.entries("workflow")?;
+        let internal = |name: &str, v: &Value| {
+            let yes = Some(&Value::Bool(true));
+            v.pointer("/meta/internal") == yes
+                || entries.get(name).and_then(|e| e.get("internal")) == yes
+        };
+        let counted = out.iter().filter(|(n, v)| !internal(n, v)).count();
         if counted > self.limits.workflows {
             bail!(
-                "{counted} workflows: workflows in itero.toml's [limits] allows {}",
+                "{counted} workflows: limits.workflows in itero.config.json allows {}",
                 self.limits.workflows
             );
         }
@@ -340,64 +398,91 @@ impl Workspace {
 
     /// Every workflow, read, by name (its file name).
     pub fn flows(&self) -> Result<Vec<(String, crate::flow::Flow)>> {
+        let entries = self.entries("workflow")?;
         self.flow_values()?
             .into_iter()
-            .map(|(n, v)| Ok((n.clone(), self.read_flow(&n, &v)?)))
+            .map(|(n, v)| Ok((n.clone(), self.read_flow(&n, &v, &entries)?)))
             .collect()
     }
 
-    /// The workflow `name`, its file read as `v`, with its config applied.
-    pub fn read_flow(&self, name: &str, v: &Value) -> Result<crate::flow::Flow> {
+    /// The workflow `name`, its file read as `v`, with its entry in the
+    /// manifest (`entries`, the `workflow` ones): what it is, its settings.
+    pub fn read_flow(
+        &self,
+        name: &str,
+        v: &Value,
+        entries: &Map<String, Value>,
+    ) -> Result<crate::flow::Flow> {
         let mut f = crate::flow::from_value(v).map_err(|e| anyhow!("{name}: {e}"))?;
-        if let Some(config) = self.config(name)? {
-            crate::flow::configure(&mut f, config)
-                .map_err(|e| anyhow!("{}: {e}", self.config_file(name).display()))?;
+        // a built-in workflow says what it is in its own JSON; the entry
+        // goes on top
+        let mut entry = match v.get("meta") {
+            Some(Value::Object(m)) => m.clone(),
+            _ => Map::new(),
+        };
+        if let Some(Value::Object(e)) = entries.get(name) {
+            entry.extend(e.clone());
         }
+        let (meta, settings) = crate::flow::entry(&Value::Object(entry)).map_err(|e| {
+            anyhow!(
+                "{}: workflow.{name}: {e}",
+                self.root.join(MANIFEST).display()
+            )
+        })?;
+        f.meta = meta;
+        f.settings = settings;
         Ok(f)
     }
 
-    /// Where a workflow's config is: `config/<workflow>.json`.
-    pub fn config_file(&self, workflow: &str) -> PathBuf {
-        self.root.join("config").join(format!("{workflow}.json"))
+    /// The manifest as written now: read again each time, so an edit
+    /// counts from the next pass, without a restart.
+    pub fn manifest(&self) -> Result<Map<String, Value>> {
+        read_manifest(&self.root.join(MANIFEST))
     }
 
-    /// A workflow's config, `config/<workflow>.json`: an object. None when
-    /// there is no file.
-    pub fn config(&self, workflow: &str) -> Result<Option<Map<String, Value>>> {
-        let f = self.config_file(workflow);
-        if !f.exists() {
-            return Ok(None);
-        }
-        let text =
-            std::fs::read_to_string(&f).with_context(|| format!("cannot read {}", f.display()))?;
-        match serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", f.display()))? {
-            Value::Object(m) => Ok(Some(m)),
-            _ => bail!(
-                "{}: a config is an object: {{\"name\": value}}",
-                f.display()
+    /// The manifest's entries of one kind (`workflow`, `action` or
+    /// `source`), by name; each an object.
+    pub fn entries(&self, kind: &str) -> Result<Map<String, Value>> {
+        let path = self.root.join(MANIFEST);
+        match self.manifest()?.remove(kind) {
+            None => Ok(Map::new()),
+            Some(Value::Object(m)) => {
+                if let Some((name, _)) = m.iter().find(|(_, e)| !e.is_object()) {
+                    bail!(
+                        "{}: {kind}.{name} is an object: {{\"description\": \"...\"}}",
+                        path.display()
+                    );
+                }
+                Ok(m)
+            }
+            Some(_) => bail!(
+                "{}: {kind} is an object: {{\"<name>\": {{...}}}}",
+                path.display()
             ),
         }
     }
 
-    /// The workflows with a file in `config/`, by name.
-    pub fn configs(&self) -> Result<Vec<String>> {
-        let dir = self.root.join("config");
-        if !dir.exists() {
-            return Ok(vec![]);
-        }
-        let mut names = vec![];
-        for e in
-            std::fs::read_dir(&dir).with_context(|| format!("cannot read {}", dir.display()))?
-        {
-            let p = e?.path();
-            if p.extension().is_some_and(|x| x == "json")
-                && let Some(n) = p.file_stem().and_then(|s| s.to_str())
-            {
-                names.push(n.to_string());
-            }
-        }
-        names.sort();
-        Ok(names)
+    /// Sets `key` of the `kind` entry `name` to `v` in the manifest,
+    /// keeping the rest as it was, written through a temporary file; the
+    /// manifest's path.
+    pub fn write_entry(&self, kind: &str, name: &str, key: &str, v: Value) -> Result<PathBuf> {
+        let path = self.root.join(MANIFEST);
+        let mut m = self.manifest()?;
+        let Value::Object(all) = m.entry(kind).or_insert_with(|| Value::Object(Map::new())) else {
+            bail!("{}: {kind} is an object", path.display());
+        };
+        let Value::Object(e) = all.entry(name).or_insert_with(|| Value::Object(Map::new())) else {
+            bail!("{}: {kind}.{name} is an object", path.display());
+        };
+        e.insert(key.into(), v);
+        let tmp = path.with_extension("json.new");
+        std::fs::write(
+            &tmp,
+            serde_json::to_string_pretty(&Value::Object(m))? + "\n",
+        )
+        .with_context(|| format!("cannot write {}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))?;
+        Ok(path)
     }
 
     /// The names of the internal workflows: whose runs lists leave out
@@ -483,24 +568,28 @@ impl Workspace {
         Ok(named("source", files)?.into_iter().collect())
     }
 
-    /// An action's args, `args/<action>.json`: an object, or a list of
-    /// objects (the step runs once per item). None when there is no file.
-    pub fn args(&self, action: &str) -> Result<Option<serde_json::Value>> {
-        let f = self.root.join("args").join(format!("{action}.json"));
-        if !f.exists() {
-            return Ok(None);
-        }
-        let text =
-            std::fs::read_to_string(&f).with_context(|| format!("cannot read {}", f.display()))?;
-        let v: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", f.display()))?;
+    /// An action's args, `action.<name>.args` in the manifest: an object,
+    /// or a list of objects (the step runs once per item). None when its
+    /// entry has none.
+    pub fn args(&self, action: &str) -> Result<Option<Value>> {
+        let v = match self.entries("action")?.remove(action) {
+            Some(Value::Object(mut e)) => e.remove("args"),
+            _ => None,
+        };
+        let v = match v {
+            None | Some(Value::Null) => return Ok(None),
+            Some(v) => v,
+        };
         let ok = match &v {
-            serde_json::Value::Object(_) => true,
-            serde_json::Value::Array(items) => items.iter().all(|i| i.is_object()),
+            Value::Object(_) => true,
+            Value::Array(items) => items.iter().all(|i| i.is_object()),
             _ => false,
         };
         if !ok {
-            bail!("{}: args are an object, or a list of objects", f.display());
+            bail!(
+                "{}: action.{action}.args are an object, or a list of objects",
+                self.root.join(MANIFEST).display()
+            );
         }
         Ok(Some(v))
     }

@@ -104,8 +104,13 @@ fn the_beacon_tells_only_what_changed() {
     let ws = copy("beacon", d.path());
     // its sites are a setting, a JSON list in $sites as a run gives it; a
     // port nothing listens on is down, without the network
-    let config = std::fs::read_to_string(ws.join("config/sites.json")).unwrap();
-    assert!(config.contains("\"sites\""), "{config}");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join("itero.config.json")).unwrap())
+            .unwrap();
+    assert!(
+        manifest["workflow"]["sites"]["settings"]["sites"].is_array(),
+        "{manifest}"
+    );
     let sites = run_action(
         &ws,
         "check-sites",

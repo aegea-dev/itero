@@ -40,7 +40,7 @@ it may reach when some are waiting.
   type, whose conditions hold over its data, and that is not `off` or
   outside its `from` and `until`. Its data is the run's first state.
   Every such workflow starts, side by side. With `runs` runs under way
-  ([`[limits]`](/reference/itero-toml/#limits)), it waits its turn.
+  ([`limits`](/reference/itero-config/#limits)), it waits its turn.
 - **It reaches the runs waiting for data** (a step exited 75) that it
   matches: it shares at least one field with the run's state and agrees
   with it on every one they share. `{"payment_ref": "pay-1", "paid": true}`

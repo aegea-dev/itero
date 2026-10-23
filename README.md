@@ -17,7 +17,7 @@ minute itero asks it; when it does not answer, you get a notification
 saying why.
 
 ```bash
-mkdir beacon && cd beacon && touch itero.toml && mkdir actions workflows
+mkdir beacon && cd beacon && echo '{}' > itero.config.json && mkdir actions workflows
 
 cat > actions/check-site <<'EOF'
 #!/bin/sh
@@ -112,15 +112,13 @@ through `notify-send` (or `gdbus`, or `kdialog`).
 
 ## A workspace
 
-A folder with `itero.toml` is a workspace; `itero daemon` runs it.
+A folder with `itero.config.json` is a workspace (`{}` will do); `itero daemon` runs it.
 
 ```
-itero.toml                 settings: the port, [meta], [limits]
+itero.config.json          the manifest: what it is, port, limits, and each workflow, action and source
 workflows/order.json       a workflow: when it runs (on) and its steps
 actions/check-payment      an action: an executable, its name its file name
 sources/mail.received      a source: each line it prints is a message of this type
-args/check-payment.json    data for an action (itero args)
-config/order.json          a workflow's settings (itero config)
 .itero/                    the journal, the log (itero.log) and memory
 ```
 

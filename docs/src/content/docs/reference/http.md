@@ -4,7 +4,7 @@ description: The daemon's local API, its routes and answers.
 ---
 
 `itero daemon` serves on `127.0.0.1:<port>` only (`port` in
-[`itero.toml`](/reference/itero-toml/), 8787 by default). Answers are JSON;
+[`itero.config.json`](/reference/itero-config/), 8787 by default). Answers are JSON;
 an error is `{"error": "..."}` with its status.
 
 | Route | Does |

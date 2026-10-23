@@ -343,6 +343,53 @@ fn story(j: &crate::engine::journal::Journal, r: &crate::engine::journal::Run) -
     Ok(())
 }
 
+/// What `itero check` refuses in the manifest: an entry naming no workflow,
+/// action or source, and the folders from before it (`args/`, `config/`).
+fn check_manifest(
+    ws: &crate::workspace::Workspace,
+    flows: &[(String, crate::flow::Flow)],
+) -> Result<()> {
+    let manifest = crate::workspace::MANIFEST;
+    let mut wrong = vec![];
+    for (dir, now) in [
+        ("args", "\"action\": {\"<name>\": {\"args\": ...}}"),
+        ("config", "\"workflow\": {\"<name>\": {\"settings\": ...}}"),
+    ] {
+        if ws.root.join(dir).is_dir() {
+            wrong.push(format!("{dir}/: this goes in {manifest} now, as {now}"));
+        }
+    }
+    let actions: Vec<String> = ws
+        .action_files()?
+        .into_keys()
+        .map(|f| f.split('@').next().unwrap_or(&f).to_string())
+        .chain(
+            crate::engine::worker::BUILT_IN
+                .iter()
+                .map(|b| b.to_string()),
+        )
+        .collect();
+    let sources: Vec<String> = ws.source_files()?.into_iter().map(|(n, _)| n).collect();
+    for (kind, known) in [
+        (
+            "workflow",
+            flows.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
+        ),
+        ("action", actions),
+        ("source", sources),
+    ] {
+        for name in ws.entries(kind)?.keys() {
+            if !known.contains(name) {
+                wrong.push(format!("{kind}.{name}: no {kind} {name}"));
+            }
+        }
+    }
+    if !wrong.is_empty() {
+        bail!("{}: {}", ws.root.join(manifest).display(), wrong.join("; "));
+    }
+    Ok(())
+}
+
 fn dispatch(cli: Cli) -> Result<()> {
     let workspace = || crate::workspace::find(&std::env::current_dir()?);
     if matches!(
@@ -535,10 +582,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             if !ok {
                 bail!("args are an object, or a list of objects, as JSON");
             }
-            let dir = ws.root.join("args");
-            std::fs::create_dir_all(&dir)?;
-            let f = dir.join(format!("{action}.json"));
-            std::fs::write(&f, serde_json::to_string_pretty(&v)? + "\n")?;
+            let f = ws.write_entry("action", &action, "args", v)?;
             println!("{}", f.display());
         }
         Cmd::Config {
@@ -553,29 +597,30 @@ fn dispatch(cli: Cli) -> Result<()> {
             if bad_name {
                 bail!("{workflow} is not a workflow's name");
             }
-            let f = ws.config_file(&workflow);
             let text = match (data, file) {
                 (Some(d), _) => d,
                 (None, Some(path)) => std::fs::read_to_string(&path)
                     .map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?,
                 (None, None) => {
-                    match ws.config(&workflow)? {
-                        Some(c) => println!("{}", serde_json::to_string_pretty(&c)?),
-                        None => {
-                            eprintln!("{workflow} has no settings: {} is not there", ws.shown(&f))
-                        }
+                    let settings = ws
+                        .entries("workflow")?
+                        .get(&workflow)
+                        .and_then(|e| e.get("settings"))
+                        .cloned();
+                    match settings {
+                        Some(s) => println!("{}", serde_json::to_string_pretty(&s)?),
+                        None => eprintln!(
+                            "{workflow} has no settings in {}",
+                            crate::workspace::MANIFEST
+                        ),
                     }
                     return Ok(());
                 }
             };
-            let Ok(serde_json::Value::Object(config)) = serde_json::from_str(&text) else {
+            let Ok(settings @ serde_json::Value::Object(_)) = serde_json::from_str(&text) else {
                 bail!("settings are an object, as JSON: {{\"name\": value}}");
             };
-            // the switches are checked as the daemon will read them
-            crate::flow::configure(&mut crate::flow::Flow::default(), config.clone())
-                .map_err(|e| anyhow!(e))?;
-            std::fs::create_dir_all(f.parent().expect("config/"))?;
-            std::fs::write(&f, serde_json::to_string_pretty(&config)? + "\n")?;
+            let f = ws.write_entry("workflow", &workflow, "settings", settings)?;
             println!("{}", f.display());
         }
         Cmd::Secret { name, file } => {
@@ -603,12 +648,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
             }
             let mut flows = ws.flows()?;
-            for name in ws.configs()? {
-                if !flows.iter().any(|(n, _)| *n == name) {
-                    let f = ws.config_file(&name);
-                    eprintln!("note: {}: no workflow {name}", ws.shown(&f));
-                }
-            }
+            check_manifest(&ws, &flows)?;
             // the internal ones last, apart
             flows.sort_by_key(|(_, f)| f.meta.internal);
             let j = crate::engine::journal::Journal::open(&ws)?;
@@ -829,13 +869,16 @@ fn dispatch(cli: Cli) -> Result<()> {
             let w = j.workspace()?;
             println!("workspace");
             println!("  id {}", w.id);
-            println!("  name {}", w.name);
+            // the manifest's name, once given; until then, itero's
+            let named = ws.meta.get("name").and_then(|n| n.as_str());
+            println!("  name {}", named.unwrap_or(&w.name));
             println!("  created {}", w.created);
             println!("  path {}", ws.root.display());
             println!("  itero {}", w.itero);
-            if !ws.meta.is_empty() {
+            let about: Vec<_> = ws.meta.iter().filter(|(k, _)| *k != "name").collect();
+            if !about.is_empty() {
                 println!("  meta");
-                for (k, v) in &ws.meta {
+                for (k, v) in about {
                     println!("    {k} {v}");
                 }
             }

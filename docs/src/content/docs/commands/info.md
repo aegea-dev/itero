@@ -8,7 +8,7 @@ itero info
 ```
 
 The workspace: its id, name, when it was made, its folder, the itero that
-made it, its `[meta]` and its `[limits]`. Then the daemon running it, when
+made it, what its manifest says it is, and its `limits`. Then the daemon running it, when
 one answers on the port: its id, name, start, pid, host and itero version.
 
 ```
@@ -30,5 +30,5 @@ workspace
 daemon: not running (no answer on port 8787)
 ```
 
-See [`itero.toml`](/reference/itero-toml/) and
+See [`itero.config.json`](/reference/itero-config/) and
 [The log, IDs and names](/guides/log/).

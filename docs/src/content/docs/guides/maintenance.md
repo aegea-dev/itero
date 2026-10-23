@@ -34,7 +34,7 @@ they only start workflows.
 
 ## Internal workflows
 
-A workflow with `"meta": {"internal": true}` looks after the workspace
+A workflow whose entry in `itero.config.json` says `"internal": true` looks after the workspace
 rather than doing its work. Nothing in its name says so. Being internal:
 
 - `itero check` lists it apart, last;
@@ -60,16 +60,18 @@ itero carries two internal workflows and runs them as if they were in
   oldest away:
 
   ```json
-  { "meta": { "internal": true },
-    "on": [{ "event": "itero.log.full" }],
+  { "on": [{ "event": "itero.log.full" }],
     "steps": ["#roll-log", "#upload-old-logs"] }
   ```
 
-- **Turning one off:** that file with `"meta": {"off": true}`.
+  with `"workflow": {"logs": {"internal": true}}` in `itero.config.json`,
+  so it stays internal.
+
+- **Turning one off:** its entry, `"workflow": {"logs": {"off": true}}`.
 
 ## Limits
 
-`itero.toml`'s `[limits]` ([itero.toml](/reference/itero-toml/)):
+`limits` in [`itero.config.json`](/reference/itero-config/#limits):
 
 - past `runs` under way, a message that would start a run waits its turn;
 - past `workflows`, `itero check` and each of the daemon's passes stop

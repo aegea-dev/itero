@@ -1,0 +1,5 @@
+{
+  "name": "order",
+  "description": "An order: payment and stock side by side, the payment waiting for its provider, then shipping and a mail",
+  "port": 8789
+}

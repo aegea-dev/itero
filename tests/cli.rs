@@ -13,7 +13,7 @@ fn itero(dir: &Path, args: &[&str]) -> Output {
 
 fn workspace() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("itero.toml"), "").unwrap();
+    std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
     d
 }
 
@@ -21,14 +21,27 @@ fn err(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).to_string()
 }
 
+/// The workspace's manifest, read.
+fn manifest(d: &Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(d.join("itero.config.json")).unwrap()).unwrap()
+}
+
 #[test]
 fn args_are_written_for_the_action() {
     let d = workspace();
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"name": "ev", "port": 8787, "action": {"kargola": {"description": "Kargoya verir"}}}"#,
+    );
     let o = itero(d.path(), &["args", "kargola", r#"{"firma": "PTT Kargo"}"#]);
     assert!(o.status.success(), "{o:?}");
-    let f = d.path().join("args/kargola.json");
-    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
-    assert_eq!(v["firma"], "PTT Kargo");
+    let m = manifest(d.path());
+    assert_eq!(m["action"]["kargola"]["args"]["firma"], "PTT Kargo");
+    assert_eq!(m["action"]["kargola"]["description"], "Kargoya verir");
+    // the rest is kept as it was, in its order
+    let keys: Vec<&String> = m.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["name", "port", "action"]);
     // from a file, a list of objects
     let list = d.path().join("hesaplar.json");
     std::fs::write(
@@ -41,11 +54,10 @@ fn args_are_written_for_the_action() {
         &["args", "posta-bak", "--file", list.to_str().unwrap()],
     );
     assert!(o.status.success(), "{o:?}");
-    let v: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(d.path().join("args/posta-bak.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(v[1]["user"], "can@örnek.test");
+    assert_eq!(
+        manifest(d.path())["action"]["posta-bak"]["args"][1]["user"],
+        "can@örnek.test"
+    );
 }
 
 #[test]
@@ -108,26 +120,28 @@ fn config_is_written_shown_and_checked_for_the_workflow() {
         r##"{ "on": [{ "event": "saat.geldi" }], "steps": ["#bak"] }"##,
     );
     file(d.path(), "actions/bak", "#!/bin/sh\n");
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"workflow": {"gözcü": {"description": "Siteler"}}}"#,
+    );
     let o = itero(
         d.path(),
-        &[
-            "config",
-            "gözcü",
-            r#"{"siteler": ["https://örnek.test"], "off": false}"#,
-        ],
+        &["config", "gözcü", r#"{"siteler": ["https://örnek.test"]}"#],
     );
     assert!(o.status.success(), "{o:?}");
-    let v: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(d.path().join("config/gözcü.json")).unwrap())
-            .unwrap();
-    assert_eq!(v["siteler"][0], "https://örnek.test");
-    // without data, it is shown
+    let m = manifest(d.path());
+    assert_eq!(
+        m["workflow"]["gözcü"]["settings"]["siteler"][0],
+        "https://örnek.test"
+    );
+    assert_eq!(m["workflow"]["gözcü"]["description"], "Siteler");
+    // without data, they are shown
     let shown = out(&itero(d.path(), &["config", "gözcü"]));
     assert!(shown.contains("örnek.test"), "{shown}");
     for (name, data, says) in [
         ("../dışarı", "{}", "not a workflow's name"),
         ("gözcü", "[1]", "an object"),
-        ("gözcü", r#"{"off": "evet"}"#, "off is true or false"),
     ] {
         let o = itero(d.path(), &["config", name, data]);
         assert!(
@@ -135,17 +149,27 @@ fn config_is_written_shown_and_checked_for_the_workflow() {
             "{data}: {o:?}"
         );
     }
-    // check: a config for no workflow is a note; a bad one an error
-    file(d.path(), "config/yok-böyle.json", "{}");
+    assert!(itero(d.path(), &["check"]).status.success());
+    // check: an entry naming nothing, and folders from before, are refused
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"workflow": {"gözcü": {}, "yok-böyle": {}}, "action": {"hayalet": {}}}"#,
+    );
     let o = itero(d.path(), &["check"]);
-    assert!(o.status.success(), "{o:?}");
     assert!(
-        err(&o).contains("config/yok-böyle.json: no workflow yok-böyle"),
+        !o.status.success()
+            && err(&o).contains("workflow.yok-böyle")
+            && err(&o).contains("action.hayalet"),
         "{o:?}"
     );
-    file(d.path(), "config/gözcü.json", r#"{"until": "yarın"}"#);
+    file(d.path(), "itero.config.json", "{}");
+    file(d.path(), "args/bak.json", "{}");
     let o = itero(d.path(), &["check"]);
-    assert!(!o.status.success() && err(&o).contains("until"), "{o:?}");
+    assert!(
+        !o.status.success() && err(&o).contains("args") && err(&o).contains("itero.config.json"),
+        "{o:?}"
+    );
 }
 
 #[test]
@@ -229,7 +253,12 @@ fn runs_and_errors_say_how_each_run_is_doing() {
     file(
         d.path(),
         "workflows/bakım.json",
-        r##"{ "meta": { "internal": true }, "on": [{ "event": "a.b" }], "steps": ["#tamam"] }"##,
+        r##"{ "on": [{ "event": "a.b" }], "steps": ["#tamam"] }"##,
+    );
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"workflow": {"bakım": {"internal": true}}}"#,
     );
     itero(d.path(), &["emit", "a.b", "{}"]);
     itero(d.path(), &["daemon", "--once"]);
@@ -333,19 +362,20 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
     let d = workspace();
     file(
         d.path(),
-        "itero.toml",
-        "port = 8797\n\n[meta]\nsahibi = \"ayşe\"\n\n[limits]\nruns = 7\n",
+        "itero.config.json",
+        r#"{"name": "dükkân-işleri", "port": 8797, "sahibi": "ayşe", "limits": {"runs": 7},
+             "workflow": {"sipariş": {"description": "Dükkân", "ekip": "ödeme"}}}"#,
     );
     file(
         d.path(),
         "workflows/sipariş.json",
-        r##"{ "meta": { "description": "Dükkân", "ekip": "ödeme" }, "steps": ["#gönder"] }"##,
+        r##"{ "steps": ["#gönder"] }"##,
     );
     file(d.path(), "actions/gönder", "#!/bin/sh\n");
     let info = out(&itero(d.path(), &["info"]));
     for says in [
         "id ",
-        "name ",
+        "name dükkân-işleri",
         "created ",
         "path ",
         "sahibi",
@@ -364,7 +394,11 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
 #[test]
 fn workflows_lists_each_workflow_and_what_waits_for_a_daemon() {
     let d = workspace();
-    file(d.path(), "itero.toml", "port = 8799\n");
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"port": 8799, "workflow": {"özet": {"off": true}}}"#,
+    );
     file(
         d.path(),
         "workflows/sipariş.json",
@@ -373,7 +407,7 @@ fn workflows_lists_each_workflow_and_what_waits_for_a_daemon() {
     file(
         d.path(),
         "workflows/özet.json",
-        r##"{ "meta": { "off": true }, "on": [{ "schedule": "0 9 * * *" }, { "path": "gelen" }], "steps": ["#gönder"] }"##,
+        r##"{ "on": [{ "schedule": "0 9 * * *" }, { "path": "gelen" }], "steps": ["#gönder"] }"##,
     );
     file(
         d.path(),
@@ -418,7 +452,7 @@ fn workflows_lists_each_workflow_and_what_waits_for_a_daemon() {
 #[test]
 fn emit_says_what_a_message_starts() {
     let d = workspace();
-    file(d.path(), "itero.toml", "port = 8798\n");
+    file(d.path(), "itero.config.json", r#"{"port": 8798}"#);
     file(
         d.path(),
         "workflows/sipariş.json",
@@ -487,7 +521,7 @@ impl Drop for Daemon {
 #[test]
 fn emit_wait_answers_with_the_runs_end() {
     let d = workspace();
-    file(d.path(), "itero.toml", "port = 8802\n");
+    file(d.path(), "itero.config.json", r#"{"port": 8802}"#);
     file(
         d.path(),
         "workflows/selam.json",

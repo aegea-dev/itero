@@ -17,9 +17,9 @@ pub struct Flow {
     pub error: Vec<Step>,
     /// How long a run may wait for data; `None` is `WAIT`.
     pub timeout: Option<Duration>,
+    /// What it is: its entry in itero.config.json, not its file.
     pub meta: Meta,
-    /// The workspace's values for it (`config/<name>.json`), not its file's:
-    /// a run's state starts with them.
+    /// Its entry's settings: a run's state starts with them.
     pub settings: Map<String, Value>,
 }
 
@@ -40,8 +40,8 @@ pub struct Meta {
     pub other: Map<String, Value>,
 }
 
-/// The names itero gives and nobody sets: in a workflow's `meta` and the
-/// workspace's `[meta]` they are an error.
+/// The names itero gives and nobody sets: in a workflow's entry they are
+/// an error.
 pub fn given_by_itero(key: &str) -> Result<(), String> {
     match key {
         "id" | "name" | "created" | "path" | "version" => {
@@ -57,20 +57,24 @@ pub fn active(meta: &Meta, now: DateTime<Utc>) -> bool {
     !meta.off && meta.from.is_none_or(|f| now >= f) && meta.until.is_none_or(|u| now < u)
 }
 
-fn meta(v: &Value) -> Result<Meta, String> {
+/// A workflow's entry in itero.config.json: what it is, and its settings.
+pub fn entry(v: &Value) -> Result<(Meta, Map<String, Value>), String> {
     let Value::Object(m) = v else {
-        return Err("meta is an object: { \"description\": \"...\" }".into());
+        return Err("an entry is an object: { \"description\": \"...\" }".into());
     };
-    let flag = |k: &str, v: &Value| v.as_bool().ok_or(format!("meta: {k} is true or false"));
-    let moment =
-        |k: &str, v: &Value, end: bool| moment(k, v, end).map_err(|e| format!("meta: {e}"));
+    let flag = |k: &str, v: &Value| v.as_bool().ok_or(format!("{k} is true or false"));
     let mut out = Meta::default();
+    let mut settings = Map::new();
     for (k, v) in m {
         given_by_itero(k)?;
         match k.as_str() {
             "description" => {
-                out.description = Some(v.as_str().ok_or("meta: description is text")?.into())
+                out.description = Some(v.as_str().ok_or("description is text")?.into())
             }
+            "settings" => match v {
+                Value::Object(s) => settings = s.clone(),
+                _ => return Err("settings are an object: { \"name\": value }".into()),
+            },
             "from" => out.from = Some(moment(k, v, false)?),
             "until" => out.until = Some(moment(k, v, true)?),
             "off" => out.off = flag(k, v)?,
@@ -80,7 +84,7 @@ fn meta(v: &Value) -> Result<Meta, String> {
             }
         }
     }
-    Ok(out)
+    Ok((out, settings))
 }
 
 /// A date or an RFC 3339 time. A date is a whole day: `from` it starts at
@@ -98,23 +102,6 @@ fn moment(key: &str, v: &Value, end: bool) -> Result<DateTime<Utc>, String> {
         day
     };
     Ok(day.and_time(chrono::NaiveTime::MIN).and_utc())
-}
-
-/// A workflow's config, `config/<name>.json`, applied to it: the switches
-/// `off`, `from` and `until` win over its `meta`; the rest are its
-/// settings.
-pub fn configure(f: &mut Flow, mut config: Map<String, Value>) -> Result<(), String> {
-    if let Some(v) = config.remove("off") {
-        f.meta.off = v.as_bool().ok_or("off is true or false")?;
-    }
-    if let Some(v) = config.remove("from") {
-        f.meta.from = Some(moment("from", &v, false)?);
-    }
-    if let Some(v) = config.remove("until") {
-        f.meta.until = Some(moment("until", &v, true)?);
-    }
-    f.settings = config;
-    Ok(())
 }
 
 /// When a workflow or a step runs. Messages and schedules are
@@ -175,7 +162,10 @@ pub fn from_value(v: &Value) -> Result<Flow, String> {
     let mut f = Flow::default();
     for (k, v) in top {
         match k.as_str() {
-            "meta" => f.meta = meta(v)?,
+            // what a workflow is lives in itero.config.json; a version
+            // pinned before (and a built-in one) still carries a meta, read
+            // there, not here
+            "meta" => {}
             "on" => f.on = on(v)?,
             "steps" => f.steps = steps(k, v)?,
             "success" => f.success = steps(k, v)?,
