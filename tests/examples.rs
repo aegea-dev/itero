@@ -133,3 +133,41 @@ fn the_beacon_tells_only_what_changed() {
     assert_eq!(disk("0"), r#"{"status":{"disk":"ok"}}"#);
     assert_eq!(disk("101"), r#"{"status":{"disk":"under 101% free"}}"#);
 }
+
+#[test]
+fn the_beacon_without_jq_says_it_needs_jq() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = copy("beacon", d.path());
+    // a PATH with what the actions use, jq apart
+    let bin = d.path().join("araç kutusu");
+    std::fs::create_dir(&bin).unwrap();
+    for p in ["curl", "df", "awk", "cat", "mv"] {
+        let o = std::process::Command::new("sh")
+            .args(["-c", &format!("command -v {p}")])
+            .output()
+            .unwrap();
+        let at = String::from_utf8(o.stdout).unwrap();
+        std::os::unix::fs::symlink(at.trim(), bin.join(p)).unwrap();
+    }
+    let memory = d.path().join("hafıza");
+    for (name, env) in [
+        ("check-sites", vec![("sites", r#"["http://127.0.0.1:9"]"#)]),
+        ("check-disk", vec![]),
+        ("changed", vec![("ITERO_MEMORY", memory.to_str().unwrap())]),
+    ] {
+        let o = std::process::Command::new(ws.join("actions").join(name))
+            .current_dir(&ws)
+            .env("PATH", &bin)
+            .envs(env)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(o.status.code(), Some(127), "#{name}: {o:?}");
+        assert_eq!(
+            itero::needs::missing(127, &err).as_deref(),
+            Some("needs jq: not found on PATH"),
+            "#{name}: {err}"
+        );
+    }
+}

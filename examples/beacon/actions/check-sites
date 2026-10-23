@@ -1,6 +1,8 @@
 #!/bin/sh
 # Each site in $sites (a JSON list, the workflow's setting), up or down:
-# {"status": {"<url>": "up"}}.
+# {"status": {"<url>": "up"}}. set -e: a jq that fails inside $(...)
+# ends it, rather than leaving no sites to check.
+set -e
 urls=$(printf '%s' "${sites:-[]}" | jq -r '.[]')
 status='{}'
 for url in $urls; do
