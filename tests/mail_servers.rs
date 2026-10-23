@@ -281,7 +281,7 @@ fn gmail_tells_each_new_mail_as_it_arrives_and_none_twice() {
     first.wait().unwrap();
     assert_eq!(
         shown(&log),
-        "Gmail\tgonderen@ornek.test: Sipariş geldi: çay ve şeker\n",
+        "Gmail\tSipariş geldi: çay ve şeker\tsubtitle=gonderen@ornek.test\tsound=default\n",
         "mail from before the first start is not new"
     );
     // a mail while nothing runs is told on the next start, once
@@ -295,7 +295,7 @@ fn gmail_tells_each_new_mail_as_it_arrives_and_none_twice() {
     again.wait().unwrap();
     assert_eq!(
         shown(&log).lines().last().unwrap(),
-        "Gmail\tgonderen@ornek.test: Kahve molası"
+        "Gmail\tKahve molası\tsubtitle=gonderen@ornek.test\tsound=default"
     );
     assert_eq!(shown(&log).lines().count(), 2, "none twice");
 }

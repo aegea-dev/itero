@@ -3,27 +3,50 @@
 //! Notifications) only when it comes from an app, so this runs inside
 //! Itero.app (`make notifier`); `itero worker` starts it for notify@1.
 //!
-//! Usage: `itero-notifier <title> <text> [<url>]`. Exits 0 once macOS has
-//! taken the notification, 1 with the reason on stderr when it has not.
-//! With a url (http or https), a click on the notification opens it: macOS
-//! starts Itero.app again, with no arguments, to hand it the click.
+//! Usage: `itero-notifier <title> <text> [--subtitle S] [--sound S] [--url U]`.
+//! Exits 0 once macOS has taken the notification, 1 with the reason on
+//! stderr when it has not. A sound is `default` or a sound's name. With a
+//! url (http or https), a click on the notification opens it: macOS starts
+//! Itero.app again, with no arguments, to hand it the click.
+
+#[cfg(target_os = "macos")]
+const USAGE: &str = "usage: itero-notifier <title> <text> [--subtitle S] [--sound S] [--url U]";
 
 #[cfg(target_os = "macos")]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let shown = match args.as_slice() {
-        [] => {
+    let [title, text, rest @ ..] = args.as_slice() else {
+        if args.is_empty() {
             mac::clicked();
             return;
         }
-        [title, text] => mac::show(title, text, None),
-        [title, text, url] => mac::show(title, text, Some(url)),
-        _ => {
-            eprintln!("usage: itero-notifier <title> <text> [<url>]");
-            std::process::exit(2);
-        }
+        eprintln!("{USAGE}");
+        std::process::exit(2);
     };
-    if let Err(e) = shown {
+    let mut n = itero::engine::worker::Note {
+        title,
+        text,
+        subtitle: None,
+        sound: None,
+        url: None,
+    };
+    for pair in rest.chunks(2) {
+        let slot = match pair[0].as_str() {
+            "--subtitle" => &mut n.subtitle,
+            "--sound" => &mut n.sound,
+            "--url" => &mut n.url,
+            _ => {
+                eprintln!("{USAGE}");
+                std::process::exit(2);
+            }
+        };
+        let Some(v) = pair.get(1) else {
+            eprintln!("{USAGE}");
+            std::process::exit(2);
+        };
+        *slot = Some(v);
+    }
+    if let Err(e) = mac::show(&n) {
         eprintln!("itero-notifier: {e}");
         std::process::exit(1);
     }
@@ -38,6 +61,7 @@ fn main() {
 #[cfg(target_os = "macos")]
 mod mac {
     use block2::RcBlock;
+    use itero::engine::worker::Note;
     use objc2::rc::Retained;
     use objc2::runtime::{Bool, ProtocolObject};
     use objc2::{ClassType, MainThreadMarker, define_class, msg_send};
@@ -45,7 +69,8 @@ mod mac {
     use objc2_foundation::{NSDictionary, NSError, NSObject, NSObjectProtocol, NSString, NSTimer};
     use objc2_user_notifications::{
         UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationRequest,
-        UNNotificationResponse, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+        UNNotificationResponse, UNNotificationSound, UNUserNotificationCenter,
+        UNUserNotificationCenterDelegate,
     };
     use std::sync::mpsc;
     use std::time::Duration;
@@ -65,8 +90,8 @@ mod mac {
         unsafe { e.as_ref() }.map(|e| e.localizedDescription().to_string())
     }
 
-    pub fn show(title: &str, text: &str, url: Option<&str>) -> Result<(), String> {
-        if let Some(u) = url
+    pub fn show(n: &Note) -> Result<(), String> {
+        if let Some(u) = n.url
             && !itero::engine::worker::openable(u)
         {
             return Err(format!("a url to open is http or https: {u}"));
@@ -92,9 +117,20 @@ mod mac {
             Err(_) => return Err("no answer to the notifications prompt".into()),
         }
         let content = UNMutableNotificationContent::new();
-        content.setTitle(&NSString::from_str(title));
-        content.setBody(&NSString::from_str(text));
-        if let Some(u) = url {
+        content.setTitle(&NSString::from_str(n.title));
+        content.setBody(&NSString::from_str(n.text));
+        if let Some(sub) = n.subtitle {
+            content.setSubtitle(&NSString::from_str(sub));
+        }
+        // a name macOS does not find plays the default sound
+        match n.sound {
+            None => {}
+            Some("default") => content.setSound(Some(&UNNotificationSound::defaultSound())),
+            Some(name) => content.setSound(Some(&UNNotificationSound::soundNamed(
+                &NSString::from_str(name),
+            ))),
+        }
+        if let Some(u) = n.url {
             let info =
                 NSDictionary::from_slices(&[&*NSString::from_str(URL)], &[&*NSString::from_str(u)]);
             // SAFETY: userInfo holds property-list values, as this does: a

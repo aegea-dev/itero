@@ -62,11 +62,24 @@ secrets are the action's, whatever the version.
 
 ## Built in
 
-`#notify` shows `$text` (and `$title`) as a desktop notification: through
-Itero.app on macOS (`osascript` without it), `notify-send` on Linux. With a
-`$url` (http or https), a click on it opens that page, on macOS through
-Itero.app; a url of another kind is an error, as it may come from a
-message.
+`#notify` shows a desktop notification: through Itero.app on macOS
+(`osascript` without it), `notify-send` on Linux.
+
+| Value | Is |
+|---|---|
+| `$text` | what it says; needed |
+| `$title` | its title; `itero` when not set |
+| `$subtitle` | a line under the title (on Linux, the text's first line) |
+| `$sound` | `default`, or a macOS sound's name such as `Glass` (those in `/System/Library/Sounds`); on Linux, a sound theme's name |
+| `$url` | opened by a click on it, on macOS through Itero.app: http or https, anything else an error, as it may come from a message |
+
+```json
+{ "#notify": { "title": "Backup", "subtitle": "disk 2", "text": "$why", "sound": "Basso" } }
+```
+
+How long a notification stays is yours to set, in System Settings,
+Notifications, itero: Banners go away by themselves, Alerts stay until
+dismissed.
 
 `#forget` forgets ended runs and their messages past `keep`, and
 `#roll-log` rolls the log; the built-in workflows use them

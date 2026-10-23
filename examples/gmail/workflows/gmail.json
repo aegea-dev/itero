@@ -1,1 +1,1 @@
-{ "on": [{ "event": "gmail.received" }], "steps": ["#notify"] }
+{ "on": [{ "event": "gmail.received" }], "steps": [{ "#notify": { "sound": "default" } }] }
