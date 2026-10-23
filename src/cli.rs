@@ -265,7 +265,10 @@ fn daemon_running(
     j: &crate::engine::journal::Journal,
 ) -> Result<bool> {
     let me = j.workspace()?;
-    Ok(daemon_health(ws.port).is_some_and(|h| h["workspace"]["id"] == me.id.as_str()))
+    Ok(ws
+        .daemon_port()
+        .and_then(daemon_health)
+        .is_some_and(|h| h["workspace"]["id"] == me.id.as_str()))
 }
 
 /// How long before `now` an RFC 3339 time was: `2m ago`, `3h ago`.
@@ -431,8 +434,18 @@ fn dispatch(cli: Cli) -> Result<()> {
                 pass?;
                 return Ok(());
             }
+            use crate::engine::http::{self, Engine};
+            // its port first: a daemon that cannot listen starts nothing
+            let listening = if no_serve {
+                None
+            } else {
+                Some(http::listen(&ws)?)
+            };
             let workspace = crate::engine::journal::Journal::open(&ws)?.workspace()?;
             let log = crate::engine::log::Log::new(&ws, &workspace.id);
+            if let Some((_, Some(note))) = &listening {
+                log.write("port.changed", serde_json::json!({ "why": note }));
+            }
             let me = daemon::Daemon::current();
             log.write(
                 "daemon.started",
@@ -459,7 +472,6 @@ fn dispatch(cli: Cli) -> Result<()> {
                 "itero: running the workflows in {}, a pass every {interval}s (Ctrl-C stops); log: .itero/itero.log",
                 ws.root.display()
             );
-            use crate::engine::http::{self, Engine};
             let (wake, woken) = std::sync::mpsc::channel();
             let engine = std::sync::Arc::new(Engine {
                 health: std::sync::Mutex::new(daemon::Health::starting(&daemon::stamp(
@@ -502,14 +514,18 @@ fn dispatch(cli: Cli) -> Result<()> {
                     })
                 })
             };
-            if no_serve {
-                // the loop's sender lives in `engine`: the loop runs for good
-                looping
-                    .join()
-                    .map_err(|_| anyhow!("the daemon's loop stopped unexpectedly"))?;
-            } else {
-                eprintln!("itero: serving on http://127.0.0.1:{}/", ws.port);
-                http::serve(http::router(ws.clone(), engine), ws.port)?;
+            match listening {
+                None => {
+                    // the loop's sender lives in `engine`: the loop runs for good
+                    looping
+                        .join()
+                        .map_err(|_| anyhow!("the daemon's loop stopped unexpectedly"))?;
+                }
+                Some((listener, _)) => {
+                    let port = listener.local_addr()?.port();
+                    eprintln!("itero: serving on http://127.0.0.1:{port}/");
+                    http::serve(http::router(ws.clone(), engine, port), listener)?;
+                }
             }
         }
         Cmd::Emit {
@@ -914,16 +930,16 @@ fn dispatch(cli: Cli) -> Result<()> {
             println!("    keep {}", humantime::format_duration(l.keep));
             println!("    log {}", l.log);
             println!("    logs {}", l.logs);
-            match daemon_health(ws.port) {
-                Some(h) if h["workspace"]["id"] != w.id.as_str() => println!(
-                    "daemon: port {} answers, but for another workspace ({})",
-                    ws.port,
+            let port = ws.daemon_port();
+            match (port, port.and_then(daemon_health)) {
+                (Some(p), Some(h)) if h["workspace"]["id"] != w.id.as_str() => println!(
+                    "daemon: port {p} answers, but for another workspace ({})",
                     h["workspace"]["path"]
                         .as_str()
                         .or(h["workspace"].as_str())
                         .unwrap_or("unknown")
                 ),
-                Some(h) => {
+                (Some(p), Some(h)) => {
                     let d = &h["daemon"];
                     println!("daemon");
                     for k in ["id", "name", "started", "pid", "host", "itero"] {
@@ -932,8 +948,12 @@ fn dispatch(cli: Cli) -> Result<()> {
                             d[k].as_str().map_or(d[k].to_string(), String::from)
                         );
                     }
+                    println!("  port {p}");
                 }
-                None => println!("daemon: not running (no answer on port {})", ws.port),
+                (Some(p), None) => println!("daemon: not running (no answer on port {p})"),
+                (None, _) => {
+                    println!("daemon: not running (no port yet: the OS gives one at its start)")
+                }
             }
         }
         Cmd::Runs { run: None, all } => {
@@ -994,7 +1014,10 @@ fn dispatch(cli: Cli) -> Result<()> {
                         service::label(&ws.root).to_qualified_name(),
                         ws.root.display()
                     );
-                    println!("API: http://127.0.0.1:{}/", ws.port);
+                    match ws.port {
+                        Some(p) => println!("API: http://127.0.0.1:{p}/"),
+                        None => println!("API: on the port the OS gives it, as itero info says"),
+                    }
                     println!("log: {}", log.display());
                     println!("it keeps this shell's PATH; install again after changing it");
                 }
@@ -1007,7 +1030,8 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
                 ServiceCmd::Status => {
                     println!("service: {}", service::status(&ws.root)?);
-                    match daemon_health(ws.port) {
+                    let port = ws.daemon_port();
+                    match port.and_then(daemon_health) {
                         Some(h) => println!(
                             "daemon: pid {}, {} passes, last {}{}",
                             h["pid"],
@@ -1018,7 +1042,10 @@ fn dispatch(cli: Cli) -> Result<()> {
                                 .map(|e| format!(", last error: {e}"))
                                 .unwrap_or_default()
                         ),
-                        None => println!("daemon: no answer on port {}", ws.port),
+                        None => match port {
+                            Some(p) => println!("daemon: no answer on port {p}"),
+                            None => println!("daemon: no port yet"),
+                        },
                     }
                 }
             }
@@ -1035,7 +1062,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             run(&Options {
                 exe: std::env::current_exe()?,
                 daemon_args: vec!["--interval".into(), interval.to_string()],
-                port: ws.port,
+                ws: ws.clone(),
                 rules: Rules {
                     check_every: std::time::Duration::from_secs(check_every),
                     misses,

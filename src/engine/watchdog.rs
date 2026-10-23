@@ -111,14 +111,19 @@ pub struct Options {
     pub exe: PathBuf,
     /// The flags `itero daemon` gets.
     pub daemon_args: Vec<String>,
-    pub port: u16,
+    /// The workspace: its daemon's port is read at each check, as the OS
+    /// may give it another one at a start.
+    pub ws: crate::workspace::Workspace,
     pub rules: Rules,
     /// Where its own lines and the daemon's stderr go; stderr when none.
     pub log: Option<PathBuf>,
 }
 
-/// Asks the daemon's `/health`.
-fn probe(client: &reqwest::blocking::Client, port: u16) -> Probe {
+/// Asks the daemon's `/health`; no port yet is no answer.
+fn probe(client: &reqwest::blocking::Client, port: Option<u16>) -> Probe {
+    let Some(port) = port else {
+        return Probe::NoAnswer;
+    };
     let answer = client
         .get(format!("http://127.0.0.1:{port}/health"))
         .send()
@@ -179,7 +184,7 @@ pub fn run(o: &Options) -> Result<()> {
         let why = loop {
             let found = match child.wait_timeout(o.rules.check_every)? {
                 Some(status) => Probe::Exited(status.to_string()),
-                None => probe(&client, o.port),
+                None => probe(&client, o.ws.daemon_port()),
             };
             if let Verdict::Restart(why) = decide(&mut w, &found, Utc::now(), &o.rules) {
                 break why;

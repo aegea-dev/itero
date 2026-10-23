@@ -1,5 +1,4 @@
 {
   "name": "mail-servers",
-  "description": "A notification for new mail in an IMAP or a POP3 mailbox, checked every minute with curl",
-  "port": 8788
+  "description": "A notification for new mail in an IMAP or a POP3 mailbox, checked every minute with curl"
 }

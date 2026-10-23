@@ -26,6 +26,8 @@ pub struct Engine {
 struct Shared {
     ws: Arc<Workspace>,
     engine: Arc<Engine>,
+    /// The port it serves on: the only Host it answers.
+    port: u16,
 }
 
 type Reply = (StatusCode, Json<Value>);
@@ -34,11 +36,12 @@ fn fail(code: StatusCode, message: impl Into<String>) -> Reply {
     (code, Json(json!({ "error": message.into() })))
 }
 
-/// The API's routes, for the workspace `ws`.
-pub fn router(ws: Workspace, engine: Arc<Engine>) -> Router {
+/// The API's routes, for the workspace `ws`, served on `port`.
+pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16) -> Router {
     let s = Shared {
         ws: Arc::new(ws),
         engine,
+        port,
     };
     Router::new()
         .route("/health", get(health))
@@ -53,7 +56,7 @@ pub fn router(ws: Workspace, engine: Arc<Engine>) -> Router {
 /// Refuses a request whose Host is not this server's own address: a web
 /// page that rebinds a name to 127.0.0.1 still sends its own name.
 async fn local_only(State(s): State<Shared>, req: Request, next: Next) -> Response {
-    let port = s.ws.port;
+    let port = s.port;
     let host = req
         .headers()
         .get(header::HOST)
@@ -300,17 +303,40 @@ async fn workflows(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
     .await
 }
 
-/// Serves `router` on 127.0.0.1:`port` until the process ends.
-pub fn serve(router: Router, port: u16) -> anyhow::Result<()> {
+/// The daemon's socket on 127.0.0.1, bound before anything else starts:
+/// the manifest's port; else the one kept from the last start; else (none
+/// kept, or it is taken) one the OS gives, which is kept. With a note when
+/// the kept one was taken.
+pub fn listen(ws: &Workspace) -> anyhow::Result<(std::net::TcpListener, Option<String>)> {
+    let bind = |p: u16| std::net::TcpListener::bind(("127.0.0.1", p));
+    if let Some(p) = ws.port {
+        let l = bind(p).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot listen on 127.0.0.1:{p}: {e} (another itero daemon? set another port in itero.config.json, or none)"
+            )
+        })?;
+        return Ok((l, None));
+    }
+    // port 0: the OS gives a free one, held from then on
+    let given = || bind(0).map_err(|e| anyhow::anyhow!("cannot listen on 127.0.0.1: {e}"));
+    let (listener, note) = match ws.saved_port().map(|p| (p, bind(p))) {
+        Some((_, Ok(l))) => (l, None),
+        Some((p, Err(e))) => (
+            given()?,
+            Some(format!("port {p} is taken ({e}): the OS gave another")),
+        ),
+        None => (given()?, None),
+    };
+    ws.save_port(listener.local_addr()?.port())?;
+    Ok((listener, note))
+}
+
+/// Serves `router` on `listener` until the process ends.
+pub fn serve(router: Router, listener: std::net::TcpListener) -> anyhow::Result<()> {
+    listener.set_nonblocking(true)?;
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "cannot listen on 127.0.0.1:{port}: {e} (another itero daemon? set port in itero.config.json)"
-                )
-            })?;
+        let listener = tokio::net::TcpListener::from_std(listener)?;
         axum::serve(listener, router).await?;
         Ok(())
     })

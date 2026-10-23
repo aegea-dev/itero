@@ -1,7 +1,6 @@
 {
   "name": "terraform",
   "description": "A k3d cluster of 3 machines (containers in Docker) with a web app on it, applied with OpenTofu, all on this machine",
-  "port": 8795,
   "workflow": {
     "cluster": {
       "description": "A 3-machine k3d cluster with a web app, applied with OpenTofu"

@@ -1,5 +1,4 @@
 {
   "name": "page-summary",
-  "description": "A page, summarized by a model on this machine, on request",
-  "port": 8792
+  "description": "A page, summarized by a model on this machine, on request"
 }
