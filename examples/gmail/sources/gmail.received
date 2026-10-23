@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Tells itero about each new mail in a Gmail inbox, the moment it
+arrives: IMAP IDLE keeps a connection open and the server says when a mail
+comes. One line per mail, with its sender and subject.
+
+Its args, from source.gmail.received.args in itero.config.json:
+user and password (a Gmail app password, as a secret), and host, port, tls
+and mailbox for another IMAP server. It notes the last mail it told about,
+so a restart tells nothing twice; on its first start it only notes where
+the inbox is. Python 3.14 or later, nothing to install.
+"""
+import email.parser
+import email.policy
+import imaplib
+import json
+import os
+import sys
+import threading
+
+if sys.version_info < (3, 14):
+    sys.exit("gmail.received needs Python 3.14 or later (imaplib's idle)")
+
+USER = os.environ.get("user") or sys.exit("no user: set it in the source's args")
+PASSWORD = os.environ.get("password") or sys.exit("no password: set it in the source's args")
+HOST = os.environ.get("host", "imap.gmail.com")
+PORT = int(os.environ.get("port", "993"))
+TLS = os.environ.get("tls", "true") != "false"
+MAILBOX = os.environ.get("mailbox", "INBOX")
+SEEN = os.path.join(".itero", "gmail.received.seen")
+# servers end an IDLE after 30 minutes: start it again before that
+IDLE = 25 * 60
+
+
+def watch_stdin():
+    """The daemon has gone when stdin closes: so does this."""
+    sys.stdin.read()
+    os._exit(0)
+
+
+def seen():
+    """The inbox's UIDVALIDITY and the last UID told about, or None."""
+    try:
+        with open(SEEN) as f:
+            validity, uid = f.read().split()
+            return validity, int(uid)
+    except (OSError, ValueError):
+        return None
+
+
+def note(validity, uid):
+    os.makedirs(".itero", exist_ok=True)
+    with open(SEEN + ".new", "w") as f:
+        f.write(f"{validity} {uid}\n")
+    os.replace(SEEN + ".new", SEEN)
+
+
+def check(m, validity, last):
+    """Tells about each mail after `last`; the new last."""
+    _, data = m.uid("SEARCH", None, f"UID {last + 1}:*")
+    # n:* always holds the last mail, even one already told about
+    uids = sorted(u for u in map(int, data[0].split()) if u > last)
+    for uid in uids:
+        _, parts = m.uid("FETCH", str(uid), "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])")
+        header = next(p[1] for p in parts if isinstance(p, tuple))
+        mail = email.parser.BytesHeaderParser(policy=email.policy.default).parsebytes(header)
+        sender, subject = str(mail["From"] or ""), str(mail["Subject"] or "")
+        print(json.dumps({"title": "Gmail", "text": f"{sender}: {subject}",
+                          "from": sender, "subject": subject}, ensure_ascii=False), flush=True)
+        note(validity, uid)
+    return uids[-1] if uids else last
+
+
+def main():
+    threading.Thread(target=watch_stdin, daemon=True).start()
+    m = imaplib.IMAP4_SSL(HOST, PORT) if TLS else imaplib.IMAP4(HOST, PORT)
+    m.login(USER, PASSWORD)
+    m.select(MAILBOX, readonly=True)
+    validity = m.response("UIDVALIDITY")[1][0].decode()
+    before = seen()
+    if before and before[0] == validity:
+        last = check(m, validity, before[1])
+    else:
+        # the first start, or a new inbox: only where it is now
+        _, data = m.uid("SEARCH", None, "ALL")
+        last = max(map(int, data[0].split()), default=0)
+        note(validity, last)
+    while True:
+        with m.idle(duration=IDLE) as idler:
+            for typ, _ in idler:
+                if typ == "EXISTS":
+                    break
+        last = check(m, validity, last)
+
+
+main()

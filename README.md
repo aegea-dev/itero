@@ -102,7 +102,7 @@ make fmt-check    # rustfmt
 make check        # cargo check, every target
 make audit        # Cargo.lock against RustSec advisories (needs cargo-audit)
 make test-linux   # the tests and clippy on Linux, in Docker
-make test-docker  # the IMAP and POP3 examples against a mail server in Docker
+make test-docker  # the IMAP, POP3 and Gmail examples against a mail server in Docker
 make docs         # the docs site at http://localhost:4321/itero/ (make docs-install once)
 make verify       # every gate before a release: fmt, check, clippy, tests, audit, docs
 ```
@@ -155,6 +155,8 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
   new mail in the local mailbox, as it arrives.
 - [`examples/mail-servers`](examples/mail-servers): new mail on an IMAP or
   POP3 server, checked every minute with curl.
+- [`examples/gmail`](examples/gmail): a notification for each new Gmail
+  mail the moment it arrives, pushed by IMAP IDLE (Python, no polling).
 - [`examples/order`](examples/order): payment and stock side by side, the
   payment waiting for its provider, then shipping and a mail.
 - [`examples/page-digest`](examples/page-digest): a page, summarized by an
