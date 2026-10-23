@@ -76,7 +76,8 @@ def check(m, validity, last):
         header = next(p[1] for p in parts if isinstance(p, tuple))
         mail = email.parser.BytesHeaderParser(policy=email.policy.default).parsebytes(header)
         sender, subject = str(mail["From"] or ""), str(mail["Subject"] or "")
-        told = {"title": "Gmail", "text": f"{sender}: {subject}", "from": sender, "subject": subject}
+        told = {"title": "Gmail", "subtitle": sender, "text": subject or "(no subject)",
+                "from": sender, "subject": subject}
         if url := link(str(mail["Message-ID"] or "")):
             told["url"] = url
         print(json.dumps(told, ensure_ascii=False), flush=True)

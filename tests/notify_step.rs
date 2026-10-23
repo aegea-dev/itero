@@ -44,7 +44,7 @@ fn the_built_in_notify_shows_text() {
     worker::run_step(&step(&[("text", "43 kargoda"), ("url", url)])).unwrap();
     assert_eq!(
         std::fs::read_to_string(&log).unwrap(),
-        format!("itero\t43 kargoda\t{url}\n")
+        format!("itero\t43 kargoda\turl={url}\n")
     );
     for bad in ["file:///etc/passwd", "javascript:alert(1)", "örnek.test"] {
         let e = worker::run_step(&step(&[("text", "çay"), ("url", bad)])).unwrap_err();
@@ -53,4 +53,21 @@ fn the_built_in_notify_shows_text() {
     assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1);
     assert!(worker::openable("http://localhost:3000/"));
     assert!(!worker::openable("HTTPS-but-not://x"));
+
+    // a subtitle, and a sound: the default one, or one by name
+    std::fs::remove_file(&log).unwrap();
+    worker::run_step(&step(&[
+        ("title", "Gmail"),
+        ("subtitle", "Ayşe Yılmaz"),
+        ("text", "Sipariş geldi"),
+        ("sound", "default"),
+    ]))
+    .unwrap();
+    worker::run_step(&step(&[("text", "çay"), ("sound", "Glass"), ("url", url)])).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        format!(
+            "Gmail\tSipariş geldi\tsubtitle=Ayşe Yılmaz\tsound=default\nitero\tçay\tsound=Glass\turl={url}\n"
+        )
+    );
 }

@@ -98,42 +98,79 @@ pub fn openable(url: &str) -> bool {
     url.starts_with("https://") || url.starts_with("http://")
 }
 
+/// What `#notify` shows: `$title`, `$text`, and `$subtitle`, `$sound`
+/// (`default`, or a sound's name) and `$url` when set.
+pub struct Note<'a> {
+    pub title: &'a str,
+    pub text: &'a str,
+    pub subtitle: Option<&'a str>,
+    pub sound: Option<&'a str>,
+    pub url: Option<&'a str>,
+}
+
+impl Note<'_> {
+    /// The ones set of subtitle, sound and url, by name, in that order.
+    fn extras(&self) -> Vec<(&'static str, &str)> {
+        [
+            ("subtitle", self.subtitle),
+            ("sound", self.sound),
+            ("url", self.url),
+        ]
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|v| (k, v)))
+        .collect()
+    }
+}
+
 /// The ways to show a notification here, in order: each a program and its
-/// arguments. On macOS, Itero.app's notifier (notifications from itero; a
-/// click opens the url), else osascript (shown as Script Editor's, no
-/// click). Elsewhere, whichever the desktop has: notify-send (libnotify),
-/// gdbus (the freedesktop notification service), kdialog (KDE).
-fn notifiers(title: &str, body: &str, url: Option<&str>) -> Vec<(PathBuf, Vec<String>)> {
+/// arguments. On macOS, Itero.app's notifier (notifications from itero,
+/// all of the note), else osascript (shown as Script Editor's; no click,
+/// and a sound only by name). Elsewhere, whichever the desktop has:
+/// notify-send (libnotify; a sound as a hint), gdbus (the freedesktop
+/// notification service), kdialog (KDE); a subtitle is the text's first
+/// line there.
+fn notifiers(n: &Note) -> Vec<(PathBuf, Vec<String>)> {
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
     if cfg!(target_os = "macos") {
-        let script = s(&[
-            "-e",
-            "on run argv",
-            "-e",
-            "display notification (item 2 of argv) with title (item 1 of argv)",
-            "-e",
-            "end run",
-        ]);
         let mut out: Vec<(PathBuf, Vec<String>)> = notifier()
             .into_iter()
             .map(|p| {
-                (
-                    p,
-                    s(&[title, body])
-                        .into_iter()
-                        .chain(url.map(String::from))
-                        .collect(),
-                )
+                let mut a = s(&[n.title, n.text]);
+                for (k, v) in n.extras() {
+                    a.extend([format!("--{k}"), v.to_string()]);
+                }
+                (p, a)
             })
             .collect();
-        out.push((
-            "osascript".into(),
-            script.into_iter().chain(s(&[title, body])).collect(),
-        ));
+        // the values only as arguments, never in the script's text
+        let mut shows = "display notification (item 2 of argv) with title (item 1 of argv) subtitle (item 3 of argv)".to_string();
+        let named = n.sound.filter(|s| *s != "default");
+        if named.is_some() {
+            shows.push_str(" sound name (item 4 of argv)");
+        }
+        let mut script = s(&["-e", "on run argv", "-e", &shows, "-e", "end run"]);
+        script.extend(s(&[n.title, n.text, n.subtitle.unwrap_or("")]));
+        script.extend(named.map(String::from));
+        out.push(("osascript".into(), script));
         return out;
     }
+    let text = match n.subtitle {
+        Some(sub) => format!("{sub}\n{}", n.text),
+        None => n.text.to_string(),
+    };
+    let (title, body) = (n.title, text.as_str());
+    let mut send = s(&["--app-name=itero"]);
+    if let Some(sound) = n.sound {
+        let name = if sound == "default" {
+            "message-new-instant"
+        } else {
+            sound
+        };
+        send.push(format!("--hint=string:sound-name:{name}"));
+    }
+    send.extend(s(&[title, body]));
     vec![
-        ("notify-send".into(), s(&["--app-name=itero", title, body])),
+        ("notify-send".into(), send),
         (
             "gdbus".into(),
             s(&[
@@ -159,12 +196,12 @@ fn notifiers(title: &str, body: &str, url: Option<&str>) -> Vec<(PathBuf, Vec<St
     ]
 }
 
-/// A desktop notification, the title, text and url as arguments (never in
-/// a script's text), through the first of `notifiers` there is. With
+/// A desktop notification, through the first of `notifiers` there is. With
 /// `ITERO_NOTIFY_LOG` set, a line is appended to that file instead: the
-/// title, the text and the url, if any, tab separated.
-fn show(title: &str, body: &str, url: Option<&str>) -> Result<(), String> {
-    if let Some(u) = url
+/// title, the text, then `subtitle=`, `sound=` and `url=` when set, tab
+/// separated.
+fn show(n: &Note) -> Result<(), String> {
+    if let Some(u) = n.url
         && !openable(u)
     {
         return Err(format!("#notify's url is http or https: {u}"));
@@ -176,15 +213,16 @@ fn show(title: &str, body: &str, url: Option<&str>) -> Result<(), String> {
             .open(&log)
             .map_err(|e| format!("cannot open {}: {e}", PathBuf::from(&log).display()))?;
         // one write: lines from steps side by side never interleave
-        let line = match url {
-            Some(u) => format!("{title}\t{body}\t{u}\n"),
-            None => format!("{title}\t{body}\n"),
-        };
+        let mut line = format!("{}\t{}", n.title, n.text);
+        for (k, v) in n.extras() {
+            line.push_str(&format!("\t{k}={v}"));
+        }
+        line.push('\n');
         f.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
         return Ok(());
     }
     let mut tried = vec![];
-    for (program, args) in notifiers(title, body, url) {
+    for (program, args) in notifiers(n) {
         let out = match Command::new(&program)
             .args(&args)
             .stdin(Stdio::null())
@@ -357,12 +395,18 @@ pub fn run_step_telling(r: &StepRun, printed: &(dyn Fn() + Sync)) -> Result<Outc
         return roll_log(r);
     }
     if r.file == Path::new(NOTIFY) {
-        let body = r
+        let text = r
             .env
             .get("text")
             .ok_or_else(|| Failure::Error("#notify needs $text".into()))?;
-        let title = r.env.get("title").map_or("itero", String::as_str);
-        show(title, body, r.env.get("url").map(String::as_str))?;
+        let get = |k: &str| r.env.get(k).map(String::as_str);
+        show(&Note {
+            title: get("title").unwrap_or("itero"),
+            text,
+            subtitle: get("subtitle"),
+            sound: get("sound"),
+            url: get("url"),
+        })?;
         return Ok(Outcome::Done(Map::new()));
     }
     if let Some(dir) = r.memory.parent() {
