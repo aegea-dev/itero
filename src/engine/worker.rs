@@ -92,12 +92,18 @@ fn notifier() -> Option<PathBuf> {
     .find(|p| p.is_file())
 }
 
+/// Whether a notification's url can be opened on a click: http or https,
+/// never a file or another app's scheme, as it may come from a message.
+pub fn openable(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("http://")
+}
+
 /// The ways to show a notification here, in order: each a program and its
-/// arguments before the title and text. On macOS, Itero.app's notifier
-/// (notifications from itero), else osascript (shown as Script Editor's).
-/// Elsewhere, whichever the desktop has: notify-send (libnotify), gdbus
-/// (the freedesktop notification service), kdialog (KDE).
-fn notifiers(title: &str, body: &str) -> Vec<(PathBuf, Vec<String>)> {
+/// arguments. On macOS, Itero.app's notifier (notifications from itero; a
+/// click opens the url), else osascript (shown as Script Editor's, no
+/// click). Elsewhere, whichever the desktop has: notify-send (libnotify),
+/// gdbus (the freedesktop notification service), kdialog (KDE).
+fn notifiers(title: &str, body: &str, url: Option<&str>) -> Vec<(PathBuf, Vec<String>)> {
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
     if cfg!(target_os = "macos") {
         let script = s(&[
@@ -108,11 +114,22 @@ fn notifiers(title: &str, body: &str) -> Vec<(PathBuf, Vec<String>)> {
             "-e",
             "end run",
         ]);
-        let mut out: Vec<(PathBuf, Vec<String>)> =
-            notifier().into_iter().map(|p| (p, vec![])).collect();
-        out.push(("osascript".into(), script));
-        out.iter_mut()
-            .for_each(|(_, a)| a.extend([title.to_string(), body.to_string()]));
+        let mut out: Vec<(PathBuf, Vec<String>)> = notifier()
+            .into_iter()
+            .map(|p| {
+                (
+                    p,
+                    s(&[title, body])
+                        .into_iter()
+                        .chain(url.map(String::from))
+                        .collect(),
+                )
+            })
+            .collect();
+        out.push((
+            "osascript".into(),
+            script.into_iter().chain(s(&[title, body])).collect(),
+        ));
         return out;
     }
     vec![
@@ -142,10 +159,16 @@ fn notifiers(title: &str, body: &str) -> Vec<(PathBuf, Vec<String>)> {
     ]
 }
 
-/// A desktop notification, the title and text as arguments (never in a
-/// script's text), through the first of `notifiers` there is. With
-/// `ITERO_NOTIFY_LOG` set, a line is appended to that file instead.
-fn show(title: &str, body: &str) -> Result<(), String> {
+/// A desktop notification, the title, text and url as arguments (never in
+/// a script's text), through the first of `notifiers` there is. With
+/// `ITERO_NOTIFY_LOG` set, a line is appended to that file instead: the
+/// title, the text and the url, if any, tab separated.
+fn show(title: &str, body: &str, url: Option<&str>) -> Result<(), String> {
+    if let Some(u) = url
+        && !openable(u)
+    {
+        return Err(format!("#notify's url is http or https: {u}"));
+    }
     if let Some(log) = std::env::var_os("ITERO_NOTIFY_LOG") {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
@@ -153,12 +176,15 @@ fn show(title: &str, body: &str) -> Result<(), String> {
             .open(&log)
             .map_err(|e| format!("cannot open {}: {e}", PathBuf::from(&log).display()))?;
         // one write: lines from steps side by side never interleave
-        f.write_all(format!("{title}\t{body}\n").as_bytes())
-            .map_err(|e| e.to_string())?;
+        let line = match url {
+            Some(u) => format!("{title}\t{body}\t{u}\n"),
+            None => format!("{title}\t{body}\n"),
+        };
+        f.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
         return Ok(());
     }
     let mut tried = vec![];
-    for (program, args) in notifiers(title, body) {
+    for (program, args) in notifiers(title, body, url) {
         let out = match Command::new(&program)
             .args(&args)
             .stdin(Stdio::null())
@@ -336,7 +362,7 @@ pub fn run_step_telling(r: &StepRun, printed: &(dyn Fn() + Sync)) -> Result<Outc
             .get("text")
             .ok_or_else(|| Failure::Error("#notify needs $text".into()))?;
         let title = r.env.get("title").map_or("itero", String::as_str);
-        show(title, body)?;
+        show(title, body, r.env.get("url").map(String::as_str))?;
         return Ok(Outcome::Done(Map::new()));
     }
     if let Some(dir) = r.memory.parent() {

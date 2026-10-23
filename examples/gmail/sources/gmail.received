@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import threading
+import urllib.parse
 
 if sys.version_info < (3, 14):
     sys.exit("gmail.received needs Python 3.14 or later (imaplib's idle)")
@@ -54,18 +55,31 @@ def note(validity, uid):
     os.replace(SEEN + ".new", SEEN)
 
 
+def link(message_id):
+    """The mail in Gmail on the web, by its Message-ID, in this account
+    (the user in the link picks it among those signed in); none elsewhere.
+    #notify opens it on a click."""
+    message_id = message_id.strip().strip("<>")
+    if HOST != "imap.gmail.com" or not message_id:
+        return None
+    search = urllib.parse.quote(f"rfc822msgid:{message_id}", safe="")
+    return f"https://mail.google.com/mail/u/{urllib.parse.quote(USER, safe='@')}/#search/{search}"
+
+
 def check(m, validity, last):
     """Tells about each mail after `last`; the new last."""
     _, data = m.uid("SEARCH", None, f"UID {last + 1}:*")
     # n:* always holds the last mail, even one already told about
     uids = sorted(u for u in map(int, data[0].split()) if u > last)
     for uid in uids:
-        _, parts = m.uid("FETCH", str(uid), "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])")
+        _, parts = m.uid("FETCH", str(uid), "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID)])")
         header = next(p[1] for p in parts if isinstance(p, tuple))
         mail = email.parser.BytesHeaderParser(policy=email.policy.default).parsebytes(header)
         sender, subject = str(mail["From"] or ""), str(mail["Subject"] or "")
-        print(json.dumps({"title": "Gmail", "text": f"{sender}: {subject}",
-                          "from": sender, "subject": subject}, ensure_ascii=False), flush=True)
+        told = {"title": "Gmail", "text": f"{sender}: {subject}", "from": sender, "subject": subject}
+        if url := link(str(mail["Message-ID"] or "")):
+            told["url"] = url
+        print(json.dumps(told, ensure_ascii=False), flush=True)
         note(validity, uid)
     return uids[-1] if uids else last
 
