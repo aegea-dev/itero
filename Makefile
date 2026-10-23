@@ -83,10 +83,23 @@ APP = target/$(PROFILE)/Itero.app
 notifier: ## Build Itero.app (macOS), which notify@1 shows notifications through
 	$(CARGO) build --bin itero-notifier $(if $(filter release,$(PROFILE)),--release,)
 	rm -rf $(APP)
-	mkdir -p $(APP)/Contents/MacOS
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp packaging/macos/Info.plist $(APP)/Contents/Info.plist
+	cp packaging/macos/Itero.icns $(APP)/Contents/Resources/Itero.icns
 	cp target/$(PROFILE)/itero-notifier $(APP)/Contents/MacOS/itero-notifier
 	codesign --force --sign - $(APP)
+
+# Itero.icns from packaging/macos/itero.svg, every size macOS asks for
+# (needs rsvg-convert, from librsvg); the .icns is kept in git.
+ICONSET = target/Itero.iconset
+.PHONY: icon
+icon: ## Build packaging/macos/Itero.icns from itero.svg (macOS, rsvg-convert)
+	rm -rf $(ICONSET) && mkdir -p $(ICONSET)
+	for s in 16 32 128 256 512; do \
+	  rsvg-convert -w $$s -h $$s packaging/macos/itero.svg -o $(ICONSET)/icon_$${s}x$${s}.png && \
+	  rsvg-convert -w $$((s * 2)) -h $$((s * 2)) packaging/macos/itero.svg -o $(ICONSET)/icon_$${s}x$${s}@2x.png; \
+	done
+	iconutil -c icns $(ICONSET) -o packaging/macos/Itero.icns
 
 # A release archive for one target (this machine's unless TARGET is given),
 # and its checksum: what install.sh downloads and release.yml publishes.
@@ -105,8 +118,9 @@ dist: ## Build the release archive and checksum (TAG=vX.Y.Z, TARGET=triple)
 	cp $(OUT)/itero $(DIST)/stage/itero
 	@case "$(TARGET)" in *-apple-darwin) \
 	  $(CARGO) build --release --target $(TARGET) --bin itero-notifier && \
-	  mkdir -p $(DIST)/stage/Itero.app/Contents/MacOS && \
+	  mkdir -p $(DIST)/stage/Itero.app/Contents/MacOS $(DIST)/stage/Itero.app/Contents/Resources && \
 	  cp packaging/macos/Info.plist $(DIST)/stage/Itero.app/Contents/Info.plist && \
+	  cp packaging/macos/Itero.icns $(DIST)/stage/Itero.app/Contents/Resources/Itero.icns && \
 	  cp $(OUT)/itero-notifier $(DIST)/stage/Itero.app/Contents/MacOS/itero-notifier && \
 	  codesign --force --sign - $(DIST)/stage/Itero.app ;; \
 	esac
