@@ -158,6 +158,9 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
   POP3 server, checked every minute with curl.
 - [`examples/gmail`](examples/gmail): a notification for each new Gmail
   mail the moment it arrives, pushed by IMAP IDLE (Python, no polling).
+- [`examples/notify-api`](examples/notify-api): an app on this machine
+  asks for a notification over HTTP, with buttons, and gets the answer
+  posted back when it is clicked (macOS).
 - [`examples/order`](examples/order): payment and stock side by side, the
   payment waiting for its provider, then shipping and a mail.
 - [`examples/page-digest`](examples/page-digest): a page, summarized by an
