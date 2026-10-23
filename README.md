@@ -109,7 +109,8 @@ make verify       # every gate before a release: fmt, check, clippy, tests, audi
 
 On macOS, `make notifier` builds `Itero.app` next to the binary (and `make
 install` puts it in `~/Applications`): notifications then come from itero.
-Without it they come through `osascript`. On Linux, notifications go
+Without it they come through `osascript`. Its icon is
+`packaging/macos/Itero.icns`, built from `itero.svg` by `make icon`. On Linux, notifications go
 through `notify-send` (or `gdbus`, or `kdialog`).
 
 ## A workspace

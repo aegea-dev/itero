@@ -13,6 +13,8 @@
   <string>itero</string>
   <key>CFBundleExecutable</key>
   <string>itero-notifier</string>
+  <key>CFBundleIconFile</key>
+  <string>Itero</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
