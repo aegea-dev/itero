@@ -3,8 +3,10 @@ title: HTTP API
 description: The daemon's local API, its routes and answers.
 ---
 
-`itero daemon` serves on `127.0.0.1:<port>` only (`port` in
-[`itero.config.json`](/reference/itero-config/), 8787 by default). Answers are JSON;
+`itero daemon` serves on `127.0.0.1:<port>` only: `port` in
+[`itero.config.json`](/reference/itero-config/), or, when it sets none, one
+the OS gives, which `itero info` shows; an app that calls the API sets
+one. The examples here use 8787. Answers are JSON;
 an error is `{"error": "..."}` with its status.
 
 | Route | Does |

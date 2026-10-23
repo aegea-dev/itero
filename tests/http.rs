@@ -15,7 +15,7 @@ fn app(d: &std::path::Path) -> (axum::Router, std::sync::mpsc::Receiver<()>) {
         health: Mutex::new(Health::starting("2026-10-15T14:00:00Z")),
         wake,
     });
-    (router(ws, engine), woken)
+    (router(ws, engine, 8790), woken)
 }
 
 fn get(path: &str) -> Request<Body> {

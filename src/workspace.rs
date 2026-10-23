@@ -147,7 +147,9 @@ pub const BUILT_IN: [(&str, &str); 2] = [
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub root: PathBuf,
-    pub port: u16,
+    /// The daemon's port, when the manifest sets one; else the OS gives
+    /// one (`daemon_port`).
+    pub port: Option<u16>,
     pub workflows: Vec<PathBuf>,
     pub actions: Vec<PathBuf>,
     /// The folders with the workspace's sources.
@@ -177,7 +179,7 @@ fn read_manifest(path: &Path) -> Result<Map<String, Value>> {
     match serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", path.display()))? {
         Value::Object(m) => Ok(m),
         _ => bail!(
-            "{}: the manifest is an object: {{\"port\": 8787}}",
+            "{}: the manifest is an object: {{}} is a whole workspace",
             path.display()
         ),
     }
@@ -201,8 +203,8 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
     let mut m = read_manifest(&path)?;
     let at = |e: serde_json::Error, key: &str| anyhow!("{}: {key}: {e}", path.display());
     let port = match m.remove("port") {
-        Some(v) => serde_json::from_value(v).map_err(|e| at(e, "port"))?,
-        None => 8787,
+        Some(v) => Some(serde_json::from_value(v).map_err(|e| at(e, "port"))?),
+        None => None,
     };
     let folders: Folders = match m.remove("folders") {
         Some(v) => serde_json::from_value(v).map_err(|e| at(e, "folders"))?,
@@ -286,6 +288,16 @@ fn named(
         out.insert(name, f);
     }
     Ok(out)
+}
+
+/// Writes `path` through a temporary file beside it and a rename, so a
+/// reader never sees half of it.
+fn write_through(path: &Path, text: &str) -> Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".new");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, text).with_context(|| format!("cannot write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("cannot write {}", path.display()))
 }
 
 /// A file's name without its extension.
@@ -475,14 +487,41 @@ impl Workspace {
             bail!("{}: {kind}.{name} is an object", path.display());
         };
         e.insert(key.into(), v);
-        let tmp = path.with_extension("json.new");
-        std::fs::write(
-            &tmp,
-            serde_json::to_string_pretty(&Value::Object(m))? + "\n",
-        )
-        .with_context(|| format!("cannot write {}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))?;
+        write_through(
+            &path,
+            &(serde_json::to_string_pretty(&Value::Object(m))? + "\n"),
+        )?;
         Ok(path)
+    }
+
+    /// Where the daemon keeps the port the OS gave it.
+    fn port_file(&self) -> PathBuf {
+        self.root.join(".itero").join("port")
+    }
+
+    /// The port the OS last gave the daemon, when the manifest sets none.
+    pub fn saved_port(&self) -> Option<u16> {
+        std::fs::read_to_string(self.port_file())
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
+    /// The daemon's port: the manifest's, else the one it was last given.
+    pub fn daemon_port(&self) -> Option<u16> {
+        self.port.or_else(|| self.saved_port())
+    }
+
+    /// Keeps the port the OS gave the daemon, for its next start and for
+    /// whoever asks it (`itero info`, the watchdog).
+    pub fn save_port(&self, port: u16) -> Result<()> {
+        let f = self.port_file();
+        if let Some(dir) = f.parent() {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("cannot make {}", dir.display()))?;
+        }
+        write_through(&f, &format!("{port}\n"))
     }
 
     /// The names of the internal workflows: whose runs lists leave out

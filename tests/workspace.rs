@@ -10,11 +10,16 @@ fn write(root: &Path, rel: &str, text: &str) {
 }
 
 #[test]
-fn defaults_are_one_workflows_and_one_actions_folder_on_8787() {
+fn defaults_are_one_workflows_and_one_actions_folder_and_no_port() {
     let d = tempfile::tempdir().unwrap();
     write(d.path(), "itero.config.json", "{}");
     let ws = workspace::find(d.path()).unwrap();
-    assert_eq!(ws.port, 8787);
+    // the OS gives one when the daemon starts, kept in .itero/port
+    assert_eq!(ws.port, None);
+    assert_eq!(ws.daemon_port(), None);
+    std::fs::create_dir_all(d.path().join(".itero")).unwrap();
+    std::fs::write(d.path().join(".itero/port"), "50123\n").unwrap();
+    assert_eq!(ws.daemon_port(), Some(50123));
     assert_eq!(ws.workflows, [d.path().join("workflows")]);
     assert_eq!(ws.actions, [d.path().join("actions")]);
 }
@@ -62,7 +67,8 @@ fn the_manifest_says_how_it_runs_and_what_it_is() {
         }"#,
     );
     let ws = workspace::find(d.path()).unwrap();
-    assert_eq!(ws.port, 8799);
+    assert_eq!(ws.port, Some(8799));
+    assert_eq!(ws.daemon_port(), Some(8799));
     assert_eq!(ws.workflows, [d.path().join("iş akışları")]);
     assert_eq!(ws.actions[0], d.path().join("eylemler"));
     assert!(ws.actions[1].ends_with("ortak"));

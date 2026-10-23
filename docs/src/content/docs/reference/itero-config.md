@@ -39,7 +39,7 @@ and shown by `itero info` and the log's `daemon.started` line. `id`,
 
 | Key | Is | Default |
 |---|---|---|
-| `port` | the HTTP API's port, on 127.0.0.1 | `8787` |
+| `port` | the HTTP API's port, on 127.0.0.1: set it when an app needs a fixed address | one the OS gives (below) |
 | `folders.workflows` | the folders with workflows, any number | `["workflows"]` |
 | `folders.actions` | the folders with actions, any number | `["actions"]` |
 | `folders.sources` | the folders with [sources](/guides/messages/#sources), any number | `["sources"]` |
@@ -49,7 +49,13 @@ that is not there holds nothing, and `itero check` notes it. Each folder's
 subfolders count too (hidden ones and `node_modules` apart). Two workflows,
 two actions or two sources of one name, in any of the folders, is an error
 naming both files. The journal, the log and each workflow's memory live in
-`.itero/`. Two workspaces on one machine need two ports.
+`.itero/`.
+
+Without a `port`, the daemon asks the OS for a free one when it starts
+and keeps it in `.itero/port`; its next start asks for the same one, and
+only when that is taken gets another (the log says so). `itero info` shows
+it. A daemon that cannot listen on its port stops before it starts
+anything.
 
 ### `limits`
 
