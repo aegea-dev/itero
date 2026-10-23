@@ -1,8 +1,9 @@
-import { expect } from "chai";
+import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { Workspace } from "./workspace.js";
 
-describe("beacon", function () {
-  this.timeout(30000);
+setDefaultTimeout(30000);
+
+describe("beacon", () => {
   let ws;
   beforeEach(() => {
     ws = new Workspace();
@@ -22,8 +23,8 @@ describe("beacon", function () {
     ws.pass(at(0));
     ws.pass(at(1));
     const [run] = ws.runs();
-    expect(run).to.include({ workflow: "sites", status: "done" });
-    expect(ws.state(run)).to.deep.include({
+    expect(run).toMatchObject({ workflow: "sites", status: "done" });
+    expect(ws.state(run)).toMatchObject({
       status: { "http://127.0.0.1:9": "down" },
       text: "http://127.0.0.1:9: down",
     });
@@ -34,8 +35,8 @@ describe("beacon", function () {
     ws.pass(at(1));
     ws.pass(at(2));
     const runs = ws.runs();
-    expect(runs).to.have.length(2);
-    expect(ws.state(runs[0])).to.not.have.property("text");
+    expect(runs).toHaveLength(2);
+    expect(ws.state(runs[0])).not.toHaveProperty("text");
   });
 
   it("tells again when a site's state changes", () => {
@@ -43,6 +44,6 @@ describe("beacon", function () {
     ws.pass(at(1));
     ws.manifest((m) => m.workflow.sites.settings.sites.push("http://127.0.0.1:19"));
     ws.pass(at(2));
-    expect(ws.state(ws.runs()[0]).text).to.equal("http://127.0.0.1:19: down");
+    expect(ws.state(ws.runs()[0]).text).toBe("http://127.0.0.1:19: down");
   });
 });

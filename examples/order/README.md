@@ -12,9 +12,9 @@ daemon` in this folder, then:
 `test/` has four tests: the order waits for its payment, ships once paid, fails
 when the payment is refused, and is not reached by another order's
 payment. Each test runs on a throwaway copy of this folder,
-with `itero` from your `PATH` (or `$ITERO_BIN`). They need Node:
+with `itero` from your `PATH` (or `$ITERO_BIN`). They need Bun,
+and nothing else installed:
 
 ```sh
-npm install
-npm test
+bun test
 ```

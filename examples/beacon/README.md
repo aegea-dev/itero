@@ -19,9 +19,9 @@ followed by #changed and #notify. The actions need curl, jq, df and awk.
 `test/` has three tests: the first check tells what it watches, nothing is told
 when nothing changed, and a new site is told. They use a port nothing
 answers on, so they need no network. Each test runs on a throwaway copy of this folder,
-with `itero` from your `PATH` (or `$ITERO_BIN`). They need Node:
+with `itero` from your `PATH` (or `$ITERO_BIN`). They need Bun,
+and nothing else installed:
 
 ```sh
-npm install
-npm test
+bun test
 ```
