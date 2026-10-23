@@ -5,7 +5,9 @@ A notification for each new Gmail mail, the moment it arrives: no polling.
 IDLE, and Gmail tells it when a mail comes; it prints one line per mail,
 and `workflows/gmail.json` shows it with `#notify`, with a sound: the
 subject, under the sender. On macOS a click on
-the notification opens the mail in Gmail on the web.
+the notification opens the mail in Gmail on the web, and is a message,
+`itero.notification.clicked`, whose `data` names the mail (`uid`,
+`mailbox`): a workflow on it could mark the mail read.
 
 It needs Python 3.14 or later, and a Gmail app password: turn on 2-Step
 Verification for your Google account, then make one at

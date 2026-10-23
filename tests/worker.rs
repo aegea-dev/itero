@@ -19,6 +19,7 @@ mod steps {
         StepRun {
             file,
             root: dir.to_path_buf(),
+            workflow: "deneme".into(),
             env: env
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))

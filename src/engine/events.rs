@@ -39,6 +39,22 @@ pub fn engine_own(kind: &str) -> bool {
 /// whose `on` names the path.
 pub const PATH_CHANGED: &str = "itero.path.changed";
 
+/// A click on a notification `#notify` showed: `{"notification", "answer",
+/// "workflow", "data"}`, saved by Itero.app through `itero
+/// notification-clicked`. Itero's own, so nothing from outside fakes one.
+pub const NOTIFICATION_CLICKED: &str = "itero.notification.clicked";
+
+/// Saves a click on a notification for the workspace; its data must name
+/// the notification. Returns the message's id.
+pub fn notification_clicked(ws: &Workspace, data: Value, now: &str) -> anyhow::Result<String> {
+    if !data.get("notification").is_some_and(Value::is_string) {
+        anyhow::bail!("a click names its notification: {{\"notification\": \"<id>\", ...}}");
+    }
+    let e = own(NOTIFICATION_CLICKED, data, now);
+    Journal::open(ws)?.publish(&e)?;
+    Ok(e.id)
+}
+
 /// One of the daemon's own messages, for the workspace.
 pub fn own(kind: &str, data: Value, now: &str) -> Envelope {
     debug_assert!(kind.starts_with(OWN));

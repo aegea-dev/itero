@@ -72,10 +72,32 @@ secrets are the action's, whatever the version.
 | `$subtitle` | a line under the title (on Linux, the text's first line) |
 | `$sound` | `default`, or a macOS sound's name such as `Glass` (those in `/System/Library/Sounds`); on Linux, a sound theme's name |
 | `$url` | opened by a click on it, on macOS through Itero.app: http or https, anything else an error, as it may come from a message |
+| `$buttons` | a list of 1 to 4 labels, shown as its buttons (macOS); the step then waits for an answer |
+| `$wait` | `true`: the step waits for a click on it, with no buttons |
+| `$data` | an object a click on it passes on, as `data` |
 
 ```json
 { "#notify": { "title": "Backup", "subtitle": "disk 2", "text": "$why", "sound": "Basso" } }
 ```
+
+On macOS, each click on a notification from `#notify` is a message,
+`itero.notification.clicked`, in the workspace that showed it: `answer` is
+the button's label, `open` for a click on the notification itself, or
+`dismissed` when one that waits is closed without one. A workflow can start
+on it ([Messages from the daemon](/guides/maintenance/#messages-from-the-daemon)),
+and a step with `$buttons` or `$wait` waits for it, then the run goes on
+with `$answer` in its state:
+
+```json
+{ "steps": [
+    "#plan",
+    { "#notify": { "title": "Deploy?", "text": "$summary", "buttons": ["Deploy", "Cancel"] } },
+    { "#apply": { "on": [{ "$answer": "Deploy" }] } }
+] }
+```
+
+A run nobody answers waits until its workflow's `timeout`. On Linux a
+notification has no buttons and tells no clicks.
 
 How long a notification stays is yours to set, in System Settings,
 Notifications, itero: Banners go away by themselves, Alerts stay until

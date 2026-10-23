@@ -99,27 +99,130 @@ pub fn openable(url: &str) -> bool {
 }
 
 /// What `#notify` shows: `$title`, `$text`, and `$subtitle`, `$sound`
-/// (`default`, or a sound's name) and `$url` when set.
-pub struct Note<'a> {
-    pub title: &'a str,
-    pub text: &'a str,
-    pub subtitle: Option<&'a str>,
-    pub sound: Option<&'a str>,
-    pub url: Option<&'a str>,
+/// (`default`, or a sound's name), `$url` and `$buttons` when set.
+#[derive(Default)]
+pub struct Note {
+    pub title: String,
+    pub text: String,
+    pub subtitle: Option<String>,
+    pub sound: Option<String>,
+    pub url: Option<String>,
+    /// Its buttons' labels, at most `BUTTONS`.
+    pub buttons: Vec<String>,
+    /// Whether its step waits for a click on it.
+    pub wait: bool,
+    /// What a click on it is told with, as itero's own message.
+    pub click: Option<Click>,
 }
 
-impl Note<'_> {
-    /// The ones set of subtitle, sound and url, by name, in that order.
-    fn extras(&self) -> Vec<(&'static str, &str)> {
-        [
-            ("subtitle", self.subtitle),
-            ("sound", self.sound),
-            ("url", self.url),
-        ]
-        .into_iter()
-        .filter_map(|(k, v)| v.map(|v| (k, v)))
-        .collect()
+/// Where a click on a notification goes: `itero notification-clicked`,
+/// run by the `itero` that showed it in its workspace, with its id, its
+/// workflow and `$data`.
+pub struct Click {
+    pub id: String,
+    pub workspace: PathBuf,
+    pub itero: PathBuf,
+    pub workflow: String,
+    pub data: Option<String>,
+}
+
+/// The most buttons a notification has.
+pub const BUTTONS: usize = 4;
+
+impl Note {
+    /// Its values past the title and text, by name, in this order: those
+    /// shown, then (`all`, for the notifier) what a click is told with.
+    /// The id is among the first when it waits, so tests can answer it.
+    pub fn fields(&self, all: bool) -> Vec<(&'static str, String)> {
+        let mut f: Vec<(&'static str, String)> = vec![];
+        for (k, v) in [
+            ("subtitle", &self.subtitle),
+            ("sound", &self.sound),
+            ("url", &self.url),
+        ] {
+            f.extend(v.clone().map(|v| (k, v)));
+        }
+        if !self.buttons.is_empty() {
+            f.push(("buttons", Value::from(self.buttons.clone()).to_string()));
+        }
+        if self.wait {
+            f.push(("wait", "true".into()));
+        }
+        if let Some(c) = &self.click {
+            if all || self.wait {
+                f.push(("notification", c.id.clone()));
+            }
+            if all {
+                f.push(("workspace", c.workspace.display().to_string()));
+                f.push(("itero", c.itero.display().to_string()));
+                f.push(("workflow", c.workflow.clone()));
+                f.extend(c.data.clone().map(|d| ("data", d)));
+            }
+        }
+        f
     }
+}
+
+/// `$buttons`: a JSON list of 1 to `BUTTONS` labels.
+fn labels(text: &str) -> Result<Vec<String>, String> {
+    let bad = || format!("#notify's buttons are a list of 1 to {BUTTONS} labels: {text}");
+    let labels: Vec<String> = serde_json::from_str(text).map_err(|_| bad())?;
+    if labels.is_empty() || labels.len() > BUTTONS || labels.iter().any(|l| l.trim().is_empty()) {
+        return Err(bad());
+    }
+    Ok(labels)
+}
+
+/// The built-in `#notify`. One that waits (with `$buttons`, or `$wait`)
+/// says "not yet" with its notification's id in the state, and its old
+/// answer cleared; run again while waiting, it shows nothing and is done
+/// once a click's `answer` has joined the state.
+fn notify(r: &StepRun) -> Result<Outcome, Failure> {
+    let get = |k: &str| r.env.get(k).cloned();
+    let text = get("text").ok_or_else(|| Failure::Error("#notify needs $text".into()))?;
+    let buttons = match r.env.get("buttons") {
+        Some(t) => labels(t)?,
+        None => vec![],
+    };
+    let wait = !buttons.is_empty() || r.env.get("wait").is_some_and(|w| w == "true");
+    if wait && r.waiting_since.is_some() {
+        return Ok(if r.state.contains_key("answer") {
+            Outcome::Done(Map::new())
+        } else {
+            Outcome::NotYet(Map::new())
+        });
+    }
+    let data = get("data");
+    if let Some(d) = &data
+        && !serde_json::from_str::<Value>(d).is_ok_and(|v| v.is_object())
+    {
+        return Err(Failure::Error(format!("#notify's data is an object: {d}")));
+    }
+    let id = uuid::Uuid::now_v7().to_string();
+    let itero = std::env::current_exe().map_err(|e| format!("which itero is this: {e}"))?;
+    show(&Note {
+        title: get("title").unwrap_or_else(|| "itero".into()),
+        text,
+        subtitle: get("subtitle"),
+        sound: get("sound"),
+        url: get("url"),
+        buttons,
+        wait,
+        click: Some(Click {
+            id: id.clone(),
+            workspace: r.root.clone(),
+            itero,
+            workflow: r.workflow.clone(),
+            data,
+        }),
+    })?;
+    if !wait {
+        return Ok(Outcome::Done(Map::new()));
+    }
+    let mut out = Map::new();
+    out.insert("notification".into(), Value::String(id));
+    out.insert("answer".into(), Value::Null);
+    Ok(Outcome::NotYet(out))
 }
 
 /// The ways to show a notification here, in order: each a program and its
@@ -135,32 +238,32 @@ fn notifiers(n: &Note) -> Vec<(PathBuf, Vec<String>)> {
         let mut out: Vec<(PathBuf, Vec<String>)> = notifier()
             .into_iter()
             .map(|p| {
-                let mut a = s(&[n.title, n.text]);
-                for (k, v) in n.extras() {
-                    a.extend([format!("--{k}"), v.to_string()]);
+                let mut a = vec![n.title.clone(), n.text.clone()];
+                for (k, v) in n.fields(true) {
+                    a.extend([format!("--{k}"), v]);
                 }
                 (p, a)
             })
             .collect();
         // the values only as arguments, never in the script's text
         let mut shows = "display notification (item 2 of argv) with title (item 1 of argv) subtitle (item 3 of argv)".to_string();
-        let named = n.sound.filter(|s| *s != "default");
+        let named = n.sound.as_deref().filter(|s| *s != "default");
         if named.is_some() {
             shows.push_str(" sound name (item 4 of argv)");
         }
         let mut script = s(&["-e", "on run argv", "-e", &shows, "-e", "end run"]);
-        script.extend(s(&[n.title, n.text, n.subtitle.unwrap_or("")]));
+        script.extend(s(&[&n.title, &n.text, n.subtitle.as_deref().unwrap_or("")]));
         script.extend(named.map(String::from));
         out.push(("osascript".into(), script));
         return out;
     }
-    let text = match n.subtitle {
+    let text = match &n.subtitle {
         Some(sub) => format!("{sub}\n{}", n.text),
-        None => n.text.to_string(),
+        None => n.text.clone(),
     };
-    let (title, body) = (n.title, text.as_str());
+    let (title, body) = (n.title.as_str(), text.as_str());
     let mut send = s(&["--app-name=itero"]);
-    if let Some(sound) = n.sound {
+    if let Some(sound) = n.sound.as_deref() {
         let name = if sound == "default" {
             "message-new-instant"
         } else {
@@ -198,10 +301,9 @@ fn notifiers(n: &Note) -> Vec<(PathBuf, Vec<String>)> {
 
 /// A desktop notification, through the first of `notifiers` there is. With
 /// `ITERO_NOTIFY_LOG` set, a line is appended to that file instead: the
-/// title, the text, then `subtitle=`, `sound=` and `url=` when set, tab
-/// separated.
+/// title, the text, then `Note::fields` as `name=value`, tab separated.
 fn show(n: &Note) -> Result<(), String> {
-    if let Some(u) = n.url
+    if let Some(u) = &n.url
         && !openable(u)
     {
         return Err(format!("#notify's url is http or https: {u}"));
@@ -214,7 +316,7 @@ fn show(n: &Note) -> Result<(), String> {
             .map_err(|e| format!("cannot open {}: {e}", PathBuf::from(&log).display()))?;
         // one write: lines from steps side by side never interleave
         let mut line = format!("{}\t{}", n.title, n.text);
-        for (k, v) in n.extras() {
+        for (k, v) in n.fields(false) {
             line.push_str(&format!("\t{k}={v}"));
         }
         line.push('\n');
@@ -344,6 +446,9 @@ pub struct StepRun {
     pub file: PathBuf,
     /// The workspace: where the action runs.
     pub root: PathBuf,
+    /// The run's workflow: what a click on its notification names.
+    #[serde(default)]
+    pub workflow: String,
     /// Its values, as environment variables.
     #[serde(default)]
     pub env: std::collections::BTreeMap<String, String>,
@@ -395,19 +500,7 @@ pub fn run_step_telling(r: &StepRun, printed: &(dyn Fn() + Sync)) -> Result<Outc
         return roll_log(r);
     }
     if r.file == Path::new(NOTIFY) {
-        let text = r
-            .env
-            .get("text")
-            .ok_or_else(|| Failure::Error("#notify needs $text".into()))?;
-        let get = |k: &str| r.env.get(k).map(String::as_str);
-        show(&Note {
-            title: get("title").unwrap_or("itero"),
-            text,
-            subtitle: get("subtitle"),
-            sound: get("sound"),
-            url: get("url"),
-        })?;
-        return Ok(Outcome::Done(Map::new()));
+        return notify(r);
     }
     if let Some(dir) = r.memory.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
