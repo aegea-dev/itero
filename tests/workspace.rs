@@ -186,6 +186,35 @@ fn args_are_an_object_or_a_list_of_objects() {
 }
 
 #[test]
+fn a_sources_args_are_an_object() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = simple(d.path());
+    assert_eq!(ws.source_args("posta.geldi").unwrap(), None);
+    write(
+        d.path(),
+        "itero.config.json",
+        r#"{ "source": {
+              "posta.geldi": { "args": { "user": "ayşe@örnek.test", "password": "$$POSTA_ŞİFRE" } },
+              "sade.olay": { "description": "Args yok" } } }"#,
+    );
+    let a = ws.source_args("posta.geldi").unwrap().unwrap();
+    assert_eq!(a["user"], "ayşe@örnek.test");
+    assert_eq!(ws.source_args("sade.olay").unwrap(), None);
+    for args in [r#"[{"user": "can@örnek.test"}]"#, r#""çay""#] {
+        write(
+            d.path(),
+            "itero.config.json",
+            &format!(r#"{{"source": {{"posta.geldi": {{"args": {args}}}}}}}"#),
+        );
+        let e = format!("{:#}", ws.source_args("posta.geldi").unwrap_err());
+        assert!(
+            e.contains("source.posta.geldi.args are an object") && e.contains("itero.config.json"),
+            "{args}: {e}"
+        );
+    }
+}
+
+#[test]
 fn meta_is_free_and_limits_have_defaults() {
     let d = tempfile::tempdir().unwrap();
     let ws = simple(d.path());

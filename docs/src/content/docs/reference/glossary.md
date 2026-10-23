@@ -96,7 +96,8 @@ step whose `on` does not hold is skipped.
 ### args
 
 Data for an action, `action.<name>.args` in `itero.config.json`, set with `itero args`. A list
-runs the step once per item.
+runs the step once per item. A source has args too, `source.<name>.args`:
+an object.
 
 ### settings
 

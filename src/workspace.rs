@@ -572,13 +572,8 @@ impl Workspace {
     /// or a list of objects (the step runs once per item). None when its
     /// entry has none.
     pub fn args(&self, action: &str) -> Result<Option<Value>> {
-        let v = match self.entries("action")?.remove(action) {
-            Some(Value::Object(mut e)) => e.remove("args"),
-            _ => None,
-        };
-        let v = match v {
-            None | Some(Value::Null) => return Ok(None),
-            Some(v) => v,
+        let Some(v) = self.entry_args("action", action)? else {
+            return Ok(None);
         };
         let ok = match &v {
             Value::Object(_) => true,
@@ -592,5 +587,26 @@ impl Workspace {
             );
         }
         Ok(Some(v))
+    }
+
+    /// A source's args, `source.<name>.args` in the manifest: an object (a
+    /// source runs once). None when its entry has none.
+    pub fn source_args(&self, source: &str) -> Result<Option<Map<String, Value>>> {
+        match self.entry_args("source", source)? {
+            None => Ok(None),
+            Some(Value::Object(o)) => Ok(Some(o)),
+            Some(_) => bail!(
+                "{}: source.{source}.args are an object",
+                self.root.join(MANIFEST).display()
+            ),
+        }
+    }
+
+    /// `<kind>.<name>.args` in the manifest, as written; `null` is none.
+    fn entry_args(&self, kind: &str, name: &str) -> Result<Option<Value>> {
+        Ok(match self.entries(kind)?.remove(name) {
+            Some(Value::Object(mut e)) => e.remove("args").filter(|v| !v.is_null()),
+            _ => None,
+        })
     }
 }
