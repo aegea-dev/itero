@@ -32,8 +32,8 @@ libc = "~0.2.190"
 # itero-notifier: notifications as itero (Itero.app), through UserNotifications
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "~0.6.5"
-objc2-foundation = { version = "~0.3.2", default-features = false, features = ["std", "NSString", "NSError", "NSDictionary", "NSObject", "NSDate", "NSTimer", "block2"] }
-objc2-user-notifications = { version = "~0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNNotification", "UNNotificationResponse", "UNNotificationSound"] }
+objc2-foundation = { version = "~0.3.2", default-features = false, features = ["std", "NSString", "NSError", "NSDictionary", "NSObject", "NSDate", "NSTimer", "NSArray", "NSSet", "NSEnumerator", "block2"] }
+objc2-user-notifications = { version = "~0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNNotification", "UNNotificationResponse", "UNNotificationSound", "UNNotificationAction", "UNNotificationCategory"] }
 block2 = "~0.6.2"
 objc2-app-kit = { version = "~0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
 

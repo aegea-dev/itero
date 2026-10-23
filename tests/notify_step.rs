@@ -14,6 +14,7 @@ fn the_built_in_notify_shows_text() {
     let step = |env: &[(&str, &str)]| StepRun {
         file: PathBuf::from(worker::NOTIFY),
         root: d.path().to_path_buf(),
+        workflow: "bildirim".into(),
         env: env
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))

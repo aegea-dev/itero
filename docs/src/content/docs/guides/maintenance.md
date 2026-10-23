@@ -10,7 +10,8 @@ workspace changes or turns them off the same way.
 
 ## Messages from the daemon
 
-Their types start with `itero.`, which only the daemon may send:
+Their types start with `itero.`, which only itero may send (a click on a
+notification comes through Itero.app):
 
 | Type | When | Data |
 |---|---|---|
@@ -20,6 +21,7 @@ Their types start with `itero.`, which only the daemon may send:
 | `itero.source.gave-up` | a source kept ending and was given up on | `source`, `why` |
 | `itero.space.full` | `.itero/` is past its `space` limit | `used`, `limit` |
 | `itero.log.full` | the log is past its `log` limit | `path`, `size`, `limit` |
+| `itero.notification.clicked` | a notification from `#notify` was clicked, on macOS ([`#notify`](/guides/actions/#built-in)) | `notification`, `answer`, `workflow`, `data` |
 
 A workflow on one is written like any other:
 

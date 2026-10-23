@@ -115,6 +115,12 @@ pub enum Cmd {
     /// A worker: one job, JSON in on stdin, its output as JSON on stdout
     #[command(hide = true)]
     Worker,
+    /// A click on a notification itero showed, as Itero.app tells it
+    #[command(hide = true)]
+    NotificationClicked {
+        /// The click, as JSON: {"notification", "answer", "workflow", "data"}
+        data: String,
+    },
     /// For sources: print a line each time a file or folder changes
     Watch { path: std::path::PathBuf },
     /// Keeps `itero daemon` running: restarts it when it exits, stops
@@ -1047,6 +1053,13 @@ fn dispatch(cli: Cli) -> Result<()> {
                 serde_json::from_str(&text).map_err(|e| anyhow!("the manager's input: {e}"))?;
             let answer = crate::engine::steps::decide(&input).map_err(|e| anyhow!(e))?;
             println!("{}", serde_json::to_string(&answer)?);
+        }
+        Cmd::NotificationClicked { data } => {
+            let ws = workspace()?;
+            let v: serde_json::Value =
+                serde_json::from_str(&data).map_err(|e| anyhow!("the click, as JSON: {e}"))?;
+            let now = crate::engine::daemon::stamp(chrono::Utc::now());
+            crate::engine::events::notification_clicked(&ws, v, &now)?;
         }
         Cmd::Worker => {
             let mut text = String::new();

@@ -676,11 +676,14 @@ fn route(
     if counted && (no_room || j.active_count(&flows.internals())? >= ws.limits.runs) {
         return Ok(false);
     }
-    // the daemon's own messages start workflows; no run waits for them
+    // the daemon's own messages start workflows; no run waits for them,
+    // but for a click on a notification, which a #notify step waits for
+    let reaches =
+        !r.event.kind.starts_with(events::OWN) || r.event.kind == events::NOTIFICATION_CLICKED;
     let waiting: Vec<String> = j
         .active_runs()?
         .into_iter()
-        .filter(|run| steps::is_waiting(&run.runtime) && !r.event.kind.starts_with(events::OWN))
+        .filter(|run| reaches && steps::is_waiting(&run.runtime))
         .map(|run| run.id)
         .collect();
     let started = j.route(r, &starts, &waiting, &stamp(now))?;
@@ -1148,6 +1151,7 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
     Ok(StepRun {
         file,
         root: ws.root.clone(),
+        workflow: workflow.into(),
         env: bind(&run.runtime.state, args.as_ref(), &job)?,
         state: run.runtime.state.clone(),
         memory: ws.root.join(".itero").join("memory").join(workflow),
