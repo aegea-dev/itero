@@ -134,7 +134,7 @@ fn a_watchdog_restarts_a_daemon_that_dies() {
         .unwrap()
         .port();
     // a workspace with no workflows: the daemon idles, and serves its health
-    std::fs::write(d.path().join("itero.toml"), format!("port = {port}\n")).unwrap();
+    std::fs::write(d.path().join("itero.config.json"), format!("{{\"port\": {port}}}")).unwrap();
     let logs = tempfile::tempdir().unwrap();
     let log = logs.path().join("watchdog.log");
     let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_itero"));

@@ -1,29 +1,42 @@
-//! The workspace: the folder with itero.toml, and the folders it lists for
-//! workflows, actions and sources. One daemon runs one workspace.
+//! The workspace: the folder with itero.config.json, and the folders it
+//! lists for workflows, actions and sources. One daemon runs one workspace.
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// The workspace's manifest: what it is, how it runs, and what its
+/// workflows, actions and sources are.
+pub const MANIFEST: &str = "itero.config.json";
+
+/// The manifest's keys for how the workspace runs, and for its entries:
+/// every other key at its top says what the workspace is.
+const RUNNING: [&str; 6] = ["port", "folders", "limits", "workflow", "action", "source"];
+
+/// `folders` as written.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Settings {
-    #[serde(default = "default_port")]
-    port: u16,
+struct Folders {
     #[serde(default = "default_workflows")]
     workflows: Vec<String>,
     #[serde(default = "default_actions")]
     actions: Vec<String>,
     #[serde(default = "default_sources")]
     sources: Vec<String>,
-    #[serde(default)]
-    meta: Map<String, Value>,
-    #[serde(default)]
-    limits: RawLimits,
 }
 
-/// `[limits]` as written: sizes and durations are text, `"1GB"`, `"1d"`.
+impl Default for Folders {
+    fn default() -> Folders {
+        Folders {
+            workflows: default_workflows(),
+            actions: default_actions(),
+            sources: default_sources(),
+        }
+    }
+}
+
+/// `limits` as written: sizes and durations are text, `"1GB"`, `"1d"`.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct RawLimits {
@@ -116,10 +129,6 @@ fn default_sources() -> Vec<String> {
     vec!["sources".into()]
 }
 
-fn default_port() -> u16 {
-    8787
-}
-
 fn default_workflows() -> Vec<String> {
     vec!["workflows".into()]
 }
@@ -143,7 +152,8 @@ pub struct Workspace {
     pub actions: Vec<PathBuf>,
     /// The folders with the workspace's sources.
     pub sources: Vec<PathBuf>,
-    /// `[meta]`: what a person says about the workspace.
+    /// What the manifest says the workspace is: `name`, `version`,
+    /// `description` and the person's own keys.
     pub meta: Map<String, Value>,
     pub limits: Limits,
 }
@@ -160,31 +170,57 @@ fn folder(root: &Path, s: &str) -> PathBuf {
     }
 }
 
-/// The workspace `cwd` is in: the nearest folder upwards with itero.toml.
-pub fn find(cwd: &Path) -> Result<Workspace> {
-    let Some(root) = cwd.ancestors().find(|d| d.join("itero.toml").is_file()) else {
-        bail!(
-            "no itero.toml here or above: write one (port, workflows, actions) to make this folder a workspace"
-        );
-    };
-    let path = root.join("itero.toml");
-    let text = std::fs::read_to_string(&path)
+/// The manifest at `path`: a JSON object.
+fn read_manifest(path: &Path) -> Result<Map<String, Value>> {
+    let text = std::fs::read_to_string(path)
         .with_context(|| format!("cannot read {}", path.display()))?;
-    let s: Settings = toml::from_str(&text).with_context(|| format!("{}", path.display()))?;
-    for k in s.meta.keys() {
-        crate::flow::given_by_itero(k).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    match serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", path.display()))? {
+        Value::Object(m) => Ok(m),
+        _ => bail!("{}: the manifest is an object: {{\"port\": 8787}}", path.display()),
+    }
+}
+
+/// The workspace `cwd` is in: the nearest folder upwards with
+/// itero.config.json.
+pub fn find(cwd: &Path) -> Result<Workspace> {
+    let Some(root) = cwd.ancestors().find(|d| d.join(MANIFEST).is_file()) else {
+        if let Some(old) = cwd.ancestors().find(|d| d.join("itero.toml").is_file()) {
+            bail!(
+                "{}: itero reads {MANIFEST} now: write its port, [limits] and [meta] there (meta's keys at the top)",
+                old.join("itero.toml").display()
+            );
+        }
+        bail!("no {MANIFEST} here or above: write one ({{}} will do) to make this folder a workspace");
+    };
+    let path = root.join(MANIFEST);
+    let mut m = read_manifest(&path)?;
+    let at = |e: serde_json::Error, key: &str| anyhow!("{}: {key}: {e}", path.display());
+    let port = match m.remove("port") {
+        Some(v) => serde_json::from_value(v).map_err(|e| at(e, "port"))?,
+        None => 8787,
+    };
+    let folders: Folders = match m.remove("folders") {
+        Some(v) => serde_json::from_value(v).map_err(|e| at(e, "folders"))?,
+        None => Folders::default(),
+    };
+    let limits: RawLimits = match m.remove("limits") {
+        Some(v) => serde_json::from_value(v).map_err(|e| at(e, "limits"))?,
+        None => RawLimits::default(),
+    };
+    let meta: Map<String, Value> = m.into_iter().filter(|(k, _)| !RUNNING.contains(&k.as_str())).collect();
+    for k in meta.keys() {
+        if matches!(k.as_str(), "id" | "created" | "path") {
+            bail!("{}: {k} is given by itero and cannot be set", path.display());
+        }
     }
     Ok(Workspace {
         root: root.to_path_buf(),
-        port: s.port,
-        workflows: s.workflows.iter().map(|w| folder(root, w)).collect(),
-        actions: s.actions.iter().map(|a| folder(root, a)).collect(),
-        sources: s.sources.iter().map(|x| folder(root, x)).collect(),
-        meta: s.meta,
-        limits: s
-            .limits
-            .read()
-            .with_context(|| format!("{}", path.display()))?,
+        port,
+        workflows: folders.workflows.iter().map(|w| folder(root, w)).collect(),
+        actions: folders.actions.iter().map(|a| folder(root, a)).collect(),
+        sources: folders.sources.iter().map(|x| folder(root, x)).collect(),
+        meta,
+        limits: limits.read().with_context(|| format!("{}", path.display()))?,
     })
 }
 
@@ -331,7 +367,7 @@ impl Workspace {
             .count();
         if counted > self.limits.workflows {
             bail!(
-                "{counted} workflows: workflows in itero.toml's [limits] allows {}",
+                "{counted} workflows: limits.workflows in itero.config.json allows {}",
                 self.limits.workflows
             );
         }

@@ -1,4 +1,4 @@
-//! The workspace: itero.toml, and the workflows, actions, sources and args
+//! The workspace: itero.config.json, and the workflows, actions and sources
 //! in its folders.
 use itero::workspace;
 use std::path::Path;
@@ -12,7 +12,7 @@ fn write(root: &Path, rel: &str, text: &str) {
 #[test]
 fn defaults_are_one_workflows_and_one_actions_folder_on_8787() {
     let d = tempfile::tempdir().unwrap();
-    write(d.path(), "itero.toml", "");
+    write(d.path(), "itero.config.json", "{}");
     let ws = workspace::find(d.path()).unwrap();
     assert_eq!(ws.port, 8787);
     assert_eq!(ws.workflows, [d.path().join("workflows")]);
@@ -22,7 +22,7 @@ fn defaults_are_one_workflows_and_one_actions_folder_on_8787() {
 #[test]
 fn a_workspace_without_its_folders_has_no_workflows_and_its_daemon_idles() {
     let d = tempfile::tempdir().unwrap();
-    write(d.path(), "itero.toml", "");
+    write(d.path(), "itero.config.json", "{}");
     let ws = workspace::find(d.path()).unwrap();
     let names: Vec<String> = ws.flows().unwrap().into_iter().map(|(n, _)| n).collect();
     assert_eq!(names, ["keep", "logs"], "only the built-in ones");
@@ -33,18 +33,45 @@ fn a_workspace_without_its_folders_has_no_workflows_and_its_daemon_idles() {
 }
 
 #[test]
-fn no_itero_toml_is_an_error_saying_how_to_make_one() {
+fn no_manifest_is_an_error_saying_how_to_make_one() {
     let d = tempfile::tempdir().unwrap();
     let e = workspace::find(d.path()).unwrap_err().to_string();
-    assert!(e.contains("itero.toml"), "{e}");
+    assert!(e.contains("itero.config.json"), "{e}");
+    // an itero.toml from before is named, with where it goes
+    write(d.path(), "itero.toml", "port = 8787\n");
+    let e = workspace::find(d.path()).unwrap_err().to_string();
+    assert!(
+        e.contains("itero.toml") && e.contains("itero.config.json"),
+        "{e}"
+    );
 }
 
 #[test]
-fn an_unknown_setting_is_an_error() {
+fn the_manifest_says_how_it_runs_and_what_it_is() {
     let d = tempfile::tempdir().unwrap();
-    write(d.path(), "itero.toml", "kapı = 1\n");
-    let e = format!("{:#}", workspace::find(d.path()).err().unwrap());
-    assert!(e.contains("kapı"), "{e}");
+    write(
+        d.path(),
+        "itero.config.json",
+        r#"{
+          "name": "ev-işleri",
+          "version": "0.1.0",
+          "description": "Posta ve siparişler",
+          "kapı": 1,
+          "port": 8799,
+          "folders": { "workflows": ["iş akışları"], "actions": ["eylemler", "~/ortak"], "sources": ["kaynaklar"] }
+        }"#,
+    );
+    let ws = workspace::find(d.path()).unwrap();
+    assert_eq!(ws.port, 8799);
+    assert_eq!(ws.workflows, [d.path().join("iş akışları")]);
+    assert_eq!(ws.actions[0], d.path().join("eylemler"));
+    assert!(ws.actions[1].ends_with("ortak"));
+    assert_eq!(ws.sources, [d.path().join("kaynaklar")]);
+    // what it is: its own keys too, kept; how it runs is not among them
+    assert_eq!(ws.meta["name"], "ev-işleri");
+    assert_eq!(ws.meta["version"], "0.1.0");
+    assert_eq!(ws.meta["kapı"], 1);
+    assert!(!ws.meta.contains_key("port") && !ws.meta.contains_key("folders"));
 }
 
 fn executable(root: &Path, rel: &str, text: &str) {
@@ -54,7 +81,7 @@ fn executable(root: &Path, rel: &str, text: &str) {
 }
 
 fn simple(d: &Path) -> workspace::Workspace {
-    write(d, "itero.toml", "");
+    write(d, "itero.config.json", "{}");
     workspace::find(d).unwrap()
 }
 
@@ -165,8 +192,9 @@ fn meta_is_free_and_limits_have_defaults() {
     assert_eq!(l.most, std::time::Duration::from_secs(86_400));
     write(
         d.path(),
-        "itero.toml",
-        "[meta]\ndescription = \"Ev: posta ve siparişler\"\nsahibi = \"ayşe\"\netiketler = [\"ev\", \"küçük\"]\n\n[limits]\nruns = 5\nspace = \"500MB\"\nkeep = \"2h\"\nlog = \"64KB\"\nquiet = \"30m\"\nmost = \"6h\"\n",
+        "itero.config.json",
+        r#"{ "description": "Ev: posta ve siparişler", "sahibi": "ayşe", "etiketler": ["ev", "küçük"],
+             "limits": { "runs": 5, "space": "500MB", "keep": "2h", "log": "64KB", "quiet": "30m", "most": "6h" } }"#,
     );
     let ws = workspace::find(d.path()).unwrap();
     assert_eq!(ws.meta["sahibi"], "ayşe");
@@ -182,29 +210,30 @@ fn meta_is_free_and_limits_have_defaults() {
 
 #[test]
 fn limit_mistakes_are_named() {
-    for (toml, says) in [
-        ("[limits]\nkoşu = 5\n", "koşu"),
-        ("[limits]\nspace = \"çok\"\n", "a size is like 10MB or 1GB"),
-        ("[limits]\nkeep = \"bir gün\"\n", "a duration is like"),
-        ("[limits]\nsteps = 0\n", "steps is at least 1"),
-        (
-            "[limits]\nquiet = \"sessiz\"\n",
-            "quiet: a duration is like",
-        ),
-        ("[limits]\nmost = \"0s\"\n", "most is at least 1s"),
-        ("[meta]\nid = \"01a0\"\n", "id is given by itero"),
+    for (manifest, says) in [
+        (r#"{"limits": {"koşu": 5}}"#, "koşu"),
+        (r#"{"limits": {"space": "çok"}}"#, "a size is like 10MB or 1GB"),
+        (r#"{"limits": {"keep": "bir gün"}}"#, "a duration is like"),
+        (r#"{"limits": {"steps": 0}}"#, "steps is at least 1"),
+        (r#"{"limits": {"quiet": "sessiz"}}"#, "quiet: a duration is like"),
+        (r#"{"limits": {"most": "0s"}}"#, "most is at least 1s"),
+        (r#"{"id": "01a0"}"#, "id is given by itero"),
+        (r#"{"port": "sekiz"}"#, "port"),
+        (r#"{"folders": {"eylemler": ["x"]}}"#, "eylemler"),
+        (r#"["ş"]"#, "an object"),
+        ("{ bozuk", "itero.config.json"),
     ] {
         let d = tempfile::tempdir().unwrap();
-        write(d.path(), "itero.toml", toml);
+        write(d.path(), "itero.config.json", manifest);
         let e = format!("{:#}", workspace::find(d.path()).err().unwrap());
-        assert!(e.contains(says), "{toml}: {e}");
+        assert!(e.contains(says), "{manifest}: {e}");
     }
 }
 
 #[test]
 fn more_workflows_than_the_limit_is_an_error() {
     let d = tempfile::tempdir().unwrap();
-    write(d.path(), "itero.toml", "[limits]\nworkflows = 2\n");
+    write(d.path(), "itero.config.json", r#"{"limits": {"workflows": 2}}"#);
     let ws = workspace::find(d.path()).unwrap();
     for n in ["bir", "iki", "üç"] {
         write(

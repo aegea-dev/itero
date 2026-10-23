@@ -1,7 +1,0 @@
-# An order: its payment and stock checked side by side, the payment
-# waiting for its provider's message, then shipping and a mail. The
-# actions only pretend; each says what a real one would do. Run `itero
-# daemon` in this folder, then:
-#   itero emit order.placed '{"order": 43, "email": "ayse@example.com"}'
-#   itero emit payment.received '{"payment_ref": "pay-43", "paid": true}'
-port = 8789

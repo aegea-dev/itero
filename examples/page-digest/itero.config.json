@@ -1,0 +1,5 @@
+{
+  "name": "page-digest",
+  "description": "A page, summarized by an AI assistant, by mail, every morning at 9",
+  "port": 8790
+}

@@ -1,0 +1,5 @@
+{
+  "name": "mail-alert",
+  "description": "New mail, as it arrives",
+  "port": 8787
+}

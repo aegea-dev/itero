@@ -1,0 +1,5 @@
+{
+  "name": "photos",
+  "description": "Photos dropped into inbox/ get a thumbnail in thumbnails/",
+  "port": 8791
+}

@@ -1,0 +1,5 @@
+{
+  "name": "beacon",
+  "description": "Health checks on a schedule, told only when something changes",
+  "port": 8796
+}

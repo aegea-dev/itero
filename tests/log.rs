@@ -39,7 +39,7 @@ fn events(lines: &[Value]) -> Vec<&str> {
 fn a_run_is_told_step_by_step() {
     let d = tempfile::tempdir().unwrap();
     let root = d.path();
-    write(root, "itero.toml", "");
+    write(root, "itero.config.json", "{}");
     write(
         root,
         "workflows/sipariş.json",
@@ -159,7 +159,7 @@ fn a_run_is_told_step_by_step() {
 #[test]
 fn a_message_nothing_wants_says_so() {
     let d = tempfile::tempdir().unwrap();
-    write(d.path(), "itero.toml", "");
+    write(d.path(), "itero.config.json", "{}");
     let ws = itero::workspace::find(d.path()).unwrap();
     itero::engine::events::emit(&ws, "kimse.istemez", Some(json!({"ü": 1})), NOW).unwrap();
     itero::engine::daemon::run_once(&ws, NOW.parse().unwrap(), exe()).unwrap();
@@ -173,7 +173,7 @@ fn a_message_nothing_wants_says_so() {
 fn a_daemon_says_when_it_starts_and_stops() {
     let d = tempfile::tempdir().unwrap();
     let root = d.path();
-    write(root, "itero.toml", "[meta]\nsahibi = \"ayşe\"\n");
+    write(root, "itero.config.json", r#"{"sahibi": "ayşe"}"#);
     executable(
         root,
         "sources/kapı.çaldı",

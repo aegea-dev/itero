@@ -13,7 +13,7 @@ fn itero(dir: &Path, args: &[&str]) -> Output {
 
 fn workspace() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("itero.toml"), "").unwrap();
+    std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
     d
 }
 
@@ -333,8 +333,8 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
     let d = workspace();
     file(
         d.path(),
-        "itero.toml",
-        "port = 8797\n\n[meta]\nsahibi = \"ayşe\"\n\n[limits]\nruns = 7\n",
+        "itero.config.json",
+        r#"{"port": 8797, "sahibi": "ayşe", "limits": {"runs": 7}}"#,
     );
     file(
         d.path(),
@@ -364,7 +364,7 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
 #[test]
 fn workflows_lists_each_workflow_and_what_waits_for_a_daemon() {
     let d = workspace();
-    file(d.path(), "itero.toml", "port = 8799\n");
+    file(d.path(), "itero.config.json", r#"{"port": 8799}"#);
     file(
         d.path(),
         "workflows/sipariş.json",
@@ -418,7 +418,7 @@ fn workflows_lists_each_workflow_and_what_waits_for_a_daemon() {
 #[test]
 fn emit_says_what_a_message_starts() {
     let d = workspace();
-    file(d.path(), "itero.toml", "port = 8798\n");
+    file(d.path(), "itero.config.json", r#"{"port": 8798}"#);
     file(
         d.path(),
         "workflows/sipariş.json",
@@ -487,7 +487,7 @@ impl Drop for Daemon {
 #[test]
 fn emit_wait_answers_with_the_runs_end() {
     let d = workspace();
-    file(d.path(), "itero.toml", "port = 8802\n");
+    file(d.path(), "itero.config.json", r#"{"port": 8802}"#);
     file(
         d.path(),
         "workflows/selam.json",

@@ -62,7 +62,7 @@ fn quick() -> Policy {
 /// A workspace with one source, `sources/deneme.başladı`.
 fn ws_with_source(d: &std::path::Path, script: &str) -> itero::workspace::Workspace {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::write(d.join("itero.toml"), "").unwrap();
+    std::fs::write(d.join("itero.config.json"), "{}").unwrap();
     std::fs::create_dir_all(d.join("sources")).unwrap();
     let s = d.join("sources/deneme.başladı");
     std::fs::write(&s, script).unwrap();

@@ -76,7 +76,7 @@ fn each_new_mail_is_shown_once_as_it_arrives_and_old_mail_never() {
         .local_addr()
         .unwrap()
         .port();
-    std::fs::write(ws.join("itero.toml"), format!("port = {port}\n")).unwrap();
+    std::fs::write(ws.join("itero.config.json"), format!("{{\"port\": {port}}}")).unwrap();
     let daemon = Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
             .arg("daemon")

@@ -29,7 +29,7 @@ INSERT INTO events (id, time, type, source, subject, data) VALUES ('e-eski', '20
 ";
 
 fn ws(d: &std::path::Path) -> itero::workspace::Workspace {
-    std::fs::write(d.join("itero.toml"), "").unwrap();
+    std::fs::write(d.join("itero.config.json"), "{}").unwrap();
     itero::workspace::find(d).unwrap()
 }
 

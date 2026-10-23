@@ -23,13 +23,13 @@ struct Ws {
 
 impl Ws {
     fn new() -> Ws {
-        Ws::with("")
+        Ws::with("{}")
     }
 
-    /// A workspace whose itero.toml says `toml`.
-    fn with(toml: &str) -> Ws {
+    /// A workspace whose itero.config.json says `manifest`.
+    fn with(manifest: &str) -> Ws {
         let d = tempfile::tempdir().unwrap();
-        std::fs::write(d.path().join("itero.toml"), toml).unwrap();
+        std::fs::write(d.path().join("itero.config.json"), manifest).unwrap();
         let ws = itero::workspace::find(d.path()).unwrap();
         Ws { d, ws }
     }
@@ -296,7 +296,7 @@ fn a_run_that_waits_past_its_timeout_ends_in_error() {
 
 #[test]
 fn a_step_quiet_past_its_limit_is_stopped_and_run_again() {
-    let ws = Ws::with("[limits]\nquiet = \"1s\"\n");
+    let ws = Ws::with(r#"{"limits": {"quiet": "1s"}}"#);
     ws.flow(
         "sessiz",
         json!({"on": [{ "event": "order.placed" }], "steps": ["#sessiz"]}),
@@ -317,7 +317,7 @@ fn a_step_quiet_past_its_limit_is_stopped_and_run_again() {
 
 #[test]
 fn a_step_that_prints_as_it_goes_runs_past_its_quiet_limit() {
-    let ws = Ws::with("[limits]\nquiet = \"1s\"\n");
+    let ws = Ws::with(r#"{"limits": {"quiet": "1s"}}"#);
     ws.flow(
         "uzun",
         json!({"on": [{ "event": "order.placed" }], "steps": ["#uzun"]}),
@@ -334,7 +334,7 @@ fn a_step_that_prints_as_it_goes_runs_past_its_quiet_limit() {
 
 #[test]
 fn a_step_past_its_most_is_stopped_even_while_it_prints() {
-    let ws = Ws::with("[limits]\nquiet = \"1s\"\nmost = \"1s\"\n");
+    let ws = Ws::with(r#"{"limits": {"quiet": "1s", "most": "1s"}}"#);
     ws.flow(
         "döngü",
         json!({"on": [{ "event": "order.placed" }], "steps": ["#döngü"]}),
@@ -728,7 +728,7 @@ fn a_workflow_off_or_outside_its_dates_starts_nothing() {
 
 #[test]
 fn past_the_runs_limit_messages_wait_their_turn() {
-    let w = Ws::with("[limits]\nruns = 1\n");
+    let w = Ws::with(r#"{"limits": {"runs": 1}}"#);
     w.action("bekle", "[ -n \"$tamam\" ] || exit 75");
     w.flow(
         "sıra",
@@ -791,7 +791,7 @@ fn itero_messages_cannot_be_sent_from_outside() {
 
 #[test]
 fn internal_runs_are_outside_the_runs_limit_and_say_so_in_the_log() {
-    let w = Ws::with("[limits]\nruns = 1\nworkflows = 1\n");
+    let w = Ws::with(r#"{"limits": {"runs": 1, "workflows": 1}}"#);
     w.action("bekle", "exit 75");
     w.action("bak", "true");
     w.flow(
@@ -834,7 +834,7 @@ fn keep_forgets_ended_runs_every_hour() {
 
 #[test]
 fn past_its_space_the_daemon_says_so_and_starts_no_run() {
-    let w = Ws::with("[limits]\nspace = \"1KB\"\n");
+    let w = Ws::with(r#"{"limits": {"space": "1KB"}}"#);
     w.action("yaz", "true");
     w.flow(
         "iş",
@@ -860,7 +860,7 @@ fn past_its_space_the_daemon_says_so_and_starts_no_run() {
 
 #[test]
 fn past_its_size_the_log_is_rolled() {
-    let w = Ws::with("[limits]\nlog = \"1KB\"\nlogs = 1\n");
+    let w = Ws::with(r#"{"limits": {"log": "1KB", "logs": 1}}"#);
     w.action("yaz", "true");
     w.flow(
         "iş",
@@ -881,7 +881,7 @@ fn past_its_size_the_log_is_rolled() {
 
 #[test]
 fn a_built_in_workflow_is_replaced_or_turned_off_by_a_file_of_its_name() {
-    let w = Ws::with("[limits]\nlog = \"1KB\"\n");
+    let w = Ws::with(r#"{"limits": {"log": "1KB"}}"#);
     w.flow(
         "logs",
         json!({ "meta": { "off": true }, "on": [{ "event": "itero.log.full" }], "steps": ["#roll-log"] }),

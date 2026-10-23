@@ -4,7 +4,7 @@ use itero::engine::journal::Journal;
 use serde_json::json;
 
 fn ws(d: &std::path::Path) -> itero::workspace::Workspace {
-    std::fs::write(d.join("itero.toml"), "").unwrap();
+    std::fs::write(d.join("itero.config.json"), "{}").unwrap();
     itero::workspace::find(d).unwrap()
 }
 

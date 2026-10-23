@@ -8,7 +8,7 @@ use tower::ServiceExt;
 
 /// A workspace on port 8790, its router, and the receiver the router wakes.
 fn app(d: &std::path::Path) -> (axum::Router, std::sync::mpsc::Receiver<()>) {
-    std::fs::write(d.join("itero.toml"), "port = 8790\n").unwrap();
+    std::fs::write(d.join("itero.config.json"), r#"{"port": 8790}"#).unwrap();
     let ws = itero::workspace::find(d).unwrap();
     let (wake, woken) = std::sync::mpsc::channel();
     let engine = Arc::new(Engine {
