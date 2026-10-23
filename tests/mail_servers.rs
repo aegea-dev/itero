@@ -231,7 +231,7 @@ fn gmail_example(d: &Path, user: &str, host: &str) -> PathBuf {
         serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     m["port"] = free.local_addr().unwrap().port().into();
-    let args = &mut m["source"]["gmail.push.received"]["args"];
+    let args = &mut m["source"]["gmail.received"]["args"];
     args["host"] = host.into();
     args["port"] = IMAP.into();
     args["tls"] = false.into();
@@ -272,7 +272,7 @@ fn gmail_tells_each_new_mail_as_it_arrives_and_none_twice() {
     let ws = gmail_example(d.path(), &user, &host);
     send(&host, &user, "Eski posta");
     let mut first = daemon(&ws, &log);
-    let seen = ws.join(".itero/gmail.push.received.seen");
+    let seen = ws.join(".itero/gmail.received.seen");
     until("the first start to note the inbox", || seen.exists());
     std::thread::sleep(std::time::Duration::from_secs(1)); // in IDLE
     send(&host, &user, "Sipariş geldi: çay ve şeker");
