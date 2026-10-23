@@ -79,12 +79,14 @@ way.
 ## Install
 
 ```bash
+brew trust aegea-dev/tap
 brew install aegea-dev/tap/itero
 # or
 curl -fsSL https://raw.githubusercontent.com/aegea-dev/itero/main/install.sh | sh
 ```
 
-Homebrew puts `Itero.app` in the formula's own folder. The script checks
+Homebrew 7 and later load a tap's formulae only once you trust the tap,
+hence `brew trust`. Homebrew puts `Itero.app` in the formula's own folder. The script checks
 the release archive's SHA-256 before unpacking, installs `itero` to
 `~/.local/bin` and, on macOS, `Itero.app` to `~/Applications`, and never
 edits your shell profile. `--version X.Y.Z`, `--to DIR` and `--uninstall`

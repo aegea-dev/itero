@@ -9,10 +9,13 @@ aarch64).
 ## Homebrew
 
 ```bash
+brew trust aegea-dev/tap
 brew install aegea-dev/tap/itero
 ```
 
-The formula puts `Itero.app`, the macOS notifier, in its own folder, where
+Homebrew 7 and later load a tap's formulae only once you trust the tap:
+without `brew trust`, the install stops with "Refusing to load formula
+aegea-dev/tap/itero from untrusted tap". The formula puts `Itero.app`, the macOS notifier, in its own folder, where
 itero finds it.
 
 ## The install script
