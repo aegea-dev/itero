@@ -1,0 +1,10 @@
+{
+  "name": "notify-api",
+  "description": "Notifications for an app on this machine, over HTTP, with the answer posted back",
+  "port": 8800,
+  "workflow": {
+    "app-notify": {
+      "description": "Shows the notification an app asks for; a click ends the run, which is posted to the app"
+    }
+  }
+}
