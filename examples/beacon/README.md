@@ -13,3 +13,15 @@ tells you what it watches; after that, only changes. Your own sites:
 workflow's have its min_free). Your own
 checks: an action that prints {"status": {"<what>": "<how it is>"}},
 followed by #changed and #notify. The actions need curl, jq, df and awk.
+
+## Tests
+
+`test/` has three tests: the first check tells what it watches, nothing is told
+when nothing changed, and a new site is told. They use a port nothing
+answers on, so they need no network. Each test runs on a throwaway copy of this folder,
+with `itero` from your `PATH` (or `$ITERO_BIN`). They need Node:
+
+```sh
+npm install
+npm test
+```
