@@ -3,8 +3,9 @@ use serde_json::{Value, json};
 
 const NOW: &str = "2026-10-21T10:00:00Z";
 
-/// A journal as iteration 1 made it: schema 1, events without `note`.
-const VERSION_1: &str = "
+/// A journal as itero 0.4.0 to 0.8.0 made it: schema 7, with the tables
+/// nothing reads any more (queued, paused, cursors, memory).
+const VERSION_7: &str = "
 CREATE TABLE events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   id TEXT NOT NULL UNIQUE,
@@ -15,18 +16,37 @@ CREATE TABLE events (
   cause TEXT,
   data TEXT NOT NULL,
   handled TEXT,
-  error TEXT
+  error TEXT,
+  note TEXT,
+  reply TEXT
 );
-CREATE TABLE runs (id TEXT PRIMARY KEY, workflow TEXT NOT NULL, pin TEXT NOT NULL, runtime TEXT NOT NULL, args TEXT NOT NULL, started TEXT NOT NULL, ended TEXT);
+CREATE TABLE runs (id TEXT PRIMARY KEY, workflow TEXT NOT NULL, pin TEXT NOT NULL, runtime TEXT NOT NULL, args TEXT NOT NULL, started TEXT NOT NULL, ended TEXT, input TEXT, name TEXT, message TEXT, reply TEXT);
 CREATE TABLE workflows (pin TEXT PRIMARY KEY, definition TEXT NOT NULL);
 CREATE TABLE timers (id INTEGER PRIMARY KEY AUTOINCREMENT, run TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE jobs (seq INTEGER PRIMARY KEY, runs INTEGER NOT NULL, lost TEXT);
 CREATE TABLE schedules (key TEXT PRIMARY KEY, last TEXT NOT NULL);
 CREATE TABLE memory (workflow TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (workflow, key));
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-INSERT INTO meta (key, value) VALUES ('schema', '1');
+CREATE TABLE queued (seq INTEGER PRIMARY KEY AUTOINCREMENT, workflow TEXT NOT NULL, args TEXT NOT NULL, input TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE paused (workflow TEXT PRIMARY KEY, pin TEXT NOT NULL, at TEXT NOT NULL, why TEXT NOT NULL);
+CREATE TABLE cursors (source TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE workflow_ids (name TEXT PRIMARY KEY, id TEXT NOT NULL, created TEXT NOT NULL, itero TEXT NOT NULL);
+CREATE TABLE replies (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT NOT NULL, body TEXT NOT NULL, first TEXT NOT NULL, next TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0);
+INSERT INTO meta (key, value) VALUES ('schema', '7');
 INSERT INTO events (id, time, type, source, subject, data) VALUES ('e-eski', '2026-10-15T14:00:00Z', 'eski.olay', 'outside', 'itero.app', '{\"söz\": \"çay\"}');
 ";
+
+/// The tables a journal has, by name.
+fn tables(ws: &itero::workspace::Workspace) -> Vec<String> {
+    let db = rusqlite::Connection::open(ws.journal()).unwrap();
+    let mut q = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .unwrap();
+    q.query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
 
 fn ws(d: &std::path::Path) -> itero::workspace::Workspace {
     std::fs::write(d.join("itero.config.json"), "{}").unwrap();
@@ -34,32 +54,25 @@ fn ws(d: &std::path::Path) -> itero::workspace::Workspace {
 }
 
 #[test]
-fn a_journal_from_an_earlier_itero_is_brought_up_to_date() {
+fn a_journal_from_itero_0_4_to_0_8_keeps_what_it_held() {
     let d = tempfile::tempdir().unwrap();
     let ws = ws(d.path());
     std::fs::create_dir_all(d.path().join(".itero")).unwrap();
     rusqlite::Connection::open(ws.journal())
         .unwrap()
-        .execute_batch(VERSION_1)
+        .execute_batch(VERSION_7)
         .unwrap();
     let j = Journal::open(&ws).unwrap();
     let all = j.events(None).unwrap();
     assert_eq!(all.len(), 1, "what it held is kept");
     assert_eq!(all[0].event.data["söz"], "çay");
-    assert_eq!(all[0].note, None);
-    j.publish(&Envelope::new(
-        "outside",
-        "yeni.olay",
-        "itero.app",
-        "2026-10-15T14:01:00Z",
-        None,
-        json!({}),
-    ))
-    .unwrap();
-    assert_eq!(j.events(None).unwrap().len(), 2);
     drop(j);
+    let left = tables(&ws);
+    for gone in ["queued", "paused", "cursors", "memory"] {
+        assert!(!left.contains(&gone.to_string()), "{gone}: {left:?}");
+    }
     // opening again changes nothing
-    assert_eq!(Journal::open(&ws).unwrap().events(None).unwrap().len(), 2);
+    assert_eq!(Journal::open(&ws).unwrap().events(None).unwrap().len(), 1);
     let version: String = rusqlite::Connection::open(ws.journal())
         .unwrap()
         .query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| {
@@ -67,6 +80,41 @@ fn a_journal_from_an_earlier_itero_is_brought_up_to_date() {
         })
         .unwrap();
     assert_eq!(version, SCHEMA_VERSION.to_string());
+}
+
+#[test]
+fn a_new_journal_has_only_the_tables_itero_reads() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = ws(d.path());
+    drop(Journal::open(&ws).unwrap());
+    assert_eq!(
+        tables(&ws),
+        [
+            "events",
+            "jobs",
+            "meta",
+            "replies",
+            "runs",
+            "schedules",
+            "timers",
+            "workflow_ids",
+            "workflows"
+        ]
+    );
+}
+
+#[test]
+fn a_journal_from_before_itero_0_4_is_refused_saying_what_to_do() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = ws(d.path());
+    std::fs::create_dir_all(d.path().join(".itero")).unwrap();
+    let db = rusqlite::Connection::open(ws.journal()).unwrap();
+    db.execute_batch(VERSION_7).unwrap();
+    db.execute("UPDATE meta SET value = '6' WHERE key = 'schema'", [])
+        .unwrap();
+    drop(db);
+    let e = format!("{:#}", Journal::open(&ws).err().unwrap());
+    assert!(e.contains("0.4.0") && e.contains(".itero"), "{e}");
 }
 
 #[test]
@@ -80,38 +128,6 @@ fn a_journal_from_a_newer_itero_is_refused() {
         .unwrap();
     let e = format!("{:#}", Journal::open(&ws).err().unwrap());
     assert!(e.contains("newer itero"), "{e}");
-}
-
-#[test]
-fn the_runs_of_the_old_form_end_and_their_events_stay() {
-    let d = tempfile::tempdir().unwrap();
-    let ws = ws(d.path());
-    std::fs::create_dir_all(d.path().join(".itero")).unwrap();
-    let db = rusqlite::Connection::open(ws.journal()).unwrap();
-    db.execute_batch(VERSION_1).unwrap();
-    db.execute_batch(
-        "UPDATE meta SET value = '4' WHERE key = 'schema';
-         ALTER TABLE events ADD COLUMN note TEXT;
-         CREATE TABLE queued (seq INTEGER PRIMARY KEY AUTOINCREMENT, workflow TEXT NOT NULL, args TEXT NOT NULL, input TEXT NOT NULL, at TEXT NOT NULL);
-         CREATE TABLE paused (workflow TEXT PRIMARY KEY, pin TEXT NOT NULL, at TEXT NOT NULL, why TEXT NOT NULL);
-         CREATE TABLE cursors (source TEXT PRIMARY KEY, value TEXT NOT NULL);
-         ALTER TABLE runs ADD COLUMN input TEXT;
-         INSERT INTO runs (id, workflow, pin, runtime, args, started) VALUES ('r-eski', 'posta', 'posta@1', '{\"state\": \"bekle\"}', '{}', '2026-10-15T14:00:00Z');
-         INSERT INTO timers (run, at, data) VALUES ('r-eski', '2026-10-15T15:00:00Z', '{}');
-         INSERT INTO events (id, time, type, source, subject, data) VALUES ('e-koşu', '2026-10-15T14:00:00Z', 'run.started', 'daemon', 'itero.run.r-eski', '{}');",
-    )
-    .unwrap();
-    drop(db);
-    let j = Journal::open(&ws).unwrap();
-    assert!(j.runs().unwrap().is_empty(), "the old runs end");
-    assert!(j.due_timers("2027-01-01T00:00:00Z").unwrap().is_empty());
-    let all = j.events(None).unwrap();
-    assert_eq!(all.len(), 2, "their events stay, as history");
-    let old = all.iter().find(|e| e.event.id == "e-koşu").unwrap();
-    assert!(old.handled.is_some());
-    assert_eq!(old.note.as_deref(), Some("a run of the old form"));
-    // a message not taken yet is still waiting for the daemon
-    assert_eq!(j.next(&[]).unwrap().unwrap().event.id, "e-eski");
 }
 
 fn start(workflow: &str, flows: Value) -> Start {
@@ -271,7 +287,7 @@ fn an_earlier_journal_gets_an_identity_too() {
     std::fs::create_dir_all(d.path().join(".itero")).unwrap();
     rusqlite::Connection::open(ws.journal())
         .unwrap()
-        .execute_batch(VERSION_1)
+        .execute_batch(VERSION_7)
         .unwrap();
     let w = Journal::open(&ws).unwrap().workspace().unwrap();
     assert_eq!(w.id.len(), 36);

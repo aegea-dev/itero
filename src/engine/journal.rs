@@ -12,44 +12,26 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 /// The journal's schema version, kept in its `meta` table.
-pub const SCHEMA_VERSION: i64 = 1 + MIGRATIONS.len() as i64;
+pub const SCHEMA_VERSION: i64 = OLDEST + MIGRATIONS.len() as i64;
 
-/// The steps from each version to the next: `MIGRATIONS[0]` takes version 1
-/// to 2, and so on. A step is only ever added, never changed: a journal on
-/// someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 6] = [
-    // 2: what handling an event did, when no run shows it
-    "ALTER TABLE events ADD COLUMN note TEXT;",
-    // 3: starts waiting for a free slot, paused workflows, sources' cursors
-    "CREATE TABLE queued (seq INTEGER PRIMARY KEY AUTOINCREMENT, workflow TEXT NOT NULL, args TEXT NOT NULL, input TEXT NOT NULL, at TEXT NOT NULL);
-     CREATE TABLE paused (workflow TEXT PRIMARY KEY, pin TEXT NOT NULL, at TEXT NOT NULL, why TEXT NOT NULL);
-     CREATE TABLE cursors (source TEXT PRIMARY KEY, value TEXT NOT NULL);",
-    // 4: the input each run started with, for correlation (run.input)
-    "ALTER TABLE runs ADD COLUMN input TEXT;",
-    // 5: the simple form (docs/design-simple.md). The runs of the old form
-    // end here, with what was waiting for them; their events stay, as
-    // history, and so do messages not yet taken.
-    "DELETE FROM timers; DELETE FROM queued; DELETE FROM paused; DELETE FROM memory; DELETE FROM jobs;
-     UPDATE events SET handled = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), note = 'a run of the old form'
-       WHERE handled IS NULL AND subject != 'itero.app';
-     DELETE FROM runs; DELETE FROM workflows;",
-    // 6: names for runs, identities for workflows (the workspace's is in
-    // meta, made when the journal is opened)
-    "ALTER TABLE runs ADD COLUMN name TEXT;
-     CREATE TABLE workflow_ids (name TEXT PRIMARY KEY, id TEXT NOT NULL, created TEXT NOT NULL, itero TEXT NOT NULL);",
-    // 7: answers: where a message's answer goes, each run's message, and
-    // the callbacks still to deliver
-    "ALTER TABLE events ADD COLUMN reply TEXT;
-     ALTER TABLE runs ADD COLUMN message TEXT;
-     ALTER TABLE runs ADD COLUMN reply TEXT;
-     CREATE TABLE replies (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT NOT NULL, body TEXT NOT NULL, first TEXT NOT NULL, next TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0);",
+/// The oldest schema a journal may have, from itero 0.4.0 on. An older one
+/// is refused: nobody depended on itero then.
+const OLDEST: i64 = 7;
+
+/// The steps from each version to the next: `MIGRATIONS[0]` takes `OLDEST`
+/// to the one after, and so on. A step is only ever added, never changed:
+/// a journal on someone's machine was made by the steps as they were.
+const MIGRATIONS: [&str; 1] = [
+    // 8: the tables nothing reads any more
+    "DROP TABLE IF EXISTS queued; DROP TABLE IF EXISTS paused;
+     DROP TABLE IF EXISTS cursors; DROP TABLE IF EXISTS memory;",
 ];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
 /// while it ran.
 const STOPPED: &str = "the daemon stopped while it ran";
 
-/// Version 1's tables; `MIGRATIONS` take them to this version.
+/// The tables at `SCHEMA_VERSION`: a new journal is made with them.
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,7 +43,9 @@ CREATE TABLE IF NOT EXISTS events (
   cause TEXT,
   data TEXT NOT NULL,
   handled TEXT,
-  error TEXT
+  error TEXT,
+  note TEXT,
+  reply TEXT
 );
 CREATE INDEX IF NOT EXISTS events_open ON events (handled, seq);
 CREATE TABLE IF NOT EXISTS runs (
@@ -71,13 +55,18 @@ CREATE TABLE IF NOT EXISTS runs (
   runtime TEXT NOT NULL,
   args TEXT NOT NULL,
   started TEXT NOT NULL,
-  ended TEXT
+  ended TEXT,
+  input TEXT,
+  name TEXT,
+  message TEXT,
+  reply TEXT
 );
 CREATE TABLE IF NOT EXISTS workflows (pin TEXT PRIMARY KEY, definition TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS workflow_ids (name TEXT PRIMARY KEY, id TEXT NOT NULL, created TEXT NOT NULL, itero TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY AUTOINCREMENT, run TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS jobs (seq INTEGER PRIMARY KEY, runs INTEGER NOT NULL, lost TEXT);
 CREATE TABLE IF NOT EXISTS schedules (key TEXT PRIMARY KEY, last TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS memory (workflow TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (workflow, key));
+CREATE TABLE IF NOT EXISTS replies (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT NOT NULL, body TEXT NOT NULL, first TEXT NOT NULL, next TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
 
@@ -303,30 +292,42 @@ impl Journal {
         db.pragma_update(None, "synchronous", "FULL")?;
         // immediate: two processes opening at once make it one after the other
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute_batch(SCHEMA)?;
-        let version: Option<String> = tx
-            .query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| {
+        let has_meta: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
+            [],
+            |r| r.get(0),
+        )?;
+        let version: Option<String> = if has_meta {
+            tx.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| {
                 r.get(0)
             })
-            .optional()?;
-        // a journal being made has no version yet: it starts at 1
-        let v: i64 = match version {
-            None => 1,
-            Some(v) => v
-                .parse()
-                .with_context(|| format!("the journal's schema version is not a number: {v}"))?,
+            .optional()?
+        } else {
+            None
         };
-        if v > SCHEMA_VERSION {
-            bail!(
-                "{} was made by a newer itero (journal schema {v}; this itero knows up to {SCHEMA_VERSION}): update itero",
-                path.display()
-            );
-        }
-        if v < 1 {
-            bail!("{}: journal schema {v} is not a version", path.display());
-        }
-        for step in &MIGRATIONS[(v - 1) as usize..] {
-            tx.execute_batch(step)?;
+        match version {
+            // a journal being made: the tables as they are now
+            None => tx.execute_batch(SCHEMA)?,
+            Some(v) => {
+                let v: i64 = v.parse().with_context(|| {
+                    format!("the journal's schema version is not a number: {v}")
+                })?;
+                if v > SCHEMA_VERSION {
+                    bail!(
+                        "{} was made by a newer itero (journal schema {v}; this itero knows up to {SCHEMA_VERSION}): update itero",
+                        path.display()
+                    );
+                }
+                if v < OLDEST {
+                    bail!(
+                        "{} was made by an itero before 0.4.0 (journal schema {v}): remove .itero/ to start again; its runs and history go with it",
+                        path.display()
+                    );
+                }
+                for step in &MIGRATIONS[(v - OLDEST) as usize..] {
+                    tx.execute_batch(step)?;
+                }
+            }
         }
         tx.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?1)",
@@ -342,17 +343,6 @@ impl Journal {
             "INSERT OR IGNORE INTO meta (key, value) VALUES ('workspace', ?1)",
             params![json(&workspace)?],
         )?;
-        // runs from before names had them
-        let unnamed: Vec<String> = tx
-            .prepare("SELECT id FROM runs WHERE name IS NULL")?
-            .query_map([], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        for id in unnamed {
-            tx.execute(
-                "UPDATE runs SET name = ?2 WHERE id = ?1",
-                params![id, crate::names::random()],
-            )?;
-        }
         tx.commit()?;
         Ok(Journal { db })
     }
