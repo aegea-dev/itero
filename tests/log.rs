@@ -1,6 +1,7 @@
 //! `.itero/itero.log`: one JSON object per line, everything that happens,
 //! each line with its time, workspace, daemon and event.
 #![cfg(unix)]
+mod common;
 use itero::engine::journal::Journal;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -24,15 +25,24 @@ fn executable(root: &Path, rel: &str, text: &str) {
 }
 
 fn lines(root: &Path) -> Vec<Value> {
-    std::fs::read_to_string(root.join(".itero/itero.log"))
-        .unwrap_or_default()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
-        .collect()
+    common::log_lines(&std::fs::read_to_string(root.join(".itero/itero.log")).unwrap_or_default())
 }
 
 fn events(lines: &[Value]) -> Vec<&str> {
     lines.iter().map(|l| l["event"].as_str().unwrap()).collect()
+}
+
+#[test]
+fn a_line_still_being_written_is_not_read_yet() {
+    let d = tempfile::tempdir().unwrap();
+    // the daemon appends from its own process: a reader may catch a line
+    // half written
+    write(
+        d.path(),
+        ".itero/itero.log",
+        "{\"event\": \"daemon.started\", \"yer\": \"çatı\"}\n{\"event\": \"run.sta",
+    );
+    assert_eq!(events(&lines(d.path())), ["daemon.started"]);
 }
 
 #[test]
