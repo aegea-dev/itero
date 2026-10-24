@@ -104,7 +104,9 @@ icon: ## Build packaging/macos/Itero.icns from itero.svg (macOS, rsvg-convert)
 # A release archive for one target (this machine's unless TARGET is given),
 # and its checksum: what docs/public/install downloads and release.yml publishes.
 # Always built with --target, so a host build and a cross build are one
-# recipe. TAG names the release.
+# recipe. TAG names the release. The archive also holds THIRD-PARTY-LICENSES,
+# the notices of the crates in the binary, made by cargo-about
+# (`cargo install cargo-about --version 0.9.2 --features cli --locked`).
 TAG ?= v$(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 TARGET_DIR ?= $(or $(CARGO_TARGET_DIR),target)
@@ -116,6 +118,9 @@ dist: ## Build the release archive and checksum (TAG=vX.Y.Z, TARGET=triple)
 	$(CARGO) build --release --target $(TARGET) --bin itero
 	rm -rf $(DIST)/stage && mkdir -p $(DIST)/stage
 	cp $(OUT)/itero $(DIST)/stage/itero
+	$(CARGO) about generate --locked --fail --target $(TARGET) \
+	  -c packaging/licenses/about.toml packaging/licenses/about.hbs \
+	  -o $(DIST)/stage/THIRD-PARTY-LICENSES
 	@case "$(TARGET)" in *-apple-darwin) \
 	  $(CARGO) build --release --target $(TARGET) --bin itero-notifier && \
 	  mkdir -p $(DIST)/stage/Itero.app/Contents/MacOS $(DIST)/stage/Itero.app/Contents/Resources && \

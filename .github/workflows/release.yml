@@ -75,6 +75,12 @@ jobs:
         shell: bash
         run: rustup target add ${{ matrix.target }}
 
+      # make dist writes THIRD-PARTY-LICENSES with it. Not cached: a cache made
+      # on one tag is not restored on the next.
+      - name: Install cargo-about
+        shell: bash
+        run: cargo install cargo-about --version 0.9.2 --features cli --locked
+
       - name: Build the archive and its checksum
         shell: bash
         run: make dist TAG="$GITHUB_REF_NAME" TARGET=${{ matrix.target }}

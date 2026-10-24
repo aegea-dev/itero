@@ -32,6 +32,7 @@ class Itero < Formula
 
   def install
     bin.install "itero"
+    prefix.install "THIRD-PARTY-LICENSES"
     libexec.install "Itero.app" if OS.mac?
   end
 
