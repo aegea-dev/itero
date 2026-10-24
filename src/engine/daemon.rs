@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::mpsc::Receiver;
 use std::sync::{Mutex, PoisonError};
 use wait_timeout::ChildExt;
 
@@ -33,6 +33,8 @@ pub struct Pass {
     pub lost: usize,
     /// Events left for the next pass: their manager kept being killed.
     pub deferred: usize,
+    /// It stopped at its cap of events with more waiting.
+    pub more: bool,
 }
 
 /// More events than this in one pass wait for the next.
@@ -109,6 +111,8 @@ pub struct Health {
     pub last_pass: Option<String>,
     /// What went wrong in the last pass, if anything.
     pub last_error: Option<String>,
+    /// When the pass under way began; none while the daemon waits.
+    pub busy_since: Option<String>,
     /// How each connector is doing, by the type it sends.
     pub connectors: BTreeMap<String, ConnectorHealth>,
 }
@@ -132,39 +136,62 @@ impl Health {
             passes: 0,
             last_pass: None,
             last_error: None,
+            busy_since: None,
             connectors: Default::default(),
         }
     }
 }
 
-/// Runs passes over the workspace until `wake`'s sender is gone: one every
-/// `interval`, or at once when something arrives on `wake` (a message from
-/// outside). Each pass is recorded in `health`, and `report` hears of it; a
-/// pass that fails never stops the next.
+/// A pass that fails, or cannot tell when it is next due, is tried again
+/// after this, whatever else wakes the daemon sooner.
+const AFTER_FAILURE: chrono::Duration = chrono::Duration::minutes(1);
+
+/// Runs a pass each time something arrives on `woken` (a message, a line
+/// from a connector, a watched path or an edit, the alarm), until its
+/// senders are gone. After a pass the alarm is set to the next due time,
+/// or to none; between passes the daemon waits, with no timeout. Each pass
+/// is recorded in `health`, and `report` hears of it; a pass that fails
+/// never stops the next.
 pub fn run_loop(
     ws: &Workspace,
-    interval: std::time::Duration,
     exe: &Path,
-    wake: &Receiver<()>,
+    alarm: &super::alarm::Alarm,
+    woken: &Receiver<()>,
     health: &Mutex<Health>,
     report: impl Fn(&Result<Pass>),
 ) {
+    let lock = || health.lock().unwrap_or_else(PoisonError::into_inner);
     loop {
         let now = Utc::now();
+        lock().busy_since = Some(stamp(now));
         let pass = run_once(ws, now, exe);
         {
-            let mut h = health.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut h = lock();
             h.passes += 1;
             h.last_pass = Some(stamp(now));
             h.last_error = pass.as_ref().err().map(|e| format!("{e:#}"));
+            h.busy_since = None;
         }
         report(&pass);
-        match wake.recv_timeout(interval) {
-            Ok(()) | Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return,
+        let next = match &pass {
+            Ok(p) if p.more => Ok(Some(now)),
+            // a lost manager is asked again, as before, a second on
+            Ok(p) if p.deferred > 0 => Ok(Some(now + chrono::Duration::seconds(1))),
+            Ok(_) => next_due(ws, Utc::now()),
+            Err(_) => Ok(Some(now + AFTER_FAILURE)),
+        };
+        let next = next.unwrap_or_else(|e| {
+            report(&Err(e.context("cannot tell when the next pass is due")));
+            Some(Utc::now() + AFTER_FAILURE)
+        });
+        if let Err(e) = alarm.set(next) {
+            report(&Err(anyhow!("cannot set the alarm for the next pass: {e}")));
+        }
+        if woken.recv().is_err() {
+            return;
         }
         // several wake-ups while a pass ran need only one more pass
-        while wake.try_recv().is_ok() {}
+        while woken.try_recv().is_ok() {}
     }
 }
 
@@ -273,10 +300,15 @@ fn wanted_paths(ws: &Workspace) -> (Vec<PathBuf>, Vec<String>) {
     (paths, errors)
 }
 
-/// Watches every path a workflow's `on` names, all in this one thread,
-/// and sends `itero.path.changed` for each change once the path has been
-/// quiet for half a second. The paths are read again every second, so
-/// editing a workflow moves its watch. Runs for good.
+/// Watches every path a workflow's `on` names and the workspace's own
+/// files (`Workspace::own_files`), all in this one thread. A watched path,
+/// once quiet for half a second, sends `itero.path.changed`; an edit to the
+/// workspace's own files wakes the daemon, which reads them again, and
+/// moves the watches. A path whose folder is not there yet is watched for
+/// from the nearest folder that is. `Workspace::wake_file`, touched by
+/// other processes once they saved a message, wakes the daemon too. It
+/// waits in the kernel, with no timeout while nothing is pending. Runs for
+/// good.
 pub fn watch_paths(ws: &Workspace, wake: &std::sync::mpsc::Sender<()>, log: &Log) {
     use crate::watch::{Debouncer, Kind};
     use std::time::{Duration, Instant};
@@ -293,28 +325,54 @@ pub fn watch_paths(ws: &Workspace, wake: &std::sync::mpsc::Sender<()>, log: &Log
     let mut d = Debouncer::new(Duration::from_millis(500), Duration::from_secs(5));
     let mut watched: Option<Vec<PathBuf>> = None;
     let mut said = vec![];
+    let mut look = true;
+    let (mut paths, mut own, mut lookouts) = (vec![], vec![], vec![]);
+    let poke = ws.wake_file();
     loop {
-        let (paths, mut errors) = wanted_paths(ws);
-        if watched.as_ref() != Some(&paths) {
-            match backend.set(&paths) {
-                Ok(()) => {
-                    log.write("paths.watched", json!({ "paths": paths }));
-                    watched = Some(paths);
+        if look {
+            let mut errors;
+            (paths, errors) = wanted_paths(ws);
+            own = ws.own_files().unwrap_or_else(|e| {
+                errors.push(format!("{e:#}"));
+                vec![]
+            });
+            // the nearest folder there is above one that is not there yet
+            lookouts = paths
+                .iter()
+                .filter(|p| p.parent().is_some_and(|d| !d.is_dir()))
+                .filter_map(|p| p.ancestors().skip(1).find(|a| a.is_dir()))
+                .map(Path::to_path_buf)
+                .collect();
+            let mut all: Vec<PathBuf> = paths
+                .iter()
+                .chain(&own)
+                .chain(&lookouts)
+                .chain([&poke])
+                .cloned()
+                .collect();
+            all.sort();
+            all.dedup();
+            if watched.as_ref() != Some(&all) {
+                match backend.set(&all) {
+                    Ok(()) => {
+                        log.write("paths.watched", json!({ "paths": paths }));
+                        watched = Some(all);
+                    }
+                    // a folder may come: looked for again at the next edit
+                    Err(e) => errors.push(e.to_string()),
                 }
-                // tried again next time: a folder may come
-                Err(e) => errors.push(e.to_string()),
             }
-        }
-        if errors != said {
-            for why in &errors {
-                log.write("error", json!({ "why": why }));
+            if errors != said {
+                for why in &errors {
+                    log.write("error", json!({ "why": why }));
+                }
+                said = errors;
             }
-            said = errors;
+            look = false;
         }
-        let timeout = d.due().map_or(Duration::from_secs(1), |at| {
-            at.saturating_duration_since(Instant::now())
-                .min(Duration::from_secs(1))
-        });
+        let timeout = d
+            .due()
+            .map(|at| at.saturating_duration_since(Instant::now()));
         match backend.wait(timeout) {
             Ok(changes) => d.add(changes, Instant::now()),
             Err(e) => {
@@ -322,7 +380,21 @@ pub fn watch_paths(ws: &Workspace, wake: &std::sync::mpsc::Sender<()>, log: &Log
                 std::thread::sleep(Duration::from_secs(1));
             }
         }
+        let mut woke = false;
         for c in d.take(Instant::now()) {
+            if own.contains(&c.path) {
+                look = true;
+                woke = true;
+            }
+            if lookouts.contains(&c.path) {
+                look = true;
+            }
+            if c.path == poke {
+                woke = true;
+            }
+            if !paths.contains(&c.path) {
+                continue;
+            }
             let kind = match c.kind {
                 Kind::Created => "created",
                 Kind::Removed | Kind::Renamed => "removed",
@@ -334,11 +406,12 @@ pub fn watch_paths(ws: &Workspace, wake: &std::sync::mpsc::Sender<()>, log: &Log
                 &stamp(Utc::now()),
             );
             match Journal::open(ws).and_then(|j| j.publish(&m)) {
-                Ok(()) => {
-                    let _ = wake.send(());
-                }
+                Ok(()) => woke = true,
                 Err(e) => log.write("error", json!({ "why": format!("{e:#}") })),
             }
+        }
+        if woke {
+            let _ = wake.send(());
         }
     }
 }
@@ -459,6 +532,7 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
                 held.clear();
             }
             if pass.delivered >= MAX_EVENTS {
+                pass.more = true;
                 return Ok(pass);
             }
         }
@@ -562,11 +636,57 @@ fn watch_limits(ws: &Workspace, j: &Journal, now: DateTime<Utc>, log: &Log) -> R
 /// Starts a run of every workflow whose schedule is due, when its
 /// conditions hold. A schedule seen for the first time only starts
 /// counting: it waits for its first slot.
+/// A schedule's last slot, none before the daemon first saw it.
+fn last_slot(j: &Journal, key: &str) -> Result<Option<DateTime<Utc>>> {
+    j.schedule_last(key)?
+        .map(|last| {
+            last.parse()
+                .map_err(|_| anyhow!("schedule {key}: its last slot is not a time: {last}"))
+        })
+        .transpose()
+}
+
+/// When the daemon next has something to do that no message brings: the
+/// earliest of each schedule's next slot, a waiting run's timer and a
+/// callback due again; none when there is nothing. A schedule not seen yet
+/// is due `now`, as the next pass starts counting its slots. A workflow
+/// that is off, or past its `until`, has no slots (an edit that turns it on
+/// wakes the daemon); one before its `from` has its first slot from then.
+pub fn next_due(ws: &Workspace, now: DateTime<Utc>) -> Result<Option<DateTime<Utc>>> {
+    let j = Journal::open(ws)?;
+    let flows = Flows::load(ws)?;
+    let mut due = vec![];
+    for (name, f) in &flows.read {
+        if f.meta.off || f.meta.until.is_some_and(|u| now >= u) {
+            continue;
+        }
+        for cron in &f.on.schedules {
+            let Some(last) = last_slot(&j, &format!("{name}#{cron}"))? else {
+                due.push(now);
+                continue;
+            };
+            // the slot at `from` itself counts
+            let since = f
+                .meta
+                .from
+                .map_or(last, |from| last.max(from - chrono::Duration::seconds(1)));
+            due.push(super::schedule::next(cron, since).map_err(|e| anyhow!(e))?);
+        }
+    }
+    for t in [j.next_timer()?, j.next_reply()?].into_iter().flatten() {
+        due.push(
+            t.parse()
+                .map_err(|_| anyhow!("the journal's due time is not a time: {t}"))?,
+        );
+    }
+    Ok(due.into_iter().min())
+}
+
 fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log) -> Result<()> {
     for (name, f) in &flows.read {
         for cron in &f.on.schedules {
             let key = format!("{name}#{cron}");
-            let Some(last) = j.schedule_last(&key)? else {
+            let Some(last) = last_slot(j, &key)? else {
                 j.set_schedule_last(&key, &stamp(now))?;
                 continue;
             };
@@ -575,9 +695,6 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log)
                 j.set_schedule_last(&key, &stamp(now))?;
                 continue;
             }
-            let last: DateTime<Utc> = last
-                .parse()
-                .map_err(|_| anyhow!("schedule {key}: its last slot is not a time: {last}"))?;
             if !super::schedule::due(cron, last, now).map_err(|e| anyhow!(e))? {
                 continue;
             }

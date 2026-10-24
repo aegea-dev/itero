@@ -1,6 +1,7 @@
 //! The watchdog: keeps `itero daemon` running. It starts the daemon, asks
 //! its `/health` every few seconds, and restarts it when it has exited,
-//! stops answering, or stops making passes. The decision (`decide`) is a pure
+//! stops answering, or one pass runs past its limit (a daemon waiting for
+//! something to do makes no passes, and is fine). The decision (`decide`) is a pure
 //! function of what the watchdog knows; `run` does the processes and HTTP.
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -18,7 +19,7 @@ pub struct Rules {
     pub misses: u32,
     /// How long a new daemon may take to answer.
     pub grace: Duration,
-    /// How old the last pass may be before the daemon counts as hung.
+    /// How long one pass may run before the daemon counts as hung.
     pub stale_after: Duration,
 }
 
@@ -41,7 +42,7 @@ pub enum Probe {
     /// `/health` did not answer.
     NoAnswer,
     /// `/health` answered.
-    Health { last_pass: Option<DateTime<Utc>> },
+    Health { busy_since: Option<DateTime<Utc>> },
 }
 
 /// What the watchdog knows about the daemon it started.
@@ -84,13 +85,13 @@ pub fn decide(w: &mut Watch, probe: &Probe, now: DateTime<Utc>, rules: &Rules) -
                 Verdict::Wait
             }
         }
-        Probe::Health { last_pass } => {
+        Probe::Health { busy_since } => {
             w.missed = 0;
-            let last = last_pass.unwrap_or(w.started);
-            if since(last) > rules.stale_after {
-                Verdict::Restart(format!("no pass for {}s", secs(now - last)))
-            } else {
-                Verdict::Wait
+            match busy_since {
+                Some(began) if since(*began) > rules.stale_after => {
+                    Verdict::Restart(format!("a pass running for {}s", secs(now - *began)))
+                }
+                _ => Verdict::Wait,
             }
         }
     }
@@ -109,8 +110,6 @@ pub fn pause(previous: Duration, ran: Duration) -> Duration {
 pub struct Options {
     /// This itero binary.
     pub exe: PathBuf,
-    /// The flags `itero daemon` gets.
-    pub daemon_args: Vec<String>,
     /// The workspace: its daemon's port is read at each check, as the OS
     /// may give it another one at a start.
     pub ws: crate::workspace::Workspace,
@@ -131,7 +130,7 @@ fn probe(client: &reqwest::blocking::Client, port: Option<u16>) -> Probe {
         .and_then(|r| r.json::<serde_json::Value>());
     match answer {
         Ok(v) => Probe::Health {
-            last_pass: v["last_pass"].as_str().and_then(|s| s.parse().ok()),
+            busy_since: v["busy_since"].as_str().and_then(|s| s.parse().ok()),
         },
         Err(_) => Probe::NoAnswer,
     }
@@ -170,7 +169,6 @@ pub fn run(o: &Options) -> Result<()> {
         };
         let mut child = Command::new(&o.exe)
             .arg("daemon")
-            .args(&o.daemon_args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(stderr)

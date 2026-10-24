@@ -142,13 +142,14 @@ impl Backend for Inotify {
         failed.map_or(Ok(()), Err)
     }
 
-    fn wait(&mut self, timeout: Duration) -> io::Result<Vec<Change>> {
+    fn wait(&mut self, timeout: Option<Duration>) -> io::Result<Vec<Change>> {
         let mut pfd = libc::pollfd {
             fd: self.fd.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         };
-        let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+        // -1: for good
+        let ms = timeout.map_or(-1, |t| t.as_millis().min(i32::MAX as u128) as i32);
         // SAFETY: one valid pollfd
         let n = unsafe { libc::poll(&mut pfd, 1, ms) };
         if n < 0 {

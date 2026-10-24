@@ -5,7 +5,7 @@ use std::path::Path;
 fn the_service_runs_the_watchdog_in_the_workspace() {
     let root = Path::new("/Users/biri/iş akışları");
     let exe = Path::new("/opt/homebrew/bin/itero");
-    let ctx = install_ctx(root, exe, 2, Some("/opt/homebrew/bin:/usr/bin".into()));
+    let ctx = install_ctx(root, exe, Some("/opt/homebrew/bin:/usr/bin".into()));
     assert_eq!(ctx.program, exe);
     let args: Vec<String> = ctx
         .args
@@ -16,8 +16,6 @@ fn the_service_runs_the_watchdog_in_the_workspace() {
         args,
         [
             "watchdog",
-            "--interval",
-            "2",
             "--log",
             "/Users/biri/iş akışları/.itero/daemon.log"
         ]

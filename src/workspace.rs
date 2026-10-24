@@ -250,31 +250,33 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
 /// missing folder is an error naming it. Subfolders only group: hidden ones
 /// (`.venv`, `.git`) and `node_modules` belong to tools and are skipped.
 fn listed(dir: &Path, keep: impl Fn(&Path) -> Option<PathBuf>) -> Result<Vec<PathBuf>> {
-    fn walk(
-        dir: &Path,
-        keep: &dyn Fn(&Path) -> Option<PathBuf>,
-        out: &mut Vec<PathBuf>,
-    ) -> Result<()> {
-        let entries =
-            std::fs::read_dir(dir).with_context(|| format!("cannot read {}", dir.display()))?;
-        for e in entries {
-            let p = e?.path();
-            if p.is_dir() {
-                let name = p.file_name().map(|n| n.to_string_lossy().into_owned());
-                let tools = name.is_some_and(|n| n.starts_with('.') || n == "node_modules");
-                if !tools {
-                    walk(&p, keep, out)?;
-                }
-            } else if let Some(p) = keep(&p) {
-                out.push(p);
-            }
-        }
-        Ok(())
-    }
     let mut out = vec![];
-    walk(dir, &keep, &mut out)?;
+    walk(dir, &|p| (!p.is_dir()).then(|| keep(p)).flatten(), &mut out)?;
     out.sort();
     Ok(out)
+}
+
+/// What `dir` and its subfolders hold that `keep` keeps, folders included;
+/// tools' folders (`.git`, `node_modules`) are passed over.
+fn walk(dir: &Path, keep: &dyn Fn(&Path) -> Option<PathBuf>, out: &mut Vec<PathBuf>) -> Result<()> {
+    let entries =
+        std::fs::read_dir(dir).with_context(|| format!("cannot read {}", dir.display()))?;
+    for e in entries {
+        let p = e?.path();
+        if p.is_dir() {
+            let name = p.file_name().map(|n| n.to_string_lossy().into_owned());
+            if name.is_some_and(|n| n.starts_with('.') || n == "node_modules") {
+                continue;
+            }
+            if let Some(kept) = keep(&p) {
+                out.push(kept);
+            }
+            walk(&p, keep, out)?;
+        } else if let Some(kept) = keep(&p) {
+            out.push(kept);
+        }
+    }
+    Ok(())
 }
 
 /// `files` by name, one per name: a second file of one name is an error
@@ -348,6 +350,12 @@ impl Workspace {
     }
 
     /// The bytes `.itero/` takes: the journal, the logs, memory.
+    /// The file another process touches once it has saved a message in
+    /// the journal: the running daemon watches it, and wakes.
+    pub fn wake_file(&self) -> PathBuf {
+        self.root.join(".itero").join("wake")
+    }
+
     pub fn used(&self) -> u64 {
         fn size(p: &Path) -> u64 {
             match std::fs::symlink_metadata(p) {
@@ -363,6 +371,29 @@ impl Workspace {
 
     /// Every workflow's file, by name (its file name), in any subfolder of
     /// the workflows folders. Two with one name is an error naming both.
+    /// What the daemon reads to know its workflows, for it to watch: the
+    /// manifest, each workflow folder and its subfolders (a file comes or
+    /// goes there), and each workflow file.
+    pub fn own_files(&self) -> Result<Vec<PathBuf>> {
+        let mut out = vec![self.root.join(MANIFEST)];
+        for dir in &self.workflows {
+            out.push(dir.clone());
+            if dir.exists() {
+                walk(
+                    dir,
+                    &|p| {
+                        (p.is_dir() || p.extension().is_some_and(|x| x == "json"))
+                            .then(|| p.to_path_buf())
+                    },
+                    &mut out,
+                )?;
+            }
+        }
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+
     pub fn flow_files(&self) -> Result<BTreeMap<String, PathBuf>> {
         let mut files = vec![];
         for dir in self.workflows.iter().filter(|d| d.exists()) {

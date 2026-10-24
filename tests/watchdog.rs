@@ -18,17 +18,27 @@ fn rules() -> Rules {
 fn the_watchdog_decides_when_to_restart() {
     let start = at("2026-10-15T10:00:00Z");
     let mut w = Watch::new(start);
-    let health = |last: &str| Probe::Health {
-        last_pass: Some(at(last)),
+    let idle = Probe::Health { busy_since: None };
+    let busy = |since: &str| Probe::Health {
+        busy_since: Some(at(since)),
     };
-    // a healthy daemon is left alone
+    // a healthy daemon is left alone, busy or waiting
+    assert_eq!(
+        decide(&mut w, &idle, start + Duration::seconds(10), &rules()),
+        Verdict::Wait
+    );
     assert_eq!(
         decide(
             &mut w,
-            &health("2026-10-15T10:00:05Z"),
+            &busy("2026-10-15T10:00:05Z"),
             start + Duration::seconds(10),
             &rules()
         ),
+        Verdict::Wait
+    );
+    // waiting a day for something to do is not hanging
+    assert_eq!(
+        decide(&mut w, &idle, start + Duration::days(1), &rules()),
         Verdict::Wait
     );
     // no answer while it starts up is not counted
@@ -60,25 +70,18 @@ fn the_watchdog_decides_when_to_restart() {
     // an answer resets the count
     let mut w = Watch::new(start);
     decide(&mut w, &Probe::NoAnswer, later, &rules());
-    decide(&mut w, &health("2026-10-15T10:00:59Z"), later, &rules());
+    decide(&mut w, &idle, later, &rules());
     assert_eq!(w.missed, 0);
-    // answering but making no passes: restart
+    // answering, but one pass running past its limit: restart
     let Verdict::Restart(why) = decide(
         &mut w,
-        &health("2026-10-15T10:00:00Z"),
+        &busy("2026-10-15T10:00:00Z"),
         start + Duration::minutes(11),
         &rules(),
     ) else {
-        panic!("a stale pass restarts it");
+        panic!("a pass that hangs restarts it");
     };
-    assert!(why.contains("no pass for"), "{why}");
-    // no pass at all since it started, for too long: restart
-    let mut w = Watch::new(start);
-    let none = Probe::Health { last_pass: None };
-    assert!(matches!(
-        decide(&mut w, &none, start + Duration::minutes(11), &rules()),
-        Verdict::Restart(_)
-    ));
+    assert!(why.contains("a pass running for 660s"), "{why}");
     // exited: restart, saying how
     let Verdict::Restart(why) = decide(
         &mut w,

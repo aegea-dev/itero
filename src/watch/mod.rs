@@ -33,8 +33,9 @@ pub struct Change {
 
 /// One system's file events, for any number of paths.
 pub trait Backend: Send {
-    /// Waits up to `timeout` for changes; none when it ran out.
-    fn wait(&mut self, timeout: Duration) -> std::io::Result<Vec<Change>>;
+    /// Waits up to `timeout`, or for good with none, for changes; none
+    /// when it ran out.
+    fn wait(&mut self, timeout: Option<Duration>) -> std::io::Result<Vec<Change>>;
     /// Watches these paths from now on: new ones are added, the others
     /// dropped.
     fn set(&mut self, paths: &[PathBuf]) -> std::io::Result<()>;
@@ -142,9 +143,8 @@ pub fn run(
 ) -> std::io::Result<()> {
     loop {
         let now = Instant::now();
-        let timeout = d.due().map_or(Duration::from_secs(3600), |at| {
-            at.saturating_duration_since(now)
-        });
+        // nothing pending: wait for good
+        let timeout = d.due().map(|at| at.saturating_duration_since(now));
         let changes = backend.wait(timeout)?;
         let now = Instant::now();
         d.add(changes, now);
@@ -224,7 +224,7 @@ mod tests {
     struct Fake(std::collections::VecDeque<Vec<Change>>);
 
     impl Backend for Fake {
-        fn wait(&mut self, _: Duration) -> std::io::Result<Vec<Change>> {
+        fn wait(&mut self, _: Option<Duration>) -> std::io::Result<Vec<Change>> {
             self.0
                 .pop_front()
                 .ok_or_else(|| std::io::Error::other("bitti"))

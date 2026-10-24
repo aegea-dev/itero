@@ -15,7 +15,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Cmd {
-    /// Run the workspace's workflows: their schedules, events and jobs, pass after pass
+    /// Run the workspace's workflows: their schedules, events and jobs, as each comes due
     Daemon {
         /// One pass, then stop: for tests and scripts, so hidden
         #[arg(long, hide = true)]
@@ -23,9 +23,6 @@ pub enum Cmd {
         /// The time to run at, with --once (RFC 3339; for tests)
         #[arg(long, requires = "once", hide = true)]
         now: Option<String>,
-        /// Seconds between passes
-        #[arg(long, default_value_t = 1)]
-        interval: u64,
         /// The passes only: no HTTP API
         #[arg(long)]
         no_serve: bool,
@@ -124,19 +121,19 @@ pub enum Cmd {
     /// For connectors: print a line each time a file or folder changes
     Watch { path: std::path::PathBuf },
     /// Keeps `itero daemon` running: restarts it when it exits, stops
-    /// answering or stops making passes (what the service runs)
+    /// answering or a pass hangs (what the service runs)
     #[command(hide = true)]
     Watchdog {
-        /// Seconds between the daemon's passes
-        #[arg(long, default_value_t = 1)]
-        interval: u64,
+        /// Gone: a service installed before 0.10.0 still passes it
+        #[arg(long, hide = true)]
+        interval: Option<String>,
         /// Seconds between checks of the daemon's /health
         #[arg(long, default_value_t = 10)]
         check_every: u64,
         /// Checks in a row without an answer before a restart
         #[arg(long, default_value_t = 3)]
         misses: u32,
-        /// Seconds without a pass before the daemon counts as hung
+        /// Seconds one pass may run before the daemon counts as hung
         #[arg(long, default_value_t = 600)]
         stale_after: u64,
         /// Where its lines and the daemon's stderr go
@@ -148,11 +145,7 @@ pub enum Cmd {
 #[derive(Subcommand)]
 pub enum ServiceCmd {
     /// Run the daemon as a service (per user, at login), kept up by a watchdog
-    Install {
-        /// Seconds between passes
-        #[arg(long, default_value_t = 1)]
-        interval: u64,
-    },
+    Install,
     /// Stop and remove the service
     Uninstall,
     /// The service's state and the daemon's health
@@ -244,6 +237,17 @@ fn ignore_sigpipe() {
     // SAFETY: before this command starts any thread or child
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+}
+
+/// Wakes the running daemon for a message saved in the journal; the
+/// message is kept either way, so a failure is said, not fatal.
+fn nudge(ws: &crate::workspace::Workspace, now: &str) {
+    if let Err(e) = crate::engine::events::nudge(ws, now) {
+        eprintln!(
+            "itero: saved, but could not wake the daemon ({}: {e}); it takes the message at its next start or wake",
+            ws.wake_file().display()
+        );
     }
 }
 
@@ -414,7 +418,6 @@ fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Daemon {
             once,
             now,
-            interval,
             no_serve,
         } => {
             use crate::engine::daemon;
@@ -467,7 +470,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 &me.started,
             ))?;
             eprintln!(
-                "itero: running the workflows in {}, a pass every {interval}s (Ctrl-C stops); log: .itero/itero.log",
+                "itero: running the workflows in {}, each as it comes due (Ctrl-C stops); log: .itero/itero.log",
                 ws.root.display()
             );
             let (wake, woken) = std::sync::mpsc::channel();
@@ -503,11 +506,21 @@ fn dispatch(cli: Cli) -> Result<()> {
                 let (ws, wake, log) = (ws.clone(), engine.wake.clone(), log.clone());
                 std::thread::spawn(move || daemon::watch_paths(&ws, &wake, &log));
             }
+            // the next due time, kept by the kernel; it wakes the loop as
+            // everything else does
+            let alarm = {
+                let log = log.clone();
+                crate::engine::alarm::Alarm::start(engine.wake.clone(), move |e| {
+                    log.write(
+                        "error",
+                        serde_json::json!({ "why": format!("the alarm stopped: {e}") }),
+                    );
+                })?
+            };
             let looping = {
                 let (ws, engine) = (ws.clone(), engine.clone());
-                let interval = std::time::Duration::from_secs(interval);
                 std::thread::spawn(move || {
-                    daemon::run_loop(&ws, interval, &exe, &woken, &engine.health, |p| {
+                    daemon::run_loop(&ws, &exe, &alarm, &woken, &engine.health, |p| {
                         report(p, Some(&log))
                     })
                 })
@@ -552,6 +565,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                     bail!("no daemon is running: start itero daemon, then send it again");
                 }
                 let id = events::emit_with(&ws, &kind, data, reply.as_deref(), &now)?;
+                nudge(&ws, &now);
                 let (answer, how) = events::wait_for(&ws, &id, timeout)?;
                 println!("{}", serde_json::to_string_pretty(&answer)?);
                 match how {
@@ -564,6 +578,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
             }
             let id = events::emit_with(&ws, &kind, data, reply.as_deref(), &now)?;
+            nudge(&ws, &now);
             println!("{id}");
             // what it will do, on stderr: stdout stays the id for scripts
             let fate = crate::engine::events::fate(&ws, &kind, &fields)?;
@@ -1002,14 +1017,14 @@ fn dispatch(cli: Cli) -> Result<()> {
             use crate::engine::service;
             let ws = workspace()?;
             match cmd {
-                ServiceCmd::Install { interval } => {
+                ServiceCmd::Install => {
                     let exe = std::env::current_exe()?;
                     let log = service::log_file(&ws.root);
                     if let Some(dir) = log.parent() {
                         std::fs::create_dir_all(dir)?;
                     }
                     let path = std::env::var("PATH").ok();
-                    service::install(service::install_ctx(&ws.root, &exe, interval, path))?;
+                    service::install(service::install_ctx(&ws.root, &exe, path))?;
                     println!(
                         "installed: {} runs itero in {}; it starts at login",
                         service::label(&ws.root).to_qualified_name(),
@@ -1059,10 +1074,14 @@ fn dispatch(cli: Cli) -> Result<()> {
             log,
         } => {
             use crate::engine::watchdog::{Options, Rules, run};
+            if interval.is_some() {
+                bail!(
+                    "--interval is gone: the daemon now waits for what is due. Run `itero service install` again in this workspace to update the service"
+                );
+            }
             let ws = workspace()?;
             run(&Options {
                 exe: std::env::current_exe()?,
-                daemon_args: vec!["--interval".into(), interval.to_string()],
                 ws: ws.clone(),
                 rules: Rules {
                     check_every: std::time::Duration::from_secs(check_every),
@@ -1088,6 +1107,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 serde_json::from_str(&data).map_err(|e| anyhow!("the click, as JSON: {e}"))?;
             let now = crate::engine::daemon::stamp(chrono::Utc::now());
             crate::engine::events::notification_clicked(&ws, v, &now)?;
+            nudge(&ws, &now);
         }
         Cmd::Worker => {
             let mut text = String::new();

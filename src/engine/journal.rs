@@ -780,6 +780,20 @@ impl Journal {
         set_schedule_last(&self.db, key, at)
     }
 
+    /// The earliest time a waiting run's timer is set for.
+    pub fn next_timer(&self) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT MIN(at) FROM timers", [], |r| r.get(0))?)
+    }
+
+    /// The earliest time a callback is due again.
+    pub fn next_reply(&self) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT MIN(next) FROM replies", [], |r| r.get(0))?)
+    }
+
     /// Timers due at `now` (RFC 3339, UTC): id, run, data.
     pub fn due_timers(&self, now: &str) -> Result<Vec<(i64, String, Value)>> {
         let mut s = self
