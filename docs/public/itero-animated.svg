@@ -1,0 +1,39 @@
+<svg width="693" height="416" viewBox="0 0 693 416" fill="none" xmlns="http://www.w3.org/2000/svg">
+<title>itero</title>
+<desc>A connector, two actions and a workflow light up one after another, along the line that joins them.</desc>
+<style>
+.ink { stroke: #6b7280; }
+.connector { fill: #E57373; }
+.action { fill: #6C8EEF; }
+.workflow { fill: #6FBF73; }
+@media (prefers-color-scheme: dark) {
+  .ink { stroke: #ffffff; }
+  .connector { fill: #9E3F3B; }
+  .action { fill: #3A4FA8; }
+  .workflow { fill: #3B7F43; }
+}
+</style>
+<path class="ink" d="M110.232 296.009L287.009 119.232" stroke-width="1.5">
+  <animate attributeName="stroke-width" to="5" begin="2s" dur="0.3s" fill="freeze"/>
+</path>
+<path class="ink" d="M290.768 119.232L432.189 260.654" stroke-width="1.5">
+  <animate attributeName="stroke-width" to="5" begin="4s" dur="0.3s" fill="freeze"/>
+</path>
+<path class="ink" d="M429.232 260.364L641.364 48.2322" stroke-width="1.5">
+  <animate attributeName="stroke-width" to="5" begin="6s" dur="0.3s" fill="freeze"/>
+</path>
+<path class="ink workflow" d="M690.5 50C690.5 76.2335 669.234 97.5 643 97.5C616.766 97.5 595.5 76.2335 595.5 50C595.5 23.7665 616.766 2.5 643 2.5C669.234 2.5 690.5 23.7665 690.5 50Z" stroke-width="0">
+  <animate attributeName="stroke-width" to="5" begin="7s" dur="0.3s" fill="freeze"/>
+</path>
+<path class="ink action" d="M221.825 121L289 53.8249L356.175 121L289 188.175L221.825 121Z" stroke-width="0">
+  <animate attributeName="stroke-width" to="5" begin="3s" dur="0.3s" fill="freeze"/>
+</path>
+<path class="ink action" d="M363.536 261.711L430.711 194.536L497.886 261.711L430.711 328.886L363.536 261.711Z" stroke-width="0">
+  <animate attributeName="stroke-width" to="5" begin="5s" dur="0.3s" fill="freeze"/>
+</path>
+<path class="connector" d="M10.074 332.202L113.602 292.578L96.1529 402.048L10.074 332.202Z"/>
+<mask id="triangle" fill="white"><path d="M10.074 332.202L113.602 292.578L96.1529 402.048L10.074 332.202Z"/></mask>
+<path class="ink" d="M10.074 332.202L113.602 292.578L96.1529 402.048L10.074 332.202Z" stroke-width="0" mask="url(#triangle)">
+  <animate attributeName="stroke-width" to="10" begin="1s" dur="0.3s" fill="freeze"/>
+</path>
+</svg>
