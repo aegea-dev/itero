@@ -148,8 +148,10 @@ fn a_message_wakes_it_and_a_deadline_ends_a_waiting_run_on_time() {
     until("the deadline", Duration::from_secs(8), || {
         (statuses(d.path()) == ["error"]).then_some(())
     });
+    // the journal keeps times to the second, and "waiting since" is the
+    // second it began: a 2 s deadline comes between 1 s and 2 s on
     assert!(
-        sent.elapsed() >= Duration::from_millis(1900),
+        sent.elapsed() >= Duration::from_millis(1000),
         "{:?}",
         sent.elapsed()
     );
