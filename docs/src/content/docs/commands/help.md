@@ -26,4 +26,4 @@ Arguments:
   [DATA]  Its data, a JSON object
 ```
 
-`itero --version` prints the version: `itero 0.10.0`.
+`itero --version` prints the version: `itero 0.11.0`.
