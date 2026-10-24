@@ -32,8 +32,11 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "release already exists, reusing it"
           else
+            # the install line, then GitHub's notes: the PRs merged since
+            # the last tag, by their titles
             gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" \
-              --notes "itero $GITHUB_REF_NAME. Install: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh"
+              --notes "itero $GITHUB_REF_NAME. Install: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh" \
+              --generate-notes
           fi
 
   build:
