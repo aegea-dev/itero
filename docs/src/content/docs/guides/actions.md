@@ -3,7 +3,7 @@ title: Actions
 description: An executable file that reads its values from the environment, prints JSON, and says with its exit code how it went.
 ---
 
-■ An action is an executable file in `actions/` or any subfolder of it, in
+<span class="act">■</span> An action is an executable file in `actions/` or any subfolder of it, in
 any language its first line names (`#!/bin/sh`, `#!/usr/bin/env python3`).
 It has no extension and no description file; its name is its file name,
 unique among the actions (`actions/mail/imap-check` is `#imap-check`).
@@ -33,7 +33,7 @@ curl -fsS "https://carrier.example.com/ship?order=$order" | jq '{tracking: .id}'
 - **`$ITERO_WAITING_SINCE`**, when it runs again after waiting.
 
 It runs in the workspace, with the daemon's own `itero` first on its
-`PATH`, so an action can send a message with `itero emit`.
+`PATH`, so an action can send an event with `itero emit`.
 
 ## What it says
 
@@ -43,7 +43,7 @@ to `null` is removed. Printing nothing adds nothing. Its exit code:
 | Exit | Means |
 |---|---|
 | `0` | done |
-| `75` | not yet: what it printed joins the state, and the run waits; the step runs again when a matching message comes, or every hour |
+| `75` | not yet: what it printed joins the state, and the run waits; the step runs again when a matching event comes, or every hour |
 | anything else | an error: the end of its stderr says why |
 
 A step may print nothing for 10 minutes, `quiet` in
@@ -71,7 +71,7 @@ secrets are the action's, whatever the version.
 | `$title` | its title; `itero` when not set |
 | `$subtitle` | a line under the title (on Linux, the text's first line) |
 | `$sound` | `default`, or a macOS sound's name such as `Glass` (those in `/System/Library/Sounds`); on Linux, a sound theme's name |
-| `$url` | opened by a click on it, on macOS through Itero.app: http or https, anything else an error, as it may come from a message |
+| `$url` | opened by a click on it, on macOS through Itero.app: http or https, anything else an error, as it may come from an event |
 | `$buttons` | a list of 1 to 4 labels, shown as its buttons (macOS); the step then waits for an answer |
 | `$wait` | `true`: the step waits for a click on it, with no buttons |
 | `$data` | an object a click on it passes on, as `data` |
@@ -80,11 +80,11 @@ secrets are the action's, whatever the version.
 { "#notify": { "title": "Backup", "subtitle": "disk 2", "text": "$why", "sound": "Basso" } }
 ```
 
-On macOS, each click on a notification from `#notify` is a message,
+On macOS, each click on a notification from `#notify` is an event,
 `itero.notification.clicked`, in the workspace that showed it: `answer` is
 the button's label, `open` for a click on the notification itself, or
 `dismissed` when one that waits is closed without one. A workflow can start
-on it ([Messages from the daemon](/guides/maintenance/#messages-from-the-daemon)),
+on it ([Events from the daemon](/guides/maintenance/#events-from-the-daemon)),
 and a step with `$buttons` or `$wait` waits for it, then the run goes on
 with `$answer` in its state:
 
@@ -103,7 +103,7 @@ How long a notification stays is yours to set, in System Settings,
 Notifications, itero: Banners go away by themselves, Alerts stay until
 dismissed.
 
-`#forget` forgets ended runs and their messages past `keep`, and
+`#forget` forgets ended runs and their events past `keep`, and
 `#roll-log` rolls the log; the built-in workflows use them
 ([The daemon's own workflows](/guides/maintenance/)).
 
@@ -204,7 +204,7 @@ itero finds what an action needs from the action itself, with no list to
 keep up to date:
 
 - **When a step fails,** it reads the exit code and stderr, and the run's
-  `why` (in `itero runs <name>` and `itero errors`) starts with what was
+  `why` (in `itero wf runs <name>` and `itero action errors`) starts with what was
   missing:
 
   | The action printed | The run's why |

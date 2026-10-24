@@ -132,7 +132,7 @@ fn another_answer_or_a_dismissal_goes_on_without_the_step() {
         click(d.path(), &id, answer);
         pass(d.path());
         assert!(!d.path().join("uygulandı.txt").exists(), "{answer}");
-        let runs = String::from_utf8(itero(d.path(), &["runs"]).stdout).unwrap();
+        let runs = String::from_utf8(itero(d.path(), &["wf", "runs"]).stdout).unwrap();
         assert!(runs.contains("done"), "{answer}: {runs}");
     }
 }
@@ -157,7 +157,8 @@ fn notify_s_buttons_are_a_short_list_of_labels() {
         );
         assert!(itero(d.path(), &["emit", "soru.geldi"]).status.success());
         pass(d.path());
-        let errors = String::from_utf8(itero(d.path(), &["errors"]).stdout).unwrap();
+        let errors =
+            String::from_utf8(itero(d.path(), &["wf", "runs", "--errors"]).stdout).unwrap();
         assert!(errors.contains("buttons"), "{bad}: {errors}");
         assert!(shown(d.path()).is_empty(), "{bad}");
     }

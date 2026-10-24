@@ -1,7 +1,11 @@
 ---
-title: itero secret
+title: secret
 description: Keeps a secret in the OS secret store.
 ---
+
+`itero secret` keeps a password, a token or an API key safe in your
+system's secret store, so your workflows can use it as `$$NAME` without it
+ever being written in a file.
 
 ```sh
 itero secret <NAME>

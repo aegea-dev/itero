@@ -1,4 +1,10 @@
 //! The command line.
+mod complete;
+mod kinds;
+mod out;
+mod top;
+mod workflow;
+
 use anyhow::{Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 
@@ -6,7 +12,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "itero",
     version,
-    about = "Runs workflows again and again: schedules, events, steps, workers"
+    about = "itero: your domain, your solution, your tool. Build the harness you need, from anything, for anything."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -27,9 +33,12 @@ pub enum Cmd {
         #[arg(long)]
         no_serve: bool,
     },
-    /// Check every workflow, action and connector; print each
-    Check,
-    /// Send a message: it starts runs and reaches the runs waiting for it
+    /// Read every workflow, action and connector, before anything runs, and say what is wrong
+    Check {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Send an event: it starts runs, and reaches the runs waiting for it
     Emit {
         /// Its type, two or more words joined by dots, like order.placed
         #[arg(value_name = "TYPE")]
@@ -43,35 +52,9 @@ pub enum Cmd {
         /// With --wait: how long, like 30s or 5m
         #[arg(long, default_value = "60s", requires = "wait")]
         timeout: String,
-        /// Post each run's end to this URL, when it ends
-        #[arg(long, value_name = "URL")]
-        reply: Option<String>,
-    },
-    /// Set an action's args (a JSON object, or a list of objects: its step runs once per item), or a connector's (an object)
-    Args {
-        /// The action, without # or a version; or the connector
-        name: String,
-        /// The args, as JSON
-        #[arg(
-            value_name = "DATA",
-            required_unless_present = "file",
-            conflicts_with = "file"
-        )]
-        data: Option<String>,
-        /// Read the args from this file
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
-    },
-    /// Set a workflow's settings, or show them: a JSON object its runs start with
-    Config {
-        /// The workflow
-        workflow: String,
-        /// The settings, as JSON; without them, they are shown
-        #[arg(value_name = "DATA", conflicts_with = "file")]
-        data: Option<String>,
-        /// Read the settings from this file
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
+        /// Print its id, and what it starts, as JSON (with --wait, the runs are JSON already)
+        #[arg(long, conflicts_with = "wait")]
+        json: bool,
     },
     /// Keep a secret in the OS secret store, for $$NAME (asks for it, without echo)
     Secret {
@@ -81,25 +64,37 @@ pub enum Cmd {
         #[arg(long)]
         file: Option<std::path::PathBuf>,
     },
-    /// The runs, newest first: id, name, workflow, where it is or how it ended, started, ended
-    Runs {
-        /// One run, by id or name: what happened, step by step
-        run: Option<String>,
-        /// The internal workflows' runs too
-        #[arg(long)]
-        all: bool,
-    },
     /// The workspace: its identity, meta and limits, and the daemon running it
-    Info,
-    /// Each workflow: what starts it, its runs and the last; and whether a daemon takes the messages
-    Workflows,
+    Info {
+        #[arg(long)]
+        json: bool,
+    },
     /// Where a workflow, action or connector of this name is (#name: the action only)
-    Which { name: String },
-    /// Runs that ended in error, newest first: when, the workflow, the run, the step and why
-    Errors {
-        /// How many
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
+    Which {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// The workflows, their runs and their settings
+    #[command(visible_alias = "wf")]
+    Workflow {
+        #[command(subcommand)]
+        cmd: WorkflowCmd,
+    },
+    /// The actions, the ones that break, and their args
+    Action {
+        #[command(subcommand)]
+        cmd: ActionCmd,
+    },
+    /// The connectors, and their args
+    Connector {
+        #[command(subcommand)]
+        cmd: ConnectorCmd,
+    },
+    /// Print the script that completes itero's commands and names on Tab
+    Completion {
+        /// bash, zsh or fish
+        shell: Shell,
     },
     /// Start this workspace's daemon at login, kept up by a watchdog
     Service {
@@ -142,6 +137,168 @@ pub enum Cmd {
     },
 }
 
+/// The shells `itero completion` writes for.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum Shell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
+#[derive(Subcommand)]
+pub enum WorkflowCmd {
+    /// Each workflow: what starts it, its runs and the last
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// The runs, newest first, or one run step by step
+    Runs {
+        /// One run, by id or name: what happened, step by step
+        #[arg(add = complete::runs())]
+        run: Option<String>,
+        /// Only the runs that ended in error, and why
+        #[arg(long)]
+        errors: bool,
+        /// Only this workflow's runs
+        #[arg(long, add = complete::workflows())]
+        workflow: Option<String>,
+        /// Only the runs that broke at this action
+        #[arg(long, add = complete::actions())]
+        action: Option<String>,
+        /// At most this many
+        #[arg(long)]
+        limit: Option<usize>,
+        /// The internal workflows' runs too
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// A workflow's settings: the JSON object its runs start with
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCmd,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCmd {
+    /// Show a workflow's settings
+    Get {
+        #[arg(add = complete::workflows())]
+        workflow: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set a workflow's settings, a JSON object
+    Set {
+        #[arg(add = complete::workflows())]
+        workflow: String,
+        /// The settings, as JSON
+        #[arg(
+            value_name = "DATA",
+            required_unless_present = "file",
+            conflicts_with = "file"
+        )]
+        data: Option<String>,
+        /// Read them from this file
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ActionCmd {
+    /// Each action, its files and whether it has args
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Which actions broke runs, how often and why; with a name, that action's failures
+    Errors {
+        /// One action, without #
+        #[arg(add = complete::actions())]
+        action: Option<String>,
+        /// At most this many
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// An action's args: the data its step gets
+    Args {
+        #[command(subcommand)]
+        cmd: ActionArgsCmd,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConnectorCmd {
+    /// Each connector, its file and whether it has args
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// A connector's args: the data it starts with
+    Args {
+        #[command(subcommand)]
+        cmd: ConnectorArgsCmd,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ActionArgsCmd {
+    /// Show an action's args
+    Get {
+        #[arg(add = complete::actions())]
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set an action's args: an object, or a list of objects (its step runs once per item)
+    Set {
+        #[arg(add = complete::actions())]
+        name: String,
+        /// The args, as JSON
+        #[arg(
+            value_name = "DATA",
+            required_unless_present = "file",
+            conflicts_with = "file"
+        )]
+        data: Option<String>,
+        /// Read them from this file
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConnectorArgsCmd {
+    /// Show a connector's args
+    Get {
+        #[arg(add = complete::connectors())]
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set a connector's args: an object
+    Set {
+        #[arg(add = complete::connectors())]
+        name: String,
+        /// The args, as JSON
+        #[arg(
+            value_name = "DATA",
+            required_unless_present = "file",
+            conflicts_with = "file"
+        )]
+        data: Option<String>,
+        /// Read them from this file
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+}
+
 #[derive(Subcommand)]
 pub enum ServiceCmd {
     /// Run the daemon as a service (per user, at login), kept up by a watchdog
@@ -149,7 +306,10 @@ pub enum ServiceCmd {
     /// Stop and remove the service
     Uninstall,
     /// The service's state and the daemon's health
-    Status,
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Lists a command's subcommands, and theirs, by name in help: one display
@@ -158,10 +318,18 @@ fn by_name(c: clap::Command) -> clap::Command {
     c.mut_subcommands(|s| by_name(s.display_order(0)))
 }
 
+/// The command line, as parsed and as the shell completes it.
+fn command() -> clap::Command {
+    use clap::CommandFactory;
+    by_name(Cli::command())
+}
+
 /// Runs the command line; returns the exit code.
 pub fn run(args: Vec<String>) -> i32 {
-    use clap::{CommandFactory, FromArgMatches};
-    let parsed = by_name(Cli::command())
+    use clap::FromArgMatches;
+    // the shell asking for completions: answered, and the process ends
+    complete::answer(command);
+    let parsed = command()
         .try_get_matches_from(args)
         .and_then(|m| Cli::from_arg_matches(&m));
     let cli = match parsed {
@@ -273,139 +441,6 @@ fn daemon_running(
         .is_some_and(|h| h["workspace"]["id"] == me.id.as_str()))
 }
 
-/// How long before `now` an RFC 3339 time was: `2m ago`, `3h ago`.
-fn ago(at: &str, now: chrono::DateTime<chrono::Utc>) -> String {
-    let Ok(t) = at.parse::<chrono::DateTime<chrono::Utc>>() else {
-        return at.to_string();
-    };
-    let s = (now - t).num_seconds().max(0);
-    match s {
-        0..60 => format!("{s}s ago"),
-        60..3600 => format!("{}m ago", s / 60),
-        3600..86400 => format!("{}h ago", s / 3600),
-        _ => format!("{}d ago", s / 86400),
-    }
-}
-
-/// A run, from the journal: how it started, each step and how it went,
-/// the messages it took, and its state.
-fn story(j: &crate::engine::journal::Journal, r: &crate::engine::journal::Run) -> Result<()> {
-    use crate::engine::journal::subject;
-    println!(
-        "{}  {}  {}  {}",
-        r.name,
-        r.id,
-        r.workflow,
-        crate::engine::steps::status(&r.runtime)
-    );
-    // each result's cause is its job, which names the action
-    let jobs: std::collections::BTreeMap<String, String> = j
-        .events(Some(&subject("worker")))?
-        .into_iter()
-        .filter(|e| e.event.data["run"] == r.id.as_str())
-        .map(|e| {
-            let action = e.event.data["job"]["action"].as_str().unwrap_or("?");
-            (e.event.id, format!("#{action}"))
-        })
-        .collect();
-    for e in j.events(Some(&subject(&r.id)))? {
-        let d = &e.event.data;
-        let step = || {
-            let name = e
-                .event
-                .cause
-                .as_ref()
-                .and_then(|c| jobs.get(c))
-                .map_or("a step", String::as_str);
-            let undo = crate::engine::steps::Phase::Undo.index() as u64;
-            match d["path"][0].as_u64() {
-                Some(p) if p == undo => format!("{name} (undo)"),
-                _ => name.to_string(),
-            }
-        };
-        let line = match e.event.kind.as_str() {
-            "run.started" => format!("started  {d}"),
-            "action.finished" => format!("{}  done  {}", step(), d["output"]),
-            "action.waiting" => format!("{}  waiting  {}", step(), d["output"]),
-            "action.failed" => format!("{}  error  {}", step(), d["error"]),
-            "timer.fired" => "waited too long".into(),
-            // a message is copied to every waiting run: show those it took
-            "message" if r.runtime.taken.iter().any(|t| d["id"] == t.as_str()) => {
-                format!(
-                    "message {}  {}",
-                    d["type"].as_str().unwrap_or("?"),
-                    d["data"]
-                )
-            }
-            _ => continue,
-        };
-        println!("  {}  {line}", e.event.time);
-    }
-    if let Some(ended) = &r.ended {
-        println!(
-            "  {ended}  ended {}",
-            crate::engine::steps::status(&r.runtime)
-        );
-    }
-    println!(
-        "  state {}",
-        serde_json::Value::Object(r.runtime.state.clone())
-    );
-    Ok(())
-}
-
-/// What `itero check` refuses in the manifest: an entry naming no workflow,
-/// action or connector, and the folders from before it (`args/`, `config/`).
-fn check_manifest(
-    ws: &crate::workspace::Workspace,
-    flows: &[(String, crate::flow::Flow)],
-) -> Result<()> {
-    let manifest = crate::workspace::MANIFEST;
-    let mut wrong = vec![];
-    for (dir, now) in [
-        ("args", "\"action\": {\"<name>\": {\"args\": ...}}"),
-        ("config", "\"workflow\": {\"<name>\": {\"settings\": ...}}"),
-    ] {
-        if ws.root.join(dir).is_dir() {
-            wrong.push(format!("{dir}/: this goes in {manifest} now, as {now}"));
-        }
-    }
-    let actions: Vec<String> = ws
-        .action_files()?
-        .into_keys()
-        .map(|f| f.split('@').next().unwrap_or(&f).to_string())
-        .chain(
-            crate::engine::worker::BUILT_IN
-                .iter()
-                .map(|b| b.to_string()),
-        )
-        .collect();
-    let connectors: Vec<String> = ws.connector_files()?.into_iter().map(|(n, _)| n).collect();
-    for name in ws.entries("connector")?.keys() {
-        if let Err(why) = crate::engine::daemon::connector_args(ws, name) {
-            wrong.push(why);
-        }
-    }
-    for (kind, known) in [
-        (
-            "workflow",
-            flows.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
-        ),
-        ("action", actions),
-        ("connector", connectors),
-    ] {
-        for name in ws.entries(kind)?.keys() {
-            if !known.contains(name) {
-                wrong.push(format!("{kind}.{name}: no {kind} {name}"));
-            }
-        }
-    }
-    if !wrong.is_empty() {
-        bail!("{}: {}", ws.root.join(manifest).display(), wrong.join("; "));
-    }
-    Ok(())
-}
-
 fn dispatch(cli: Cli) -> Result<()> {
     let workspace = || crate::workspace::find(&std::env::current_dir()?);
     if matches!(
@@ -463,6 +498,12 @@ fn dispatch(cli: Cli) -> Result<()> {
                     "itero": me.itero,
                 }),
             );
+            // a $$NAME both a secret and a variable: said once, at the start
+            for name in crate::engine::secrets::shadowed(&ws)? {
+                let why = crate::engine::secrets::shadow_warning(&name);
+                eprintln!("itero: warning: {why}");
+                log.write("warning", serde_json::json!({ "why": why }));
+            }
             stop_on_signal(log.clone());
             crate::engine::journal::Journal::open(&ws)?.publish(&crate::engine::events::own(
                 "itero.daemon.started",
@@ -544,7 +585,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             data,
             wait,
             timeout,
-            reply,
+            json,
         } => {
             use crate::engine::events::{self, Waited};
             let ws = workspace()?;
@@ -564,7 +605,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 if !daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)? {
                     bail!("no daemon is running: start itero daemon, then send it again");
                 }
-                let id = events::emit_with(&ws, &kind, data, reply.as_deref(), &now)?;
+                let id = events::emit(&ws, &kind, data, &now)?;
                 nudge(&ws, &now);
                 let (answer, how) = events::wait_for(&ws, &id, timeout)?;
                 println!("{}", serde_json::to_string_pretty(&answer)?);
@@ -577,106 +618,108 @@ fn dispatch(cli: Cli) -> Result<()> {
                     }
                 }
             }
-            let id = events::emit_with(&ws, &kind, data, reply.as_deref(), &now)?;
+            let id = events::emit(&ws, &kind, data, &now)?;
             nudge(&ws, &now);
-            println!("{id}");
-            // what it will do, on stderr: stdout stays the id for scripts
             let fate = crate::engine::events::fate(&ws, &kind, &fields)?;
-            if !fate.starts.is_empty() {
-                eprintln!("starts: {}", fate.starts.join(", "));
-            }
-            if fate.waiting > 0 {
-                eprintln!("may reach {} waiting run(s)", fate.waiting);
-            }
-            if fate.starts.is_empty() {
-                match &fate.nearest {
-                    Some(n) => eprintln!("nothing starts on {kind}: did you mean {n}?"),
-                    None => eprintln!("nothing starts on {kind}"),
+            let running = daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)?;
+            let v = serde_json::json!({
+                "id": id,
+                "starts": fate.starts,
+                "waiting": fate.waiting,
+                "nearest": fate.nearest,
+                "daemon": { "running": running },
+            });
+            out::show(json, &v, |_| {
+                println!("{id}");
+                // what it will do, on stderr: stdout stays the id for scripts
+                if !fate.starts.is_empty() {
+                    eprintln!("starts: {}", fate.starts.join(", "));
                 }
-            }
-            if !daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)? {
-                eprintln!("no daemon is running: it waits for itero daemon");
-            }
-        }
-        Cmd::Args { name, data, file } => {
-            let ws = workspace()?;
-            let text = match (data, file) {
-                (Some(d), _) => d,
-                (None, Some(f)) => std::fs::read_to_string(&f)
-                    .map_err(|e| anyhow!("cannot read {}: {e}", f.display()))?,
-                (None, None) => bail!("give the args as JSON, or --file"),
-            };
-            let bad_name = name.is_empty()
-                || name.contains(['/', '\\', '#', '@', '$'])
-                || name.starts_with('.');
-            if bad_name {
-                bail!("{name} is not an action's or a connector's name");
-            }
-            // a connector's when the workspace has a connector of that name
-            let connector = ws.connector_files()?.iter().any(|(n, _)| *n == name);
-            if connector && ws.action_file(&name, None).is_ok() {
-                bail!(
-                    "{name} is an action and a connector: set its args in {}",
-                    crate::workspace::MANIFEST
-                );
-            }
-            let v: serde_json::Value = serde_json::from_str(&text)
-                .map_err(|_| anyhow!("args are an object, or a list of objects, as JSON"))?;
-            let ok = match &v {
-                serde_json::Value::Object(_) => true,
-                serde_json::Value::Array(items) => {
-                    !connector && items.iter().all(|i| i.is_object())
+                if fate.waiting > 0 {
+                    eprintln!("may reach {} waiting run(s)", fate.waiting);
                 }
-                _ => false,
-            };
-            if !ok && connector {
-                bail!("a connector's args are an object, as JSON: a connector runs once");
-            }
-            if !ok {
-                bail!("args are an object, or a list of objects, as JSON");
-            }
-            let kind = if connector { "connector" } else { "action" };
-            let f = ws.write_entry(kind, &name, "args", v)?;
-            println!("{}", f.display());
-        }
-        Cmd::Config {
-            workflow,
-            data,
-            file,
-        } => {
-            let ws = workspace()?;
-            let bad_name = workflow.is_empty()
-                || workflow.contains(['/', '\\', '#', '@', '$'])
-                || workflow.starts_with('.');
-            if bad_name {
-                bail!("{workflow} is not a workflow's name");
-            }
-            let text = match (data, file) {
-                (Some(d), _) => d,
-                (None, Some(path)) => std::fs::read_to_string(&path)
-                    .map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?,
-                (None, None) => {
-                    let settings = ws
-                        .entries("workflow")?
-                        .get(&workflow)
-                        .and_then(|e| e.get("settings"))
-                        .cloned();
-                    match settings {
-                        Some(s) => println!("{}", serde_json::to_string_pretty(&s)?),
-                        None => eprintln!(
-                            "{workflow} has no settings in {}",
-                            crate::workspace::MANIFEST
-                        ),
+                if fate.starts.is_empty() {
+                    match &fate.nearest {
+                        Some(n) => eprintln!("nothing starts on {kind}: did you mean {n}?"),
+                        None => eprintln!("nothing starts on {kind}"),
                     }
-                    return Ok(());
                 }
-            };
-            let Ok(settings @ serde_json::Value::Object(_)) = serde_json::from_str(&text) else {
-                bail!("settings are an object, as JSON: {{\"name\": value}}");
-            };
-            let f = ws.write_entry("workflow", &workflow, "settings", settings)?;
-            println!("{}", f.display());
+                if !running {
+                    eprintln!("no daemon is running: it waits for itero daemon");
+                }
+            })?;
         }
+        Cmd::Workflow { cmd } => {
+            let ws = workspace()?;
+            match cmd {
+                WorkflowCmd::List { json } => workflow::list(&ws, json)?,
+                WorkflowCmd::Runs {
+                    run: Some(run),
+                    json,
+                    ..
+                } => workflow::run(&ws, &run, json)?,
+                WorkflowCmd::Runs {
+                    run: None,
+                    errors,
+                    workflow,
+                    action,
+                    limit,
+                    all,
+                    json,
+                } => workflow::runs(
+                    &ws,
+                    &workflow::Filter {
+                        errors,
+                        workflow,
+                        action,
+                        limit,
+                        all,
+                    },
+                    json,
+                )?,
+                WorkflowCmd::Config {
+                    cmd: ConfigCmd::Get { workflow, json },
+                } => workflow::config_get(&ws, &workflow, json)?,
+                WorkflowCmd::Config {
+                    cmd:
+                        ConfigCmd::Set {
+                            workflow,
+                            data,
+                            file,
+                        },
+                } => workflow::config_set(&ws, &workflow, data, file)?,
+            }
+        }
+        Cmd::Action { cmd } => {
+            let ws = workspace()?;
+            match cmd {
+                ActionCmd::List { json } => kinds::actions(&ws, json)?,
+                ActionCmd::Errors {
+                    action,
+                    limit,
+                    json,
+                } => kinds::errors(&ws, action.as_deref(), limit, json)?,
+                ActionCmd::Args {
+                    cmd: ActionArgsCmd::Get { name, json },
+                } => kinds::args_get(&ws, kinds::Kind::Action, &name, json)?,
+                ActionCmd::Args {
+                    cmd: ActionArgsCmd::Set { name, data, file },
+                } => kinds::args_set(&ws, kinds::Kind::Action, &name, data, file)?,
+            }
+        }
+        Cmd::Connector { cmd } => {
+            let ws = workspace()?;
+            match cmd {
+                ConnectorCmd::List { json } => kinds::connectors(&ws, json)?,
+                ConnectorCmd::Args {
+                    cmd: ConnectorArgsCmd::Get { name, json },
+                } => kinds::args_get(&ws, kinds::Kind::Connector, &name, json)?,
+                ConnectorCmd::Args {
+                    cmd: ConnectorArgsCmd::Set { name, data, file },
+                } => kinds::args_set(&ws, kinds::Kind::Connector, &name, data, file)?,
+            }
+        }
+        Cmd::Completion { shell } => complete::script(shell, command),
         Cmd::Secret { name, file } => {
             crate::engine::secrets::ready(&name)?;
             let value = match file {
@@ -694,299 +737,9 @@ fn dispatch(cli: Cli) -> Result<()> {
             crate::engine::secrets::set(&name, &value)?;
             println!("{name}: kept in the OS secret store");
         }
-        Cmd::Check => {
-            let ws = workspace()?;
-            for dir in ws.workflows.iter().chain(&ws.actions) {
-                if !dir.exists() {
-                    eprintln!("note: no folder {}", dir.display());
-                }
-            }
-            let mut flows = ws.flows()?;
-            check_manifest(&ws, &flows)?;
-            // the internal ones last, apart
-            flows.sort_by_key(|(_, f)| f.meta.internal);
-            let j = crate::engine::journal::Journal::open(&ws)?;
-            let now = crate::engine::daemon::stamp(chrono::Utc::now());
-            let files = ws.flow_files()?;
-            let mut apart = false;
-            for (name, f) in &flows {
-                if f.meta.internal && !apart {
-                    apart = true;
-                    println!("\ninternal");
-                }
-                println!("{name}");
-                let id = j.workflow_id(name, &now)?;
-                println!("  id {}  since {}", id.id, id.created);
-                match files.get(name) {
-                    Some(file) => println!("  file {}", ws.shown(file)),
-                    None => println!("  file built in"),
-                }
-                if !f.settings.is_empty() {
-                    println!(
-                        "  settings {}",
-                        serde_json::Value::Object(f.settings.clone())
-                    );
-                }
-                let m = &f.meta;
-                if let Some(d) = &m.description {
-                    println!("  description {d}");
-                }
-                for (k, t) in [("from", m.from), ("until", m.until)] {
-                    if let Some(t) = t {
-                        println!("  {k} {}", crate::engine::daemon::stamp(t));
-                    }
-                }
-                for (k, on) in [("off", m.off), ("internal", m.internal)] {
-                    if on {
-                        println!("  {k}");
-                    }
-                }
-                for (k, v) in &m.other {
-                    println!("  {k} {v}");
-                }
-                let runs = j.runs_page(Some(name), None, &[], usize::MAX)?;
-                println!("  runs so far {}", runs.len());
-                if let Some(last) = runs.first() {
-                    println!(
-                        "  last run {} {}  {}",
-                        last.name,
-                        crate::engine::steps::status(&last.runtime),
-                        last.ended.as_deref().unwrap_or(&last.started)
-                    );
-                }
-                for u in f.uses() {
-                    match u {
-                        crate::flow::Name::Action { name: a, version } => {
-                            match ws.action_file(&a, version.as_deref()) {
-                                Ok(file) => {
-                                    println!("  #{a}  {}", file.display());
-                                    // the PATH an action runs with
-                                    let path = crate::connectors::supervise::path_with(
-                                        &std::env::current_exe()?,
-                                    );
-                                    let first = crate::engine::worker::first_line(&file)
-                                        .unwrap_or_default();
-                                    for note in crate::needs::notes(&file, &first, Some(&path)) {
-                                        println!("    {note}");
-                                    }
-                                }
-                                Err(_)
-                                    if crate::engine::worker::BUILT_IN.contains(&a.as_str())
-                                        && version.is_none() =>
-                                {
-                                    println!("  #{a}  built in")
-                                }
-                                Err(e) => bail!("{name}: {e:#}"),
-                            }
-                        }
-                        crate::flow::Name::Workflow(w) => {
-                            if !flows.iter().any(|(n, _)| *n == w) {
-                                bail!("{name} uses workflow {w}, which is not there");
-                            }
-                            println!("  {w}  workflow");
-                        }
-                    }
-                }
-            }
-            for (kind, file) in ws.connector_files()? {
-                println!("connector {kind}  {}", file.display());
-            }
-        }
-        Cmd::Runs { run: Some(run), .. } => {
-            let ws = workspace()?;
-            let j = crate::engine::journal::Journal::open(&ws)?;
-            let found = j.run_by(&run)?;
-            let Some(r) = found.first() else {
-                bail!("no run {run}: itero runs lists them");
-            };
-            if found.len() > 1 {
-                println!(
-                    "{} runs are named {run}: this is the newest; give an id for another",
-                    found.len()
-                );
-            }
-            story(&j, r)?;
-        }
-        Cmd::Which { name } => {
-            let ws = workspace()?;
-            let (action_only, name) = match name.strip_prefix('#') {
-                Some(n) => (true, n.to_string()),
-                None => (false, name),
-            };
-            let mut found: Vec<(&str, String)> = vec![];
-            if !action_only {
-                match ws.flow_files()?.get(&name) {
-                    Some(f) => found.push(("workflow", ws.shown(f))),
-                    None if crate::workspace::BUILT_IN.iter().any(|(n, _)| *n == name) => {
-                        found.push(("workflow", "built in".into()))
-                    }
-                    None => {}
-                }
-            }
-            // the action, and each of its versions
-            let actions: Vec<String> = ws
-                .action_files()?
-                .into_iter()
-                .filter(|(file, _)| *file == name || file.starts_with(&format!("{name}@")))
-                .map(|(_, f)| ws.shown(&f))
-                .collect();
-            if actions.is_empty() && crate::engine::worker::BUILT_IN.contains(&name.as_str()) {
-                found.push(("action", "built in".into()));
-            }
-            found.extend(actions.into_iter().map(|a| ("action", a)));
-            if !action_only {
-                for (kind, f) in ws.connector_files()? {
-                    if kind == name {
-                        found.push(("connector", ws.shown(&f)));
-                    }
-                }
-            }
-            if found.is_empty() {
-                bail!("nothing named {name}: itero workflows and itero check list them");
-            }
-            for (kind, path) in found {
-                println!("{kind:<10}{path}");
-            }
-        }
-        Cmd::Workflows => {
-            let ws = workspace()?;
-            let j = crate::engine::journal::Journal::open(&ws)?;
-            let now = chrono::Utc::now();
-            let mut flows = ws.flows()?;
-            flows.sort_by_key(|(_, f)| f.meta.internal);
-            let files = ws.flow_files()?;
-            // the columns: name, its file, what starts it, runs, the last, notes
-            let mut rows: Vec<[String; 6]> = vec![];
-            for (name, f) in &flows {
-                let on = &f.on;
-                let mut starts: Vec<String> = on.events.iter().map(|e| format!("on {e}")).collect();
-                starts.extend(on.schedules.iter().map(|s| format!("at {s}")));
-                starts.extend(on.paths.iter().map(|p| format!("path {p}")));
-                if starts.is_empty() {
-                    starts.push("a step only".into());
-                }
-                let mut notes = vec![];
-                if f.meta.off {
-                    notes.push("off");
-                } else if !crate::flow::active(&f.meta, now) {
-                    notes.push("not now (from/until)");
-                }
-                if f.meta.internal {
-                    notes.push("internal");
-                }
-                let runs = j.runs_page(Some(name), None, &[], usize::MAX)?;
-                let last = match runs.first() {
-                    Some(r) => {
-                        let at = r.ended.as_deref().unwrap_or(&r.started);
-                        let status = crate::engine::steps::status(&r.runtime);
-                        format!("last: {status} {}", ago(at, now))
-                    }
-                    None => "last: none".into(),
-                };
-                let file = files
-                    .get(name)
-                    .map_or_else(|| "built in".to_string(), |f| ws.shown(f));
-                rows.push([
-                    name.clone(),
-                    file,
-                    starts.join(", "),
-                    format!("runs {}", runs.len()),
-                    last,
-                    notes.join(", "),
-                ]);
-            }
-            let width = |c: usize| rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0);
-            let widths: Vec<usize> = (0..5).map(width).collect();
-            for r in &rows {
-                let mut line = String::new();
-                for (c, w) in widths.iter().enumerate() {
-                    line += &format!("{:<w$}   ", r[c]);
-                }
-                line += &r[5];
-                println!("{}", line.trim_end());
-            }
-            let waiting = match j.waiting_messages()? {
-                0 => "no message waiting".to_string(),
-                1 => "1 message waiting".to_string(),
-                n => format!("{n} messages waiting"),
-            };
-            let daemon = if daemon_running(&ws, &j)? {
-                "running"
-            } else {
-                "not running"
-            };
-            println!("daemon: {daemon}, {waiting}");
-        }
-        Cmd::Info => {
-            let ws = workspace()?;
-            let j = crate::engine::journal::Journal::open(&ws)?;
-            let w = j.workspace()?;
-            println!("workspace");
-            println!("  id {}", w.id);
-            // the manifest's name, once given; until then, itero's
-            let named = ws.meta.get("name").and_then(|n| n.as_str());
-            println!("  name {}", named.unwrap_or(&w.name));
-            println!("  created {}", w.created);
-            println!("  path {}", ws.root.display());
-            println!("  itero {}", w.itero);
-            let about: Vec<_> = ws.meta.iter().filter(|(k, _)| *k != "name").collect();
-            if !about.is_empty() {
-                println!("  meta");
-                for (k, v) in about {
-                    println!("    {k} {v}");
-                }
-            }
-            let l = &ws.limits;
-            println!("  limits");
-            println!("    workflows {}", l.workflows);
-            println!("    runs {}", l.runs);
-            println!("    steps {}", l.steps);
-            println!("    space {}", l.space);
-            println!("    keep {}", humantime::format_duration(l.keep));
-            println!("    log {}", l.log);
-            println!("    logs {}", l.logs);
-            let port = ws.daemon_port();
-            match (port, port.and_then(daemon_health)) {
-                (Some(p), Some(h)) if h["workspace"]["id"] != w.id.as_str() => println!(
-                    "daemon: port {p} answers, but for another workspace ({})",
-                    h["workspace"]["path"]
-                        .as_str()
-                        .or(h["workspace"].as_str())
-                        .unwrap_or("unknown")
-                ),
-                (Some(p), Some(h)) => {
-                    let d = &h["daemon"];
-                    println!("daemon");
-                    for k in ["id", "name", "started", "pid", "host", "itero"] {
-                        println!(
-                            "  {k} {}",
-                            d[k].as_str().map_or(d[k].to_string(), String::from)
-                        );
-                    }
-                    println!("  port {p}");
-                }
-                (Some(p), None) => println!("daemon: not running (no answer on port {p})"),
-                (None, _) => {
-                    println!("daemon: not running (no port yet: the OS gives one at its start)")
-                }
-            }
-        }
-        Cmd::Runs { run: None, all } => {
-            let ws = workspace()?;
-            let j = crate::engine::journal::Journal::open(&ws)?;
-            let apart = if all { vec![] } else { ws.internal()? };
-            for r in j.runs_page(None, None, &apart, usize::MAX)? {
-                println!(
-                    "{}  {:<20} {:<20} {:<12} {}  {}",
-                    r.id,
-                    r.name,
-                    r.workflow,
-                    crate::engine::steps::status(&r.runtime),
-                    r.started,
-                    r.ended.as_deref().unwrap_or("-")
-                );
-            }
-        }
+        Cmd::Check { json } => top::check(&workspace()?, json)?,
+        Cmd::Which { name, json } => top::which(&workspace()?, &name, json)?,
+        Cmd::Info { json } => top::info(&workspace()?, json)?,
         Cmd::Watch { path } => {
             let watch = crate::connectors::Watch::new(&path)?;
             // the daemon going away closes stdin: then the connector using
@@ -996,22 +749,6 @@ fn dispatch(cli: Cli) -> Result<()> {
                 std::process::exit(0);
             });
             watch.run(&mut std::io::stdout().lock())?;
-        }
-        Cmd::Errors { limit } => {
-            let ws = workspace()?;
-            let j = crate::engine::journal::Journal::open(&ws)?;
-            for r in j.runs_page(None, Some("error"), &[], limit)? {
-                let st = &r.runtime.state;
-                let text = |k: &str| st.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                println!(
-                    "{}  {:<20} {}  {}: {}",
-                    r.ended.as_deref().unwrap_or(&r.started),
-                    r.workflow,
-                    r.id,
-                    text("failed_step"),
-                    text("why")
-                );
-            }
         }
         Cmd::Service { cmd } => {
             use crate::engine::service;
@@ -1044,26 +781,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                         println!("no service for {}", ws.root.display());
                     }
                 }
-                ServiceCmd::Status => {
-                    println!("service: {}", service::status(&ws.root)?);
-                    let port = ws.daemon_port();
-                    match port.and_then(daemon_health) {
-                        Some(h) => println!(
-                            "daemon: pid {}, {} passes, last {}{}",
-                            h["pid"],
-                            h["passes"],
-                            h["last_pass"].as_str().unwrap_or("none yet"),
-                            h["last_error"]
-                                .as_str()
-                                .map(|e| format!(", last error: {e}"))
-                                .unwrap_or_default()
-                        ),
-                        None => match port {
-                            Some(p) => println!("daemon: no answer on port {p}"),
-                            None => println!("daemon: no port yet"),
-                        },
-                    }
-                }
+                ServiceCmd::Status { json } => top::service_status(&ws, json)?,
             }
         }
         Cmd::Watchdog {

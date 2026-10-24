@@ -62,7 +62,7 @@ fn the_order_example_waits_for_its_payment_then_ships() {
         ],
     );
     itero(&ws, &["daemon", "--once"]);
-    let runs = String::from_utf8(itero(&ws, &["runs"]).stdout).unwrap();
+    let runs = String::from_utf8(itero(&ws, &["wf", "runs"]).stdout).unwrap();
     assert!(runs.contains("waiting"), "{runs}");
     itero(
         &ws,

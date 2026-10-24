@@ -20,7 +20,7 @@ is an error.
 
 | Entry | Means |
 |---|---|
-| `{"event": "order.placed"}` | a message of this type starts a run |
+| `{"event": "order.placed"}` | an event of this type starts a run |
 | `{"schedule": "0 9 * * *"}` | a schedule starts a run (cron, local time) |
 | `{"path": "inbox"}` | a change to this file or folder starts a run; `~/` is home, `$$NAME` an environment variable, a relative path is in the workspace |
 | `{"$order": 43}` | condition: `order` is exactly `43` |

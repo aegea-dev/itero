@@ -68,8 +68,22 @@ fn a_journal_from_itero_0_4_to_0_8_keeps_what_it_held() {
     assert_eq!(all[0].event.data["söz"], "çay");
     drop(j);
     let left = tables(&ws);
-    for gone in ["queued", "paused", "cursors", "memory"] {
+    for gone in ["queued", "paused", "cursors", "memory", "replies"] {
         assert!(!left.contains(&gone.to_string()), "{gone}: {left:?}");
+    }
+    // nor the columns callbacks used
+    let db = rusqlite::Connection::open(ws.journal()).unwrap();
+    for table in ["events", "runs"] {
+        let mut s = db.prepare(&format!("PRAGMA table_info({table})")).unwrap();
+        let columns: Vec<String> = s
+            .query_map([], |r| r.get(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            !columns.contains(&"reply".to_string()),
+            "{table}: {columns:?}"
+        );
     }
     // opening again changes nothing
     assert_eq!(Journal::open(&ws).unwrap().events(None).unwrap().len(), 1);
@@ -93,7 +107,6 @@ fn a_new_journal_has_only_the_tables_itero_reads() {
             "events",
             "jobs",
             "meta",
-            "replies",
             "runs",
             "schedules",
             "timers",
@@ -136,7 +149,6 @@ fn start(workflow: &str, flows: Value) -> Start {
         flows: serde_json::from_value(flows).unwrap(),
         input: json!({"sipariş": 43}),
         cause: None,
-        reply: None,
     }
 }
 

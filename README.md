@@ -146,9 +146,10 @@ a name stays its file name, and `itero which <name>` says where it is.
 - **A message** starts runs of the workflows on its type, and reaches the
   runs waiting for it that it matches by their data.
 
-Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero args`, `itero config`,
-`itero secret`, `itero check`, `itero which`, `itero workflows`, `itero info`, `itero runs [<run>]`,
-`itero errors`, `itero watch`, `itero service install|status|uninstall`.
+Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero check`,
+`itero workflow` (`wf`) `list|runs|config`, `itero action list|errors|args`,
+`itero connector list|args`, `itero which`, `itero info`, `itero secret`,
+`itero watch`, `itero service install|status|uninstall`, `itero completion`.
 What the daemon does is in `.itero/itero.log`, one JSON line each.
 
 ## Examples

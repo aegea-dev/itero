@@ -113,9 +113,6 @@ struct Posted {
     kind: String,
     #[serde(default)]
     data: Option<Value>,
-    /// Where each run's end is posted.
-    #[serde(default)]
-    reply: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -138,19 +135,17 @@ async fn event(
     let ws = s.ws.clone();
     let now = super::daemon::stamp(chrono::Utc::now());
     // the journal may wait on a busy SQLite: off the async threads
-    let id = tokio::task::spawn_blocking(move || {
-        super::events::emit_with(&ws, &p.kind, p.data, p.reply.as_deref(), &now)
-    })
-    .await
-    .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .map_err(|e| {
-        use super::events::EmitError::*;
-        let code = match &e {
-            Bad(_) => StatusCode::BAD_REQUEST,
-            Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-        fail(code, e.to_string())
-    })?;
+    let id = tokio::task::spawn_blocking(move || super::events::emit(&ws, &p.kind, p.data, &now))
+        .await
+        .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| {
+            use super::events::EmitError::*;
+            let code = match &e {
+                Bad(_) => StatusCode::BAD_REQUEST,
+                Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            fail(code, e.to_string())
+        })?;
     // a loop that has stopped finds the event in the journal when it starts
     let _ = s.engine.wake.send(());
     let Some(secs) = q.wait else {

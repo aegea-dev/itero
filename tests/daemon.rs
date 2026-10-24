@@ -67,11 +67,6 @@ impl Ws {
         itero::engine::events::emit(&self.ws, kind, Some(data), NOW).unwrap();
     }
 
-    /// A message whose runs' ends are posted to `reply`.
-    fn emit_replying(&self, kind: &str, data: Value, reply: &str) -> String {
-        itero::engine::events::emit_with(&self.ws, kind, Some(data), Some(reply), NOW).unwrap()
-    }
-
     fn pass(&self, now: &str) -> Pass {
         run_once(&self.ws, now.parse().unwrap(), exe()).unwrap()
     }
@@ -393,91 +388,34 @@ fn endpoint(statuses: Vec<u16>) -> (String, std::sync::mpsc::Receiver<Value>) {
 }
 
 #[test]
-fn the_app_is_called_back_when_each_run_ends() {
+fn a_workflow_posts_its_result_from_its_success_and_error_steps() {
     let w = Ws::new();
     w.action("selamla", "echo \"{\\\"selam\\\": \\\"merhaba $kim\\\"}\"");
     w.action("kır", "echo 'çöktü' >&2; exit 3");
+    // what the workflow guide shows: the app's URL comes in the event's data
+    w.action(
+        "gönder",
+        r#"curl -fsS --retry 5 -H 'content-type: application/json' -d "{\"selam\": \"$selam\", \"why\": \"$why\"}" "$reply_url""#,
+    );
     w.flow(
         "iyi",
-        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }),
+        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"], "success": ["#gönder"] }),
     );
     w.flow(
         "kötü",
-        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#kır"] }),
+        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#kır"], "error": ["#gönder"] }),
     );
     let (url, bodies) = endpoint(vec![200]);
-    let message = w.emit_replying("kişi.geldi", json!({ "kim": "ayşe" }), &url);
+    w.emit("kişi.geldi", json!({ "kim": "ayşe", "reply_url": url }));
     w.pass(NOW);
     let mut got: Vec<Value> = bodies.try_iter().collect();
-    got.sort_by_key(|b| b["workflow"].to_string());
-    assert_eq!(got.len(), 2, "{got:?}");
-    let (good, bad) = (&got[0], &got[1]);
-    assert_eq!(good["workflow"], "iyi");
-    assert_eq!(good["status"], "done");
-    assert_eq!(good["message"], message.as_str());
-    assert_eq!(good["state"]["selam"], "merhaba ayşe");
-    assert_eq!(
-        good["name"],
-        w.runs()
-            .iter()
-            .find(|r| r.workflow == "iyi")
-            .unwrap()
-            .name
-            .as_str()
+    got.sort_by_key(|b| b["selam"].to_string());
+    assert_eq!(got.len(), 2, "{got:?} {:#?}", w.log());
+    assert!(
+        got[0]["why"].as_str().unwrap().contains("exit 3"),
+        "{got:?}"
     );
-    assert_eq!(bad["status"], "error");
-    // a message without a reply calls nothing
-    w.emit("kişi.geldi", json!({ "kim": "can" }));
-    w.pass(NOW);
-    assert_eq!(bodies.try_iter().count(), 0);
-}
-
-#[test]
-fn a_callback_the_app_refuses_is_tried_again_later() {
-    let w = Ws::new();
-    w.action("selamla", "true");
-    w.flow(
-        "iyi",
-        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }),
-    );
-    let (url, bodies) = endpoint(vec![500, 200]);
-    w.emit_replying("kişi.geldi", json!({ "kim": "ayşe" }), &url);
-    w.pass(NOW);
-    assert_eq!(bodies.try_iter().count(), 1, "refused once");
-    w.pass(NOW);
-    assert_eq!(bodies.try_iter().count(), 0, "not again at once");
-    w.pass("2026-10-21T10:05:00Z");
-    assert_eq!(bodies.try_iter().count(), 1, "taken later");
-    w.pass("2026-10-21T11:00:00Z");
-    assert_eq!(bodies.try_iter().count(), 0, "taken once");
-}
-
-#[test]
-fn a_callback_no_app_takes_is_given_up_after_a_day() {
-    let w = Ws::new();
-    w.action("selamla", "true");
-    w.flow(
-        "iyi",
-        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }),
-    );
-    // a port no one listens on
-    let closed = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    w.emit_replying("kişi.geldi", json!({}), &format!("http://{closed}/itero"));
-    w.pass(NOW);
-    w.pass("2026-10-22T10:00:01Z");
-    let gave_up = w
-        .log()
-        .into_iter()
-        .any(|l| l["event"] == "error" && l["why"].as_str().unwrap_or("").contains("gave up"));
-    assert!(gave_up, "{:#?}", w.log());
-    let left: i64 = rusqlite::Connection::open(w.ws.journal())
-        .unwrap()
-        .query_row("SELECT COUNT(*) FROM replies", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(left, 0);
+    assert_eq!(got[1]["selam"], "merhaba ayşe");
 }
 
 #[test]
@@ -1033,14 +971,6 @@ fn at(s: &str) -> DateTime<Utc> {
     s.parse().unwrap()
 }
 
-/// A port no one listens on, for a reply that fails.
-fn closed_port() -> std::net::SocketAddr {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-}
-
 /// The built-in keep runs hourly in local time: off, so that times here are
 /// the same in every time zone.
 const KEEP_OFF: &str = r#"{"workflow": {"keep": {"off": true}}}"#;
@@ -1096,23 +1026,6 @@ fn the_next_time_is_a_waiting_runs_deadline() {
 }
 
 #[test]
-fn the_next_time_is_a_failed_replys_next_try() {
-    let ws = Ws::with(KEEP_OFF);
-    ws.flow(
-        "selamla",
-        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }),
-    );
-    ws.action("selamla", "true");
-    ws.emit_replying(
-        "kişi.geldi",
-        json!({}),
-        &format!("http://{}/itero", closed_port()),
-    );
-    ws.pass(NOW);
-    assert_eq!(ws.next_due(NOW), Some(at("2026-10-21T10:00:10Z")));
-}
-
-#[test]
 fn the_next_time_is_the_earliest_of_them() {
     let ws = Ws::with(KEEP_OFF);
     ws.flow(
@@ -1122,22 +1035,13 @@ fn the_next_time_is_the_earliest_of_them() {
     ws.action("say", "true");
     ws.flow(
         "bekle",
-        json!({"on": [{ "event": "order.placed" }], "steps": ["#bekle"], "timeout": "1m"}),
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#bekle"], "timeout": "30s"}),
     );
     ws.action("bekle", "exit 75");
-    ws.flow(
-        "selamla",
-        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#say"] }),
-    );
     ws.emit("order.placed", json!({"order": 1}));
-    ws.emit_replying(
-        "kişi.geldi",
-        json!({}),
-        &format!("http://{}/itero", closed_port()),
-    );
-    ws.pass(NOW);
-    // the schedule at 10:01, the deadline at 10:01, the reply at 10:00:10
-    assert_eq!(ws.next_due(NOW), Some(at("2026-10-21T10:00:10Z")));
+    ws.pass("2026-10-21T10:00:10Z");
+    // the schedule at 10:01, the deadline at 10:00:40
+    assert_eq!(ws.next_due(NOW), Some(at("2026-10-21T10:00:40Z")));
 }
 
 #[test]

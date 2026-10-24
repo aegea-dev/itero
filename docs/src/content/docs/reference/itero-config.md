@@ -42,7 +42,7 @@ and shown by `itero info` and the log's `daemon.started` line. `id`,
 | `port` | the HTTP API's port, on 127.0.0.1: set it when an app needs a fixed address | one the OS gives (below) |
 | `folders.workflows` | the folders with workflows, any number | `["workflows"]` |
 | `folders.actions` | the folders with actions, any number | `["actions"]` |
-| `folders.connectors` | the folders with [connectors](/guides/messages/#connectors), any number | `["connectors"]` |
+| `folders.connectors` | the folders with [connectors](/guides/connectors/), any number | `["connectors"]` |
 
 A folder is relative to the workspace; `~/` is your home folder. A folder
 that is not there holds nothing, and `itero check` notes it. Each folder's
@@ -62,10 +62,10 @@ anything.
 | Key | Is | Default |
 |---|---|---|
 | `workflows` | workflows, the internal ones apart; more is an error | `100` |
-| `runs` | runs under way at once, the internal ones apart; past it, messages wait their turn | `1000` |
+| `runs` | runs under way at once, the internal ones apart; past it, events wait their turn | `1000` |
 | `steps` | steps running at once | `8` |
 | `space` | what `.itero/` may take (`KB`, `MB`, `GB`) | `"1GB"` |
-| `keep` | how long ended runs and their messages are kept | `"1d"` |
+| `keep` | how long ended runs and their events are kept | `"1d"` |
 | `log` | the log's size before it is rolled | `"10MB"` |
 | `logs` | rolled logs kept | `3` |
 | `quiet` | how long a step may print nothing; past it, it is stopped and runs again | `"10m"` |
@@ -97,6 +97,6 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 | `description`, `tags`, your own keys | what it is |
 | `args` | data for the connector, as environment variables: an object; [A connector's args](/guides/secrets/#a-connectors-args) |
 
-`itero args` and `itero config` write `args` and `settings` here, keeping
+`itero action args set`, `itero connector args set` and `itero wf config set` write `args` and `settings` here, keeping
 the rest of the file as it was. A workflow file has no `meta`: one is an
 error saying where it goes.

@@ -1,21 +1,25 @@
 ---
-title: itero daemon
-description: Runs the workspace, each thing as it comes due.
+title: daemon
+description: Runs your workflows; leave it running.
 ---
+
+`itero daemon` runs your workflows. While it runs, events start them,
+schedules come due and steps run; leave it running in a terminal, or use
+[`itero service`](/commands/service/) to start it at login.
 
 ```sh
 itero daemon [--no-serve]
 ```
 
-Runs the workspace: starts its [connectors](/guides/messages/#connectors),
-watches the [paths](/guides/messages/#watching-files) its workflows name,
-takes messages and schedules, and runs steps. It serves the
+It starts the workspace's [connectors](/guides/connectors/), watches the
+[paths](/guides/connectors/#watching-files) its workflows name, takes
+events and schedules, and runs steps. It serves the
 [HTTP API](/reference/http/) on `127.0.0.1:<port>`. Leave it running;
 Ctrl-C stops it.
 
 It works in passes, and makes one only when something wakes it:
 
-- a message: `POST /events`, `itero emit`, a connector, a click on a
+- an event: `POST /events`, `itero emit`, a connector, a click on a
   notification;
 - a watched path that changed, or an edit to a workflow or
   `itero.config.json`;

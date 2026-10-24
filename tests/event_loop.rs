@@ -108,14 +108,6 @@ fn statuses(dir: &Path) -> Vec<&'static str> {
         .collect()
 }
 
-fn log_has(dir: &Path, event: &str) -> usize {
-    std::fs::read_to_string(dir.join(".itero/itero.log"))
-        .unwrap_or_default()
-        .lines()
-        .filter(|l| l.contains(&format!("\"event\":\"{event}\"")))
-        .count()
-}
-
 #[test]
 fn an_idle_daemon_makes_no_passes() {
     let d = tempfile::tempdir().unwrap();
@@ -157,40 +149,6 @@ fn a_message_wakes_it_and_a_deadline_ends_a_waiting_run_on_time() {
     );
     // a pass for the message, its job, the deadline: a few, not one a second
     assert!(passes(port) <= 8, "{}", passes(port));
-}
-
-#[test]
-fn a_reply_that_failed_is_tried_again_at_its_time() {
-    let d = tempfile::tempdir().unwrap();
-    write(d.path(), "itero.config.json", KEEP_OFF);
-    write(
-        d.path(),
-        "workflows/selamla.json",
-        r##"{"on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"]}"##,
-    );
-    action(d.path(), "selamla", "true");
-    let closed = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let (_daemon, _port) = start(d.path());
-    itero(
-        d.path(),
-        &[
-            "emit",
-            "--reply",
-            &format!("http://{closed}/itero"),
-            "kişi.geldi",
-            "{}",
-        ],
-    );
-    until("the first try", Duration::from_secs(5), || {
-        (log_has(d.path(), "reply.failed") == 1).then_some(())
-    });
-    // tried again 10 s on, woken by the alarm
-    until("the second try", Duration::from_secs(15), || {
-        (log_has(d.path(), "reply.failed") == 2).then_some(())
-    });
 }
 
 #[test]

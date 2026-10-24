@@ -1,10 +1,13 @@
 ---
-title: itero info
+title: info
 description: The workspace and its daemon - IDs, names, limits.
 ---
 
+`itero info` tells you about the workspace you are in and the daemon
+running it, if one is.
+
 ```sh
-itero info
+itero info [--json]
 ```
 
 The workspace: its id, name, when it was made, its folder, the itero that

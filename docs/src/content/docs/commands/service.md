@@ -1,11 +1,14 @@
 ---
-title: itero service
+title: service
 description: Runs the daemon from login on, kept up by a watchdog.
 ---
 
+`itero service` runs the daemon for you: it starts when you log in, and is
+restarted if it stops.
+
 ```sh
 itero service install
-itero service status
+itero service status [--json]
 itero service uninstall
 ```
 
