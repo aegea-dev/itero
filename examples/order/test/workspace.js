@@ -41,22 +41,14 @@ export class Workspace {
     this.itero("daemon", "--once", "--now", now);
   }
 
-  /** The runs, newest first: { id, name, workflow, status }. */
+  /** The runs, newest first: { id, name, workflow, status, ... }. */
   runs() {
-    return this.itero("runs")
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        const [id, name, workflow, status] = line.trim().split(/\s+/);
-        return { id, name, workflow, status };
-      });
+    return JSON.parse(this.itero("workflow", "runs", "--json"));
   }
 
-  /** A run's state, from the last line of its story. */
+  /** A run's state, from its story. */
   state(run) {
-    const story = this.itero("runs", run.id);
-    const line = story.split("\n").find((l) => l.trim().startsWith("state "));
-    return JSON.parse(line.trim().slice("state ".length));
+    return JSON.parse(this.itero("workflow", "runs", run.id, "--json")).state;
   }
 
   /** Changes the manifest: `edit` gets it as an object and changes it. */

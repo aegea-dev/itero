@@ -4,7 +4,7 @@
   "port": 8800,
   "workflow": {
     "app-notify": {
-      "description": "Shows the notification an app asks for; a click ends the run, which is posted to the app"
+      "description": "Shows the notification an app asks for; a click ends the run, and #post-answer posts its state to the app"
     }
   }
 }

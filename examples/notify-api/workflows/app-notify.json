@@ -1,1 +1,2 @@
-{ "on": [{ "event": "app.notify" }], "steps": ["#notify"], "timeout": "1h" }
+{ "on": [{ "event": "app.notify" }], "steps": ["#notify"], "timeout": "1h",
+  "success": ["#post-answer"], "failure": ["#post-answer"], "error": ["#post-answer"] }

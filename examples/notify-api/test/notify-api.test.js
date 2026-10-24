@@ -31,8 +31,13 @@ describe("notify-api", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         type: "app.notify",
-        data: { title: "Dağıtılsın mı?", text: "3 değişiklik", buttons: ["Dağıt", "Vazgeç"], request: "istek-1" },
-        reply: `http://127.0.0.1:${app.port}/notified`,
+        data: {
+          title: "Dağıtılsın mı?",
+          text: "3 değişiklik",
+          buttons: ["Dağıt", "Vazgeç"],
+          request: "istek-1",
+          reply_url: `http://127.0.0.1:${app.port}/notified`,
+        },
       }),
     });
     expect(asked.status).toBe(202);
@@ -46,10 +51,7 @@ describe("notify-api", () => {
 
     ws.click({ notification: shown.notification, answer: "Dağıt", workflow: "app-notify" });
     await until("the answer, posted to the app", () => posted.length === 1);
-    expect(posted[0]).toMatchObject({
-      workflow: "app-notify",
-      status: "done",
-      state: { answer: "Dağıt", request: "istek-1", notification: shown.notification },
-    });
+    // the run's state, posted by the workflow's success step
+    expect(posted[0]).toMatchObject({ answer: "Dağıt", request: "istek-1", notification: shown.notification });
   });
 });

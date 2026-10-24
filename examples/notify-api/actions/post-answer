@@ -1,0 +1,3 @@
+#!/bin/sh
+# posts the run's state (on stdin) to $reply_url, the URL the app sent
+curl -fsS --retry 5 -H 'content-type: application/json' --data-binary @- "$reply_url"
