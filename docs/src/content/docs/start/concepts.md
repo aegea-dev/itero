@@ -3,14 +3,18 @@ title: Workspaces, workflows and runs
 description: The few things itero is made of.
 ---
 
+Three kinds of things, each with its shape, as in the logo and in
+pictures of a workflow: **● a workflow**, **■ an action** and **▲ a
+source**, where messages come from.
+
 **A workspace** is a folder with an `itero.config.json`. One daemon runs one
 workspace:
 
 ```
 itero.config.json          the manifest: what it is, port, limits, and each workflow, action and source
-workflows/order.json       a workflow: its name is its file name
-actions/check-payment      an action: an executable, its name its file name
-sources/mail.received      a source: its messages are of this type
+workflows/order.json       ● a workflow: its name is its file name
+actions/check-payment      ■ an action: an executable, its name its file name
+sources/mail.received      ▲ a source: its messages are of this type
 .itero/                    the journal, the log and each workflow's memory
 ```
 
@@ -21,13 +25,13 @@ name are an error naming both files, but an action and a workflow may share
 one (`#ship` and `ship`). Hidden folders and `node_modules` are never
 looked into. [`itero which`](/commands/which/) says where a name is.
 
-**A workflow** says when it runs (`on`) and what it does (`steps`):
+**● A workflow** says when it runs (`on`) and what it does (`steps`):
 
 ```json
 { "on": [{ "event": "order.placed" }], "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"] }
 ```
 
-**An action** (`#check-payment`) is a small program. It reads its values
+**■ An action** (`#check-payment`) is a small program. It reads its values
 as environment variables, prints JSON, and its exit code says how it
 went. **A workflow** can be a step too (`order-process`).
 

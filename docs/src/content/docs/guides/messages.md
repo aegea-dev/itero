@@ -102,7 +102,7 @@ path costs a file descriptor and no CPU until something changes.
 
 ## Sources
 
-A source is an executable in `sources/` (or a subfolder of it) that keeps
+▲ A source is an executable in `sources/` (or a subfolder of it) that keeps
 running. Each line it prints is the data of one message, of the type its
 file name says: `sources/mail/mail.received` sends `mail.received`
 messages.

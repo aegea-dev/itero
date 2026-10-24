@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/src/assets/itero-animated.svg" alt="itero" width="360"></p>
+
 # itero: your domain, your solution, your tool
 
 Build the harness you need, from anything, for anything. Chain scripts,
@@ -119,22 +121,22 @@ A folder with `itero.config.json` is a workspace (`{}` will do); `itero daemon` 
 
 ```
 itero.config.json          the manifest: what it is, port, limits, and each workflow, action and source
-workflows/order.json       a workflow: when it runs (on) and its steps
-actions/check-payment      an action: an executable, its name its file name
-sources/mail.received      a source: each line it prints is a message of this type
+workflows/order.json       ● a workflow: when it runs (on) and its steps
+actions/check-payment      ■ an action: an executable, its name its file name
+sources/mail.received      ▲ a source: each line it prints is a message of this type
 .itero/                    the journal, the log (itero.log) and memory
 ```
 
 `workflows/`, `actions/` and `sources/` may have subfolders to group files;
 a name stays its file name, and `itero which <name>` says where it is.
 
-- **A workflow** starts on a message (`{"event": "order.placed"}`), a
+- **● A workflow** starts on a message (`{"event": "order.placed"}`), a
   schedule (`{"schedule": "0 9 * * *"}`) or a watched file
   (`{"path": "inbox"}`), under conditions (`{"$paid": true}`,
   `{"has": ["$order", "$$API"]}`). Its steps are actions (`#name`),
   workflows, lists that run side by side, and steps with data and their
   own `on`. `success`, `failure` and `error` run at the end.
-- **An action** reads its values as environment variables (from the step,
+- **■ An action** reads its values as environment variables (from the step,
   its args, then the run's state; `$$NAME` for a secret) and the state on
   stdin, prints a JSON object, and exits 0 (done), 75 (not yet: wait for a
   matching message) or anything else (an error). A program or a package it

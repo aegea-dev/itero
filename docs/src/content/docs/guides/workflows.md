@@ -3,7 +3,7 @@ title: Writing a workflow
 description: on, meta, steps, side by side, conditions, workflows as steps, and the lists run at the end.
 ---
 
-A workflow is a JSON file in `workflows/`; its name is its file name.
+● A workflow is a JSON file in `workflows/`; its name is its file name.
 
 ```json
 {
