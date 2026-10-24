@@ -36,7 +36,8 @@ Adding a page means creating the file and adding it to `sidebar` in
 ## Deploying
 
 `yarn build` writes plain static files to `dist/`, served by Cloudflare at
-<https://docs.itero.sh>, as videre's docs are. `wrangler.jsonc` makes it an
+<https://docs.itero.sh>, as videre's docs are. A route on the same Worker,
+`itero.sh/install`, serves `public/install` at the short address. `wrangler.jsonc` makes it an
 assets-only Worker: no script runs on a request. Cloudflare builds from
 `main` on every push; `.github/workflows/docs.yml` builds every pull request
 that touches `docs/`.

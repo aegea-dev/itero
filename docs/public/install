@@ -9,8 +9,8 @@
 # POSIX sh on purpose, so `| sh` and `| bash` both work. Nothing here reads
 # stdin, because stdin is the script itself when this is piped.
 #
-# The docs site serves this file at https://docs.itero.sh/install, and
-# itero.sh/install redirects there; `curl -fsSL` follows the redirect.
+# The docs site serves this file at https://docs.itero.sh/install, and at
+# https://itero.sh/install through a route to the same Cloudflare Worker.
 #
 # Tested by scripts/test-install.sh, which installs from an archive made by
 # `make dist`, the same recipe the release workflow publishes with: that is
