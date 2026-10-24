@@ -2,6 +2,7 @@
 //! run in workers, waiting runs get their messages, and runs end as done,
 //! failed or error.
 #![cfg(unix)]
+mod common;
 use itero::engine::daemon::{Pass, run_once};
 use itero::engine::journal::{Journal, Run};
 use itero::engine::steps;
@@ -89,12 +90,9 @@ impl Ws {
         std::fs::read_to_string(self.d.path().join(rel)).unwrap_or_default()
     }
 
-    /// The log's lines.
+    /// The log's lines, those written whole.
     fn log(&self) -> Vec<Value> {
-        self.read(".itero/itero.log")
-            .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect()
+        common::log_lines(&self.read(".itero/itero.log"))
     }
 
     /// The types of the messages the log tells of.
