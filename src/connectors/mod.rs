@@ -1,13 +1,13 @@
-//! Sources: executables in `sources/` that keep running and tell itero
+//! Connectors: executables in `connectors/` that keep running and tell itero
 //! when something happens outside (`docs/design-simple.md`):
 //!
-//! - each line a source prints is the data of one message, a JSON object;
-//!   the message's type is the source's file name (`mail.received`);
+//! - each line a connector prints is the data of one message, a JSON object;
+//!   the message's type is the connector's file name (`mail.received`);
 //! - its stdin stays open while the daemon runs, and closes when it goes;
 //! - its stderr goes to the daemon's log;
 //! - `itero` on its PATH is the daemon's own.
 //!
-//! `itero watch <path>` is there for sources that watch a file or folder.
+//! `itero watch <path>` is there for connectors that watch a file or folder.
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::time::Duration;

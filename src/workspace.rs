@@ -1,5 +1,5 @@
 //! The workspace: the folder with itero.config.json, and the folders it
-//! lists for workflows, actions and sources. One daemon runs one workspace.
+//! lists for workflows, actions and connectors. One daemon runs one workspace.
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -7,12 +7,19 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The workspace's manifest: what it is, how it runs, and what its
-/// workflows, actions and sources are.
+/// workflows, actions and connectors are.
 pub const MANIFEST: &str = "itero.config.json";
 
 /// The manifest's keys for how the workspace runs, and for its entries:
 /// every other key at its top says what the workspace is.
-const RUNNING: [&str; 6] = ["port", "folders", "limits", "workflow", "action", "source"];
+const RUNNING: [&str; 6] = [
+    "port",
+    "folders",
+    "limits",
+    "workflow",
+    "action",
+    "connector",
+];
 
 /// `folders` as written.
 #[derive(Deserialize)]
@@ -22,8 +29,8 @@ struct Folders {
     workflows: Vec<String>,
     #[serde(default = "default_actions")]
     actions: Vec<String>,
-    #[serde(default = "default_sources")]
-    sources: Vec<String>,
+    #[serde(default = "default_connectors")]
+    connectors: Vec<String>,
 }
 
 impl Default for Folders {
@@ -31,7 +38,7 @@ impl Default for Folders {
         Folders {
             workflows: default_workflows(),
             actions: default_actions(),
-            sources: default_sources(),
+            connectors: default_connectors(),
         }
     }
 }
@@ -125,8 +132,8 @@ fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
     n.checked_mul(1 << shift).ok_or_else(wrong)
 }
 
-fn default_sources() -> Vec<String> {
-    vec!["sources".into()]
+fn default_connectors() -> Vec<String> {
+    vec!["connectors".into()]
 }
 
 fn default_workflows() -> Vec<String> {
@@ -152,8 +159,8 @@ pub struct Workspace {
     pub port: Option<u16>,
     pub workflows: Vec<PathBuf>,
     pub actions: Vec<PathBuf>,
-    /// The folders with the workspace's sources.
-    pub sources: Vec<PathBuf>,
+    /// The folders with the workspace's connectors.
+    pub connectors: Vec<PathBuf>,
     /// What the manifest says the workspace is: `name`, `version`,
     /// `description` and the person's own keys.
     pub meta: Map<String, Value>,
@@ -202,6 +209,22 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
     let path = root.join(MANIFEST);
     let mut m = read_manifest(&path)?;
     let at = |e: serde_json::Error, key: &str| anyhow!("{}: {key}: {e}", path.display());
+    // sources are connectors now; nothing reads the old names
+    if m.contains_key("source") {
+        bail!(
+            "{}: source is connector now: {{\"connector\": {{\"<name>\": ...}}}}",
+            path.display()
+        );
+    }
+    if m.get("folders")
+        .and_then(Value::as_object)
+        .is_some_and(|f| f.contains_key("sources"))
+    {
+        bail!(
+            "{}: folders.sources is folders.connectors now",
+            path.display()
+        );
+    }
     let port = match m.remove("port") {
         Some(v) => Some(serde_json::from_value(v).map_err(|e| at(e, "port"))?),
         None => None,
@@ -231,7 +254,7 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
         port,
         workflows: folders.workflows.iter().map(|w| folder(root, w)).collect(),
         actions: folders.actions.iter().map(|a| folder(root, a)).collect(),
-        sources: folders.sources.iter().map(|x| folder(root, x)).collect(),
+        connectors: folders.connectors.iter().map(|x| folder(root, x)).collect(),
         meta,
         limits: limits
             .read()
@@ -307,7 +330,7 @@ fn stem(f: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// A file's whole name: actions and sources have no extension, and their
+/// A file's whole name: actions and connectors have no extension, and their
 /// names have dots (`notify@0.2`, `mail.received`).
 fn stem_with_ext(f: &Path) -> String {
     f.file_name()
@@ -453,7 +476,7 @@ impl Workspace {
     }
 
     /// The manifest's entries of one kind (`workflow`, `action` or
-    /// `source`), by name; each an object.
+    /// `connector`), by name; each an object.
     pub fn entries(&self, kind: &str) -> Result<Map<String, Value>> {
         let path = self.root.join(MANIFEST);
         match self.manifest()?.remove(kind) {
@@ -591,20 +614,29 @@ impl Workspace {
         Ok(f)
     }
 
-    /// Every source in the simple form: an executable whose file name is
+    /// Programs left where connectors were before they had the name: in
+    /// `sources/`, which nothing reads now. Notes there are left alone.
+    pub fn left_in_sources(&self) -> Result<Option<String>> {
+        let old = self.root.join("sources");
+        let found = self.files_in(std::slice::from_ref(&old), true)?;
+        Ok((!found.is_empty())
+            .then(|| "sources/ has programs: connectors are in connectors/ now".to_string()))
+    }
+
+    /// Every connector in the simple form: an executable whose file name is
     /// the type of the messages it sends.
-    pub fn source_files(&self) -> Result<Vec<(String, PathBuf)>> {
-        // only executables are sources: notes beside them are left alone
-        let files = self.files_in(&self.sources, true)?;
+    pub fn connector_files(&self) -> Result<Vec<(String, PathBuf)>> {
+        // only executables are connectors: notes beside them are left alone
+        let files = self.files_in(&self.connectors, true)?;
         for (kind, f) in &files {
             if !crate::flow::is_message_type(kind) || crate::engine::events::engine_own(kind) {
                 bail!(
-                    "{}: a source's name is the message type it sends, two or more words joined by . (like mail.received)",
+                    "{}: a connector's name is the message type it sends, two or more words joined by . (like mail.received)",
                     f.display()
                 );
             }
         }
-        Ok(named("source", files)?.into_iter().collect())
+        Ok(named("connector", files)?.into_iter().collect())
     }
 
     /// An action's args, `action.<name>.args` in the manifest: an object,
@@ -628,14 +660,14 @@ impl Workspace {
         Ok(Some(v))
     }
 
-    /// A source's args, `source.<name>.args` in the manifest: an object (a
-    /// source runs once). None when its entry has none.
-    pub fn source_args(&self, source: &str) -> Result<Option<Map<String, Value>>> {
-        match self.entry_args("source", source)? {
+    /// A connector's args, `connector.<name>.args` in the manifest: an object (a
+    /// connector runs once). None when its entry has none.
+    pub fn connector_args(&self, connector: &str) -> Result<Option<Map<String, Value>>> {
+        match self.entry_args("connector", connector)? {
             None => Ok(None),
             Some(Value::Object(o)) => Ok(Some(o)),
             Some(_) => bail!(
-                "{}: source.{source}.args are an object",
+                "{}: connector.{connector}.args are an object",
                 self.root.join(MANIFEST).display()
             ),
         }

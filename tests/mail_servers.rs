@@ -211,7 +211,7 @@ fn pop3_notifies_mail_that_arrives_after_the_first_check() {
     notifies_new_mail("pop3-alert", POP3);
 }
 
-/// The gmail example, copied into `d`: its source pointed at the test
+/// The gmail example, copied into `d`: its connector pointed at the test
 /// server, its daemon on a free port.
 fn gmail_example(d: &Path, user: &str, host: &str) -> PathBuf {
     let ws = d.join("ws");
@@ -231,7 +231,7 @@ fn gmail_example(d: &Path, user: &str, host: &str) -> PathBuf {
         serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     m["port"] = free.local_addr().unwrap().port().into();
-    let args = &mut m["source"]["gmail.received"]["args"];
+    let args = &mut m["connector"]["gmail.received"]["args"];
     args["host"] = host.into();
     args["port"] = IMAP.into();
     args["tls"] = false.into();

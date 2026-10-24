@@ -1,4 +1,4 @@
-//! The mail-alert example, live: its source tells the daemon about each new
+//! The mail-alert example, live: its connector tells the daemon about each new
 //! mail in a local mailbox, and its workflow shows it.
 #![cfg(unix)]
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ fn example(d: &Path, mbox: &Path) -> PathBuf {
     assert!(status.success());
     // a journal left by trying the example by hand is not the test's
     let _ = std::fs::remove_dir_all(ws.join(".itero"));
-    let src = ws.join("sources/mail.received");
+    let src = ws.join("connectors/mail.received");
     let text = std::fs::read_to_string(&src)
         .unwrap()
         .replace("/var/mail/$USER", mbox.to_str().unwrap());
@@ -90,9 +90,12 @@ fn each_new_mail_is_shown_once_as_it_arrives_and_old_mail_never() {
             .spawn()
             .unwrap(),
     );
-    // the source has noted where the mailbox is and set its watch
+    // the connector has noted where the mailbox is and set its watch
     let seen = ws.join(".itero/mail.received.seen");
-    assert!(wait_for(20, || seen.exists()), "the source did not start");
+    assert!(
+        wait_for(20, || seen.exists()),
+        "the connector did not start"
+    );
     std::thread::sleep(std::time::Duration::from_millis(500));
     mail(
         &mbox,
@@ -135,7 +138,7 @@ fn each_new_mail_is_shown_once_as_it_arrives_and_old_mail_never() {
 }
 
 #[test]
-fn check_lists_the_workflow_and_the_source() {
+fn check_lists_the_workflow_and_the_connector() {
     let d = tempfile::tempdir().unwrap();
     let ws = example(d.path(), &d.path().join("yok"));
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
@@ -149,5 +152,5 @@ fn check_lists_the_workflow_and_the_source() {
         out.contains("mail-alert\n  id ") && out.contains("  #notify  built in"),
         "{out}"
     );
-    assert!(out.contains("source mail.received  "), "{out}");
+    assert!(out.contains("connector mail.received  "), "{out}");
 }

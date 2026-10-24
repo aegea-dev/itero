@@ -197,7 +197,7 @@ then `#cluster-delete`. If `#tf-plan` breaks: only `#cluster-delete`.
 ## Waiting: `timeout`
 
 A step that exits 75 is not ready yet: the run waits for a message that
-matches it ([Messages and sources](/guides/messages/)). `timeout` is how
+matches it ([Messages and connectors](/guides/messages/)). `timeout` is how
 long a run may wait, like `"2h"`; unless given, a day.
 
 ## Two fields printed side by side

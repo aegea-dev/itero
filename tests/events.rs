@@ -45,7 +45,7 @@ fn bad_messages_are_refused_and_nothing_is_saved() {
         "timer.fired",
         "run.started",
         "workflow.paused",
-        "source.paused",
+        "connector.paused",
     ] {
         let e = bad(own, None);
         assert!(e.to_string().contains("engine's own"), "{e}");

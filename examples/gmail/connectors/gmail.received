@@ -3,7 +3,7 @@
 arrives: IMAP IDLE keeps a connection open and the server says when a mail
 comes. One line per mail, with its sender and subject.
 
-Its args, from source.gmail.received.args in itero.config.json:
+Its args, from connector.gmail.received.args in itero.config.json:
 user and password (a Gmail app password, as a secret), and host, port, tls
 and mailbox for another IMAP server. It notes the last mail it told about,
 so a restart tells nothing twice; on its first start it only notes where
@@ -21,8 +21,8 @@ import urllib.parse
 if sys.version_info < (3, 14):
     sys.exit("gmail.received needs Python 3.14 or later (imaplib's idle)")
 
-USER = os.environ.get("user") or sys.exit("no user: set it in the source's args")
-PASSWORD = os.environ.get("password") or sys.exit("no password: set it in the source's args")
+USER = os.environ.get("user") or sys.exit("no user: set it in the connector's args")
+PASSWORD = os.environ.get("password") or sys.exit("no password: set it in the connector's args")
 HOST = os.environ.get("host", "imap.gmail.com")
 PORT = int(os.environ.get("port", "993"))
 TLS = os.environ.get("tls", "true") != "false"

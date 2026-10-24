@@ -80,9 +80,9 @@ fn args_that_are_not_an_object_or_a_list_of_objects_are_refused() {
 
 #[test]
 #[cfg(unix)]
-fn args_are_written_for_the_source_and_checked() {
+fn args_are_written_for_the_connector_and_checked() {
     let d = workspace();
-    file(d.path(), "sources/posta.geldi", "#!/bin/sh\n");
+    file(d.path(), "connectors/posta.geldi", "#!/bin/sh\n");
     let o = itero(
         d.path(),
         &["args", "posta.geldi", r#"{"user": "ayşe@örnek.test"}"#],
@@ -90,30 +90,30 @@ fn args_are_written_for_the_source_and_checked() {
     assert!(o.status.success(), "{o:?}");
     let m = manifest(d.path());
     assert_eq!(
-        m["source"]["posta.geldi"]["args"]["user"],
+        m["connector"]["posta.geldi"]["args"]["user"],
         "ayşe@örnek.test"
     );
     assert!(m.get("action").is_none(), "{m}");
     assert!(itero(d.path(), &["check"]).status.success());
-    // a source runs once: no list
+    // a connector runs once: no list
     let o = itero(
         d.path(),
         &["args", "posta.geldi", r#"[{"user": "can@örnek.test"}]"#],
     );
     assert!(!o.status.success());
     assert!(
-        err(&o).contains("a source's args are an object"),
+        err(&o).contains("a connector's args are an object"),
         "{}",
         err(&o)
     );
     file(
         d.path(),
         "itero.config.json",
-        r#"{"source": {"posta.geldi": {"args": [{"user": "can@örnek.test"}]}}}"#,
+        r#"{"connector": {"posta.geldi": {"args": [{"user": "can@örnek.test"}]}}}"#,
     );
     let o = itero(d.path(), &["check"]);
     assert!(
-        !o.status.success() && err(&o).contains("source.posta.geldi.args"),
+        !o.status.success() && err(&o).contains("connector.posta.geldi.args"),
         "{o:?}"
     );
     // an action of the same name: which one is meant is not known
@@ -121,7 +121,27 @@ fn args_are_written_for_the_source_and_checked() {
     file(d.path(), "actions/posta.geldi", "#!/bin/sh\n");
     let o = itero(d.path(), &["args", "posta.geldi", "{}"]);
     assert!(!o.status.success());
-    assert!(err(&o).contains("an action and a source"), "{}", err(&o));
+    assert!(err(&o).contains("an action and a connector"), "{}", err(&o));
+}
+
+#[test]
+#[cfg(unix)]
+fn programs_left_in_sources_are_refused_saying_connectors() {
+    let d = workspace();
+    file(d.path(), "sources/posta.geldi", "#!/bin/sh\n");
+    use std::os::unix::fs::PermissionsExt;
+    let program = d.path().join("sources/posta.geldi");
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let check = itero(d.path(), &["check"]);
+    assert!(!check.status.success(), "{check:?}");
+    assert!(err(&check).contains("connectors/"), "{}", err(&check));
+    let pass = itero(d.path(), &["daemon", "--once"]);
+    assert!(!pass.status.success(), "{pass:?}");
+    assert!(err(&pass).contains("connectors/"), "{}", err(&pass));
+    // notes in a folder of that name are no one's business
+    std::fs::remove_file(d.path().join("sources/posta.geldi")).unwrap();
+    std::fs::write(d.path().join("sources/notlar.md"), "# kaynaklar\n").unwrap();
+    assert!(itero(d.path(), &["check"]).status.success());
 }
 
 #[test]
@@ -147,7 +167,7 @@ fn file(d: &Path, rel: &str, text: &str) {
     std::fs::create_dir_all(f.parent().unwrap()).unwrap();
     std::fs::write(&f, text).unwrap();
     #[cfg(unix)]
-    if rel.starts_with("actions/") || rel.starts_with("sources/") {
+    if rel.starts_with("actions/") || rel.starts_with("connectors/") {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
@@ -661,7 +681,7 @@ fn which_says_where_each_kind_of_one_name_is() {
     );
     file(d.path(), "actions/kargo/gönder", "#!/bin/sh\n");
     file(d.path(), "actions/kargo/eski/gönder@0.1", "#!/bin/sh\n");
-    file(d.path(), "sources/posta/posta.geldi", "#!/bin/sh\n");
+    file(d.path(), "connectors/posta/posta.geldi", "#!/bin/sh\n");
     let found = out(&itero(d.path(), &["which", "gönder"]));
     assert_eq!(
         found,
@@ -674,7 +694,7 @@ fn which_says_where_each_kind_of_one_name_is() {
     );
     assert_eq!(
         out(&itero(d.path(), &["which", "posta.geldi"])),
-        "source    sources/posta/posta.geldi\n"
+        "connector connectors/posta/posta.geldi\n"
     );
     assert_eq!(
         out(&itero(d.path(), &["which", "notify"])),

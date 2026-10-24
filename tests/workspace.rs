@@ -1,4 +1,4 @@
-//! The workspace: itero.config.json, and the workflows, actions and sources
+//! The workspace: itero.config.json, and the workflows, actions and connectors
 //! in its folders.
 use itero::workspace;
 use std::path::Path;
@@ -31,7 +31,7 @@ fn a_workspace_without_its_folders_has_no_workflows_and_its_daemon_idles() {
     let ws = workspace::find(d.path()).unwrap();
     let names: Vec<String> = ws.flows().unwrap().into_iter().map(|(n, _)| n).collect();
     assert_eq!(names, ["keep", "logs"], "only the built-in ones");
-    assert!(ws.source_files().unwrap().is_empty());
+    assert!(ws.connector_files().unwrap().is_empty());
     let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
     let pass = itero::engine::daemon::run_once(&ws, chrono::Utc::now(), exe).unwrap();
     assert_eq!(pass, itero::engine::daemon::Pass::default());
@@ -63,7 +63,7 @@ fn the_manifest_says_how_it_runs_and_what_it_is() {
           "description": "Posta ve siparişler",
           "kapı": 1,
           "port": 8799,
-          "folders": { "workflows": ["iş akışları"], "actions": ["eylemler", "~/ortak"], "sources": ["kaynaklar"] }
+          "folders": { "workflows": ["iş akışları"], "actions": ["eylemler", "~/ortak"], "connectors": ["kaynaklar"] }
         }"#,
     );
     let ws = workspace::find(d.path()).unwrap();
@@ -72,7 +72,7 @@ fn the_manifest_says_how_it_runs_and_what_it_is() {
     assert_eq!(ws.workflows, [d.path().join("iş akışları")]);
     assert_eq!(ws.actions[0], d.path().join("eylemler"));
     assert!(ws.actions[1].ends_with("ortak"));
-    assert_eq!(ws.sources, [d.path().join("kaynaklar")]);
+    assert_eq!(ws.connectors, [d.path().join("kaynaklar")]);
     // what it is: its own keys too, kept; how it runs is not among them
     assert_eq!(ws.meta["name"], "ev-işleri");
     assert_eq!(ws.meta["version"], "0.1.0");
@@ -143,18 +143,40 @@ fn an_action_is_its_latest_version_unless_pinned() {
 }
 
 #[test]
-fn a_source_sends_messages_of_its_file_name() {
+fn a_connector_sends_messages_of_its_file_name() {
     #[cfg(unix)]
     {
         let d = tempfile::tempdir().unwrap();
         let ws = simple(d.path());
-        executable(d.path(), "sources/mail.received", "#!/bin/sh\n");
-        let s = ws.source_files().unwrap();
+        executable(d.path(), "connectors/mail.received", "#!/bin/sh\n");
+        let s = ws.connector_files().unwrap();
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].0, "mail.received");
-        executable(d.path(), "sources/posta", "#!/bin/sh\n");
-        let e = format!("{:#}", ws.source_files().unwrap_err());
+        executable(d.path(), "connectors/posta", "#!/bin/sh\n");
+        let e = format!("{:#}", ws.connector_files().unwrap_err());
         assert!(e.contains("posta") && e.contains("message type"), "{e}");
+    }
+}
+
+#[test]
+fn the_old_names_for_connectors_say_what_they_are_now() {
+    let d = tempfile::tempdir().unwrap();
+    for (manifest, now) in [
+        (
+            r#"{"source": {"posta.geldi": {"description": "Gelen posta"}}}"#,
+            "connector",
+        ),
+        (
+            r#"{"folders": {"sources": ["kaynaklar"]}}"#,
+            "folders.connectors",
+        ),
+    ] {
+        write(d.path(), "itero.config.json", manifest);
+        let e = format!("{:#}", workspace::find(d.path()).unwrap_err());
+        assert!(
+            e.contains(now) && e.contains("itero.config.json"),
+            "{manifest}: {e}"
+        );
     }
 }
 
@@ -192,29 +214,30 @@ fn args_are_an_object_or_a_list_of_objects() {
 }
 
 #[test]
-fn a_sources_args_are_an_object() {
+fn a_connectors_args_are_an_object() {
     let d = tempfile::tempdir().unwrap();
     let ws = simple(d.path());
-    assert_eq!(ws.source_args("posta.geldi").unwrap(), None);
+    assert_eq!(ws.connector_args("posta.geldi").unwrap(), None);
     write(
         d.path(),
         "itero.config.json",
-        r#"{ "source": {
+        r#"{ "connector": {
               "posta.geldi": { "args": { "user": "ayşe@örnek.test", "password": "$$POSTA_ŞİFRE" } },
               "sade.olay": { "description": "Args yok" } } }"#,
     );
-    let a = ws.source_args("posta.geldi").unwrap().unwrap();
+    let a = ws.connector_args("posta.geldi").unwrap().unwrap();
     assert_eq!(a["user"], "ayşe@örnek.test");
-    assert_eq!(ws.source_args("sade.olay").unwrap(), None);
+    assert_eq!(ws.connector_args("sade.olay").unwrap(), None);
     for args in [r#"[{"user": "can@örnek.test"}]"#, r#""çay""#] {
         write(
             d.path(),
             "itero.config.json",
-            &format!(r#"{{"source": {{"posta.geldi": {{"args": {args}}}}}}}"#),
+            &format!(r#"{{"connector": {{"posta.geldi": {{"args": {args}}}}}}}"#),
         );
-        let e = format!("{:#}", ws.source_args("posta.geldi").unwrap_err());
+        let e = format!("{:#}", ws.connector_args("posta.geldi").unwrap_err());
         assert!(
-            e.contains("source.posta.geldi.args are an object") && e.contains("itero.config.json"),
+            e.contains("connector.posta.geldi.args are an object")
+                && e.contains("itero.config.json"),
             "{args}: {e}"
         );
     }
@@ -315,7 +338,7 @@ fn subfolders_group_and_names_stay_the_file_names() {
         );
         executable(d.path(), "actions/kargo/gönder", "#!/bin/sh\n");
         executable(d.path(), "actions/kargo/eski/gönder@0.1", "#!/bin/sh\n");
-        executable(d.path(), "sources/posta/posta.geldi", "#!/bin/sh\n");
+        executable(d.path(), "connectors/posta/posta.geldi", "#!/bin/sh\n");
         // tools' folders are never looked into
         executable(d.path(), "actions/.venv/bin/python", "#!/bin/sh\n");
         executable(
@@ -323,7 +346,7 @@ fn subfolders_group_and_names_stay_the_file_names() {
             "actions/web/node_modules/.bin/vite",
             "#!/bin/sh\n",
         );
-        executable(d.path(), "sources/.cache/eski.kaynak", "#!/bin/sh\n");
+        executable(d.path(), "connectors/.cache/eski.kaynak", "#!/bin/sh\n");
         let names: Vec<String> = ws.flows().unwrap().into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, ["keep", "logs", "sipariş", "uyarı"]);
         let file = |n: &str, v: Option<&str>| ws.action_file(n, v).unwrap();
@@ -331,13 +354,13 @@ fn subfolders_group_and_names_stay_the_file_names() {
         assert!(file("gönder", Some("0.1")).ends_with("gönder@0.1"));
         assert!(ws.action_file("python", None).is_err());
         assert!(ws.action_file("vite", None).is_err());
-        let sources: Vec<String> = ws
-            .source_files()
+        let connectors: Vec<String> = ws
+            .connector_files()
             .unwrap()
             .into_iter()
             .map(|(k, _)| k)
             .collect();
-        assert_eq!(sources, ["posta.geldi"]);
+        assert_eq!(connectors, ["posta.geldi"]);
     }
 }
 
@@ -369,11 +392,11 @@ fn one_name_twice_in_a_kind_is_an_error_naming_both_files() {
             e.contains("actions/a/gönder") && e.contains("actions/b/gönder"),
             "{e}"
         );
-        executable(d.path(), "sources/a/posta.geldi", "#!/bin/sh\n");
-        executable(d.path(), "sources/b/posta.geldi", "#!/bin/sh\n");
-        let e = format!("{:#}", ws.source_files().unwrap_err());
+        executable(d.path(), "connectors/a/posta.geldi", "#!/bin/sh\n");
+        executable(d.path(), "connectors/b/posta.geldi", "#!/bin/sh\n");
+        let e = format!("{:#}", ws.connector_files().unwrap_err());
         assert!(
-            e.contains("sources/a/posta.geldi") && e.contains("sources/b/posta.geldi"),
+            e.contains("connectors/a/posta.geldi") && e.contains("connectors/b/posta.geldi"),
             "{e}"
         );
         // an action and a workflow may share a name
@@ -386,7 +409,7 @@ fn one_name_twice_in_a_kind_is_an_error_naming_both_files() {
 }
 
 #[test]
-fn files_that_are_not_executable_beside_actions_and_sources_are_left_alone() {
+fn files_that_are_not_executable_beside_actions_and_connectors_are_left_alone() {
     #[cfg(unix)]
     {
         let d = tempfile::tempdir().unwrap();
@@ -400,16 +423,16 @@ fn files_that_are_not_executable_beside_actions_and_sources_are_left_alone() {
         write(d.path(), "actions/çeviri/README.md", "# çeviri\n");
         let names: Vec<String> = ws.action_files().unwrap().into_keys().collect();
         assert_eq!(names, ["ekran", "çevir"]);
-        // a source's folder may hold notes too
-        executable(d.path(), "sources/posta/posta.geldi", "#!/bin/sh\n");
-        write(d.path(), "sources/posta/README.md", "# posta\n");
-        let sources: Vec<String> = ws
-            .source_files()
+        // a connector's folder may hold notes too
+        executable(d.path(), "connectors/posta/posta.geldi", "#!/bin/sh\n");
+        write(d.path(), "connectors/posta/README.md", "# posta\n");
+        let connectors: Vec<String> = ws
+            .connector_files()
             .unwrap()
             .into_iter()
             .map(|(k, _)| k)
             .collect();
-        assert_eq!(sources, ["posta.geldi"]);
+        assert_eq!(connectors, ["posta.geldi"]);
         // a step naming one that is not executable still says so
         let e = format!("{:#}", ws.action_file("package.json", None).unwrap_err());
         assert!(e.contains("not executable"), "{e}");

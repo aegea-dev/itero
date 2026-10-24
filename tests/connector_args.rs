@@ -1,27 +1,27 @@
-//! A source's args, `source.<name>.args` in the manifest: environment
-//! variables for the source, `$$NAME` from the secret store or the
+//! A connector's args, `connector.<name>.args` in the manifest: environment
+//! variables for the connector, `$$NAME` from the secret store or the
 //! environment. Its own test binary: it sets environment variables.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
+use itero::connectors::supervise::{self, Connector, Policy};
 use itero::engine::daemon::Health;
 use itero::engine::journal::Journal;
-use itero::sources::supervise::{self, Policy, Source};
 use std::sync::Mutex;
 use std::time::Duration;
 
-/// A workspace with one source, `sources/posta.geldi`, and its manifest.
+/// A workspace with one connector, `connectors/posta.geldi`, and its manifest.
 fn ws_with(d: &std::path::Path, manifest: &str, script: &str) -> itero::workspace::Workspace {
     use std::os::unix::fs::PermissionsExt;
     std::fs::write(d.join("itero.config.json"), manifest).unwrap();
-    std::fs::create_dir_all(d.join("sources")).unwrap();
-    let s = d.join("sources/posta.geldi");
+    std::fs::create_dir_all(d.join("connectors")).unwrap();
+    let s = d.join("connectors/posta.geldi");
     std::fs::write(&s, script).unwrap();
     std::fs::set_permissions(&s, std::fs::Permissions::from_mode(0o755)).unwrap();
     itero::workspace::find(d).unwrap()
 }
 
-/// Runs the workspace's source until it is given up on: how it last ended.
+/// Runs the workspace's connector until it is given up on: how it last ended.
 fn run_it(ws: &itero::workspace::Workspace) -> String {
-    let (kind, file) = ws.source_files().unwrap().remove(0);
+    let (kind, file) = ws.connector_files().unwrap().remove(0);
     let (wake, _woken) = std::sync::mpsc::channel();
     let health = Mutex::new(Health::starting("2026-10-21T10:00:00Z"));
     let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
@@ -34,19 +34,19 @@ fn run_it(ws: &itero::workspace::Workspace) -> String {
         give_up_after: 1,
         window: Duration::from_secs(60),
     };
-    let source = Source {
+    let connector = Connector {
         kind: &kind,
         file: &file,
     };
-    supervise::run(ws, exe, &source, &policy, &wake, &health, &log);
+    supervise::run(ws, exe, &connector, &policy, &wake, &health, &log);
     let h = health.into_inner().unwrap();
-    h.sources["posta.geldi"].last_exit.clone().unwrap()
+    h.connectors["posta.geldi"].last_exit.clone().unwrap()
 }
 
 const PRINTS: &str = "#!/bin/sh\nprintf '{\"user\": \"%s\", \"password\": \"%s\", \"count\": \"%s\", \"home\": \"%s\"}\\n' \"$user\" \"$password\" \"$count\" \"$ITERO_TEST_EV\"\nexit 1\n";
 
 #[test]
-fn a_source_gets_its_args_and_secrets_as_environment_variables() {
+fn a_connector_gets_its_args_and_secrets_as_environment_variables() {
     // SAFETY: the only test in this binary; no thread runs yet
     unsafe {
         std::env::set_var("ITERO_NO_SECRET_STORE", "1");
@@ -58,7 +58,7 @@ fn a_source_gets_its_args_and_secrets_as_environment_variables() {
     let d = tempfile::tempdir().unwrap();
     let ws = ws_with(
         d.path(),
-        r#"{"source": {"posta.geldi": {"args": {
+        r#"{"connector": {"posta.geldi": {"args": {
             "user": "ayşe@örnek.test", "password": "$$ITERO_TEST_POSTA_SIFRE", "count": 3, "none": null}}}}"#,
         PRINTS,
     );
@@ -85,7 +85,7 @@ fn a_source_gets_its_args_and_secrets_as_environment_variables() {
     let d = tempfile::tempdir().unwrap();
     let ws = ws_with(
         d.path(),
-        r#"{"source": {"posta.geldi": {"args": {"password": "$$ITERO_TEST_YOK"}}}}"#,
+        r#"{"connector": {"posta.geldi": {"args": {"password": "$$ITERO_TEST_YOK"}}}}"#,
         PRINTS,
     );
     let why = run_it(&ws);
@@ -96,16 +96,16 @@ fn a_source_gets_its_args_and_secrets_as_environment_variables() {
         .unwrap();
     assert!(evs.iter().all(|e| e.event.kind != "posta.geldi"), "{evs:?}");
 
-    // a source has no run state: "$name" is refused, as is a name no
+    // a connector has no run state: "$name" is refused, as is a name no
     // environment variable can have
     for args in [r#"{"user": "$kişi"}"#, r#"{"kullanıcı": "ayşe"}"#] {
         let d = tempfile::tempdir().unwrap();
         let ws = ws_with(
             d.path(),
-            &format!(r#"{{"source": {{"posta.geldi": {{"args": {args}}}}}}}"#),
+            &format!(r#"{{"connector": {{"posta.geldi": {{"args": {args}}}}}}}"#),
             PRINTS,
         );
         let why = run_it(&ws);
-        assert!(why.contains("source.posta.geldi.args"), "{args}: {why}");
+        assert!(why.contains("connector.posta.geldi.args"), "{args}: {why}");
     }
 }

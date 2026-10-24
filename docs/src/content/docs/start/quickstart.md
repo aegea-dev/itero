@@ -61,7 +61,7 @@ itero runs <name>      # the run step by step
 - [Writing a workflow](/guides/workflows/): side by side, conditions,
   workflows as steps, the end lists.
 - [Actions](/guides/actions/): what an action gets and how it answers.
-- [Messages and sources](/guides/messages/): where messages come from.
+- [Messages and connectors](/guides/messages/): where messages come from.
 - [The log, IDs and names](/guides/log/): what happened, and how to find
   it.
 - The examples in the repository: `mail-alert`, `mail-servers`, `gmail`

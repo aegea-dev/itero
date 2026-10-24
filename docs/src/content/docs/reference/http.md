@@ -11,7 +11,7 @@ an error is `{"error": "..."}` with its status.
 
 | Route | Does |
 |---|---|
-| `GET /health` | the workspace, the daemon, its passes and its sources |
+| `GET /health` | the workspace, the daemon, its passes and its connectors |
 | `POST /events` | sends a message |
 | `GET /runs` | runs, newest first |
 | `GET /runs/{id or name}` | a run, its state and its events |
@@ -34,12 +34,12 @@ cannot post one without a preflight, which is never granted.
   "daemon": { "id": "01a15f2c…", "name": "brave-otter", "started": "...", "pid": 4242,
               "host": "mini", "itero": "0.2.0" },
   "started": "...", "passes": 3600, "last_pass": "...", "last_error": null,
-  "sources": { "mail.received": { "state": "running", "restarts": 0, "last_exit": null } } }
+  "connectors": { "mail.received": { "state": "running", "restarts": 0, "last_exit": null } } }
 ```
 
 `workspace` and `daemon` are their [IDs and names](/guides/log/#ids-and-names).
 
-`sources` has each [source](/guides/messages/#sources): `running`,
+`connectors` has each [connector](/guides/messages/#connectors): `running`,
 `waiting` (to start again) or `gave up`, its restarts, and how it ended
 last.
 
@@ -58,8 +58,8 @@ curl -s -X POST http://127.0.0.1:8787/events -H 'content-type: application/json'
 
 Answers 202 `{"id": "..."}`; 400 for a bad message, one of the engine's
 own types (`itero.*`, `action.*`, `timer.*`, `run.*`, `workflow.*`,
-`source.*`), or a `reply` that is not an http(s) URL. See
-[Messages and sources](/guides/messages/).
+`connector.*`), or a `reply` that is not an http(s) URL. See
+[Messages and connectors](/guides/messages/).
 
 With `?wait=N` (seconds, up to 600) it holds the request until the runs
 the message started have ended, and answers 200 with them:

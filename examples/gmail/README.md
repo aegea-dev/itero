@@ -1,7 +1,7 @@
 # gmail
 
 A notification for each new Gmail mail, the moment it arrives: no polling.
-`sources/gmail.received` keeps a connection to Gmail open with IMAP
+`connectors/gmail.received` keeps a connection to Gmail open with IMAP
 IDLE, and Gmail tells it when a mail comes; it prints one line per mail,
 and `workflows/gmail.json` shows it with `#notify`, with a sound: the
 subject, under the sender. On macOS a click on

@@ -30,9 +30,9 @@ done, 75 not yet, anything else an error. See [Actions](/guides/actions/).
 
 ### subfolder
 
-A folder in `workflows/`, `actions/` or `sources/` that groups files; it
+A folder in `workflows/`, `actions/` or `connectors/` that groups files; it
 is never part of a name. Hidden folders and `node_modules` are not looked
-into, and files that are not executable are not actions or sources.
+into, and files that are not executable are not actions or connectors.
 [`itero which`](/commands/which/) says where a name is.
 
 ### needs
@@ -46,11 +46,11 @@ when a step fails, and by `itero check` before. See
 
 A type (two or more words joined by dots, like `order.placed`) and its
 data. It starts runs and reaches runs waiting for it. See
-[Messages and sources](/guides/messages/).
+[Messages and connectors](/guides/messages/).
 
-### source
+### connector
 
-▲ An executable in `sources/` or a subfolder of it that keeps running; each
+▲ An executable in `connectors/` or a subfolder of it that keeps running; each
 line it prints is one message of its file name's type.
 
 ### schedule
@@ -96,7 +96,7 @@ step whose `on` does not hold is skipped.
 ### args
 
 Data for an action, `action.<name>.args` in `itero.config.json`, set with `itero args`. A list
-runs the step once per item. A source has args too, `source.<name>.args`:
+runs the step once per item. A connector has args too, `connector.<name>.args`:
 an object.
 
 ### settings
@@ -122,7 +122,7 @@ later (`keep`).
 
 ### daemon
 
-`itero daemon`: runs one workspace, pass after pass. It starts sources,
+`itero daemon`: runs one workspace, pass after pass. It starts connectors,
 watches paths, takes messages and schedules, decides what each run does
 next, and runs each step's action in its own process. See
 [Workspaces, workflows and runs](/start/concepts/).

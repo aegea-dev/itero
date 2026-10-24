@@ -70,4 +70,4 @@ nothing.
 
 Types starting with `itero.` are the daemon's own and refused. An app
 sends the same with `POST /events` ([HTTP API](/reference/http/)). See
-[Messages and sources](/guides/messages/).
+[Messages and connectors](/guides/messages/).

@@ -31,20 +31,20 @@ itero args imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
                         {"user": "you@example.com", "password": "$$YOU_PASS"}]'
 ```
 
-## A source's args
+## A connector's args
 
-A [source](/guides/messages/#sources) gets its args the same way, from
-`source.<name>.args`: an object, each value an environment variable, read
-each time it starts. A source has no run, so its values are themselves or
+A [connector](/guides/messages/#connectors) gets its args the same way, from
+`connector.<name>.args`: an object, each value an environment variable, read
+each time it starts. A connector has no run, so its values are themselves or
 `"$$NAME"`, never `"$name"`.
 
 ```json
-"source": {
+"connector": {
   "mail.pushed": { "args": { "user": "me@example.com", "password": "$$ME_PASS" } }
 }
 ```
 
-A secret that is not set keeps the source from starting, and the log
+A secret that is not set keeps the connector from starting, and the log
 says which.
 
 ## Secrets
@@ -52,7 +52,7 @@ says which.
 `"$$NAME"` stands for a secret: a token, a password, an API key. It is
 looked up in the OS secret store (the macOS Keychain, the Secret Service
 on Linux), then in the daemon's environment, only when the step or the
-source starts:
+connector starts:
 the value never reaches the run's state, the journal, a log or a command
 line.
 

@@ -18,7 +18,7 @@ notification comes through Itero.app):
 | `itero.daemon.started` | the daemon starts | `daemon`, `name`, `itero` |
 | `itero.run.error` | a run ended in error | `workflow`, `run`, `failed_step`, `why` |
 | `itero.run.failed` | a run ended as failed | `workflow`, `run`, `why` |
-| `itero.source.gave-up` | a source kept ending and was given up on | `source`, `why` |
+| `itero.connector.gave-up` | a connector kept ending and was given up on | `connector`, `why` |
 | `itero.space.full` | `.itero/` is past its `space` limit | `used`, `limit` |
 | `itero.log.full` | the log is past its `log` limit | `path`, `size`, `limit` |
 | `itero.notification.clicked` | a notification from `#notify` was clicked, on macOS ([`#notify`](/guides/actions/#built-in)) | `notification`, `answer`, `workflow`, `data` |

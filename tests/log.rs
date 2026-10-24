@@ -168,7 +168,7 @@ fn a_message_nothing_wants_says_so() {
     assert_eq!(all[0]["nothing"], true, "{}", all[0]);
 }
 
-/// A daemon process: started, its source started and ended, stopped.
+/// A daemon process: started, its connector started and ended, stopped.
 #[test]
 fn a_daemon_says_when_it_starts_and_stops() {
     let d = tempfile::tempdir().unwrap();
@@ -176,7 +176,7 @@ fn a_daemon_says_when_it_starts_and_stops() {
     write(root, "itero.config.json", r#"{"sahibi": "ayşe"}"#);
     executable(
         root,
-        "sources/kapı.çaldı",
+        "connectors/kapı.çaldı",
         "#!/bin/sh\necho '{\"kim\": \"ayşe\"}'\n",
     );
     /// Kills the daemon however the test ends.
@@ -207,7 +207,7 @@ fn a_daemon_says_when_it_starts_and_stops() {
         }
         false
     };
-    assert!(saw("source.ended"), "{:#?}", lines(root));
+    assert!(saw("connector.ended"), "{:#?}", lines(root));
     let own = || {
         lines(root)
             .iter()
@@ -240,8 +240,11 @@ fn a_daemon_says_when_it_starts_and_stops() {
     );
     assert_eq!(started["pid"], child.id());
     assert_eq!(started["itero"], env!("CARGO_PKG_VERSION"));
-    let source = all.iter().find(|l| l["event"] == "source.started").unwrap();
-    assert_eq!(source["source"], "kapı.çaldı");
+    let connector = all
+        .iter()
+        .find(|l| l["event"] == "connector.started")
+        .unwrap();
+    assert_eq!(connector["connector"], "kapı.çaldı");
     assert_eq!(all.last().unwrap()["event"], "daemon.stopped", "{all:#?}");
     assert!(all.iter().all(|l| l["daemon"] == started["daemon"]));
 }

@@ -42,7 +42,7 @@ changes (down, then back up).
 
 ## What people chain
 
-- **Tell me when a mail arrives, and only the important ones**: a source
+- **Tell me when a mail arrives, and only the important ones**: a connector
   for new mail and a notification; a model step to rate it decides which
   you hear about. [`mail-alert`](examples/mail-alert), a model on this
   machine in [`page-summary`](examples/page-summary)
@@ -120,14 +120,14 @@ through `notify-send` (or `gdbus`, or `kdialog`).
 A folder with `itero.config.json` is a workspace (`{}` will do); `itero daemon` runs it.
 
 ```
-itero.config.json          the manifest: what it is, port, limits, and each workflow, action and source
+itero.config.json          the manifest: what it is, port, limits, and each workflow, action and connector
 workflows/order.json       ● a workflow: when it runs (on) and its steps
 actions/check-payment      ■ an action: an executable, its name its file name
-sources/mail.received      ▲ a source: each line it prints is a message of this type
+connectors/mail.received   ▲ a connector: each line it prints is a message of this type
 .itero/                    the journal, the log (itero.log) and memory
 ```
 
-`workflows/`, `actions/` and `sources/` may have subfolders to group files;
+`workflows/`, `actions/` and `connectors/` may have subfolders to group files;
 a name stays its file name, and `itero which <name>` says where it is.
 
 - **● A workflow** starts on a message (`{"event": "order.placed"}`), a

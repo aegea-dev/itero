@@ -1,10 +1,20 @@
 ---
-title: Messages and sources
+title: Messages and connectors
 description: Where messages come from, what they start, and how they reach the runs waiting for them.
 ---
 
 A message is a type and its data. The type is two or more words joined by
-dots.
+dots, and reads best as who, then what happened or what is asked:
+
+| Type | Is |
+|---|---|
+| `gmail.received`, `order.placed` | a fact: something happened (past tense). Facts come in, from a connector or an app. |
+| `gmail.send`, `app.notify` | a request: something asked for (imperative). |
+| `stripe.invoice.paid` | words between add detail |
+
+The first word is the service, the app or the thing (`gmail`, `stripe`,
+`order`); the last says what. itero checks only the dots; the rest is a
+convention, so that a type says at a glance which way it goes.
 
 ```sh
 itero emit order.placed '{"order": 43, "total": 120}'
@@ -19,7 +29,7 @@ Content-Type: application/json
 
 It is written to the journal at once, so one sent while the daemon is
 stopped waits for it. Types starting with `itero.`, `action.`, `timer.`,
-`run.`, `workflow.` or `source.` are the engine's own and refused.
+`run.`, `workflow.` or `connector.` are the engine's own and refused.
 
 `itero emit` prints the message's id, then says what it will do, from the
 workflows on disk:
@@ -71,10 +81,10 @@ ended, and their state.
 
 ## Where messages come from
 
-- **Push**: an app or a webhook posts to `/events`, or a source holds a
+- **Push**: an app or a webhook posts to `/events`, or a connector holds a
   connection open and prints a line when told something.
 - **Pull**: a workflow on a schedule asks
-  (`"on": [{ "schedule": "* * * * *" }]`), or a source that polls.
+  (`"on": [{ "schedule": "* * * * *" }]`), or a connector that polls.
 - **Watch**: a `path` in a workflow's `on`, below.
 
 ## Watching files
@@ -100,11 +110,11 @@ path costs a file descriptor and no CPU until something changes.
 `examples/photos` makes a thumbnail of each photo dropped into its
 `inbox/`.
 
-## Sources
+## Connectors
 
-▲ A source is an executable in `sources/` (or a subfolder of it) that keeps
+▲ A connector is an executable in `connectors/` (or a subfolder of it) that keeps
 running. Each line it prints is the data of one message, of the type its
-file name says: `sources/mail/mail.received` sends `mail.received`
+file name says: `connectors/mail/mail.received` sends `mail.received`
 messages.
 
 ```sh
@@ -114,17 +124,17 @@ exec itero watch "$HOME/notes.txt"
 ```
 
 It runs in the workspace, with the daemon's `itero` first on its `PATH`
-and its args (`source.<name>.args` in `itero.config.json`) as environment
-variables, secrets among them: [A source's args](/guides/secrets/#a-sources-args).
+and its args (`connector.<name>.args` in `itero.config.json`) as environment
+variables, secrets among them: [A connector's args](/guides/secrets/#a-connectors-args).
 Its stdin closes when the daemon goes; its stderr goes to the daemon's
 stderr. The daemon starts it again when it ends, waiting longer each time,
-and gives up on one that keeps ending (`itero.source.gave-up`); the log
-and `/health` show each source.
+and gives up on one that keeps ending (`itero.connector.gave-up`); the log
+and `/health` show each connector.
 
 `itero watch <path>` prints `{"path", "kind"}` each time a file or folder
 changes, from the OS's own file events, calm for half a second: for a
-source that wants the same events as a `path` in `on`.
+connector that wants the same events as a `path` in `on`.
 
-A source that keeps its own "last seen" sends one message per new thing,
+A connector that keeps its own "last seen" sends one message per new thing,
 so each run has its own: `examples/mail-alert` prints one line per new
 mail, with its sender and subject.
