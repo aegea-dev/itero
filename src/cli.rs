@@ -368,7 +368,6 @@ fn check_manifest(
             wrong.push(format!("{dir}/: this goes in {manifest} now, as {now}"));
         }
     }
-    wrong.extend(ws.left_in_sources()?);
     let actions: Vec<String> = ws
         .action_files()?
         .into_keys()
@@ -422,9 +421,6 @@ fn dispatch(cli: Cli) -> Result<()> {
         } => {
             use crate::engine::daemon;
             let ws = workspace()?;
-            if let Some(why) = ws.left_in_sources()? {
-                bail!("{why}");
-            }
             let exe = std::env::current_exe()?;
             if once {
                 let at = match &now {

@@ -125,26 +125,6 @@ fn args_are_written_for_the_connector_and_checked() {
 }
 
 #[test]
-#[cfg(unix)]
-fn programs_left_in_sources_are_refused_saying_connectors() {
-    let d = workspace();
-    file(d.path(), "sources/posta.geldi", "#!/bin/sh\n");
-    use std::os::unix::fs::PermissionsExt;
-    let program = d.path().join("sources/posta.geldi");
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let check = itero(d.path(), &["check"]);
-    assert!(!check.status.success(), "{check:?}");
-    assert!(err(&check).contains("connectors/"), "{}", err(&check));
-    let pass = itero(d.path(), &["daemon", "--once"]);
-    assert!(!pass.status.success(), "{pass:?}");
-    assert!(err(&pass).contains("connectors/"), "{}", err(&pass));
-    // notes in a folder of that name are no one's business
-    std::fs::remove_file(d.path().join("sources/posta.geldi")).unwrap();
-    std::fs::write(d.path().join("sources/notlar.md"), "# kaynaklar\n").unwrap();
-    assert!(itero(d.path(), &["check"]).status.success());
-}
-
-#[test]
 fn a_secret_needs_the_store_and_a_name_like_an_environment_variable() {
     let d = workspace();
     let o = itero(d.path(), &["secret", "API_KEY"]);
