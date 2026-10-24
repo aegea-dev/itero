@@ -31,9 +31,9 @@
 <path class="ink action" d="M363.536 261.711L430.711 194.536L497.886 261.711L430.711 328.886L363.536 261.711Z" stroke-width="0">
   <animate attributeName="stroke-width" to="5" begin="5s" dur="0.3s" fill="freeze"/>
 </path>
-<path class="connector" d="M10.074 332.202L113.602 292.578L96.1529 402.048L10.074 332.202Z"/>
-<mask id="triangle" fill="white"><path d="M10.074 332.202L113.602 292.578L96.1529 402.048L10.074 332.202Z"/></mask>
-<path class="ink" d="M10.074 332.202L113.602 292.578L96.1529 402.048L10.074 332.202Z" stroke-width="0" mask="url(#triangle)">
+<path class="connector" d="M6.527 321.269L113.602 292.578L84.911 399.653L6.527 321.269Z"/>
+<mask id="triangle" fill="white"><path d="M6.527 321.269L113.602 292.578L84.911 399.653L6.527 321.269Z"/></mask>
+<path class="ink" d="M6.527 321.269L113.602 292.578L84.911 399.653L6.527 321.269Z" stroke-width="0" mask="url(#triangle)">
   <animate attributeName="stroke-width" to="10" begin="1s" dur="0.3s" fill="freeze"/>
 </path>
 </svg>
