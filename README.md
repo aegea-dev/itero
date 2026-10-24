@@ -103,6 +103,7 @@ make lint-check   # clippy, warnings fail
 make fmt-check    # rustfmt
 make check        # cargo check, every target
 make audit        # Cargo.lock against RustSec advisories (needs cargo-audit)
+make dist         # a release archive with THIRD-PARTY-LICENSES (needs cargo-about)
 make test-linux   # the tests and clippy on Linux, in Docker
 make test-docker  # the IMAP, POP3 and Gmail examples against a mail server in Docker
 make docs         # the docs site at http://localhost:4321/itero/ (make docs-install once)

@@ -1,0 +1,16 @@
+Third-party licenses
+
+itero is Apache-2.0. The release binary includes these open source crates;
+each licence below is followed by the crates it covers.
+{{#each licenses}}
+
+================================================================================
+{{{name}}}
+
+Used by:
+{{#each used_by}}
+    {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

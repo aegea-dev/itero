@@ -1,0 +1,7 @@
+# cargo-about's settings for THIRD-PARTY-LICENSES, the notices `make dist`
+# puts in every release archive. A dependency under a licence not listed
+# here fails the build, so a new one is a decision, not an accident.
+accepted = ["MIT", "Apache-2.0", "BSD-3-Clause", "Unicode-3.0", "Zlib"]
+# only what ends up in the binary
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
