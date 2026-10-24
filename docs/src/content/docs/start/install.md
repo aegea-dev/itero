@@ -38,7 +38,7 @@ not on your `PATH`, it says so.
 Pass options after `sh -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aegea-dev/itero/main/install.sh | sh -s -- --version 0.1.0
+curl -fsSL https://raw.githubusercontent.com/aegea-dev/itero/main/install.sh | sh -s -- --version 0.8.0
 ```
 
 ## From source
