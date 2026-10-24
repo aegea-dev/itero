@@ -1,28 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <defs>
-    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2c66ab"/>
-      <stop offset="1" stop-color="#163d75"/>
-    </linearGradient>
-    <clipPath id="upper"><rect x="0" y="0" width="512" height="274"/></clipPath>
-  </defs>
-
-  <!-- bottom: half a sphere -->
-  <path d="M56 272 A200 200 0 0 0 456 272 Z" fill="#163d75"/>
-
-  <!-- top: a wave rising from the left, its lip curling over and down -->
-  <g clip-path="url(#upper)">
-    <path d="M56 274 C 56 176, 134 92, 246 84 C 330 78, 392 116, 404 172
-             C 410 200, 394 220, 374 210
-             C 384 184, 362 152, 326 152 C 286 154, 270 200, 298 242
-             C 306 256, 316 266, 330 274 Z" fill="url(#body)"/>
-    <g fill="none" stroke="#5e95d1" stroke-width="7" stroke-linecap="round" opacity="0.7">
-      <path d="M92 262 C 92 190, 150 124, 236 116"/>
-      <path d="M130 262 C 132 206, 176 156, 238 148"/>
-      <path d="M176 262 C 180 222, 210 190, 252 182"/>
-    </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <!-- Itero.app's icon: the logo (docs/public/itero.svg) in its light
+       colors on a white rounded square, as an app icon does not follow
+       light and dark mode, turned 10 degrees counterclockwise to fill the
+       square. make icon builds Itero.icns from it. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#ffffff" stroke="#d1d5db" stroke-width="4"/>
+  <g transform="rotate(-10 512 512) translate(131 283) scale(1.1)">
+    <path d="M110.232 296.009L287.009 119.232" stroke="#6b7280" stroke-width="9"/>
+    <path d="M290.768 119.232L432.189 260.654" stroke="#6b7280" stroke-width="9"/>
+    <path d="M429.232 260.364L641.364 48.2322" stroke="#6b7280" stroke-width="9"/>
+    <path d="M690.5 50C690.5 76.2335 669.234 97.5 643 97.5C616.766 97.5 595.5 76.2335 595.5 50C595.5 23.7665 616.766 2.5 643 2.5C669.234 2.5 690.5 23.7665 690.5 50Z" fill="#6FBF73" stroke="#6b7280" stroke-width="9"/>
+    <path d="M221.825 121L289 53.8249L356.175 121L289 188.175L221.825 121Z" fill="#6C8EEF" stroke="#6b7280" stroke-width="9"/>
+    <path d="M363.536 261.711L430.711 194.536L497.886 261.711L430.711 328.886L363.536 261.711Z" fill="#6C8EEF" stroke="#6b7280" stroke-width="9"/>
+    <path d="M10.074 332.202L113.602 292.578L96.1529 402.048L10.074 332.202Z" fill="#E57373"/>
+    <mask id="triangle" fill="white"><path d="M10.074 332.202L113.602 292.578L96.1529 402.048L10.074 332.202Z"/></mask>
+    <path d="M10.074 332.202L113.602 292.578L96.1529 402.048L10.074 332.202Z" stroke="#6b7280" stroke-width="18" mask="url(#triangle)"/>
   </g>
-
-  <!-- where the wave meets the sphere: a line of foam -->
-  <path d="M56 272 L 456 272" stroke="#f4efe2" stroke-width="5" stroke-linecap="round"/>
 </svg>

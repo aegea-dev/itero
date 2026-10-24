@@ -32,6 +32,8 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'itero',
+			// its colors follow light and dark mode inside the file
+			logo: { src: './src/assets/itero.svg', alt: '' },
 			description:
 				'Runs workflows again and again, on a schedule or when an app sends an event, with the command line tools already on the machine.',
 			expressiveCode: {
