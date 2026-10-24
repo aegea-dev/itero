@@ -6,5 +6,9 @@
     "#check-plan",
     "#tf-apply",
     "#web-check"
+  ],
+  "error": [
+    { "#notify": { "title": "$name", "text": "$why" } },
+    { "#notify": { "on": [{ "has": "$undo_failed" }], "title": "$name is left", "text": "$undo_failed" } }
   ]
 }
