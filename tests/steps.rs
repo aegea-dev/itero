@@ -325,6 +325,7 @@ fn on_error_the_finished_steps_are_undone_newest_first_then_the_error_list() {
     let a = r.done(&a.jobs[0], json!({}));
     assert_eq!(names(&a), vec!["bildir"]);
     assert_eq!(r.rt.phase, Phase::Error);
+    assert!(!r.rt.state.contains_key("undo_failed"), "every undo worked");
     r.done(&a.jobs[0], json!({}));
     assert_eq!(
         r.rt.ended,
@@ -367,6 +368,11 @@ fn an_undo_that_breaks_is_noted_and_the_others_still_run() {
     );
     let a = r.done(&a.jobs[0], json!({}));
     assert_eq!(names(&a), vec!["bildir"]);
+    // the error list is told which undos broke: what they made may be left
+    assert_eq!(
+        r.rt.state["undo_failed"],
+        json!(["#geri-al: exit 2: kilitli"])
+    );
     r.done(&a.jobs[0], json!({}));
     // the run's why stays what broke first
     assert_eq!(

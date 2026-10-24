@@ -394,10 +394,21 @@ impl Machine<'_> {
         }
     }
 
-    /// An undo that broke: noted, and the next one runs all the same.
+    /// An undo that broke: noted, in the log and in `undo_failed` for the
+    /// error list (what it made may be left), and the next one runs all
+    /// the same.
     fn undo_failed(&mut self, path: &[usize], step: &str, why: &str) -> Result<(), String> {
         self.notes
             .push(json!({"event": "undo.failed", "step": step, "why": why}));
+        let line = Value::String(format!("{step}: {why}"));
+        match self.rt.state.get_mut("undo_failed") {
+            Some(Value::Array(lines)) => lines.push(line),
+            _ => {
+                self.rt
+                    .state
+                    .insert("undo_failed".into(), Value::Array(vec![line]));
+            }
+        }
         self.log.push(format!("undo {step}: {why}"));
         self.finished(path, &Map::new())
     }
