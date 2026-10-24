@@ -249,9 +249,7 @@ fn ignore_sigpipe() {
 
 /// The workspace's daemon's `/health`, when one answers on `port`.
 fn daemon_health(port: u16) -> Option<serde_json::Value> {
-    reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .build()
+    crate::net::client(std::time::Duration::from_secs(3))
         .ok()?
         .get(format!("http://127.0.0.1:{port}/health"))
         .send()
