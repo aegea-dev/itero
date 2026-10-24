@@ -13,11 +13,11 @@ The rule is KISS:
 ## A workspace
 
 ```
-itero.config.json             the manifest: what it is, how it runs, each workflow, action and source
+itero.config.json             the manifest: what it is, how it runs, each workflow, action and connector
 workflows/order.json          a workflow; its name is the file name
 actions/check-payment         an action: an executable; its name is the file name
 actions/notify@0.2            a version, in the name
-sources/imap-idle             a source: an executable holding a connection open
+connectors/mail.pushed        a connector: an executable holding a connection open
 .itero/                       what itero keeps: the journal, the log, memory
 ```
 
@@ -248,15 +248,15 @@ Each run keeps the message that started it (a split run its parent's) and
 where its answer goes, so neither needs anything in the workflow files.
 
 Messages come from:
-- **push**: an app or a webhook calls `POST /events`, or a source holds a
+- **push**: an app or a webhook calls `POST /events`, or a connector holds a
   connection open and prints a line when told something;
 - **pull**: a workflow on a schedule asks;
 - **watch**: a `path` in a workflow's `on` (see Watching files).
 
-A **source** is an executable in `sources/` that keeps running, for what
+A **connector** is an executable in `connectors/` that keeps running, for what
 needs a connection held open: a mail server's IDLE, a queue
 subscription. Each line it prints is the data of one message, of its file
-name's type. The daemon starts it again when it stops. A source that
+name's type. The daemon starts it again when it stops. A connector that
 keeps its own "last seen" sends one message per new thing, so each run has
 its own: one line per new mail, with its sender and subject.
 
@@ -294,7 +294,7 @@ until something changes. No process per watch.
   `itero.path.changed` `{"path", "kind"}`, which starts the workflows
   naming that path.
 
-`itero watch <path>` stays, for a source that wants the same events.
+`itero watch <path>` stays, for a connector that wants the same events.
 
 ## How it runs
 
@@ -309,7 +309,7 @@ pass, at once or within a second:
 ```
 itero daemon  (one per workspace)
 │
-├─ sources and watched paths: beside it, feeding messages in
+├─ connectors and watched paths: beside it, feeding messages in
 │
 └─ every pass:
      1. messages   → start new runs, wake waiting runs
@@ -386,7 +386,7 @@ itero knows, and any others they like.
 **One manifest:** `itero.config.json` at the workspace's root, like
 `package.json`, holds all of it, so the folders keep only the things
 themselves (plan 9). Its top says what the workspace is and how it runs;
-an entry per workflow, action and source says what each is:
+an entry per workflow, action and connector says what each is:
 
 ```json
 {
@@ -418,7 +418,7 @@ an entry per workflow, action and source says what each is:
 
 The read-only names (`id`, `name`, `created`, `path`, `version`) cannot be
 set in an entry; at the top, `name` and `version` are the workspace's own,
-like a package's. An entry names a workflow, action or source that
+like a package's. An entry names a workflow, action or connector that
 exists: it describes, never creates.
 
 The limits:
@@ -477,7 +477,7 @@ workflow is internal; the rest depends on the event:
 | `run.note` | `note`: what the run did with a message or a timer it was given |
 | `run.ended` | `status` (`done`, `failed`, `error`, `split`), `why` |
 | `run.skipped` | `workflow`, `schedule`, `why`: a schedule came due and `on` did not hold |
-| `source.started`, `source.ended`, `source.gave-up` | `source`, `why` |
+| `connector.started`, `connector.ended`, `connector.gave-up` | `connector`, `why` |
 | `paths.watched` | `paths`: every path watched, when they change |
 | `error` | `why`: what went wrong in the daemon itself |
 
@@ -518,14 +518,14 @@ and the log like any other, and a workspace changes or turns them off the
 same way.
 
 **Messages from the daemon.** Their types start with `itero.`, which only
-the daemon may send (refused from `itero emit`, `/events` and sources):
+the daemon may send (refused from `itero emit`, `/events` and connectors):
 
 | Type | When | Data |
 |---|---|---|
 | `itero.daemon.started` | the daemon starts | `daemon`, `name`, `itero` (its version) |
 | `itero.run.error` | a run ended in error | `workflow`, `run`, `failed_step`, `why` |
 | `itero.run.failed` | a run ended as failed | `workflow`, `run`, `why` |
-| `itero.source.gave-up` | a source kept ending and was given up on | `source`, `why` |
+| `itero.connector.gave-up` | a connector kept ending and was given up on | `connector`, `why` |
 | `itero.space.full` | `.itero/` is past its `space` limit | `used`, `limit` |
 | `itero.log.full` | the log is past its `log` limit | `path`, `size`, `limit` |
 
@@ -592,13 +592,13 @@ earlier design describes.
 
 ## Folders and needs
 
-**Subfolders group.** `workflows/`, `actions/` and `sources/` may have
+**Subfolders group.** `workflows/`, `actions/` and `connectors/` may have
 subfolders at any depth (`workflows/shop/order.json`,
 `actions/mail/imap-check`). A name stays its file name, unique within its
-kind: two workflows, actions or sources of one name are an error naming
+kind: two workflows, actions or connectors of one name are an error naming
 both files; an action and a workflow may share one. Hidden folders and
 `node_modules` are not looked into, and only executable files are actions
-or sources, so a project's `package.json` or a `README.md` can sit beside
+or connectors, so a project's `package.json` or a `README.md` can sit beside
 them. `itero which <name>` says where a name is; nothing is stored, so
 nothing goes stale.
 
@@ -628,24 +628,24 @@ itero secret <NAME>          set a secret (asks; or --file)
 itero runs                   runs, newest first, and how each ended
 itero errors                 runs that ended in error: which step and why
 itero check                  read every file; say what is wrong
-itero which <name>           where a workflow, action or source of that name is
+itero which <name>           where a workflow, action or connector of that name is
 itero workflows              each workflow, its runs and the last; whether a daemon runs
 itero info                   the workspace and its daemon: IDs, names, limits
-itero watch <path>           for sources: a line per change
+itero watch <path>           for connectors: a line per change
 ```
 
 ## Examples
 
-**New mail, as it arrives.** A source prints one line per new mail, with
+**New mail, as it arrives.** A connector prints one line per new mail, with
 its sender and subject. `workflows/mail-alert.json`:
 
 ```json
 { "on": [{ "event": "mail.received" }], "steps": ["#notify"] }
 ```
 
-(`#notify` shows `$text`; the source prints `{"text": "Ayşe: Toplantı"}`.)
+(`#notify` shows `$text`; the connector prints `{"text": "Ayşe: Toplantı"}`.)
 
-**Photos added to a folder.** No source needed:
+**Photos added to a folder.** No connector needed:
 
 ```json
 { "on": [{ "path": "~/Pictures/inbox" }], "steps": ["#make-thumbnails"] }
@@ -738,7 +738,7 @@ one.
 - **Pausing a workflow** after errors in a row: a daemon setting.
 - **Commands to create things** without knowing the folders:
   `itero workflows new <name> '<json>'`, `itero workflows update …`,
-  `itero actions new <name> --file …`, `itero sources new …`. Each writes
+  `itero actions new <name> --file …`, `itero connectors new …`. Each writes
   the file a person would.
 - **A web page** to see workflows and runs, then to edit them; xyflow for
   the graph once branches are drawn.
