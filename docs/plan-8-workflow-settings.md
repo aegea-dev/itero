@@ -1,8 +1,8 @@
 # Plan 8: workflow settings
 
-Board ticket #10. A workflow shared from fons (or anywhere) is used as it
-is, with nothing in it edited, so `git pull` stays clean. What changes
-from one user to another goes in the workspace: the workflow's settings.
+A workflow shared from anywhere is used as it is, with nothing in it
+edited, so `git pull` stays clean. What changes from one user to another
+goes in the workspace: the workflow's settings.
 
 ## Spec
 
