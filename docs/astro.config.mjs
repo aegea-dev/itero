@@ -83,7 +83,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Writing a workflow', slug: 'guides/workflows' },
 						{ label: 'Actions', slug: 'guides/actions' },
-						{ label: 'Messages and sources', slug: 'guides/messages' },
+						{ label: 'Messages and connectors', slug: 'guides/messages' },
 						{ label: 'Args and secrets', slug: 'guides/secrets' },
 						{ label: 'The log, IDs and names', slug: 'guides/log' },
 						{ label: "The daemon's own workflows", slug: 'guides/maintenance' },
