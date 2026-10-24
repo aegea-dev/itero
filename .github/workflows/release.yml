@@ -53,10 +53,13 @@ jobs:
           # from there, and codesign signs either
           - target: x86_64-apple-darwin
             os: macos-latest
+          # the oldest Ubuntu runners: built here, itero needs glibc 2.34 and
+          # OpenSSL 3, so it runs on Ubuntu 22.04, Debian 12, RHEL 9 and later.
+          # Built on 24.04 it needed glibc 2.39.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+            os: ubuntu-22.04-arm
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write # uploads the archives to the draft release
