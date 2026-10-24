@@ -1,10 +1,13 @@
 ---
-title: itero which
+title: which
 description: Where a workflow, action or connector of a name is.
 ---
 
+`itero which` tells you which file a name means: a workflow, an action or
+a connector.
+
 ```sh
-itero which <name>
+itero which <name> [--json]
 itero which '#<name>'
 ```
 
@@ -31,4 +34,4 @@ action    built in
 - A name nothing has is an error, with exit 1.
 
 itero reads the folders each time, so nothing is kept that could go stale.
-[`itero workflows`](/commands/workflows/) shows each workflow's file too.
+[`itero wf list`](/commands/workflow/#list) shows each workflow's file too.

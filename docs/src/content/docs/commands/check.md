@@ -1,13 +1,18 @@
 ---
-title: itero check
-description: Reads every file and says what is wrong.
+title: check
+description: Reads your files before anything runs, and says what is wrong.
 ---
 
+`itero check` reads your workflows, actions and connectors and tells you
+what is wrong with them, before anything runs. Run it after you edit a
+file. (To see runs that already failed, use
+[`itero wf runs --errors`](/commands/workflow/#runs).)
+
 ```sh
-itero check
+itero check [--json]
 ```
 
-Reads every workflow, action and connector. It prints each workflow with its
+It reads every workflow, action and connector. It prints each workflow with its
 id, its entry in `itero.config.json`, its settings, its runs so far and its last run, then the actions and
 workflows its steps name and where each is; then each connector. Internal
 workflows come last, apart.
@@ -37,5 +42,5 @@ a command it runs (a hint: the script may guard it). Neither fails the
 check. See [Actions](/guides/actions/#when-something-it-needs-is-missing).
 
 Anything wrong is an error naming the file: a key it does not know, a
-message type of one word, an action or a workflow that is not there, an
+event type of one word, an action or a workflow that is not there, an
 action that is not executable. Run it after every edit.

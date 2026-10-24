@@ -4,3 +4,25 @@
 .sl-markdown-content td:first-child > code:only-child {
 	white-space: nowrap;
 }
+
+/* The three kinds' symbols, in the logo's colors: ● workflow, ■ action,
+   ▲ connector. The logo's deeper shades on a light page, its lighter ones
+   on a dark page, so each reads against its background. */
+.wf {
+	color: #3b7f43;
+}
+.act {
+	color: #3a4fa8;
+}
+.con {
+	color: #b5524e;
+}
+:root[data-theme='dark'] .wf {
+	color: #6fbf73;
+}
+:root[data-theme='dark'] .act {
+	color: #6c8eef;
+}
+:root[data-theme='dark'] .con {
+	color: #e57373;
+}

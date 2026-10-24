@@ -1,7 +1,9 @@
 ---
-title: itero help
+title: help
 description: The commands, or one command's options.
 ---
+
+`itero help` lists the commands, or tells you one command's options.
 
 ```sh
 itero help
@@ -15,7 +17,7 @@ command's arguments and options, as does `--help` after it.
 
 ```
 $ itero help emit
-Send a message: it starts runs and reaches the runs waiting for it
+Send an event: it starts runs, and reaches the runs waiting for it
 
 Usage: itero emit <TYPE> [DATA]
 

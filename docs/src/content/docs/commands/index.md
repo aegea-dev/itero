@@ -5,30 +5,29 @@ description: Every itero command, at a glance.
 
 Every command works in the workspace of the folder it runs in: the nearest
 folder upwards with an `itero.config.json`. `itero help <command>` shows a
-command's options.
+command's options, and every command that prints something takes `--json`.
 
 | Command | Does |
 |---|---|
-| [`itero daemon`](/commands/daemon/) | runs the workspace: messages, schedules, watched files, steps |
-| [`itero emit`](/commands/emit/) | sends a message, and says what it starts; `--wait` for its answer |
-| [`itero workflows`](/commands/workflows/) | each workflow, its runs and the last; whether the daemon runs |
-| [`itero runs`](/commands/runs/) | the runs, or one run step by step |
-| [`itero errors`](/commands/errors/) | the runs that ended in error, and why |
-| [`itero check`](/commands/check/) | reads every file and says what is wrong |
-| [`itero which`](/commands/which/) | where a workflow, action or connector of a name is |
-| [`itero info`](/commands/info/) | the workspace and its daemon: IDs, names, limits |
-| [`itero args`](/commands/args/) | sets an action's or a connector's data |
-| [`itero config`](/commands/config/) | sets a workflow's settings, or shows them |
-| [`itero secret`](/commands/secret/) | keeps a secret in the OS secret store |
-| [`itero service`](/commands/service/) | runs the daemon from login on |
-| [`itero watch`](/commands/watch/) | for connectors: a line per change to a file or folder |
-| [`itero help`](/commands/help/) | the commands, or one command's options |
+| [`daemon`](/commands/daemon/) | runs your workflows; leave it running |
+| [`emit`](/commands/emit/) | sends an event, and says what it starts; `--wait` for the answer |
+| [`check`](/commands/check/) | reads your files before anything runs, and says what is wrong |
+| <span class="wf">●</span> [`workflow`](/commands/workflow/) (`wf`) | your workflows, their runs (and why one broke), their settings |
+| <span class="act">■</span> [`action`](/commands/action/) | your actions, which ones break and why, their args |
+| <span class="con">▲</span> [`connector`](/commands/connector/) | your connectors, their args |
+| [`which`](/commands/which/) | where a workflow, action or connector of a name is |
+| [`info`](/commands/info/) | the workspace and its daemon: IDs, names, limits |
+| [`secret`](/commands/secret/) | keeps a secret in the OS secret store |
+| [`service`](/commands/service/) | runs the daemon from login on |
+| [`watch`](/commands/watch/) | for connectors: a line per change to a file or folder |
+| [`completion`](/commands/completion/) | Tab completion for your shell |
+| [`help`](/commands/help/) | the commands, or one command's options |
 
 A day with itero, in four of them:
 
 ```sh
 itero daemon                                   # in one terminal, left running
 itero emit order.placed '{"order": 43}'        # from an app, a script, you
-itero workflows                                # what ran, and what waits
-itero runs misty-lake                          # one run, step by step
+itero wf list                                  # what ran, and what waits
+itero wf runs misty-lake                       # one run, step by step
 ```
