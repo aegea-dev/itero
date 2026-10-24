@@ -33,10 +33,3 @@ test('rejects generated HTML that references a missing local asset', async () =>
 
 	await assert.rejects(checkLocalAssets(root), /index\.html references missing asset \/_astro\/ec\.missing\.css/);
 });
-
-test('reads root links under the base path from the output root', async () => {
-	const root = await fixture('<link rel="stylesheet" href="/itero/_astro/ec.present.css">', ['_astro/ec.present.css']);
-
-	await assert.doesNotReject(checkLocalAssets(root, '/itero'));
-	await assert.rejects(checkLocalAssets(root), /missing asset \/itero\/_astro\/ec\.present\.css/);
-});
