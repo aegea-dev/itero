@@ -30,7 +30,7 @@ pub enum Cmd {
         #[arg(long)]
         no_serve: bool,
     },
-    /// Check every workflow, action and source; print each
+    /// Check every workflow, action and connector; print each
     Check,
     /// Send a message: it starts runs and reaches the runs waiting for it
     Emit {
@@ -50,9 +50,9 @@ pub enum Cmd {
         #[arg(long, value_name = "URL")]
         reply: Option<String>,
     },
-    /// Set an action's args (a JSON object, or a list of objects: its step runs once per item), or a source's (an object)
+    /// Set an action's args (a JSON object, or a list of objects: its step runs once per item), or a connector's (an object)
     Args {
-        /// The action, without # or a version; or the source
+        /// The action, without # or a version; or the connector
         name: String,
         /// The args, as JSON
         #[arg(
@@ -96,7 +96,7 @@ pub enum Cmd {
     Info,
     /// Each workflow: what starts it, its runs and the last; and whether a daemon takes the messages
     Workflows,
-    /// Where a workflow, action or source of this name is (#name: the action only)
+    /// Where a workflow, action or connector of this name is (#name: the action only)
     Which { name: String },
     /// Runs that ended in error, newest first: when, the workflow, the run, the step and why
     Errors {
@@ -121,7 +121,7 @@ pub enum Cmd {
         /// The click, as JSON: {"notification", "answer", "workflow", "data"}
         data: String,
     },
-    /// For sources: print a line each time a file or folder changes
+    /// For connectors: print a line each time a file or folder changes
     Watch { path: std::path::PathBuf },
     /// Keeps `itero daemon` running: restarts it when it exits, stops
     /// answering or stops making passes (what the service runs)
@@ -353,7 +353,7 @@ fn story(j: &crate::engine::journal::Journal, r: &crate::engine::journal::Run) -
 }
 
 /// What `itero check` refuses in the manifest: an entry naming no workflow,
-/// action or source, and the folders from before it (`args/`, `config/`).
+/// action or connector, and the folders from before it (`args/`, `config/`).
 fn check_manifest(
     ws: &crate::workspace::Workspace,
     flows: &[(String, crate::flow::Flow)],
@@ -368,6 +368,7 @@ fn check_manifest(
             wrong.push(format!("{dir}/: this goes in {manifest} now, as {now}"));
         }
     }
+    wrong.extend(ws.left_in_sources()?);
     let actions: Vec<String> = ws
         .action_files()?
         .into_keys()
@@ -378,9 +379,9 @@ fn check_manifest(
                 .map(|b| b.to_string()),
         )
         .collect();
-    let sources: Vec<String> = ws.source_files()?.into_iter().map(|(n, _)| n).collect();
-    for name in ws.entries("source")?.keys() {
-        if let Err(why) = crate::engine::daemon::source_args(ws, name) {
+    let connectors: Vec<String> = ws.connector_files()?.into_iter().map(|(n, _)| n).collect();
+    for name in ws.entries("connector")?.keys() {
+        if let Err(why) = crate::engine::daemon::connector_args(ws, name) {
             wrong.push(why);
         }
     }
@@ -390,7 +391,7 @@ fn check_manifest(
             flows.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
         ),
         ("action", actions),
-        ("source", sources),
+        ("connector", connectors),
     ] {
         for name in ws.entries(kind)?.keys() {
             if !known.contains(name) {
@@ -421,6 +422,9 @@ fn dispatch(cli: Cli) -> Result<()> {
         } => {
             use crate::engine::daemon;
             let ws = workspace()?;
+            if let Some(why) = ws.left_in_sources()? {
+                bail!("{why}");
+            }
             let exe = std::env::current_exe()?;
             if once {
                 let at = match &now {
@@ -479,20 +483,20 @@ fn dispatch(cli: Cli) -> Result<()> {
                 ))),
                 wake,
             });
-            // a bad source file stops the daemon here, naming the file
-            for (kind, file) in ws.source_files()? {
+            // a bad connector file stops the daemon here, naming the file
+            for (kind, file) in ws.connector_files()? {
                 let (ws, exe, engine, log) = (ws.clone(), exe.clone(), engine.clone(), log.clone());
                 let wake = engine.wake.clone();
                 std::thread::spawn(move || {
-                    let source = crate::sources::supervise::Source {
+                    let connector = crate::connectors::supervise::Connector {
                         kind: &kind,
                         file: &file,
                     };
-                    let policy = crate::sources::supervise::Policy::default();
-                    crate::sources::supervise::run(
+                    let policy = crate::connectors::supervise::Policy::default();
+                    crate::connectors::supervise::run(
                         &ws,
                         &exe,
-                        &source,
+                        &connector,
                         &policy,
                         &wake,
                         &engine.health,
@@ -597,13 +601,13 @@ fn dispatch(cli: Cli) -> Result<()> {
                 || name.contains(['/', '\\', '#', '@', '$'])
                 || name.starts_with('.');
             if bad_name {
-                bail!("{name} is not an action's or a source's name");
+                bail!("{name} is not an action's or a connector's name");
             }
-            // a source's when the workspace has a source of that name
-            let source = ws.source_files()?.iter().any(|(n, _)| *n == name);
-            if source && ws.action_file(&name, None).is_ok() {
+            // a connector's when the workspace has a connector of that name
+            let connector = ws.connector_files()?.iter().any(|(n, _)| *n == name);
+            if connector && ws.action_file(&name, None).is_ok() {
                 bail!(
-                    "{name} is an action and a source: set its args in {}",
+                    "{name} is an action and a connector: set its args in {}",
                     crate::workspace::MANIFEST
                 );
             }
@@ -611,16 +615,18 @@ fn dispatch(cli: Cli) -> Result<()> {
                 .map_err(|_| anyhow!("args are an object, or a list of objects, as JSON"))?;
             let ok = match &v {
                 serde_json::Value::Object(_) => true,
-                serde_json::Value::Array(items) => !source && items.iter().all(|i| i.is_object()),
+                serde_json::Value::Array(items) => {
+                    !connector && items.iter().all(|i| i.is_object())
+                }
                 _ => false,
             };
-            if !ok && source {
-                bail!("a source's args are an object, as JSON: a source runs once");
+            if !ok && connector {
+                bail!("a connector's args are an object, as JSON: a connector runs once");
             }
             if !ok {
                 bail!("args are an object, or a list of objects, as JSON");
             }
-            let kind = if source { "source" } else { "action" };
+            let kind = if connector { "connector" } else { "action" };
             let f = ws.write_entry(kind, &name, "args", v)?;
             println!("{}", f.display());
         }
@@ -746,7 +752,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                                 Ok(file) => {
                                     println!("  #{a}  {}", file.display());
                                     // the PATH an action runs with
-                                    let path = crate::sources::supervise::path_with(
+                                    let path = crate::connectors::supervise::path_with(
                                         &std::env::current_exe()?,
                                     );
                                     let first = crate::engine::worker::first_line(&file)
@@ -773,8 +779,8 @@ fn dispatch(cli: Cli) -> Result<()> {
                     }
                 }
             }
-            for (kind, file) in ws.source_files()? {
-                println!("source {kind}  {}", file.display());
+            for (kind, file) in ws.connector_files()? {
+                println!("connector {kind}  {}", file.display());
             }
         }
         Cmd::Runs { run: Some(run), .. } => {
@@ -820,9 +826,9 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
             found.extend(actions.into_iter().map(|a| ("action", a)));
             if !action_only {
-                for (kind, f) in ws.source_files()? {
+                for (kind, f) in ws.connector_files()? {
                     if kind == name {
-                        found.push(("source", ws.shown(&f)));
+                        found.push(("connector", ws.shown(&f)));
                     }
                 }
             }
@@ -973,13 +979,14 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Watch { path } => {
-            let source = crate::sources::Watch::new(&path)?;
-            // the daemon going away closes stdin: then this source stops
+            let watch = crate::connectors::Watch::new(&path)?;
+            // the daemon going away closes stdin: then the connector using
+            // this stops it
             std::thread::spawn(|| {
                 let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
                 std::process::exit(0);
             });
-            source.run(&mut std::io::stdout().lock())?;
+            watch.run(&mut std::io::stdout().lock())?;
         }
         Cmd::Errors { limit } => {
             let ws = workspace()?;

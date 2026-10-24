@@ -1,8 +1,8 @@
-//! Runs one source for the daemon: starts it, turns each line it prints
+//! Runs one connector for the daemon: starts it, turns each line it prints
 //! into a message for the workspace, and starts it again when it ends,
 //! waiting longer each time; one that keeps ending is given up on, and the
 //! log and `/health` say so.
-use crate::engine::daemon::{Health, SourceHealth, stamp};
+use crate::engine::daemon::{ConnectorHealth, Health, stamp};
 use crate::engine::journal::{self, Envelope, Journal};
 use crate::engine::log::Log;
 use crate::workspace::Workspace;
@@ -14,7 +14,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-/// When a source is started again, and when it is given up on.
+/// When a connector is started again, and when it is given up on.
 pub struct Policy {
     /// The first wait before starting it again; it doubles each time.
     pub first_pause: Duration,
@@ -39,14 +39,14 @@ impl Default for Policy {
     }
 }
 
-/// A source of the workspace: the type of the messages it sends (its file
+/// A connector of the workspace: the type of the messages it sends (its file
 /// name), and its file.
-pub struct Source<'a> {
+pub struct Connector<'a> {
     pub kind: &'a str,
     pub file: &'a Path,
 }
 
-/// One line a source printed: the data of a message, a JSON object.
+/// One line a connector printed: the data of a message, a JSON object.
 pub fn parse_line(line: &str) -> Result<Map<String, Value>, String> {
     match serde_json::from_str(line) {
         Ok(Value::Object(o)) => Ok(o),
@@ -54,13 +54,16 @@ pub fn parse_line(line: &str) -> Result<Map<String, Value>, String> {
     }
 }
 
-fn set(health: &Mutex<Health>, name: &str, f: impl FnOnce(&mut SourceHealth)) {
+fn set(health: &Mutex<Health>, name: &str, f: impl FnOnce(&mut ConnectorHealth)) {
     let mut h = health.lock().unwrap_or_else(PoisonError::into_inner);
-    let s = h.sources.entry(name.to_string()).or_insert(SourceHealth {
-        state: "running".into(),
-        restarts: 0,
-        last_exit: None,
-    });
+    let s = h
+        .connectors
+        .entry(name.to_string())
+        .or_insert(ConnectorHealth {
+            state: "running".into(),
+            restarts: 0,
+            last_exit: None,
+        });
     f(s);
 }
 
@@ -75,17 +78,17 @@ pub fn path_with(exe: &Path) -> std::ffi::OsString {
     std::env::join_paths(dirs).unwrap_or_default()
 }
 
-/// One start of the source, until it ends: how it ended. Its args are
+/// One start of the connector, until it ends: how it ended. Its args are
 /// read at each start, so a change to them is taken on its next.
 fn once(
     ws: &Workspace,
     exe: &Path,
-    s: &Source,
+    s: &Connector,
     wake: &Sender<()>,
     log: &Log,
 ) -> anyhow::Result<String> {
     let j = Journal::open(ws)?;
-    let env = crate::engine::daemon::source_env(ws, s.kind).map_err(anyhow::Error::msg)?;
+    let env = crate::engine::daemon::connector_env(ws, s.kind).map_err(anyhow::Error::msg)?;
     let mut child = Command::new(s.file)
         .current_dir(&ws.root)
         .envs(env)
@@ -94,7 +97,7 @@ fn once(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()?;
-    // stdin stays open while it runs: its closing tells the source that
+    // stdin stays open while it runs: its closing tells the connector that
     // the daemon has gone
     let stdin = child.stdin.take();
     let stdout = child.stdout.take().expect("piped");
@@ -106,7 +109,7 @@ fn once(
         match parse_line(&line) {
             Ok(data) => {
                 let e = Envelope::new(
-                    &format!("source/{}", s.kind),
+                    &format!("connector/{}", s.kind),
                     s.kind,
                     &journal::subject("app"),
                     &stamp(chrono::Utc::now()),
@@ -116,18 +119,18 @@ fn once(
                 j.publish(&e)?;
                 let _ = wake.send(());
             }
-            Err(why) => log.write("error", json!({ "source": s.kind, "why": why })),
+            Err(why) => log.write("error", json!({ "connector": s.kind, "why": why })),
         }
     }
     drop(stdin);
     Ok(child.wait()?.to_string())
 }
 
-/// Runs a source until it is given up on.
+/// Runs a connector until it is given up on.
 pub fn run(
     ws: &Workspace,
     exe: &Path,
-    s: &Source,
+    s: &Connector,
     policy: &Policy,
     wake: &Sender<()>,
     health: &Mutex<Health>,
@@ -141,15 +144,15 @@ pub fn run(
             h.state = "running".into();
             h.restarts = ends.len();
         });
-        log.write("source.started", json!({ "source": s.kind }));
+        log.write("connector.started", json!({ "connector": s.kind }));
         let ended = match once(ws, exe, s, wake, log) {
             Ok(status) => status,
             Err(e) => format!("error: {e:#}"),
         };
         let ran = began.elapsed();
         log.write(
-            "source.ended",
-            json!({ "source": s.kind, "why": ended, "seconds": ran.as_secs() }),
+            "connector.ended",
+            json!({ "connector": s.kind, "why": ended, "seconds": ran.as_secs() }),
         );
         ends.retain(|t| t.elapsed() < policy.window);
         ends.push(Instant::now());
@@ -159,16 +162,19 @@ pub fn run(
                 "started again {restarts} times in {}s, last {ended}",
                 policy.window.as_secs()
             );
-            log.write("source.gave-up", json!({ "source": s.kind, "why": why }));
+            log.write(
+                "connector.gave-up",
+                json!({ "connector": s.kind, "why": why }),
+            );
             let own = crate::engine::events::own(
-                "itero.source.gave-up",
-                json!({ "source": s.kind, "why": why }),
+                "itero.connector.gave-up",
+                json!({ "connector": s.kind, "why": why }),
                 &stamp(chrono::Utc::now()),
             );
             if let Err(e) = Journal::open(ws).and_then(|j| j.publish(&own)) {
                 log.write(
                     "error",
-                    json!({ "source": s.kind, "why": format!("{e:#}") }),
+                    json!({ "connector": s.kind, "why": format!("{e:#}") }),
                 );
             }
             set(health, s.kind, |h| {

@@ -101,7 +101,7 @@ async fn health(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
         "passes": h.passes,
         "last_pass": h.last_pass,
         "last_error": h.last_error,
-        "sources": h.sources,
+        "connectors": h.connectors,
     })))
 }
 

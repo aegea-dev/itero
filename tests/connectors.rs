@@ -1,10 +1,10 @@
-//! Sources: executables in `sources/` that keep running, each line they
+//! Connectors: executables in `connectors/` that keep running, each line they
 //! print the data of one message of their file name's type; and `itero
-//! watch`, for sources that watch a file.
+//! watch`, for connectors that watch a file.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
+use itero::connectors::supervise::{self, Connector, Policy};
 use itero::engine::daemon::Health;
 use itero::engine::journal::Journal;
-use itero::sources::supervise::{self, Policy, Source};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -59,12 +59,12 @@ fn quick() -> Policy {
     }
 }
 
-/// A workspace with one source, `sources/deneme.başladı`.
-fn ws_with_source(d: &std::path::Path, script: &str) -> itero::workspace::Workspace {
+/// A workspace with one connector, `connectors/deneme.başladı`.
+fn ws_with_connector(d: &std::path::Path, script: &str) -> itero::workspace::Workspace {
     use std::os::unix::fs::PermissionsExt;
     std::fs::write(d.join("itero.config.json"), "{}").unwrap();
-    std::fs::create_dir_all(d.join("sources")).unwrap();
-    let s = d.join("sources/deneme.başladı");
+    std::fs::create_dir_all(d.join("connectors")).unwrap();
+    let s = d.join("connectors/deneme.başladı");
     std::fs::write(&s, script).unwrap();
     std::fs::set_permissions(&s, std::fs::Permissions::from_mode(0o755)).unwrap();
     itero::workspace::find(d).unwrap()
@@ -75,34 +75,34 @@ fn log(ws: &itero::workspace::Workspace) -> itero::engine::log::Log {
     itero::engine::log::Log::new(ws, &w.id)
 }
 
-/// Runs the workspace's source until it is given up on.
+/// Runs the workspace's connector until it is given up on.
 fn run_it(ws: &itero::workspace::Workspace) -> Health {
-    let (kind, file) = ws.source_files().unwrap().remove(0);
+    let (kind, file) = ws.connector_files().unwrap().remove(0);
     let (wake, _woken) = std::sync::mpsc::channel();
     let health = Mutex::new(Health::starting("2026-10-21T10:00:00Z"));
     let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
-    let source = Source {
+    let connector = Connector {
         kind: &kind,
         file: &file,
     };
-    supervise::run(ws, exe, &source, &quick(), &wake, &health, &log(ws));
+    supervise::run(ws, exe, &connector, &quick(), &wake, &health, &log(ws));
     health.into_inner().unwrap()
 }
 
 #[test]
-fn each_line_is_a_message_of_the_sources_type() {
+fn each_line_is_a_message_of_the_connectors_type() {
     let d = tempfile::tempdir().unwrap();
     // `itero` is the daemon's own, found first on its PATH
-    let ws = ws_with_source(
+    let ws = ws_with_connector(
         d.path(),
         "#!/bin/sh\nprintf '{\"konu\": \"çay\"}\\n'\nprintf 'bozuk satır\\n'\nprintf '{\"yer\": \"%s\"}\\n' \"$(pwd)\"\ncommand -v itero >/dev/null && echo '{\"itero\": true}'\nexit 1\n",
     );
     let h = run_it(&ws);
-    assert_eq!(h.sources["deneme.başladı"].state, "gave up");
+    assert_eq!(h.connectors["deneme.başladı"].state, "gave up");
     let j = Journal::open(&ws).unwrap();
     let mut evs = j.events(Some("itero.app")).unwrap();
-    // the last is the daemon's own: the source was given up on
-    assert_eq!(evs.pop().unwrap().event.kind, "itero.source.gave-up");
+    // the last is the daemon's own: the connector was given up on
+    assert_eq!(evs.pop().unwrap().event.kind, "itero.connector.gave-up");
     // three lines a start, one bad; four starts before it is given up on
     assert_eq!(evs.len(), 3 * 4, "{evs:?}");
     assert!(evs.iter().all(|e| e.event.kind == "deneme.başladı"));
@@ -124,21 +124,21 @@ fn a_line_is_one_json_object() {
 }
 
 #[test]
-fn a_source_that_cannot_start_is_given_up_on_with_why() {
+fn a_connector_that_cannot_start_is_given_up_on_with_why() {
     let d = tempfile::tempdir().unwrap();
-    let ws = ws_with_source(d.path(), "#!/bin/sh\n");
-    let (kind, file) = ws.source_files().unwrap().remove(0);
+    let ws = ws_with_connector(d.path(), "#!/bin/sh\n");
+    let (kind, file) = ws.connector_files().unwrap().remove(0);
     std::fs::remove_file(&file).unwrap();
     let (wake, _woken) = std::sync::mpsc::channel();
     let health = Mutex::new(Health::starting("2026-10-21T10:00:00Z"));
     let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
-    let source = Source {
+    let connector = Connector {
         kind: &kind,
         file: &file,
     };
-    supervise::run(&ws, exe, &source, &quick(), &wake, &health, &log(&ws));
+    supervise::run(&ws, exe, &connector, &quick(), &wake, &health, &log(&ws));
     let h = health.into_inner().unwrap();
-    let s = &h.sources["deneme.başladı"];
+    let s = &h.connectors["deneme.başladı"];
     assert_eq!(s.state, "gave up");
     assert!(
         s.last_exit.as_deref().unwrap().starts_with("error: "),
@@ -146,13 +146,13 @@ fn a_source_that_cannot_start_is_given_up_on_with_why() {
     );
     let log = std::fs::read_to_string(d.path().join(".itero/itero.log")).unwrap();
     let last: serde_json::Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
-    assert_eq!(last["event"], "source.gave-up");
-    assert_eq!(last["source"], "deneme.başladı");
+    assert_eq!(last["event"], "connector.gave-up");
+    assert_eq!(last["connector"], "deneme.başladı");
     let own = Journal::open(&ws)
         .unwrap()
         .events(Some("itero.app"))
         .unwrap();
     let gave_up = own.last().unwrap();
-    assert_eq!(gave_up.event.kind, "itero.source.gave-up");
-    assert_eq!(gave_up.event.data["source"], "deneme.başladı");
+    assert_eq!(gave_up.event.kind, "itero.connector.gave-up");
+    assert_eq!(gave_up.event.data["connector"], "deneme.başladı");
 }

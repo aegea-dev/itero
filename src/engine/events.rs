@@ -27,10 +27,10 @@ impl std::error::Error for EmitError {}
 pub const OWN: &str = "itero.";
 
 /// Types the engine sends itself: from outside they would forge a worker's
-/// result, a timer, a run's start, a source's state or the daemon's own
+/// result, a timer, a run's start, a connector's state or the daemon's own
 /// message.
 pub fn engine_own(kind: &str) -> bool {
-    ["action.", "timer.", "run.", "workflow.", "source.", OWN]
+    ["action.", "timer.", "run.", "workflow.", "connector.", OWN]
         .iter()
         .any(|p| kind.starts_with(p))
 }

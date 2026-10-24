@@ -109,13 +109,13 @@ pub struct Health {
     pub last_pass: Option<String>,
     /// What went wrong in the last pass, if anything.
     pub last_error: Option<String>,
-    /// How each source is doing, by the type it sends.
-    pub sources: BTreeMap<String, SourceHealth>,
+    /// How each connector is doing, by the type it sends.
+    pub connectors: BTreeMap<String, ConnectorHealth>,
 }
 
-/// How one source is doing.
+/// How one connector is doing.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct SourceHealth {
+pub struct ConnectorHealth {
     /// `running`, `waiting` (to start again) or `gave up`.
     pub state: String,
     /// Starts after the first, within the supervisor's window.
@@ -132,7 +132,7 @@ impl Health {
             passes: 0,
             last_pass: None,
             last_error: None,
-            sources: Default::default(),
+            connectors: Default::default(),
         }
     }
 }
@@ -1061,33 +1061,34 @@ pub fn bind(
     to_env(values, state)
 }
 
-/// A source's args (`source.<name>.args`), each one an environment
+/// A connector's args (`connector.<name>.args`), each one an environment
 /// variable: a name no environment variable can have is an error, and so
-/// is a `"$name"`, as a source has no run state.
-pub fn source_args(ws: &Workspace, source: &str) -> Result<Map<String, Value>, String> {
+/// is a `"$name"`, as a connector has no run state.
+pub fn connector_args(ws: &Workspace, connector: &str) -> Result<Map<String, Value>, String> {
     let args = ws
-        .source_args(source)
+        .connector_args(connector)
         .map_err(|e| format!("{e:#}"))?
         .unwrap_or_default();
     for (k, v) in &args {
-        let at = format!("source.{source}.args.{k}");
+        let at = format!("connector.{connector}.args.{k}");
         if !env_name(k) {
             return Err(format!("{at}: not a name an environment variable can have"));
         }
         if flow::state_ref(v).is_some() {
-            return Err(format!("{at}: a source has no run state for {v}"));
+            return Err(format!("{at}: a connector has no run state for {v}"));
         }
     }
     Ok(args)
 }
 
-/// A source's environment: its args, `$$NAME` the secret's (or the
+/// A connector's environment: its args, `$$NAME` the secret's (or the
 /// environment variable's).
-pub fn source_env(ws: &Workspace, source: &str) -> Result<BTreeMap<String, String>, String> {
+pub fn connector_env(ws: &Workspace, connector: &str) -> Result<BTreeMap<String, String>, String> {
     let none = Map::new();
     let mut values = Map::new();
-    for (k, v) in source_args(ws, source)? {
-        let v = resolve(&v, &none).map_err(|why| format!("source.{source}.args.{k}: {why}"))?;
+    for (k, v) in connector_args(ws, connector)? {
+        let v =
+            resolve(&v, &none).map_err(|why| format!("connector.{connector}.args.{k}: {why}"))?;
         values.insert(k, v);
     }
     to_env(values, &none)
@@ -1182,7 +1183,7 @@ fn stop(child: &mut std::process::Child) {
 fn spawn_worker(exe: &Path, step: &StepRun) -> Result<Outcome, Failure> {
     let mut c = Command::new(exe);
     c.arg("worker")
-        .env("PATH", crate::sources::supervise::path_with(exe))
+        .env("PATH", crate::connectors::supervise::path_with(exe))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
