@@ -16,7 +16,8 @@ The watchdog runs `itero daemon` and restarts it when it:
 
 - exits;
 - stops answering `/health` (3 checks in a row, 10 seconds apart);
-- stops making passes (none for 10 minutes).
+- hangs: one pass runs for 10 minutes (an idle daemon makes no passes,
+  and is fine).
 
 One service per workspace, each on its workspace's port. What happens is
 in `.itero/itero.log` ([The log, IDs and names](/guides/log/));

@@ -174,14 +174,14 @@ impl Backend for Kqueue {
         failed.map_or(Ok(()), Err)
     }
 
-    fn wait(&mut self, timeout: Duration) -> io::Result<Vec<Change>> {
-        let ts = libc::timespec {
-            tv_sec: timeout.as_secs().min(i64::MAX as u64) as libc::time_t,
-            tv_nsec: timeout.subsec_nanos() as libc::c_long,
-        };
+    fn wait(&mut self, timeout: Option<Duration>) -> io::Result<Vec<Change>> {
+        let ts = timeout.map(|t| libc::timespec {
+            tv_sec: t.as_secs().min(i64::MAX as u64) as libc::time_t,
+            tv_nsec: t.subsec_nanos() as libc::c_long,
+        });
         // SAFETY: kevent is plain data; all zeros is a valid value
         let mut evs: [libc::kevent; 64] = unsafe { std::mem::zeroed() };
-        // SAFETY: room for 64 events and a valid timeout
+        // SAFETY: room for 64 events, and a valid timeout or none
         let n = unsafe {
             libc::kevent(
                 self.kq.as_raw_fd(),
@@ -189,7 +189,8 @@ impl Backend for Kqueue {
                 0,
                 evs.as_mut_ptr(),
                 evs.len() as i32,
-                &ts,
+                ts.as_ref()
+                    .map_or(std::ptr::null(), |t| t as *const libc::timespec),
             )
         };
         if n < 0 {

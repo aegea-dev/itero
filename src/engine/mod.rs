@@ -1,6 +1,7 @@
 //! The workflow engine: the manager's pure decision for one run and one
 //! event (`steps::decide`), the journal, the daemon's passes, and the
 //! workers that run actions.
+pub mod alarm;
 pub mod daemon;
 pub mod events;
 pub mod http;

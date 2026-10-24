@@ -31,19 +31,12 @@ pub fn log_file(root: &Path) -> PathBuf {
 /// What the service runs: `itero watchdog` in `root` (which reads its port
 /// from itero.config.json), with `path` (the installing shell's `PATH`: a service
 /// starts with a bare one, which would not find mail, uv or bun).
-pub fn install_ctx(
-    root: &Path,
-    exe: &Path,
-    interval: u64,
-    path: Option<String>,
-) -> ServiceInstallCtx {
+pub fn install_ctx(root: &Path, exe: &Path, path: Option<String>) -> ServiceInstallCtx {
     ServiceInstallCtx {
         label: label(root),
         program: exe.to_path_buf(),
         args: [
             "watchdog".into(),
-            "--interval".into(),
-            interval.to_string().into(),
             "--log".into(),
             log_file(root).into_os_string(),
         ]

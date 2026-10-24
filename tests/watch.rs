@@ -8,7 +8,7 @@ fn until(b: &mut Box<dyn watch::Backend>, kind: Kind, secs: u64) -> Vec<Kind> {
     let end = Instant::now() + Duration::from_secs(secs);
     let mut seen = vec![];
     while Instant::now() < end {
-        for c in b.wait(Duration::from_millis(200)).unwrap() {
+        for c in b.wait(Some(Duration::from_millis(200))).unwrap() {
             seen.push(c.kind);
         }
         if seen.contains(&kind) {
@@ -96,7 +96,7 @@ fn nothing_happening_is_no_change() {
     let f = d.path().join("sessiz");
     append(&f, "ı");
     let mut b = watch::open(&f).unwrap();
-    assert!(b.wait(Duration::from_millis(300)).unwrap().is_empty());
+    assert!(b.wait(Some(Duration::from_millis(300))).unwrap().is_empty());
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn paths_until(
     let end = Instant::now() + Duration::from_secs(secs);
     let mut seen = std::collections::BTreeSet::new();
     while Instant::now() < end && (want.is_empty() || !want.iter().all(|p| seen.contains(p))) {
-        for c in b.wait(Duration::from_millis(200)).unwrap() {
+        for c in b.wait(Some(Duration::from_millis(200))).unwrap() {
             seen.insert(c.path);
         }
     }

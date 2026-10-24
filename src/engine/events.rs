@@ -55,6 +55,13 @@ pub fn notification_clicked(ws: &Workspace, data: Value, now: &str) -> anyhow::R
     Ok(e.id)
 }
 
+/// Tells the running daemon, if there is one, that a message waits in the
+/// journal: for the processes that are not the daemon (`itero emit`, a
+/// click). A daemon that is not running finds it when it starts.
+pub fn nudge(ws: &Workspace, now: &str) -> std::io::Result<()> {
+    std::fs::write(ws.wake_file(), now)
+}
+
 /// One of the daemon's own messages, for the workspace.
 pub fn own(kind: &str, data: Value, now: &str) -> Envelope {
     debug_assert!(kind.starts_with(OWN));

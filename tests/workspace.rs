@@ -515,3 +515,25 @@ fn entry_mistakes_name_the_manifest_and_the_workflow() {
         );
     }
 }
+
+#[test]
+fn the_daemon_watches_the_manifest_and_each_workflow_folder_and_file() {
+    let d = tempfile::tempdir().unwrap();
+    write(d.path(), "itero.config.json", "{}");
+    write(d.path(), "workflows/sipariş.json", "{}");
+    write(d.path(), "workflows/kargo/teslim.json", "{}");
+    write(d.path(), "workflows/notlar.txt", "bir not");
+    write(d.path(), "workflows/.git/HEAD.json", "{}");
+    let ws = workspace::find(d.path()).unwrap();
+    let r = |p: &str| ws.root.join(p);
+    assert_eq!(
+        ws.own_files().unwrap(),
+        vec![
+            r("itero.config.json"),
+            r("workflows"),
+            r("workflows/kargo"),
+            r("workflows/kargo/teslim.json"),
+            r("workflows/sipariş.json"),
+        ]
+    );
+}

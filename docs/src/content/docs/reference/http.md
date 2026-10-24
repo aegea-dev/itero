@@ -33,11 +33,14 @@ cannot post one without a preflight, which is never granted.
                  "path": "/Users/me/home", "meta": { "owner": "ayşe" } },
   "daemon": { "id": "01a15f2c…", "name": "brave-otter", "started": "...", "pid": 4242,
               "host": "mini", "itero": "0.9.0" },
-  "started": "...", "passes": 3600, "last_pass": "...", "last_error": null,
+  "started": "...", "passes": 42, "last_pass": "...", "last_error": null, "busy_since": null,
   "connectors": { "mail.received": { "state": "running", "restarts": 0, "last_exit": null } } }
 ```
 
 `workspace` and `daemon` are their [IDs and names](/guides/log/#ids-and-names).
+
+`busy_since` is when the pass under way began, `null` while the daemon
+waits; the service's watchdog restarts a daemon whose pass runs too long.
 
 `connectors` has each [connector](/guides/messages/#connectors): `running`,
 `waiting` (to start again) or `gave up`, its restarts, and how it ended

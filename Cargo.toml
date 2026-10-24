@@ -41,5 +41,6 @@ block2 = "~0.6.2"
 objc2-app-kit = { version = "~0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
 
 [dev-dependencies]
+chrono-tz = "~0.10"
 tempfile = "~3.27.0"
 tower = { version = "~0.5.3", features = ["util"] }

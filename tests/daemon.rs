@@ -3,7 +3,8 @@
 //! failed or error.
 #![cfg(unix)]
 mod common;
-use itero::engine::daemon::{Pass, run_once};
+use chrono::{DateTime, Utc};
+use itero::engine::daemon::{Pass, next_due, run_once};
 use itero::engine::journal::{Journal, Run};
 use itero::engine::steps;
 use serde_json::{Value, json};
@@ -73,6 +74,11 @@ impl Ws {
 
     fn pass(&self, now: &str) -> Pass {
         run_once(&self.ws, now.parse().unwrap(), exe()).unwrap()
+    }
+
+    /// When the daemon next has something to do with no message.
+    fn next_due(&self, now: &str) -> Option<DateTime<Utc>> {
+        next_due(&self.ws, now.parse().unwrap()).unwrap()
     }
 
     fn runs(&self) -> Vec<Run> {
@@ -1021,4 +1027,248 @@ fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
     assert!(watching(&root.join("dosya-9")));
     std::thread::sleep(std::time::Duration::from_millis(500));
     assert_eq!(threads(daemon.0.id()), before);
+}
+
+fn at(s: &str) -> DateTime<Utc> {
+    s.parse().unwrap()
+}
+
+/// A port no one listens on, for a reply that fails.
+fn closed_port() -> std::net::SocketAddr {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+}
+
+/// The built-in keep runs hourly in local time: off, so that times here are
+/// the same in every time zone.
+const KEEP_OFF: &str = r#"{"workflow": {"keep": {"off": true}}}"#;
+
+#[test]
+fn with_nothing_due_there_is_no_next_time() {
+    let ws = Ws::with(KEEP_OFF);
+    ws.flow(
+        "dinle",
+        json!({"on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"]}),
+    );
+    ws.action("selamla", "true");
+    ws.emit("kişi.geldi", json!({}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(ws.next_due(NOW), None);
+}
+
+#[test]
+fn the_next_time_is_a_schedules_next_slot() {
+    let ws = Ws::with(KEEP_OFF);
+    // every minute: the same slots in every time zone
+    ws.flow(
+        "dakikalık",
+        json!({"on": [{ "schedule": "* * * * *" }], "steps": ["#say"]}),
+    );
+    ws.action("say", "true");
+    // a schedule not seen yet is due at once: the pass starts its count
+    assert_eq!(
+        ws.next_due("2026-10-21T14:00:30Z"),
+        Some(at("2026-10-21T14:00:30Z"))
+    );
+    ws.pass("2026-10-21T14:00:30Z");
+    assert_eq!(
+        ws.next_due("2026-10-21T14:00:30Z"),
+        Some(at("2026-10-21T14:01:00Z"))
+    );
+}
+
+#[test]
+fn the_next_time_is_a_waiting_runs_deadline() {
+    let ws = Ws::with(KEEP_OFF);
+    ws.flow(
+        "bekle",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#bekle"], "timeout": "1m"}),
+    );
+    ws.action("bekle", "exit 75");
+    ws.emit("order.placed", json!({"order": 1}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["waiting"]);
+    // its deadline, a minute on, before its hourly retry
+    assert_eq!(ws.next_due(NOW), Some(at("2026-10-21T10:01:00Z")));
+}
+
+#[test]
+fn the_next_time_is_a_failed_replys_next_try() {
+    let ws = Ws::with(KEEP_OFF);
+    ws.flow(
+        "selamla",
+        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }),
+    );
+    ws.action("selamla", "true");
+    ws.emit_replying(
+        "kişi.geldi",
+        json!({}),
+        &format!("http://{}/itero", closed_port()),
+    );
+    ws.pass(NOW);
+    assert_eq!(ws.next_due(NOW), Some(at("2026-10-21T10:00:10Z")));
+}
+
+#[test]
+fn the_next_time_is_the_earliest_of_them() {
+    let ws = Ws::with(KEEP_OFF);
+    ws.flow(
+        "dakikalık",
+        json!({"on": [{ "schedule": "* * * * *" }], "steps": ["#say"]}),
+    );
+    ws.action("say", "true");
+    ws.flow(
+        "bekle",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#bekle"], "timeout": "1m"}),
+    );
+    ws.action("bekle", "exit 75");
+    ws.flow(
+        "selamla",
+        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#say"] }),
+    );
+    ws.emit("order.placed", json!({"order": 1}));
+    ws.emit_replying(
+        "kişi.geldi",
+        json!({}),
+        &format!("http://{}/itero", closed_port()),
+    );
+    ws.pass(NOW);
+    // the schedule at 10:01, the deadline at 10:01, the reply at 10:00:10
+    assert_eq!(ws.next_due(NOW), Some(at("2026-10-21T10:00:10Z")));
+}
+
+#[test]
+fn an_idle_workspace_is_next_due_at_keeps_hourly_slot() {
+    let ws = Ws::new();
+    ws.pass(NOW);
+    let next = ws.next_due(NOW).expect("keep is hourly");
+    assert!(
+        next > at(NOW) && next <= at("2026-10-21T11:00:00Z"),
+        "{next}"
+    );
+}
+
+#[test]
+fn a_workflow_that_is_off_or_over_has_no_next_time() {
+    let ws = Ws::with(
+        r#"{"workflow": {"keep": {"off": true}, "kapalı": {"off": true},
+            "bitti": {"until": "2026-10-21T09:00:00Z"}}}"#,
+    );
+    for name in ["kapalı", "bitti"] {
+        ws.flow(
+            name,
+            json!({"on": [{ "schedule": "* * * * *" }], "steps": ["#say"]}),
+        );
+    }
+    ws.action("say", "true");
+    ws.pass(NOW);
+    assert_eq!(ws.next_due(NOW), None);
+}
+
+#[test]
+fn a_workflow_from_a_later_date_is_next_due_at_its_first_slot_from_then() {
+    let ws = Ws::with(
+        r#"{"workflow": {"keep": {"off": true}, "sonra": {"from": "2026-10-21T12:30:30Z"}}}"#,
+    );
+    ws.flow(
+        "sonra",
+        json!({"on": [{ "schedule": "* * * * *" }], "steps": ["#say"]}),
+    );
+    ws.action("say", "echo x >> sayaç.log");
+    ws.pass(NOW);
+    let next = ws.next_due(NOW).unwrap();
+    assert_eq!(next, at("2026-10-21T12:31:00Z"));
+    // and at that time it runs, once
+    ws.pass("2026-10-21T12:31:00Z");
+    assert_eq!(ws.read("sayaç.log"), "x\n");
+}
+
+/// The path watcher, running on its own thread as in the daemon; what it
+/// sends on the channel wakes the daemon.
+fn watching(ws: &Ws) -> std::sync::mpsc::Receiver<()> {
+    let (wake, woken) = std::sync::mpsc::channel();
+    let w = ws.ws.clone();
+    let id = Journal::open(&w).unwrap().workspace().unwrap().id;
+    let log = itero::engine::log::Log::new(&w, &id);
+    std::thread::spawn(move || itero::engine::daemon::watch_paths(&w, &wake, &log));
+    // its first look
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    woken
+}
+
+fn secs(n: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(n)
+}
+
+fn path_messages(ws: &Ws) -> i64 {
+    let j = rusqlite::Connection::open(ws.ws.journal()).unwrap();
+    j.query_row(
+        "SELECT COUNT(*) FROM events WHERE type = 'itero.path.changed'",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+#[test]
+fn an_edit_to_a_workflow_or_the_manifest_wakes_the_daemon_and_nothing_else_does() {
+    let ws = Ws::with(KEEP_OFF);
+    ws.flow(
+        "dinle",
+        json!({"on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"]}),
+    );
+    let woken = watching(&ws);
+    // idle, nothing wakes it
+    assert!(woken.recv_timeout(secs(2)).is_err());
+    ws.flow(
+        "dinle",
+        json!({"on": [{ "event": "kişi.gitti" }], "steps": ["#selamla"]}),
+    );
+    woken.recv_timeout(secs(5)).expect("a workflow edited");
+    ws.flow(
+        "yeni",
+        json!({"on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"]}),
+    );
+    woken.recv_timeout(secs(5)).expect("a workflow added");
+    ws.write(
+        "itero.config.json",
+        r#"{"workflow": {"keep": {"off": false}}}"#,
+    );
+    woken.recv_timeout(secs(5)).expect("the manifest edited");
+    // an edit is no message
+    assert_eq!(path_messages(&ws), 0);
+}
+
+#[test]
+fn a_watched_path_sends_a_message_and_wakes_the_daemon() {
+    let ws = Ws::with(KEEP_OFF);
+    ws.write("gelen/rapor.txt", "ilk");
+    ws.flow(
+        "izle",
+        json!({"on": [{ "path": "gelen/rapor.txt" }], "steps": ["#oku"]}),
+    );
+    let woken = watching(&ws);
+    ws.write("gelen/rapor.txt", "ikinci");
+    woken.recv_timeout(secs(5)).expect("the path changed");
+    assert_eq!(path_messages(&ws), 1);
+}
+
+#[test]
+fn a_path_whose_folder_comes_later_is_watched_once_it_is_there() {
+    let ws = Ws::with(KEEP_OFF);
+    ws.flow(
+        "izle",
+        json!({"on": [{ "path": "sonra/gelecek/rapor.txt" }], "steps": ["#oku"]}),
+    );
+    let woken = watching(&ws);
+    // its folders come, then the file
+    std::fs::create_dir_all(ws.d.path().join("sonra/gelecek")).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    while woken.try_recv().is_ok() {}
+    ws.write("sonra/gelecek/rapor.txt", "geldi");
+    woken.recv_timeout(secs(5)).expect("the file came");
+    assert!(path_messages(&ws) >= 1);
 }
