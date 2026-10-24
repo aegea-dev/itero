@@ -84,7 +84,7 @@ way.
 brew trust aegea-dev/tap
 brew install aegea-dev/tap/itero
 # or
-curl -fsSL https://raw.githubusercontent.com/aegea-dev/itero/main/install.sh | sh
+curl -fsSL https://itero.sh/install | sh
 ```
 
 Homebrew 7 and later load a tap's formulae only once you trust the tap,
