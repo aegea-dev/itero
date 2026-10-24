@@ -12,7 +12,7 @@ plain words.
 ```
 itero daemon | emit | check | which | info | secret | service | watch | completion | help
 itero workflow (wf)  list | runs | config get | config set
-itero action         list | args get | args set
+itero action         list | errors | args get | args set
 itero connector      list | args get | args set
 ```
 
@@ -29,6 +29,18 @@ itero connector      list | args get | args set
     a workflow's settings (was `itero config`).
 - **`itero action`:** `list`, and `args get <name>` / `args set <name>
   <json | --file F>` (was `itero args` for an action).
+- **`itero action errors [NAME]`:** which actions break. Without a name,
+  each action that failed: how often, when last, why last; with one, its
+  failures newest first, each with the run to look into. Built from runs
+  that ended in error: their `failed_step` (`#send-mail`) and `why` (the
+  exit code and the end of stderr). Only how a run ended is kept, so a
+  step that failed and then passed on a retry does not count.
+- **`--reply` goes,** from `itero emit` and `POST /events`: with it, one
+  run could post its end twice and contradict a `success` step that
+  posted already. A workflow posts its result itself, from `success`,
+  `failure` and `error`, the URL coming in the event's data
+  (`$reply_url`), with an action such as `curl -fsS --retry 5`. The
+  daemon's replies (their table, their retries, their due time) go too.
 - **`itero connector`:** `list`, and `args get` / `args set` (was `itero
   args` for a connector).
 - **Gone, with no aliases:** `itero workflows`, `runs`, `errors`, `config`,
@@ -73,28 +85,26 @@ itero connector      list | args get | args set
 - **"Args and secrets"** says where `$$NAME` comes from (the store, else
   the environment), which wins when both exist, and that itero warns.
 
-## Not in this plan
-
-- Removing `--reply` (workflows post their results themselves): its own
-  item, after this one, as `emit` changes again there.
-- `itero action errors`: its own item, after this one, in the `action`
-  group this plan makes.
-
 ## Tasks
 
 1. The command tree in `src/cli.rs`: the groups, `wf` as an alias, the
    moves, `--errors`/`--workflow`/`--action`/`--limit` on `workflow runs`.
    Tests of each command's output move to the new names.
-2. `--json` on each command above, one shared way to print it; a test per
+2. `itero action errors`, with tests: an action that failed in two runs,
+   one that never failed, a workflow's step (not an action) that failed.
+3. `--reply` out of `emit`, the HTTP API, the journal and the daemon; the
+   tests that used it post from `success` instead, or go.
+4. `--json` on each command above, one shared way to print it; a test per
    command that the JSON parses and holds what the table shows.
-3. `itero completion`, with names completed from the workspace; a test
+5. `itero completion`, with names completed from the workspace; a test
    that each shell's script is printed.
-4. The warning for `$$NAME` in both places: `itero check` and the daemon's
+6. The warning for `$$NAME` in both places: `itero check` and the daemon's
    log, once per name. Tests with a secret store turned off and on.
-5. Docs: the command pages (one per group, plus the top-level ones), the
+7. Docs: the command pages (one per group, plus the top-level ones), the
    menu, the symbols and colors (one CSS class per kind), "event", the
-   Connectors guide, the workflow guide's examples, the secrets guide.
-6. `make verify`, `make test-linux`, `make test-docker`.
+   Connectors guide, the workflow guide's examples (with posting a result
+   from `success`), the secrets guide, the HTTP page without `reply`.
+8. `make verify`, `make test-linux`, `make test-docker`.
 
 ## Decided
 
