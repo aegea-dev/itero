@@ -1,6 +1,6 @@
 ---
 title: The log, IDs and names
-description: What happened, line by line; the IDs and names itero gives; itero info and itero runs.
+description: What happened, line by line; the IDs and names itero gives; itero info and itero wf runs.
 ---
 
 ## The log
@@ -28,7 +28,7 @@ workflow is [internal](/guides/maintenance/).
 | `step.failed` | `step`, `why` |
 | `step.skipped` | `step`, `why` (its `on` did not hold) |
 | `undo.failed` | `step`, `why`: an [undo](/guides/workflows/#undo-taking-steps-back) that broke; the other undos still run |
-| `run.note` | `note`: what the run did with a message or a timer |
+| `run.note` | `note`: what the run did with an event or a timer |
 | `run.ended` | `status` (`done`, `failed`, `error`, `split`), `why` |
 | `run.skipped` | a schedule came due and the workflow's `on` did not hold |
 | `connector.started`, `connector.ended`, `connector.gave-up` | `connector`, `why` |
@@ -69,14 +69,15 @@ with a new workspace id.
 ## Seeing them
 
 ```sh
-itero workflows            # each workflow: what starts it, its runs, the last; the daemon
+itero wf list              # each workflow: what starts it, its runs, the last; the daemon
 itero info                 # the workspace: id, name, what it is, limits; and its daemon
-itero runs                 # every run: id, name, workflow, status, started, ended
-itero runs misty-lake      # one run, by name or id, step by step
+itero wf runs              # every run: id, name, workflow, status, started, ended
+itero wf runs misty-lake   # one run, by name or id, step by step
+itero action errors        # which actions broke runs, and why
 itero check                # each workflow: its id, meta, runs so far, last run
 ```
 
-`itero runs <run>` tells a run's story from the journal: how it started,
-each step and how it went, the messages it took, where it waits, and its
+`itero wf runs <run>` tells a run's story from the journal: how it started,
+each step and how it went, the events it took, where it waits, and its
 state at the end. Of two runs with one name it shows the newest, and says
 so.

@@ -3,23 +3,28 @@ title: Args and secrets
 description: Where an action's values come from, and how tokens and passwords stay out of files and the journal.
 ---
 
+An action needs values to work with: a host, a list of sites, a password.
+They come from the workflow, from the action's args, or from the run so
+far. Passwords and tokens are kept as secrets, out of every file.
+
 ## Where a value comes from
 
 An action's environment variables are found by name, the first in:
 
 1. **the step's data** in the workflow: `{"#imap-check": {"host": "imap.example.com"}}`;
 2. **the action's args**, `action.<name>.args` in `itero.config.json`;
-3. **the run's state**: the message that started it, messages since, and
-   what earlier steps printed.
+3. **the run's state**: the event that started it, events since, and what
+   earlier steps printed.
 
 In the step's data and in args, a value that is exactly `"$name"` takes
-the state's value, and `"$$NAME"` a secret's.
+the state's value, and `"$$NAME"` a secret's or an environment variable's
+([Secrets](#secrets)).
 
 ## Args
 
 ```sh
-itero args imap-check '{"host": "imap.example.com", "port": 993}'
-itero args imap-check --file accounts.json
+itero action args set imap-check '{"host": "imap.example.com", "port": 993}'
+itero action args set imap-check --file accounts.json
 ```
 
 Either writes `action.imap-check.args` in `itero.config.json`, which you can also edit. A list runs
@@ -29,14 +34,14 @@ item goes on from there, through the rest of the steps and the end lists,
 each on its own; they never join. A step side by side cannot have a list.
 
 ```sh
-itero args imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
-                        {"user": "you@example.com", "password": "$$YOU_PASS"}]'
+itero action args set imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
+                                   {"user": "you@example.com", "password": "$$YOU_PASS"}]'
 ```
 
 ## A connector's args
 
-A [connector](/guides/messages/#connectors) gets its args the same way, from
-`connector.<name>.args`: an object, each value an environment variable, read
+A [connector](/guides/connectors/) gets its args the same way, from
+`connector.<name>.args` ([`itero connector args set`](/commands/connector/#args)): an object, each value an environment variable, read
 each time it starts. A connector has no run, so its values are themselves or
 `"$$NAME"`, never `"$name"`.
 
@@ -52,11 +57,22 @@ says which.
 ## Secrets
 
 `"$$NAME"` stands for a secret: a token, a password, an API key. It is
-looked up in the OS secret store (the macOS Keychain, the Secret Service
-on Linux), then in the daemon's environment, only when the step or the
-connector starts:
-the value never reaches the run's state, the journal, a log or a command
-line.
+looked up only when the step or the connector starts, and the value never
+reaches the run's state, the journal, a log or a command line. itero looks
+in two places, in this order:
+
+1. **the OS secret store** (the macOS Keychain, the Secret Service on
+   Linux), where [`itero secret`](/commands/secret/) keeps it;
+2. **the daemon's environment variables**, when the store has no such
+   name.
+
+If both have it, the secret store wins and the environment variable is
+passed over. That is easy to miss, so `itero check` and the daemon, when it
+starts, warn about each such name:
+
+```
+warning: $$IMAP_PASS is a secret and an environment variable: the secret is used
+```
 
 ```sh
 itero secret IMAP_PASS                  # asks for it, without echo

@@ -11,7 +11,7 @@ machine-wide.
 
 ### workflow
 
-● A JSON file in `workflows/` or a subfolder of it, named by its file name:
+<span class="wf">●</span> A JSON file in `workflows/` or a subfolder of it, named by its file name:
 when it runs (`on`) and its `steps`, with optional `success`,
 `failure` and `error` lists and a `timeout`. A workflow can be a step of another. See
 [Writing a workflow](/guides/workflows/).
@@ -23,7 +23,7 @@ list of them side by side, or one of those with data and an `on`.
 
 ### action
 
-■ An executable file in `actions/` or a subfolder of it, any language, named
+<span class="act">■</span> An executable file in `actions/` or a subfolder of it, any language, named
 by its file name, a version in it if any (`notify@0.2`). It reads its values
 as environment variables, prints JSON, and its exit code says how it went: 0
 done, 75 not yet, anything else an error. See [Actions](/guides/actions/).
@@ -42,16 +42,16 @@ command runs, or a Python, Node or Bun package. Named in the run's error
 when a step fails, and by `itero check` before. See
 [Actions](/guides/actions/#when-something-it-needs-is-missing).
 
-### message
+### event
 
-A type (two or more words joined by dots, like `order.placed`) and its
-data. It starts runs and reaches runs waiting for it. See
-[Messages and connectors](/guides/messages/).
+Also called a message: a type (two or more words joined by dots, like
+`order.placed`) and its data. It starts runs and reaches runs waiting for
+it. See [Connectors](/guides/connectors/).
 
 ### connector
 
-▲ An executable in `connectors/` or a subfolder of it that keeps running; each
-line it prints is one message of its file name's type.
+<span class="con">▲</span> An executable in `connectors/` or a subfolder of it that keeps running; each
+line it prints is one event of its file name's type.
 
 ### schedule
 
@@ -65,7 +65,7 @@ Each change starts a run.
 
 ### run
 
-One go through a workflow, started by a message, a schedule or a watched
+One go through a workflow, started by an event, a schedule or a watched
 path. It has an id (a UUIDv7) and a name (`misty-lake`), and keeps the
 version of its workflows it started with. It ends as `done`, `failed` or
 `error`, or `split` when it went on as one run per item of a list of
@@ -73,13 +73,13 @@ version of its workflows it started with. It ends as `done`, `failed` or
 
 ### state
 
-A run's values: the data of the message that started it, the messages
+A run's values: the data of the event that started it, the events
 that reached it, and what its steps printed. An action gets it as
 environment variables and on stdin.
 
 ### waiting
 
-A run whose step exited 75: it waits for a message that matches it (shares
+A run whose step exited 75: it waits for an event that matches it (shares
 a field with its state and agrees on all it shares), runs the step again
 every hour, and gives up after its `timeout`.
 
@@ -96,13 +96,13 @@ step whose `on` does not hold is skipped.
 
 ### args
 
-Data for an action, `action.<name>.args` in `itero.config.json`, set with `itero args`. A list
+Data for an action, `action.<name>.args` in `itero.config.json`, set with `itero action args set`. A list
 runs the step once per item. A connector has args too, `connector.<name>.args`:
 an object.
 
 ### settings
 
-A workflow's values, `workflow.<name>.settings` in `itero.config.json`, set with `itero config`: a
+A workflow's values, `workflow.<name>.settings` in `itero.config.json`, set with `itero wf config set`: a
 run's state starts with them. `off`, `from` and `until` there are switches.
 
 ### secret
@@ -117,14 +117,14 @@ per workflow.
 
 ### journal
 
-`.itero/journal.sqlite`: every message, run and answer, and the IDs.
-Local, never synced. Ended runs and their messages are forgotten a day
+`.itero/journal.sqlite`: every event, run and answer, and the IDs.
+Local, never synced. Ended runs and their events are forgotten a day
 later (`keep`).
 
 ### daemon
 
 `itero daemon`: runs one workspace, pass after pass. It starts connectors,
-watches paths, takes messages and schedules, decides what each run does
+watches paths, takes events and schedules, decides what each run does
 next, and runs each step's action in its own process. See
 [Workspaces, workflows and runs](/start/concepts/).
 
@@ -137,7 +137,7 @@ next, and runs each step's action in its own process. See
 
 What itero gives the workspace, each daemon's life, each workflow and
 each run: a UUIDv7, and a name (two random words, or a workflow's file
-name). Commands take either: `itero runs misty-lake`.
+name). Commands take either: `itero wf runs misty-lake`.
 
 ### meta
 

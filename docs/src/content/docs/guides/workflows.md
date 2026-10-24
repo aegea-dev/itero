@@ -3,7 +3,67 @@ title: Writing a workflow
 description: on, meta, steps, side by side, conditions, workflows as steps, and the lists run at the end.
 ---
 
-● A workflow is a JSON file in `workflows/`; its name is its file name.
+<span class="wf">●</span> A workflow says when something should happen, and what to do then,
+step by step. It is a JSON file in `workflows/`, and its name is its file
+name. Its steps are <span class="act">■</span> actions (small programs) and other workflows.
+
+## Examples
+
+These are from the `examples/` folder, each a workspace you can run.
+
+**Check websites every minute** (`examples/beacon`, `workflows/sites.json`):
+
+```json
+{
+  "on": [{ "schedule": "* * * * *" }],
+  "steps": [
+    { "#check-sites": { "sites": "$sites" } },
+    "#changed",
+    { "#notify": { "on": [{ "has": "$text" }], "title": "beacon: sites" } }
+  ]
+}
+```
+
+- `on`: every minute.
+- `#check-sites` fetches each site in `$sites` (the workflow's
+  [settings](#settings)) and says which are down.
+- `#changed` keeps only what changed since the last run, as `$text`.
+- `#notify` shows a notification, but only when there is a `$text`: no
+  news, no notification.
+
+**A notification for each new mail** (`examples/mail-alert`):
+
+```json
+{ "on": [{ "event": "mail.received" }], "steps": ["#notify"] }
+```
+
+- `on`: a `mail.received` event, which a <span class="con">▲</span> connector sends for each new
+  mail ([Connectors](/guides/connectors/)).
+- `#notify` shows it: the event's data (sender, subject) is the run's
+  state, and `#notify` takes its title and text from there.
+
+**A daily digest by mail** (`examples/page-digest`):
+
+```json
+{
+  "on": [{ "schedule": "0 9 * * *" }],
+  "steps": [
+    { "#fetch": { "url": "https://example.com/news" } },
+    { "#ask-ai": { "prompt": "Summarize this page in 5 bullets.", "key": "$$ANTHROPIC_KEY" } },
+    { "#send-mail": { "host": "smtp.example.com", "user": "me@example.com",
+                      "password": "$$SMTP_PASS", "to": "me@example.com",
+                      "subject": "Daily digest" } }
+  ]
+}
+```
+
+- `on`: every day at 09:00.
+- `#fetch` gets the page; what it prints joins the state for the next step.
+- `#ask-ai` summarizes it, with the API key kept as a secret
+  (`$$ANTHROPIC_KEY`, [Args and secrets](/guides/secrets/)).
+- `#send-mail` mails the summary, its password a secret too.
+
+**An order** (`examples/order`, `workflows/order.json`):
 
 ```json
 {
@@ -19,15 +79,25 @@ description: on, meta, steps, side by side, conditions, workflows as steps, and 
 }
 ```
 
+- `on`: an `order.placed` event, sent by the shop (`itero emit` or
+  `POST /events`).
+- `["#check-payment", "#check-stock"]` run side by side; the next step
+  waits for both.
+- `order-process` is another workflow, used as a step: it ships, reminds
+  or cancels, depending on payment and stock ([below](#what-it-does-steps)).
+- `#send-mail` tells the customer.
+- At the end, `success`, `failure` or `error` runs, by how it went
+  ([How it ended](#how-it-ended-success-failure-error)).
+
 ## When it runs: `on`
 
 A list of objects, each saying one thing:
 
 | Entry | Means |
 |---|---|
-| `{ "event": "order.placed" }` | a message of this type starts a run |
+| `{ "event": "order.placed" }` | an event of this type starts a run |
 | `{ "schedule": "0 9 * * *" }` | a schedule starts a run (cron, the machine's local time) |
-| `{ "path": "~/Pictures/inbox" }` | a change to this file or folder starts a run ([Watching files](/guides/messages/#watching-files)) |
+| `{ "path": "~/Pictures/inbox" }` | a change to this file or folder starts a run ([Watching files](/guides/connectors/#watching-files)) |
 | `{ "$paid": true }` | condition: the state's `paid` is exactly `true` |
 | `{ "has": "$order" }` | condition: `order` is in the state |
 | `{ "has": ["$order", "$$API"] }` | condition: both are there; `$$API` is an environment variable or a secret |
@@ -131,12 +201,35 @@ no other list runs. A run ending in error or failed also sends
 others ([The daemon's own workflows](/guides/maintenance/)). A workflow used as a step has no end lists of its own:
 the run's own workflow has them.
 
+## Posting a result
+
+An app that sends an event can get the result back when the run ends, even
+days later: it sends its URL in the event's data, and the workflow's end
+steps post the result there. From `examples/notify-api`:
+
+```json
+{ "on": [{ "event": "app.notify" }], "steps": ["#notify"], "timeout": "1h",
+  "success": ["#post-answer"], "failure": ["#post-answer"], "error": ["#post-answer"] }
+```
+
+`actions/post-answer` posts the run's state, which an action gets on its
+stdin:
+
+```sh
+#!/bin/sh
+curl -fsS --retry 5 -H 'content-type: application/json' --data-binary @- "$reply_url"
+```
+
+The app sends `{"type": "app.notify", "data": {..., "reply_url":
+"http://localhost:3000/notified"}}` and gets the state back when the
+notification is answered, or `$why` when the run broke.
+
 ## Settings
 
 A workflow you share, or take from someone, is used as it is. What
 changes from one person to another goes apart from it: its settings, in
 its entry in `itero.config.json`, set with
-[`itero config`](/commands/config/).
+[`itero wf config set`](/commands/workflow/#config).
 
 ```json
 { "on": [{ "schedule": "* * * * *" }],
@@ -144,7 +237,7 @@ its entry in `itero.config.json`, set with
 ```
 
 ```sh
-itero config sites '{"sites": ["https://example.com", "http://localhost:3000"]}'
+itero wf config set sites '{"sites": ["https://example.com", "http://localhost:3000"]}'
 ```
 
 writes:
@@ -153,7 +246,7 @@ writes:
 { "workflow": { "sites": { "settings": { "sites": ["https://example.com", "http://localhost:3000"] } } } }
 ```
 
-- A run's state starts with the settings, then the message's data on top:
+- A run's state starts with the settings, then the event's data on top:
   `itero emit` can override a setting for one run. A step names one as
   `"$sites"`, an action gets it as `$sites`, and `on` conditions see it.
 - Only the run's own workflow's settings: a workflow used as a step runs
@@ -201,12 +294,12 @@ This is `examples/terraform`'s `cluster` workflow.
   say what may be left; the others still run, and the run ends as
   `error` with the first `$why`.
 - A `failure` (`"success": false`) undoes nothing: the steps all worked.
-- `itero runs <run>` marks them: `#cluster-delete (undo)  done`.
+- `itero wf runs <run>` marks them: `#cluster-delete (undo)  done`.
 
 ## Waiting: `timeout`
 
-A step that exits 75 is not ready yet: the run waits for a message that
-matches it ([Messages and connectors](/guides/messages/)). `timeout` is how
+A step that exits 75 is not ready yet: the run waits for an event that
+matches it ([What an event does](/guides/connectors/#what-an-event-does)). `timeout` is how
 long a run may wait, like `"2h"`; unless given, a day.
 
 ## Two fields printed side by side

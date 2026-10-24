@@ -8,7 +8,7 @@ it once.
 
 Run `itero daemon` in this folder and leave it running. The first check
 tells you what it watches; after that, only changes. Your own sites:
-  itero config sites '{"sites": ["https://example.com"]}'
+  itero wf config set sites '{"sites": ["https://example.com"]}'
 (the sites workflow's settings in itero.config.json; the disk
 workflow's have its min_free). Your own
 checks: an action that prints {"status": {"<what>": "<how it is>"}},

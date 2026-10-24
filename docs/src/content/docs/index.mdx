@@ -66,7 +66,7 @@ something changes.
 	/>
 	<LinkCard
 		title="Wait for a payment, then ship"
-		description="A step that waits for a message that comes later, minutes or days."
+		description="A step that waits for an event that comes later, minutes or days."
 		href="https://github.com/aegea-dev/itero/tree/main/examples/order"
 	/>
 	<LinkCard
@@ -119,20 +119,20 @@ the important mails, and the spam and the ads pass quietly.
 		version it started with.
 	</Card>
 	<Card title="Runs on its own" icon="rocket">
-		Messages, schedules and watched files start runs. A step can wait for
-		a message that comes later; a lost step runs again; a broken one is
+		Events, schedules and watched files start runs. A step can wait for
+		an event that comes later; a lost step runs again; a broken one is
 		undone.
 	</Card>
 	<Card title="A record of everything" icon="approve-check">
-		Every message and answer is in a SQLite journal, every step in a JSON
-		log. `itero runs` tells a run's story, step by step.
+		Every event and answer is in a SQLite journal, every step in a JSON
+		log. `itero wf runs` tells a run's story, step by step.
 	</Card>
 </CardGrid>
 
 ## Next to the others
 
 - **cron** runs a command at a time; itero chains steps, waits for
-  messages, retries, undoes and keeps a record.
+  events, retries, undoes and keeps a record.
 - **n8n, Zapier** offer the nodes they built; in itero any program is a
   step, and the workflow is a file you keep.
 - **Temporal, Airflow** need their SDK and a server; itero is one binary,

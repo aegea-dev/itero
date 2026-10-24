@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: A workspace with one workflow and one action, a message, and a run.
+description: A workspace with one workflow and one action, an event, and a run.
 ---
 
 A workspace is a folder with an `itero.config.json`; `{}` will do.
@@ -11,14 +11,14 @@ echo '{}' > itero.config.json
 mkdir workflows actions
 ```
 
-A workflow, `workflows/greet.json`: on a `greet.someone` message, run the
+A workflow, `workflows/greet.json`: on a `greet.someone` event, run the
 action `#hello`, then show what it said.
 
 ```json
 { "on": [{ "event": "greet.someone" }], "steps": ["#hello", "#notify"] }
 ```
 
-An action, `actions/hello`: any executable file. It gets the message's
+An action, `actions/hello`: any executable file. It gets the event's
 fields as environment variables, and what it prints joins the run's
 state, so `#notify` finds `$text` there.
 
@@ -33,13 +33,13 @@ itero check
 ```
 
 `itero check` reads every file and says what is wrong. Start the daemon
-and leave it running; it takes each message as it comes:
+and leave it running; it takes each event as it comes:
 
 ```sh
 itero daemon
 ```
 
-In another terminal, in the same folder, send a message:
+In another terminal, in the same folder, send an event (a message):
 
 ```sh
 itero emit greet.someone '{"name": "Ayşe"}'
@@ -48,9 +48,9 @@ itero emit greet.someone '{"name": "Ayşe"}'
 Within a second a notification says "Merhaba, Ayşe!". Then:
 
 ```sh
-itero workflows        # each workflow, its runs, and whether the daemon runs
-itero runs             # the run, done, with its name
-itero runs <name>      # the run step by step
+itero wf list          # each workflow, its runs, and whether the daemon runs
+itero wf runs          # the run, done, with its name
+itero wf runs <name>   # the run step by step
 ```
 
 `.itero/itero.log` has a line for each step. Ctrl-C stops the daemon;
@@ -61,7 +61,7 @@ itero runs <name>      # the run step by step
 - [Writing a workflow](/guides/workflows/): side by side, conditions,
   workflows as steps, the end lists.
 - [Actions](/guides/actions/): what an action gets and how it answers.
-- [Messages and connectors](/guides/messages/): where messages come from.
+- [Connectors](/guides/connectors/): where events come from.
 - [The log, IDs and names](/guides/log/): what happened, and how to find
   it.
 - The examples in the repository: `mail-alert`, `mail-servers`, `gmail`

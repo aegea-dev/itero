@@ -19,7 +19,7 @@ extension, in any language its first line names.
 |---|---|
 | stdout | one JSON object, its fields joining the state (`null` removes one); or nothing |
 | exit `0` | done |
-| exit `75` | not yet: the run waits for a matching message, or the hourly retry |
+| exit `75` | not yet: the run waits for a matching event, or the hourly retry |
 | any other exit | an error; the end of stderr says why |
 
 A step may print nothing for 10 minutes and run for a day at most
