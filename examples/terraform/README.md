@@ -12,6 +12,7 @@ folder, then from another terminal:
       whoami at http://localhost:8080 ({"port": 8081} for another)
   itero emit --wait cluster.removed '{"name": "demo"}'
 
-A step that fails rolls back: #cluster-create's undo deletes the cluster. Your own
-~/.kube/config is left alone; each cluster's kubeconfig, OpenTofu state and
-plan stay in .itero/clusters/<name>/.
+A step that fails rolls back: #cluster-create's undo deletes the cluster,
+and a notification says what broke (and what is left, when the delete
+breaks too). Your own ~/.kube/config is left alone; each cluster's
+kubeconfig, OpenTofu state and plan stay in .itero/clusters/<name>/.

@@ -123,8 +123,8 @@ Steps run at the end, by the outcome:
   business outcome such as out of stock. `failure` runs.
 - **success**: anything else.
 
-These steps get `$why` and `$failed_step`. Before `error`, the steps
-that finished are undone ([Undo](#undo-taking-steps-back)). The run ends as `done`,
+These steps get `$why` and `$failed_step` (and `$undo_failed` when an
+undo broke). Before `error`, the steps that finished are undone ([Undo](#undo-taking-steps-back)). The run ends as `done`,
 `failed` or `error`; if one of these steps breaks, it ends as `error` and
 no other list runs. A run ending in error or failed also sends
 `itero.run.error` or `itero.run.failed`, for workflows that watch over
@@ -173,15 +173,22 @@ what takes it back, with `undo` in its data:
   "steps": [
     { "#cluster-create": { "undo": "#cluster-delete" } },
     "#tf-plan",
-    { "#tf-apply": { "undo": "#tf-destroy" } },
+    "#check-plan",
+    "#tf-apply",
     "#web-check"
+  ],
+  "error": [
+    { "#notify": { "title": "$name", "text": "$why" } },
+    { "#notify": { "on": [{ "has": "$undo_failed" }], "title": "$name is left", "text": "$undo_failed" } }
   ]
 }
 ```
 
 When a step breaks, the undos of the steps that finished run, newest
-first, then the `error` list. If `#web-check` breaks: `#tf-destroy`,
-then `#cluster-delete`. If `#tf-plan` breaks: only `#cluster-delete`.
+first, then the `error` list. If `#check-plan` refuses the plan, or
+`#web-check` gets no answer: `#cluster-delete`, which takes the app with
+it, then the notification. If `#cluster-create` breaks: nothing to undo.
+This is `examples/terraform`'s `cluster` workflow.
 
 - An undo is an action or a workflow. It gets the state, with `$why` and
   `$failed_step`.
@@ -189,8 +196,10 @@ then `#cluster-delete`. If `#tf-plan` breaks: only `#cluster-delete`.
   up after itself, or the `error` list does.
 - A workflow used as a step can have an undo, and its own steps can too:
   each finished step counts.
-- An undo that breaks is noted in the log (`undo.failed`); the others
-  still run, and the run ends as `error` with the first `$why`.
+- An undo that breaks is noted in the log (`undo.failed`) and in
+  `$undo_failed`, a list of `"#step: why"` lines, so the `error` list can
+  say what may be left; the others still run, and the run ends as
+  `error` with the first `$why`.
 - A `failure` (`"success": false`) undoes nothing: the steps all worked.
 - `itero runs <run>` marks them: `#cluster-delete (undo)  done`.
 
