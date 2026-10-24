@@ -5,20 +5,20 @@ description: The few things itero is made of.
 
 Three kinds of things, each with its shape, as in the logo and in
 pictures of a workflow: **● a workflow**, **■ an action** and **▲ a
-source**, where messages come from.
+connector**, where messages come from.
 
 **A workspace** is a folder with an `itero.config.json`. One daemon runs one
 workspace:
 
 ```
-itero.config.json          the manifest: what it is, port, limits, and each workflow, action and source
+itero.config.json          the manifest: what it is, port, limits, and each workflow, action and connector
 workflows/order.json       ● a workflow: its name is its file name
 actions/check-payment      ■ an action: an executable, its name its file name
-sources/mail.received      ▲ a source: its messages are of this type
+connectors/mail.received   ▲ a connector: its messages are of this type
 .itero/                    the journal, the log and each workflow's memory
 ```
 
-`workflows/`, `actions/` and `sources/` may have subfolders, to group files
+`workflows/`, `actions/` and `connectors/` may have subfolders, to group files
 any way you like: `workflows/shop/order.json`, `actions/mail/imap-check`.
 A name stays its file name, unique within its kind: two workflows of one
 name are an error naming both files, but an action and a workflow may share
@@ -37,7 +37,7 @@ went. **A workflow** can be a step too (`order-process`).
 
 **A message** has a type, two or more words joined by dots
 (`order.placed`), and data. Apps send them with `itero emit` or `POST
-/events`; sources print them. A message starts a run of every workflow
+/events`; connectors print them. A message starts a run of every workflow
 whose `on` has an `event` of its type. A schedule or a change to a
 watched file starts runs too.
 
@@ -55,7 +55,7 @@ a waiting run's timer fires) it makes a pass, at once or within a second:
 ```
 itero daemon  (one per workspace)
 │
-├─ sources and watched paths: beside it, feeding messages in
+├─ connectors and watched paths: beside it, feeding messages in
 │
 └─ every pass:
      1. messages   → start new runs, wake waiting runs

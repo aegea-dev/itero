@@ -1,6 +1,6 @@
 ---
 title: itero args
-description: Sets an action's or a source's data.
+description: Sets an action's or a connector's data.
 ---
 
 ```sh
@@ -18,8 +18,8 @@ itero args imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
                         {"user": "you@example.com", "password": "$$YOU_PASS"}]'
 ```
 
-When the workspace has a source of that name, it writes
-`source.<name>.args` instead: an object, as a source runs once.
+When the workspace has a connector of that name, it writes
+`connector.<name>.args` instead: an object, as a connector runs once.
 
 ```sh
 itero args mail.pushed '{"user": "me@example.com", "password": "$$ME_PASS"}'
@@ -27,4 +27,4 @@ itero args mail.pushed '{"user": "me@example.com", "password": "$$ME_PASS"}'
 
 It prints the file it wrote, which you can also edit. A value that is
 exactly `"$$NAME"` is a secret's, looked up only when the step or the
-source starts. See [Args and secrets](/guides/secrets/).
+connector starts. See [Args and secrets](/guides/secrets/).

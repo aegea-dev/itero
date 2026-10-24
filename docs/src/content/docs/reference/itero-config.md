@@ -6,7 +6,7 @@ description: A workspace's manifest, everything about it in one file.
 A folder with an `itero.config.json` is a workspace: itero uses the
 nearest one upwards, as npm does with `package.json`. Every key has a
 default, so `{}` is a whole workspace. The folders keep only the things
-themselves: workflow files, actions, sources.
+themselves: workflow files, actions, connectors.
 
 ```json
 {
@@ -14,7 +14,7 @@ themselves: workflow files, actions, sources.
   "version": "0.1.0",
   "description": "Mail, orders and a beacon on this machine",
   "port": 8787,
-  "folders": { "workflows": ["workflows"], "actions": ["actions"], "sources": ["sources"] },
+  "folders": { "workflows": ["workflows"], "actions": ["actions"], "connectors": ["connectors"] },
   "limits": { "runs": 1000, "quiet": "10m" },
   "workflow": {
     "sites": { "description": "Each site, every minute", "settings": { "sites": ["https://example.com"] } },
@@ -23,7 +23,7 @@ themselves: workflow files, actions, sources.
   "action": {
     "imap-check": { "description": "New mail on the server", "args": { "host": "imap.example.com" } }
   },
-  "source": {
+  "connector": {
     "mail.received": { "description": "New mail in the local mailbox" }
   }
 }
@@ -42,12 +42,12 @@ and shown by `itero info` and the log's `daemon.started` line. `id`,
 | `port` | the HTTP API's port, on 127.0.0.1: set it when an app needs a fixed address | one the OS gives (below) |
 | `folders.workflows` | the folders with workflows, any number | `["workflows"]` |
 | `folders.actions` | the folders with actions, any number | `["actions"]` |
-| `folders.sources` | the folders with [sources](/guides/messages/#sources), any number | `["sources"]` |
+| `folders.connectors` | the folders with [connectors](/guides/messages/#connectors), any number | `["connectors"]` |
 
 A folder is relative to the workspace; `~/` is your home folder. A folder
 that is not there holds nothing, and `itero check` notes it. Each folder's
 subfolders count too (hidden ones and `node_modules` apart). Two workflows,
-two actions or two sources of one name, in any of the folders, is an error
+two actions or two connectors of one name, in any of the folders, is an error
 naming both files. The journal, the log and each workflow's memory live in
 `.itero/`.
 
@@ -73,9 +73,9 @@ anything.
 
 What happens at each: [The daemon's own workflows](/guides/maintenance/#limits).
 
-## `workflow`, `action`, `source`
+## `workflow`, `action`, `connector`
 
-An entry per workflow, action or source, by its name. An entry describes;
+An entry per workflow, action or connector, by its name. An entry describes;
 it never creates: one that names nothing is an error from `itero check`.
 An entry may not set `name`, `id`, `version`, `created` or `path`.
 
@@ -92,10 +92,10 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 | `description`, `tags`, your own keys | what it is |
 | `args` | data for the action, whatever workflow runs it: an object, or a list of objects (the step runs once per item); [Args and secrets](/guides/secrets/) |
 
-| In a `source` entry | Is |
+| In a `connector` entry | Is |
 |---|---|
 | `description`, `tags`, your own keys | what it is |
-| `args` | data for the source, as environment variables: an object; [A source's args](/guides/secrets/#a-sources-args) |
+| `args` | data for the connector, as environment variables: an object; [A connector's args](/guides/secrets/#a-connectors-args) |
 
 `itero args` and `itero config` write `args` and `settings` here, keeping
 the rest of the file as it was. A workflow file has no `meta`: one is an

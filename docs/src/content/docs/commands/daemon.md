@@ -7,7 +7,7 @@ description: Runs the workspace, pass after pass.
 itero daemon [--interval N] [--no-serve]
 ```
 
-Runs the workspace: starts its [sources](/guides/messages/#sources),
+Runs the workspace: starts its [connectors](/guides/messages/#connectors),
 watches the [paths](/guides/messages/#watching-files) its workflows name,
 takes messages and schedules, and runs steps, pass after pass. It serves
 the [HTTP API](/reference/http/) on `127.0.0.1:<port>`. Leave it running;
@@ -15,7 +15,7 @@ Ctrl-C stops it.
 
 | Option | Does |
 |---|---|
-| `--interval N` | seconds between passes (1); a message from `POST /events`, a source or a watched path wakes it at once |
+| `--interval N` | seconds between passes (1); a message from `POST /events`, a connector or a watched path wakes it at once |
 | `--no-serve` | the passes only, no HTTP API |
 
 ```

@@ -30,7 +30,7 @@ workflow is [internal](/guides/maintenance/).
 | `run.note` | `note`: what the run did with a message or a timer |
 | `run.ended` | `status` (`done`, `failed`, `error`, `split`), `why` |
 | `run.skipped` | a schedule came due and the workflow's `on` did not hold |
-| `source.started`, `source.ended`, `source.gave-up` | `source`, `why` |
+| `connector.started`, `connector.ended`, `connector.gave-up` | `connector`, `why` |
 | `paths.watched` | `paths`: every path watched now |
 | `reply.sent`, `reply.failed` | `url`, `run`, and for `reply.failed` `why`: a callback taken, or to be tried again |
 | `error` | `why`: what went wrong in the daemon itself |

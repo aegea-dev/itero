@@ -15,13 +15,13 @@ command's options.
 | [`itero runs`](/commands/runs/) | the runs, or one run step by step |
 | [`itero errors`](/commands/errors/) | the runs that ended in error, and why |
 | [`itero check`](/commands/check/) | reads every file and says what is wrong |
-| [`itero which`](/commands/which/) | where a workflow, action or source of a name is |
+| [`itero which`](/commands/which/) | where a workflow, action or connector of a name is |
 | [`itero info`](/commands/info/) | the workspace and its daemon: IDs, names, limits |
-| [`itero args`](/commands/args/) | sets an action's or a source's data |
+| [`itero args`](/commands/args/) | sets an action's or a connector's data |
 | [`itero config`](/commands/config/) | sets a workflow's settings, or shows them |
 | [`itero secret`](/commands/secret/) | keeps a secret in the OS secret store |
 | [`itero service`](/commands/service/) | runs the daemon from login on |
-| [`itero watch`](/commands/watch/) | for sources: a line per change to a file or folder |
+| [`itero watch`](/commands/watch/) | for connectors: a line per change to a file or folder |
 | [`itero help`](/commands/help/) | the commands, or one command's options |
 
 A day with itero, in four of them:

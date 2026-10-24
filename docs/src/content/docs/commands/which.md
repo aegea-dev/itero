@@ -1,6 +1,6 @@
 ---
 title: itero which
-description: Where a workflow, action or source of a name is.
+description: Where a workflow, action or connector of a name is.
 ---
 
 ```sh
@@ -8,7 +8,7 @@ itero which <name>
 itero which '#<name>'
 ```
 
-Workflows, actions and sources can sit in subfolders, grouped any way you
+Workflows, actions and connectors can sit in subfolders, grouped any way you
 like; their names stay their file names. `itero which` says where one is:
 
 ```
@@ -20,7 +20,7 @@ $ itero which '#gönder'
 action    actions/shipping/gönder
 action    actions/shipping/old/gönder@0.1
 $ itero which mail.received
-source    sources/mail/mail.received
+connector connectors/mail/mail.received
 $ itero which notify
 action    built in
 ```
