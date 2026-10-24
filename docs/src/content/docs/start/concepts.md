@@ -50,7 +50,8 @@ arrives. A run ends as `done`, `failed` (the state says
 
 **The daemon** runs the workspace, one per workspace. When something
 happens (a message arrives, a schedule comes due, a watched path changes,
-a waiting run's timer fires) it makes a pass, at once or within a second:
+a waiting run's timer fires) it makes a pass, at once; in between it waits,
+with no CPU:
 
 ```
 itero daemon  (one per workspace)

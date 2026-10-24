@@ -4,14 +4,14 @@ description: Runs the daemon from login on, kept up by a watchdog.
 ---
 
 ```sh
-itero service install [--interval N]
+itero service install
 itero service status
 itero service uninstall
 ```
 
 | Command | Does |
 |---|---|
-| `install` | runs the workspace's daemon as a service (a launchd agent on macOS, a systemd user unit on Linux), from login on, kept up by a watchdog; `--interval N` as for [`itero daemon`](/commands/daemon/) |
+| `install` | runs the workspace's daemon as a service (a launchd agent on macOS, a systemd user unit on Linux), from login on, kept up by a watchdog |
 | `status` | the service's state, and the daemon's health: its pid, passes, the last one, and its last error |
 | `uninstall` | stops the service and removes it; the workspace, its journal and its log stay |
 

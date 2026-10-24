@@ -14,17 +14,28 @@ wakes it on a period.
 
 ## Spec
 
-- **What wakes it:** a message (`POST /events`, `itero emit`), a line from
-  a connector, a watched path, an edit to a workflow, an action, a
-  connector or `itero.config.json`, and one alarm set to the next due
-  time. Nothing else.
+- **What wakes it:** a message (`POST /events`, `itero emit`, a click on a
+  notification), a line from a connector, a watched path, an edit to a
+  workflow or `itero.config.json`, and one alarm set to the next due time.
+  Nothing else. Actions and connectors are read when they run, so an edit
+  to one needs no wake.
+- **Messages from other processes:** `itero emit` and a click (`itero
+  notification-clicked`) save the message in the journal themselves, which
+  no wake told the daemon about; the 1-second pass found it. Now they
+  touch `.itero/wake` once it is saved, and the file watcher wakes the
+  daemon. The daemon never writes that file, so it cannot wake itself.
 - **The next due time** is the earliest of: each schedule's next slot
   after its last; the earliest timer of a waiting run (its hourly retry,
-  its deadline); the earliest `--reply` due again. With none, there is no
-  alarm and the daemon waits for a message or an edit.
+  its deadline); the earliest `--reply` due again. A workflow that is off
+  or past its `until` has no slots; one before its `from`, its first slot
+  from then. With none, there is no alarm and the daemon waits for a
+  message or an edit. (The built-in `keep` runs hourly, so an idle
+  workspace wakes once an hour unless it is turned off.)
 - **Work left over:** a pass that stops with work still to do (the cap of
   messages a pass takes) runs again at once; one that defers a message
-  because its worker was lost runs again after a second, as now.
+  because its worker was lost runs again after a second, as now. A pass
+  that fails, or a next due time that cannot be read, is tried again a
+  minute later.
 - **The alarm is wall-clock time in the kernel:** on macOS a kqueue
   `EVFILT_TIMER` with `NOTE_ABSOLUTE | NOTE_MACH_CONTINUOUS_TIME`, on Linux
   a `timerfd` on `CLOCK_REALTIME` with `TFD_TIMER_ABSTIME`. It counts the
@@ -33,10 +44,13 @@ wakes it on a period.
   across 54 s and 203 s of sleep this timer fired on time, an interval
   timer late by the whole sleep.)
 - **Edits take effect when they happen:** the daemon rereads the
-  workflows on a wake, as each pass does now; `workflows/`, `actions/`,
-  `connectors/` and `itero.config.json` are watched for that.
-- **The file watcher** waits without a timeout when nothing is pending
-  (today it wakes hourly).
+  workflows on a wake, as each pass does now; `itero.config.json`, the
+  workflow folders, their subfolders and each workflow file are watched
+  for that.
+- **The file watcher** waits without a timeout when nothing is pending.
+  Today it rereads every workflow each second to move its watches; now
+  only an edit does. A watched path whose folder is not there yet is
+  watched for from the nearest folder that is.
 - **The watchdog** restarts a daemon whose pass has been running past its
   limit (`/health` gains `busy_since`, the start of the running pass, null
   when idle), or one that stops answering, as now. An idle daemon makes
