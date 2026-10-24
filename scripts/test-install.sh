@@ -17,7 +17,7 @@ make -s -C "$root" dist TAG="$tag" DIST="$tmp/rel/$tag" >/dev/null
 
 # a good install
 if ! HOME="$tmp/ev" ITERO_INSTALL_BASE_URL="file://$tmp/rel" \
-	sh "$root/install.sh" --version "$tag" --to "$tmp/bin" >"$tmp/out" 2>&1; then
+	sh "$root/docs/public/install" --version "$tag" --to "$tmp/bin" >"$tmp/out" 2>&1; then
 	cat "$tmp/out"
 	fail "install"
 fi
@@ -30,7 +30,7 @@ fi
 cp -R "$tmp/rel" "$tmp/bozuk"
 for a in "$tmp/bozuk/$tag"/*.tar.gz; do printf 'bozuk' >>"$a"; done
 if HOME="$tmp/ev2" ITERO_INSTALL_BASE_URL="file://$tmp/bozuk" \
-	sh "$root/install.sh" --version "$tag" --to "$tmp/bin2" >"$tmp/out2" 2>&1; then
+	sh "$root/docs/public/install" --version "$tag" --to "$tmp/bin2" >"$tmp/out2" 2>&1; then
 	fail "a corrupted archive was installed"
 fi
 grep -q "checksum mismatch" "$tmp/out2" || {
@@ -41,7 +41,7 @@ grep -q "checksum mismatch" "$tmp/out2" || {
 [ ! -e "$tmp/ev2/Applications/Itero.app" ] || fail "Itero.app was installed from a corrupted archive"
 
 # uninstall
-if ! HOME="$tmp/ev" sh "$root/install.sh" --uninstall --to "$tmp/bin" >"$tmp/out3" 2>&1; then
+if ! HOME="$tmp/ev" sh "$root/docs/public/install" --uninstall --to "$tmp/bin" >"$tmp/out3" 2>&1; then
 	cat "$tmp/out3"
 	fail "uninstall"
 fi

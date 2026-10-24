@@ -102,7 +102,7 @@ icon: ## Build packaging/macos/Itero.icns from itero.svg (macOS, rsvg-convert)
 	iconutil -c icns $(ICONSET) -o packaging/macos/Itero.icns
 
 # A release archive for one target (this machine's unless TARGET is given),
-# and its checksum: what install.sh downloads and release.yml publishes.
+# and its checksum: what docs/public/install downloads and release.yml publishes.
 # Always built with --target, so a host build and a cross build are one
 # recipe. TAG names the release.
 TAG ?= v$(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
@@ -129,7 +129,7 @@ dist: ## Build the release archive and checksum (TAG=vX.Y.Z, TARGET=triple)
 	rm -rf $(DIST)/stage
 
 .PHONY: test-install
-test-install: ## Install from a local release through install.sh, in temp folders
+test-install: ## Install from a local release through the install script, in temp folders
 	sh scripts/test-install.sh
 
 .PHONY: test-linux

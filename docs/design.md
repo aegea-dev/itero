@@ -167,7 +167,8 @@ another site cannot post one without a preflight, which is never granted).
 
 ## Installing
 
-`install.sh` (curl or wget, POSIX sh) installs a release for macOS (Apple
+The install script (`docs/public/install`, at `itero.sh/install`; curl or
+wget, POSIX sh) installs a release for macOS (Apple
 Silicon, Intel) or Linux (x86_64, aarch64): it checks the archive's SHA-256
 before unpacking, puts `itero` in `~/.local/bin` and, on macOS, `Itero.app`
 in `~/Applications`, and never edits a shell profile. Homebrew

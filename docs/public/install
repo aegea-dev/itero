@@ -2,12 +2,15 @@
 #
 # itero installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/aegea-dev/itero/main/install.sh | sh
-#   curl -fsSL .../install.sh | sh -s -- --version 0.2.0
-#   curl -fsSL .../install.sh | sh -s -- --uninstall
+#   curl -fsSL https://itero.sh/install | sh
+#   curl -fsSL https://itero.sh/install | sh -s -- --version 0.8.0
+#   curl -fsSL https://itero.sh/install | sh -s -- --uninstall
 #
 # POSIX sh on purpose, so `| sh` and `| bash` both work. Nothing here reads
 # stdin, because stdin is the script itself when this is piped.
+#
+# The docs site serves this file at https://docs.itero.sh/install, and
+# itero.sh/install redirects there; `curl -fsSL` follows the redirect.
 #
 # Tested by scripts/test-install.sh, which installs from an archive made by
 # `make dist`, the same recipe the release workflow publishes with: that is
@@ -41,8 +44,8 @@ usage() {
 itero installer
 
 USAGE
-    curl -fsSL https://raw.githubusercontent.com/aegea-dev/itero/main/install.sh | sh
-    curl -fsSL .../install.sh | sh -s -- [OPTIONS]
+    curl -fsSL https://itero.sh/install | sh
+    curl -fsSL https://itero.sh/install | sh -s -- [OPTIONS]
 
 OPTIONS
     --version X.Y.Z   Install a specific release instead of the latest
@@ -406,6 +409,7 @@ Check your network connection and try again."
 	say ""
 	say "Next:  mkdir my-workflows && cd my-workflows && echo '{}' > itero.config.json && itero daemon"
 	say "       and to start it at login, in that folder:  itero service install"
+	say "Docs:  https://docs.itero.sh"
 }
 
 main "$@"

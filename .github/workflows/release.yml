@@ -1,8 +1,8 @@
 name: Release
 
 # On a version tag: a draft release, an archive per target made by `make dist`
-# (the recipe scripts/test-install.sh installs from, so the names install.sh
-# expects and the names published here are one and the same), then the
+# (the recipe scripts/test-install.sh installs from, so the names the install
+# script expects and the names published here are one and the same), then the
 # release is published. It first runs once the repository exists.
 on:
   push:
@@ -35,7 +35,7 @@ jobs:
             # the install line, then GitHub's notes: the PRs merged since
             # the last tag, by their titles
             gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" \
-              --notes "itero $GITHUB_REF_NAME. Install: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh" \
+              --notes "itero $GITHUB_REF_NAME. Install: curl -fsSL https://itero.sh/install | sh" \
               --generate-notes
           fi
 
