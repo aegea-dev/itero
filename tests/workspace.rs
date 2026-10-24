@@ -159,28 +159,6 @@ fn a_connector_sends_messages_of_its_file_name() {
 }
 
 #[test]
-fn the_old_names_for_connectors_say_what_they_are_now() {
-    let d = tempfile::tempdir().unwrap();
-    for (manifest, now) in [
-        (
-            r#"{"source": {"posta.geldi": {"description": "Gelen posta"}}}"#,
-            "connector",
-        ),
-        (
-            r#"{"folders": {"sources": ["kaynaklar"]}}"#,
-            "folders.connectors",
-        ),
-    ] {
-        write(d.path(), "itero.config.json", manifest);
-        let e = format!("{:#}", workspace::find(d.path()).unwrap_err());
-        assert!(
-            e.contains(now) && e.contains("itero.config.json"),
-            "{manifest}: {e}"
-        );
-    }
-}
-
-#[test]
 fn args_are_an_object_or_a_list_of_objects() {
     let d = tempfile::tempdir().unwrap();
     let ws = simple(d.path());

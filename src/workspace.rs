@@ -209,22 +209,6 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
     let path = root.join(MANIFEST);
     let mut m = read_manifest(&path)?;
     let at = |e: serde_json::Error, key: &str| anyhow!("{}: {key}: {e}", path.display());
-    // sources are connectors now; nothing reads the old names
-    if m.contains_key("source") {
-        bail!(
-            "{}: source is connector now: {{\"connector\": {{\"<name>\": ...}}}}",
-            path.display()
-        );
-    }
-    if m.get("folders")
-        .and_then(Value::as_object)
-        .is_some_and(|f| f.contains_key("sources"))
-    {
-        bail!(
-            "{}: folders.sources is folders.connectors now",
-            path.display()
-        );
-    }
     let port = match m.remove("port") {
         Some(v) => Some(serde_json::from_value(v).map_err(|e| at(e, "port"))?),
         None => None,
@@ -612,15 +596,6 @@ impl Workspace {
             bail!("no action {wanted} in the actions folders");
         };
         Ok(f)
-    }
-
-    /// Programs left where connectors were before they had the name: in
-    /// `sources/`, which nothing reads now. Notes there are left alone.
-    pub fn left_in_sources(&self) -> Result<Option<String>> {
-        let old = self.root.join("sources");
-        let found = self.files_in(std::slice::from_ref(&old), true)?;
-        Ok((!found.is_empty())
-            .then(|| "sources/ has programs: connectors are in connectors/ now".to_string()))
     }
 
     /// Every connector in the simple form: an executable whose file name is
