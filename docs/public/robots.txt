@@ -4,4 +4,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://aegea-dev.github.io/itero/sitemap-index.xml
+Sitemap: https://docs.itero.sh/sitemap-index.xml

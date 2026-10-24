@@ -1,13 +1,9 @@
 name: Docs
 
-# Builds the documentation site on every pull request that touches it, and
-# publishes it to GitHub Pages (https://aegea-dev.github.io/itero/) from
-# main. Pages must be set to deploy from GitHub Actions in the repository's
-# settings.
+# Builds the documentation site on every pull request that touches it.
+# Cloudflare builds and publishes it (https://docs.itero.sh) from main; see
+# docs/README.md.
 on:
-  push:
-    branches: [main]
-    paths: ["docs/**", ".github/workflows/docs.yml"]
   pull_request:
     paths: ["docs/**", ".github/workflows/docs.yml"]
   workflow_dispatch:
@@ -50,23 +46,3 @@ jobs:
       - name: Build
         run: yarn build
 
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        if: github.event_name != 'pull_request'
-        with:
-          path: docs/dist
-
-  deploy:
-    name: deploy
-    if: github.event_name != 'pull_request'
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - id: deploy
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

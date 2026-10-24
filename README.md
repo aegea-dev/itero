@@ -10,7 +10,7 @@ You write the chain in a small JSON file, by hand or with AI; itero runs
 it when something happens or on a schedule, with waiting, retries,
 guards, undo and a record of every run.
 
-Documentation: <https://aegea-dev.github.io/itero/>.
+Documentation: <https://docs.itero.sh>.
 
 ## In a minute: a beacon
 
