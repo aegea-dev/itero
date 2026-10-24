@@ -115,7 +115,7 @@ fn a_set_port_that_is_taken_stops_the_daemon_before_it_runs_anything() {
         "{err}"
     );
     assert!(!err.contains("serving on"), "{err}");
-    let runs = String::from_utf8(itero(d.path(), &["runs"]).stdout).unwrap();
+    let runs = String::from_utf8(itero(d.path(), &["wf", "runs"]).stdout).unwrap();
     assert!(runs.trim().is_empty(), "nothing ran: {runs}");
     // its loop never began: no start in the log
     let log = std::fs::read_to_string(d.path().join(".itero/itero.log")).unwrap_or_default();

@@ -205,12 +205,13 @@ async fn an_event_posted_with_wait_is_answered_with_its_runs_end() {
         &app,
         post(
             "/events",
-            r#"{"type": "kişi.geldi", "reply": "ftp://örnek.test"}"#,
+            r#"{"type": "kişi.geldi", "reply": "http://örnek.test"}"#,
         ),
     )
     .await;
-    assert_eq!(code, StatusCode::BAD_REQUEST, "{v}");
-    assert!(v["error"].as_str().unwrap().contains("http"), "{v}");
+    // gone: a workflow posts its own result
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("reply"), "{v}");
 }
 
 #[tokio::test]

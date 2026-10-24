@@ -148,14 +148,14 @@ fn state(ws: &Path, workflow: &str) -> String {
     };
     format!(
         "runs:\n{}errors:\n{}memory: {memory}",
-        out(&["runs"]),
-        out(&["errors"])
+        out(&["wf", "runs"]),
+        out(&["wf", "runs", "--errors"])
     )
 }
 
 fn failed_runs(ws: &Path) -> String {
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-        .arg("runs")
+        .args(["wf", "runs"])
         .current_dir(ws)
         .output()
         .unwrap();

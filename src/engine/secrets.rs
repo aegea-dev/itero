@@ -68,6 +68,67 @@ pub fn get(name: &str) -> Option<String> {
     std::env::var(name).ok()
 }
 
+/// The `$$` names a workspace uses: in its workflows' steps and
+/// conditions, and in its actions' and connectors' args. Sorted, once each.
+pub fn used(ws: &crate::workspace::Workspace) -> Result<Vec<String>> {
+    fn walk(v: &serde_json::Value, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::Array(items) => items.iter().for_each(|i| walk(i, out)),
+            serde_json::Value::Object(m) => m.values().for_each(|i| walk(i, out)),
+            v => out.extend(crate::flow::secret_ref(v).map(str::to_string)),
+        }
+    }
+    let mut out = vec![];
+    for (_, f) in ws.flows()? {
+        out.extend(f.secret_names());
+        out.extend(f.defined_names());
+    }
+    for kind in ["action", "connector"] {
+        for e in ws.entries(kind)?.values() {
+            if let Some(args) = e.get("args") {
+                walk(args, &mut out);
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// Of `names`, those both a secret (`in_store`) and an environment
+/// variable (`in_env`): `$$NAME` takes the secret, and the variable is
+/// passed over, which a person may not expect.
+pub fn shadowing(
+    names: &[String],
+    in_store: impl Fn(&str) -> bool,
+    in_env: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    names
+        .iter()
+        .filter(|n| in_store(n) && in_env(n))
+        .cloned()
+        .collect()
+}
+
+/// The names the workspace uses that are both a secret and an environment
+/// variable here; none with the store off. A store that cannot be read
+/// counts as holding none.
+pub fn shadowed(ws: &crate::workspace::Workspace) -> Result<Vec<String>> {
+    if store_off() {
+        return Ok(vec![]);
+    }
+    Ok(shadowing(
+        &used(ws)?,
+        |n| matches!(lookup(n), Ok(Some(_))),
+        |n| std::env::var_os(n).is_some(),
+    ))
+}
+
+/// What itero says of a name `shadowed` found.
+pub fn shadow_warning(name: &str) -> String {
+    format!("$${name} is a secret and an environment variable: the secret is used")
+}
+
 /// The names of the secrets in the store, sorted.
 pub fn names() -> Result<Vec<String>> {
     if store_off() {

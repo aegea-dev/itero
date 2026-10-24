@@ -180,7 +180,7 @@ pub fn wait_for(
     }
 }
 
-/// Saves a message for the workspace, where it may start runs and reach
+/// Saves an event for the workspace, where it may start runs and reach
 /// waiting ones; returns its id.
 pub fn emit(
     ws: &Workspace,
@@ -188,28 +188,9 @@ pub fn emit(
     data: Option<Value>,
     now: &str,
 ) -> Result<String, EmitError> {
-    emit_with(ws, kind, data, None, now)
-}
-
-/// `emit`, with where the ends of the runs it starts are posted: an
-/// `http://` or `https://` URL.
-pub fn emit_with(
-    ws: &Workspace,
-    kind: &str,
-    data: Option<Value>,
-    reply: Option<&str>,
-    now: &str,
-) -> Result<String, EmitError> {
-    if let Some(url) = reply
-        && !(url.starts_with("http://") || url.starts_with("https://"))
-    {
-        return Err(EmitError::Bad(format!(
-            "reply is an http:// or https:// URL, not {url}"
-        )));
-    }
     if !crate::flow::is_message_type(kind) {
         return Err(EmitError::Bad(format!(
-            "a message type is two or more words joined by dots, like order.placed, not {kind}"
+            "an event type is two or more words joined by dots, like order.placed, not {kind}"
         )));
     }
     if engine_own(kind) {
@@ -223,12 +204,8 @@ pub fn emit_with(
         Some(_) => return Err(EmitError::Bad("data must be a JSON object".into())),
     };
     let internal = |e: anyhow::Error| EmitError::Internal(format!("{e:#}"));
-    let mut j = Journal::open(ws).map_err(internal)?;
+    let j = Journal::open(ws).map_err(internal)?;
     let e = Envelope::new("outside", kind, &journal::subject("app"), now, None, data);
-    match reply {
-        Some(url) => j.publish_replying(&e, url),
-        None => j.publish(&e),
-    }
-    .map_err(internal)?;
+    j.publish(&e).map_err(internal)?;
     Ok(e.id)
 }
