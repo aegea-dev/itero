@@ -48,6 +48,7 @@ Cloudflare project settings:
 | Root directory | `docs` |
 | Build command | `corepack enable && yarn install --immutable && yarn build` |
 | Deploy command | `npx wrangler deploy` (the default) |
+| Non-production deploy command | `npx wrangler preview` (the default; needs `previews` in `wrangler.jsonc`) |
 | Node version | from `.node-version` |
 
 `corepack enable` comes first because Cloudflare's build image ships Yarn 1,

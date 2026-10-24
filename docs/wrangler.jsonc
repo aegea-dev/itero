@@ -12,5 +12,9 @@
 		// Serve Starlight's generated 404.html for unknown paths, instead of a
 		// bare Cloudflare error page.
 		"not_found_handling": "404-page"
-	}
+	},
+	// Required, even empty, for `wrangler preview`, the deploy command for
+	// non-production branches. Assets and compatibility settings above apply to
+	// Previews too.
+	"previews": {}
 }
