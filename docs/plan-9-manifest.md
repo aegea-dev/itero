@@ -1,6 +1,6 @@
 # Plan 9: itero.config.json
 
-Board ticket #11. One JSON file at the workspace's root, like
+One JSON file at the workspace's root, like
 `package.json`, says what the workspace is, how it runs, and everything
 about its workflows, actions and sources. It replaces `itero.toml`,
 `args/`, `config/` and a workflow's `meta`. The folders keep only the
@@ -56,9 +56,7 @@ things themselves.
   `itero config <workflow>` with no data shows the settings.
 - **Gone, no shim:** `itero.toml`, `args/`, `config/`. `itero check` names
   an `args/` or `config/` folder it finds, saying where it went.
-- **Not in this plan:** `run` for folder actions and sources (ticket #5),
-  tools inside a workspace (ticket #9). An entry's other keys are kept as
-  the person's own.
+- An entry's other keys are kept as the person's own.
 
 ## Files
 
