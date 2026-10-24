@@ -68,7 +68,8 @@ Each change starts a run.
 One go through a workflow, started by a message, a schedule or a watched
 path. It has an id (a UUIDv7) and a name (`misty-lake`), and keeps the
 version of its workflows it started with. It ends as `done`, `failed` or
-`error`.
+`error`, or `split` when it went on as one run per item of a list of
+[args](#args).
 
 ### state
 

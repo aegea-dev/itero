@@ -9,7 +9,9 @@ itero runs <id or name>
 ```
 
 The runs, newest first: id, name, workflow, status, started and ended. A
-status is `running`, `waiting`, `done`, `failed`, `error` or `split`.
+status is `running`, `waiting`, `done`, `failed`, `error` or `split`:
+a run that reached an action with a list of args, and went on as one run
+per item ([Args](/guides/secrets/#args)).
 The internal workflows' runs show only with `--all`.
 
 ```

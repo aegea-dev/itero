@@ -24,7 +24,9 @@ itero args imap-check --file accounts.json
 
 Either writes `action.imap-check.args` in `itero.config.json`, which you can also edit. A list runs
 the step once per item, each with its own copy of the state for the rest
-of the run:
+of the run: the run that reaches the step ends as `split`, and one run per
+item goes on from there, through the rest of the steps and the end lists,
+each on its own; they never join. A step side by side cannot have a list.
 
 ```sh
 itero args imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
