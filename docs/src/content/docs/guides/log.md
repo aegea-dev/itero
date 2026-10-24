@@ -27,6 +27,7 @@ workflow is [internal](/guides/maintenance/).
 | `step.done`, `step.waiting` | `step`, `output` |
 | `step.failed` | `step`, `why` |
 | `step.skipped` | `step`, `why` (its `on` did not hold) |
+| `undo.failed` | `step`, `why`: an [undo](/guides/workflows/#undo-taking-steps-back) that broke; the other undos still run |
 | `run.note` | `note`: what the run did with a message or a timer |
 | `run.ended` | `status` (`done`, `failed`, `error`, `split`), `why` |
 | `run.skipped` | a schedule came due and the workflow's `on` did not hold |
