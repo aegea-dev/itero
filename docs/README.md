@@ -1,6 +1,6 @@
 # itero docs
 
-The source for itero's documentation site, built with
+The source for <https://docs.itero.sh>, built with
 [Astro](https://astro.build) and [Starlight](https://starlight.astro.build),
 the same setup as primum's and videre's. `design.md` and the `plan-*.md`
 files beside this README are the design and the iterations' plans; they are
@@ -8,7 +8,7 @@ not part of the site.
 
 ```bash
 yarn install      # once
-yarn dev          # http://localhost:4321/itero/
+yarn dev          # http://localhost:4321
 yarn build        # static site into dist/, then checks its local assets
 yarn preview      # serve dist/ locally
 yarn test         # the build check's own tests
@@ -35,15 +35,21 @@ Adding a page means creating the file and adding it to `sidebar` in
 
 ## Deploying
 
-The site is served by GitHub Pages at <https://aegea-dev.github.io/itero/>.
-`.github/workflows/docs.yml` builds it on every pull request that touches
-`docs/`, and publishes it from `main`. The repository's Pages setting is
-"GitHub Actions".
+`yarn build` writes plain static files to `dist/`, served by Cloudflare at
+<https://docs.itero.sh>, as videre's docs are. `wrangler.jsonc` makes it an
+assets-only Worker: no script runs on a request. Cloudflare builds from
+`main` on every push; `.github/workflows/docs.yml` builds every pull request
+that touches `docs/`.
 
-Under Pages the site lives at `/itero/`: `base` in `astro.config.mjs` says
-so, and a small remark plugin there prefixes it onto root links written in
-pages, so pages keep writing `[commands](/commands/)`. Links in
-front matter (the landing page's hero) are relative instead. To move to a
-domain of its own, set `SITE` and `BASE` in `astro.config.mjs`, the base
-argument of the build check in `package.json`, and the `Sitemap:` line in
-`public/robots.txt`.
+Cloudflare project settings:
+
+| Setting | Value |
+|---|---|
+| Root directory | `docs` |
+| Build command | `corepack enable && yarn install --immutable && yarn build` |
+| Deploy command | `npx wrangler deploy` (the default) |
+| Node version | from `.node-version` |
+
+`corepack enable` comes first because Cloudflare's build image ships Yarn 1,
+which fails on this Yarn 4 lockfile. `--immutable` fails the build on a
+`yarn.lock` that is out of date instead of resolving other versions.
