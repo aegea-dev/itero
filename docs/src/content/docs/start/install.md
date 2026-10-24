@@ -4,7 +4,7 @@ description: Install itero with Homebrew, the install script, or from source.
 ---
 
 itero runs on macOS (Apple Silicon and Intel) and Linux (x86_64 and
-aarch64) with glibc 2.34 or later and OpenSSL 3: Ubuntu 22.04, Debian 12,
+aarch64) with glibc 2.34 or later: Ubuntu 22.04, Debian 12,
 RHEL and Rocky 9, Fedora 36 and later. Alpine (musl) is not supported.
 
 ## Homebrew

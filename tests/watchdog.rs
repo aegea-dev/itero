@@ -155,7 +155,7 @@ fn a_watchdog_restarts_a_daemon_that_dies() {
     .stderr(std::process::Stdio::null())
     .process_group(0);
     let _watchdog = Group(c.spawn().unwrap());
-    let client = reqwest::blocking::Client::new();
+    let client = itero::net::client(std::time::Duration::from_secs(5)).unwrap();
     let pid = |client: &reqwest::blocking::Client| -> Option<u64> {
         let v: serde_json::Value = client
             .get(format!("http://127.0.0.1:{port}/health"))

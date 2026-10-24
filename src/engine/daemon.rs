@@ -369,9 +369,7 @@ fn send_replies(ws: &Workspace, now: DateTime<Utc>) -> Result<()> {
         return Ok(());
     }
     let log = Log::new(ws, &j.workspace()?.id);
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
+    let client = crate::net::client(std::time::Duration::from_secs(10))?;
     for journal::DueReply {
         id,
         url,

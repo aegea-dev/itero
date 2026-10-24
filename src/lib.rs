@@ -4,5 +4,6 @@ pub mod engine;
 pub mod flow;
 pub mod names;
 pub mod needs;
+pub mod net;
 pub mod watch;
 pub mod workspace;

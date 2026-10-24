@@ -161,9 +161,7 @@ pub fn run(o: &Options) -> Result<()> {
             None => eprint!("{line}"),
         }
     };
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
+    let client = crate::net::client(Duration::from_secs(5))?;
     let mut wait = Duration::ZERO;
     loop {
         let stderr = match &log {
