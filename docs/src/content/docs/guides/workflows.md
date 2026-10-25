@@ -1,5 +1,5 @@
 ---
-title: Writing a workflow
+title: Workflows
 description: on, meta, steps, side by side, conditions, workflows as steps, and the lists run at the end.
 ---
 

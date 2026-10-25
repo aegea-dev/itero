@@ -58,7 +58,9 @@ itero wf runs <name>   # the run step by step
 
 ## Next
 
-- [Writing a workflow](/guides/workflows/): side by side, conditions,
+- [Writing your first workflow](/guides/first-workflow/): a website
+  checked every five minutes, one step at a time.
+- [Workflows](/guides/workflows/): side by side, conditions,
   workflows as steps, the end lists.
 - [Actions](/guides/actions/): what an action gets and how it answers.
 - [Connectors](/guides/connectors/): where events come from.

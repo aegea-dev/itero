@@ -14,7 +14,7 @@ machine-wide.
 <span class="wf">●</span> A JSON file in `workflows/` or a subfolder of it, named by its file name:
 when it runs (`on`) and its `steps`, with optional `success`,
 `failure` and `error` lists and a `timeout`. A workflow can be a step of another. See
-[Writing a workflow](/guides/workflows/).
+[Workflows](/guides/workflows/).
 
 ### step
 

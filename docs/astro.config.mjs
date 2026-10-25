@@ -73,7 +73,8 @@ export default defineConfig({
 				{
 					label: 'Guides',
 					items: [
-						{ label: '● Writing a workflow', slug: 'guides/workflows' },
+						{ label: 'Writing your first workflow', slug: 'guides/first-workflow' },
+						{ label: '● Workflows', slug: 'guides/workflows' },
 						{ label: '■ Actions', slug: 'guides/actions' },
 						{ label: '▲ Connectors', slug: 'guides/connectors' },
 						{ label: 'Args and secrets', slug: 'guides/secrets' },
