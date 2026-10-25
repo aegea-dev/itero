@@ -8,16 +8,16 @@ Workflows run when something happens. Each thing that happens is an
 and its data, a JSON object. An event comes from one of these:
 
 - **an app or a script**: `itero emit`, or `POST /events` to the daemon;
-- **a <span class="con">▲</span> connector**: a program that keeps running and prints a line for
+- **a connector**: a program that keeps running and prints a line for
   each new thing it sees (a new mail, a sensor reading);
 - **a schedule**: `"on": [{ "schedule": "0 9 * * *" }]` in a workflow;
 - **a file that changed**: `"on": [{ "path": "~/Pictures/inbox" }]`;
 - **itero itself**: `itero.run.error` when a run breaks, and others
   ([The daemon's own workflows](/guides/maintenance/)).
 
-## Connectors
+## Connectors <span class="con">▲</span>
 
-<span class="con">▲</span> A connector is an executable in `connectors/` (or a subfolder of it)
+A connector is an executable in `connectors/` (or a subfolder of it)
 that keeps running. Each line it prints is the data of one event, of the
 type its file name says: `connectors/mail/mail.received` sends
 `mail.received` events.

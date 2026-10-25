@@ -3,7 +3,7 @@ title: connector
 description: Your connectors, and their args.
 ---
 
-<span class="con">▲</span> `itero connector` shows your connectors and sets the data they start
+`itero connector` shows your connectors and sets the data they start
 with. A connector is a program that keeps running and turns what it sees
 into events ([Connectors](/guides/connectors/)).
 

@@ -3,7 +3,7 @@ title: action
 description: Your actions, the ones that break, and their args.
 ---
 
-<span class="act">■</span> `itero action` shows your actions and sets the data they get. Actions
+`itero action` shows your actions and sets the data they get. Actions
 are where things usually go wrong, so `itero action errors` tells you which
 ones broke your runs, and why.
 

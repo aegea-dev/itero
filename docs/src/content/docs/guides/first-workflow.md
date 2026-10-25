@@ -3,9 +3,9 @@ title: Writing your first workflow
 description: A workflow that checks a website and tells you when it is down, one step at a time.
 ---
 
-You will write a <span class="wf">●</span> workflow that checks a website
+You will write a workflow that checks a website
 every five minutes and shows a notification when it is down. It takes one
-<span class="act">■</span> action and a few lines of JSON.
+action and a few lines of JSON.
 
 ## 1. A workspace
 
