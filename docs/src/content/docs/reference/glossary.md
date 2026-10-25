@@ -9,21 +9,21 @@ A folder with an `itero.config.json`, its manifest. One daemon and one port per 
 itero finds the workspace from the folder it runs in; nothing is
 machine-wide.
 
-### workflow
+### workflow <span class="wf">●</span>
 
-<span class="wf">●</span> A JSON file in `workflows/` or a subfolder of it, named by its file name:
+A JSON file in `workflows/` or a subfolder of it, named by its file name:
 when it runs (`on`) and its `steps`, with optional `success`,
 `failure` and `error` lists and a `timeout`. A workflow can be a step of another. See
-[Writing a workflow](/guides/workflows/).
+[Workflows](/guides/workflows/).
 
 ### step
 
 One thing a workflow does: an action (`#name`), a workflow (`name`), a
 list of them side by side, or one of those with data and an `on`.
 
-### action
+### action <span class="act">■</span>
 
-<span class="act">■</span> An executable file in `actions/` or a subfolder of it, any language, named
+An executable file in `actions/` or a subfolder of it, any language, named
 by its file name, a version in it if any (`notify@0.2`). It reads its values
 as environment variables, prints JSON, and its exit code says how it went: 0
 done, 75 not yet, anything else an error. See [Actions](/guides/actions/).
@@ -48,9 +48,9 @@ Also called a message: a type (two or more words joined by dots, like
 `order.placed`) and its data. It starts runs and reaches runs waiting for
 it. See [Connectors](/guides/connectors/).
 
-### connector
+### connector <span class="con">▲</span>
 
-<span class="con">▲</span> An executable in `connectors/` or a subfolder of it that keeps running; each
+An executable in `connectors/` or a subfolder of it that keeps running; each
 line it prints is one event of its file name's type.
 
 ### schedule

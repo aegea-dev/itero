@@ -45,4 +45,4 @@ its settings) is in its entry in
 | `{"#name": {...}}` | with data for it; `on` in it is when it runs, `undo` what takes it back when a later step breaks |
 
 In a step's data, `"$name"` is the state's value, `"$$NAME"` a secret's.
-See [Writing a workflow](/guides/workflows/).
+See [Workflows](/guides/workflows/).

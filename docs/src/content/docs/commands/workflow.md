@@ -3,7 +3,7 @@ title: workflow
 description: Your workflows, their runs, and their settings.
 ---
 
-<span class="wf">●</span> `itero workflow` (or `itero wf`) shows your workflows and what they
+`itero workflow` (or `itero wf`) shows your workflows and what they
 did. Use it to see which workflows you have, to look at their runs, and to
 find out why a run went wrong.
 

@@ -1,11 +1,11 @@
 ---
-title: Writing a workflow
+title: Workflows
 description: on, meta, steps, side by side, conditions, workflows as steps, and the lists run at the end.
 ---
 
-<span class="wf">●</span> A workflow says when something should happen, and what to do then,
+A workflow says when something should happen, and what to do then,
 step by step. It is a JSON file in `workflows/`, and its name is its file
-name. Its steps are <span class="act">■</span> actions (small programs) and other workflows.
+name. Its steps are actions (small programs) and other workflows.
 
 ## Examples
 
@@ -37,7 +37,7 @@ These are from the `examples/` folder, each a workspace you can run.
 { "on": [{ "event": "mail.received" }], "steps": ["#notify"] }
 ```
 
-- `on`: a `mail.received` event, which a <span class="con">▲</span> connector sends for each new
+- `on`: a `mail.received` event, which a connector sends for each new
   mail ([Connectors](/guides/connectors/)).
 - `#notify` shows it: the event's data (sender, subject) is the run's
   state, and `#notify` takes its title and text from there.
