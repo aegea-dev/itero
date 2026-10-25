@@ -10,11 +10,11 @@ command's options, and every command that prints something takes `--json`.
 | Command | Does |
 |---|---|
 | [`daemon`](/commands/daemon/) | runs your workflows; leave it running |
+| [`workflow`](/commands/workflow/) <span class="wf">●</span> (`wf`) | your workflows, their runs (and why one broke), their settings |
+| [`action`](/commands/action/) <span class="act">■</span> | your actions, which ones break and why, their args |
+| [`connector`](/commands/connector/) <span class="con">▲</span> | your connectors, their args |
 | [`emit`](/commands/emit/) | sends an event, and says what it starts; `--wait` for the answer |
 | [`check`](/commands/check/) | reads your files before anything runs, and says what is wrong |
-| <span class="wf">●</span> [`workflow`](/commands/workflow/) (`wf`) | your workflows, their runs (and why one broke), their settings |
-| <span class="act">■</span> [`action`](/commands/action/) | your actions, which ones break and why, their args |
-| <span class="con">▲</span> [`connector`](/commands/connector/) | your connectors, their args |
 | [`which`](/commands/which/) | where a workflow, action or connector of a name is |
 | [`info`](/commands/info/) | the workspace and its daemon: IDs, names, limits |
 | [`secret`](/commands/secret/) | keeps a secret in the OS secret store |
