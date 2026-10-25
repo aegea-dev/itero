@@ -56,9 +56,9 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', slug: 'commands' },
 						{ label: 'daemon', slug: 'commands/daemon' },
-						{ label: '● workflow', slug: 'commands/workflow' },
-						{ label: '■ action', slug: 'commands/action' },
-						{ label: '▲ connector', slug: 'commands/connector' },
+						{ label: 'workflow ●', slug: 'commands/workflow' },
+						{ label: 'action ■', slug: 'commands/action' },
+						{ label: 'connector ▲', slug: 'commands/connector' },
 						{ label: 'emit', slug: 'commands/emit' },
 						{ label: 'check', slug: 'commands/check' },
 						{ label: 'which', slug: 'commands/which' },
