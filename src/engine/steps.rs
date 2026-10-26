@@ -44,10 +44,36 @@ pub struct Runtime {
 /// What takes a finished step back, as written, and that step's
 /// `$output`, which it is given.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "UndoForm")]
 pub struct Undo {
     pub step: String,
     #[serde(default)]
     pub output: Value,
+}
+
+/// An undo as a journal holds it: a name alone, as runs before `$output`
+/// kept it, or with its step's output.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum UndoForm {
+    Name(String),
+    Full {
+        step: String,
+        #[serde(default)]
+        output: Value,
+    },
+}
+
+impl From<UndoForm> for Undo {
+    fn from(f: UndoForm) -> Undo {
+        match f {
+            UndoForm::Name(step) => Undo {
+                step,
+                output: Value::Null,
+            },
+            UndoForm::Full { step, output } => Undo { step, output },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
