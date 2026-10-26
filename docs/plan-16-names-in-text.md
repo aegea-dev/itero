@@ -6,8 +6,7 @@ first thing people (and models) write, and it does nothing. This plan
 fills a name wherever it is in a text, and gives a dollar sign meant as
 itself a way to say so.
 
-Status: spec for the owner's review. Points marked **(suggestion)** are
-mine and wait for a yes; the rest the owner decided (Decided, below).
+Status: spec decided with the owner (2026-10-26); building.
 
 ## Spec
 
@@ -27,16 +26,15 @@ With `{"count": 3, "folder": "Downloads"}` in the state, the text is
   not `"3"`), so conditions and numbers work as they do.
 - **Inside text, a value is written as itself:** text as it is, a number
   or `true` as JSON (`3`, `true`), a list or an object as its JSON.
-- **A name with no value stays as written:** `"$cuont files"` stays so, and
-  a typo shows. A value that is `null` stays as written too
-  **(suggestion)**.
+- **A state variable that is not there, `null` or `""` is `""` inside
+  text:** `"answer: $answer"` is "answer: " (the owner, reversing "stays
+  as written"). A whole value `"$answer"` is `null` then, as today.
 - **`$name.field` inside text reads one field** when the value is an
   object that has it: `"$output.count files"`. Otherwise the dot is text:
-  `"$file.txt"` with `file` set to `"report"` is "report.txt"
-  **(suggestion)**.
-- **Only a top-level value of args is filled,** as today: a text inside a
-  list or an object in args stays as written **(suggestion; `buttons`, a
-  list, would be the first to want more)**.
+  `"$file.txt"` with `file` set to `"report"` is "report.txt".
+- **Texts inside lists and objects in args are filled too**, at any depth:
+  `"buttons": ["Ship $order", "Cancel"]`; a whole `"$order"` there keeps
+  its type as at the top.
 
 ### Secrets inside text
 
@@ -44,10 +42,9 @@ With `{"count": 3, "folder": "Downloads"}` in the state, the text is
   value, so it reaches no notification, log or state (decided).
 - **`itero check` refuses `$$NAME` inside text**, and so does a run, with
   `why` saying a secret is a whole value only, rather than sending the
-  text as written **(suggestion)**.
-- **A name whose value is a secret's name** (a secret passed in args joins
-  the state as `"$$NAME"`) is refused inside text the same way
-  **(suggestion)**.
+  text as written.
+- **A state variable that holds a secret's name** (a secret passed in args
+  joins the state as `"$$NAME"`) is refused inside text the same way.
 - A watched `path` keeps its own rule: `$$NAME` there is an environment
   variable, filled inside the path, never a secret.
 
@@ -56,12 +53,10 @@ With `{"count": 3, "folder": "Downloads"}` in the state, the text is
 - **`\$` is a dollar sign:** `"costs \$5 for \$HOME"` is "costs $5 for
   $HOME" (decided).
 - **In a JSON file it is written `\\$`**, as JSON has no `\$` escape:
-  `"text": "\\$count stays"` (the open question; this is my suggestion,
-  said plainly in the docs).
+  `"text": "\\$count stays"`, said plainly in the docs.
 - **A `$` that starts no name is itself already:** `"costs $5"`, `"a $ b"`,
-  `"$"`. So `\$` is needed only before a name **(suggestion: no
-  `itero check` warning for a lone `$`, which the ticket considered; it
-  is never filled)**.
+  `"$"`. So `\$` is needed only before a name, and `itero check` does not
+  warn of a lone `$`.
 
 ### Where
 
@@ -89,8 +84,9 @@ With `{"count": 3, "folder": "Downloads"}` in the state, the text is
 ## Tasks
 
 1. Tests first, each watched failing: names inside text, the whole value
-   still typed, a name with no value, a list or an object inside text,
-   `$name.field` and `"$file.txt"`, `\$` (next to a name, at the start
+   still typed, a state variable not there, `null` or `""`, a list or an
+   object inside text, texts nested in args, `$name.field` and
+   `"$file.txt"`, `\$` (next to a name, at the start
    and the end, twice in a row), a secret inside text refused, a secret's
    name inside text refused, connector args.
 2. `flow::fill`, then `resolve` and the connector's args.
@@ -103,13 +99,16 @@ With `{"count": 3, "folder": "Downloads"}` in the state, the text is
 - A `$name` is filled inside text: `"$count files in ~/$folder"` is "3
   files in ~/Downloads".
 - The whole value `"$count"` keeps its type.
-- A name with no value stays as written.
+- A state variable that is not there, `null` or `""` is `""` inside text
+  (2026-10-26, reversing "stays as written" of 2026-10-25).
 - A list or an object inside text is its JSON.
-- A secret is never filled inside text.
-- `\$` is a dollar sign.
+- `$name.field` inside text is a field only when the object has it.
+- Texts nested in args are filled too.
+- A secret is never filled inside text; `$$NAME` inside text, and a state
+  variable holding a secret's name, are refused by `itero check` and by a
+  run.
+- `\$` is a dollar sign, written `\\$` in JSON; no warning for a lone `$`.
 
 ## Open
-
-- The suggestions above.
 - `${name}`, for a name with a letter right after it (`"${count}x"`), as
   the shell has: not in this plan unless asked.
