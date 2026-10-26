@@ -29,6 +29,10 @@ mine and wait for a yes; the rest the owner decided (Decided, below).
   **(suggestion)**.
 - **`output` is reserved:** args may not name it, and `itero check` says
   so.
+- **Conditions read `$output` as any field:** `{"#ship": {"on":
+  [{"$output": true}]}}` runs when the step before printed `true`;
+  `{"has": "$text"}` holds only when `text` was passed on as args.
+  An action that prints `true` or `false` is all a condition needs.
 
 ### Args, and how they join the state
 
