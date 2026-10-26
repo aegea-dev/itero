@@ -19,7 +19,7 @@ fn the_names_a_workspace_uses_come_from_workflows_and_args() {
     write(
         "workflows/kapı.json",
         r##"{ "on": [{ "event": "kapı.çal" }, { "has": "$$KAPI_VAR" }],
-              "steps": [{ "#aç": { "anahtar": "$$KAPI_ANAHTARI" } }] }"##,
+              "steps": [{ "#aç": { "args": { "anahtar": "$$KAPI_ANAHTARI" } } }] }"##,
     );
     let ws = itero::workspace::find(d.path()).unwrap();
     assert_eq!(

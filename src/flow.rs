@@ -124,13 +124,16 @@ pub struct On {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
-    /// An action or a workflow, with data for it, when it runs, and what
+    /// An action or a workflow, with its args, when it runs, and what
     /// takes it back when the run breaks after it finished.
     One {
         name: Name,
-        data: Map<String, Value>,
+        /// An object, or a `"$name"` that is one when the step starts.
+        args: Value,
         on: Option<Box<On>>,
         undo: Option<Name>,
+        /// Its args reach its action only, not the run's state.
+        strict: bool,
     },
     /// Actions and workflows that run side by side; the next step waits
     /// for all of them.
@@ -199,8 +202,27 @@ pub fn from_value(v: &Value) -> Result<Flow, String> {
 pub fn holds(on: &On, state: &Map<String, Value>, defined: &dyn Fn(&str) -> bool) -> bool {
     on.has.iter().all(|h| match h.strip_prefix("$$") {
         Some(n) => defined(n),
-        None => state.contains_key(h.trim_start_matches('$')),
-    }) && on.equal.iter().all(|(k, v)| state.get(k) == Some(v))
+        None => lookup(state, h.trim_start_matches('$')).is_some(),
+    }) && on.equal.iter().all(|(k, v)| lookup(state, k) == Some(v))
+}
+
+/// A state value by name, or one field of it: `output.count`.
+pub fn lookup<'s>(state: &'s Map<String, Value>, name: &str) -> Option<&'s Value> {
+    if let Some(v) = state.get(name) {
+        return Some(v);
+    }
+    let (n, field) = name.split_once('.')?;
+    state.get(n)?.as_object()?.get(field)
+}
+
+/// A value of a step's args filled from the state: `"$name"` and
+/// `"$name.field"` are the state's, null when it has none; a secret,
+/// `"$$NAME"`, stays as written; anything else is itself.
+pub fn fill(v: &Value, state: &Map<String, Value>) -> Value {
+    match state_ref(v) {
+        Some(n) => lookup(state, n).cloned().unwrap_or(Value::Null),
+        None => v.clone(),
+    }
 }
 
 /// Whether anything in `on` starts a run: an event, a schedule or a path.
@@ -312,9 +334,10 @@ fn step(v: &Value) -> Result<Step, String> {
     match v {
         Value::String(s) => Ok(Step::One {
             name: name(s)?,
-            data: Map::new(),
+            args: Value::Object(Map::new()),
             on: None,
             undo: None,
+            strict: false,
         }),
         Value::Array(items) => {
             let names = items
@@ -335,11 +358,13 @@ fn step(v: &Value) -> Result<Step, String> {
                 return Err("a step object has one name: { \"#ship\": { ... } }".into());
             };
             let Value::Object(fields) = v else {
-                return Err(format!("{k}: its data is an object"));
+                return Err(format!(
+                    "{k}: a step is an object: {{ \"args\": {{ ... }} }}"
+                ));
             };
-            let mut data = fields.clone();
-            let when = data.remove("on").map(|w| on(&w)).transpose()?;
-            let undo = data
+            let mut fields = fields.clone();
+            let when = fields.remove("on").map(|w| on(&w)).transpose()?;
+            let undo = fields
                 .remove("undo")
                 .map(|u| match u.as_str() {
                     Some(s) => name(s).map_err(|e| format!("{k}: undo: {e}")),
@@ -348,11 +373,43 @@ fn step(v: &Value) -> Result<Step, String> {
                     )),
                 })
                 .transpose()?;
+            let args = match fields.remove("args") {
+                None => Value::Object(Map::new()),
+                Some(Value::Object(a)) => {
+                    if a.contains_key("output") {
+                        return Err(format!(
+                            "{k}: args: output is given by itero, the step before's result"
+                        ));
+                    }
+                    Value::Object(a)
+                }
+                Some(a) if state_ref(&a).is_some() => a,
+                Some(_) => {
+                    return Err(format!(
+                        "{k}: args is an object, or a \"$name\" that is one, like \"$output\""
+                    ));
+                }
+            };
+            let strict = match fields.remove("strict") {
+                None => false,
+                Some(Value::Bool(b)) => b,
+                Some(_) => return Err(format!("{k}: strict is true or false")),
+            };
+            if let Some(other) = fields.keys().next() {
+                return Err(format!(
+                    "{k}: \"{other}\" is not one of args, on, undo, strict: a step's values go under args"
+                ));
+            }
+            let name = name(k)?;
+            if strict && matches!(name, Name::Workflow(_)) {
+                return Err(format!("{k}: strict is for an action's step"));
+            }
             Ok(Step::One {
-                name: name(k)?,
-                data,
+                name,
+                args,
                 on: when.map(Box::new),
                 undo,
+                strict,
             })
         }
         _ => Err("a step is a name, a list side by side, or { name: { data } }".into()),
@@ -448,8 +505,12 @@ impl Flow {
     pub fn secret_names(&self) -> Vec<String> {
         let mut out = vec![];
         for s in self.all_steps() {
-            if let Step::One { data, .. } = s {
-                out.extend(data.values().filter_map(secret_ref).map(str::to_string));
+            if let Step::One {
+                args: Value::Object(args),
+                ..
+            } = s
+            {
+                out.extend(args.values().filter_map(secret_ref).map(str::to_string));
             }
         }
         out.sort();

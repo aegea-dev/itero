@@ -3,7 +3,7 @@
 #[cfg(unix)]
 mod steps {
     use itero::engine::worker::{self, Failure, Outcome, StepRun};
-    use serde_json::{Map, Value, json};
+    use serde_json::{Value, json};
     use std::path::{Path, PathBuf};
 
     /// An executable shell action in `dir`.
@@ -33,7 +33,7 @@ mod steps {
         }
     }
 
-    fn done(o: Result<Outcome, Failure>) -> Map<String, Value> {
+    fn done(o: Result<Outcome, Failure>) -> Value {
         match o {
             Ok(Outcome::Done(m)) => m,
             other => panic!("{other:?}"),
@@ -62,17 +62,24 @@ printf '{"host": "%s", "state": %s, "where": "%s"}' "$host" "$state" "$(pwd)""#,
     }
 
     #[test]
-    fn printing_nothing_is_an_empty_output_and_anything_but_an_object_an_error() {
+    fn what_it_printed_is_its_output_json_when_it_is_json_else_the_text() {
         let d = tempfile::tempdir().unwrap();
-        let quiet = action(d.path(), "sessiz", "exit 0");
-        assert_eq!(
-            done(worker::run_step(&step(d.path(), quiet, &[], json!({})))),
-            Map::new()
-        );
-        for (name, body) in [("liste", "echo '[1]'"), ("yazı", "echo 'çay hazır'")] {
+        for (name, body, output) in [
+            ("sessiz", "exit 0", json!("")),
+            ("sayı", "echo 524", json!(524)),
+            ("tırnak", r#"echo '"524"'"#, json!("524")),
+            ("evet", "echo true", json!(true)),
+            ("liste", "echo '[1, 2]'", json!([1, 2])),
+            ("nesne", r#"echo '{"sayı": 3}'"#, json!({"sayı": 3})),
+            ("yazı", "printf '  çay hazır\n\n'", json!("çay hazır")),
+            ("satırlar", "printf 'bir\niki\n'", json!("bir\niki")),
+        ] {
             let f = action(d.path(), name, body);
-            let e = worker::run_step(&step(d.path(), f, &[], json!({}))).unwrap_err();
-            assert!(e.to_string().contains("not a JSON object"), "{name}: {e}");
+            assert_eq!(
+                done(worker::run_step(&step(d.path(), f, &[], json!({})))),
+                output,
+                "{name}"
+            );
         }
     }
 
@@ -81,7 +88,7 @@ printf '{"host": "%s", "state": %s, "where": "%s"}' "$host" "$state" "$(pwd)""#,
         let d = tempfile::tempdir().unwrap();
         let f = action(d.path(), "ödeme", r#"echo '{"ref": "ödeme-1"}'; exit 75"#);
         match worker::run_step(&step(d.path(), f, &[], json!({}))) {
-            Ok(Outcome::NotYet(m)) => assert_eq!(m["ref"], "ödeme-1"),
+            Ok(Outcome::NotYet(v)) => assert_eq!(v, json!({"ref": "ödeme-1"})),
             other => panic!("{other:?}"),
         }
     }

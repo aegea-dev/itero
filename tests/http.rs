@@ -130,7 +130,10 @@ async fn runs_and_workflows_can_be_read() {
     assert_eq!(code, StatusCode::OK);
     assert_eq!(run["status"], "done");
     assert_eq!(run["input"], json!({"kim": "ayşe"}));
-    assert_eq!(run["state"], json!({"kim": "ayşe", "son": "çay"}));
+    assert_eq!(
+        run["state"],
+        json!({"kim": "ayşe", "output": {"son": "çay"}})
+    );
     assert_eq!(run["events"][0]["type"], "run.started");
     let name = runs[0]["name"].as_str().unwrap();
     let (code, by_name) = send(&app, get(&format!("/runs/{name}"))).await;
@@ -200,7 +203,7 @@ async fn an_event_posted_with_wait_is_answered_with_its_runs_end() {
     assert_eq!(v["message"].as_str().unwrap().len(), 36);
     assert_eq!(v["runs"][0]["workflow"], "selam");
     assert_eq!(v["runs"][0]["status"], "done");
-    assert_eq!(v["runs"][0]["state"]["selam"], "merhaba");
+    assert_eq!(v["runs"][0]["state"]["output"]["selam"], "merhaba");
     let (code, v) = send(
         &app,
         post(

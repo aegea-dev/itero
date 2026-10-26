@@ -378,7 +378,7 @@ fn runs_with_a_name_or_id_tells_the_runs_story() {
     file(
         d.path(),
         "actions/öde",
-        "#!/bin/sh\n[ -n \"$tamam\" ] || { echo '{\"ödeme\": \"bekliyor\"}'; exit 75; }\n",
+        "#!/bin/sh\ncase \"$output\" in *'\"tamam\":true'*) exit 0 ;; esac\necho '{\"ödeme\": \"bekliyor\", \"sipariş\": 1}'; exit 75\n",
     );
     file(
         d.path(),
@@ -675,7 +675,7 @@ fn emit_wait_answers_with_the_runs_end() {
     let run = &answer["runs"][0];
     assert_eq!(run["workflow"], "selam");
     assert_eq!(run["status"], "done");
-    assert_eq!(run["state"]["selam"], "merhaba ayşe");
+    assert_eq!(run["state"]["output"]["selam"], "merhaba ayşe");
     assert!(run["name"].as_str().unwrap().contains('-'));
 
     let o = itero(d.path(), &["emit", "--wait", "kişi.bozuk", "{}"]);
@@ -890,4 +890,22 @@ fn completion_prints_a_script_for_each_shell() {
         assert!(o.status.success(), "{shell}: {o:?}");
         assert!(out(&o).contains("itero"), "{shell}: {}", out(&o));
     }
+}
+
+#[test]
+fn check_says_a_steps_values_go_under_args() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/kargo.json",
+        r##"{ "on": [{ "event": "kargo.hazır" }], "steps": [{ "#gönder": { "firma": "PTT" } }] }"##,
+    );
+    file(d.path(), "actions/gönder", "#!/bin/sh\n");
+    let o = itero(d.path(), &["check"]);
+    assert!(!o.status.success(), "{o:?}");
+    let said = format!("{}{}", out(&o), err(&o));
+    assert!(
+        said.contains("\"firma\"") && said.contains("go under args"),
+        "{said}"
+    );
 }

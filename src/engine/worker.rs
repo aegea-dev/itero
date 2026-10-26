@@ -174,9 +174,9 @@ fn labels(text: &str) -> Result<Vec<String>, String> {
 }
 
 /// The built-in `#notify`. One that waits (with `$buttons`, or `$wait`)
-/// says "not yet" with its notification's id in the state, and its old
-/// answer cleared; run again while waiting, it shows nothing and is done
-/// once a click's `answer` has joined the state.
+/// says "not yet" with its notification's id as its `$output`, which the
+/// click is matched on; run again while waiting, it shows nothing, and is
+/// done with the click as its `$output` once one has come.
 fn notify(r: &StepRun) -> Result<Outcome, Failure> {
     let get = |k: &str| r.env.get(k).cloned();
     let text = get("text").ok_or_else(|| Failure::Error("#notify needs $text".into()))?;
@@ -186,10 +186,12 @@ fn notify(r: &StepRun) -> Result<Outcome, Failure> {
     };
     let wait = !buttons.is_empty() || r.env.get("wait").is_some_and(|w| w == "true");
     if wait && r.waiting_since.is_some() {
-        return Ok(if r.state.contains_key("answer") {
-            Outcome::Done(Map::new())
+        let output = r.state.get("output").cloned().unwrap_or_default();
+        let clicked = output.get("answer").is_some();
+        return Ok(if clicked {
+            Outcome::Done(output)
         } else {
-            Outcome::NotYet(Map::new())
+            Outcome::NotYet(output)
         });
     }
     let data = get("data");
@@ -217,12 +219,11 @@ fn notify(r: &StepRun) -> Result<Outcome, Failure> {
         }),
     })?;
     if !wait {
-        return Ok(Outcome::Done(Map::new()));
+        return Ok(Outcome::Done(Value::String(String::new())));
     }
     let mut out = Map::new();
     out.insert("notification".into(), Value::String(id));
-    out.insert("answer".into(), Value::Null);
-    Ok(Outcome::NotYet(out))
+    Ok(Outcome::NotYet(Value::Object(out)))
 }
 
 /// The ways to show a notification here, in order: each a program and its
@@ -412,7 +413,7 @@ fn forget(r: &StepRun) -> Result<Outcome, Failure> {
     }
     let mut out = Map::new();
     out.insert("forgot_before".into(), before.into());
-    Ok(Outcome::Done(out))
+    Ok(Outcome::Done(Value::Object(out)))
 }
 
 fn roll_log(r: &StepRun) -> Result<Outcome, Failure> {
@@ -436,7 +437,7 @@ fn roll_log(r: &StepRun) -> Result<Outcome, Failure> {
     super::journal::Journal::open(&ws)
         .and_then(|j| j.set_flag(super::journal::LOG_FULL, false))
         .map_err(failed)?;
-    Ok(Outcome::Done(Map::new()))
+    Ok(Outcome::Done(Value::String(String::new())))
 }
 
 /// What `itero worker` reads for one step (`docs/design-simple.md`).
@@ -473,10 +474,10 @@ pub struct StepRun {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
-    /// Exit 0: what it printed, to join the state.
-    Done(Map<String, Value>),
-    /// Exit 75: not yet; what it printed joins the state all the same.
-    NotYet(Map<String, Value>),
+    /// Exit 0: what it printed, its `$output`.
+    Done(Value),
+    /// Exit 75: not yet; what it printed is its `$output` all the same.
+    NotYet(Value),
 }
 
 /// The exit code with which an action says "not yet" (`EX_TEMPFAIL`). The
@@ -551,8 +552,8 @@ pub fn run_step_telling(r: &StepRun, printed: &(dyn Fn() + Sync)) -> Result<Outc
         return Err(Failure::Lost(format!("killed ({status})")));
     };
     match exit {
-        0 => Ok(Outcome::Done(answer(&stdout)?)),
-        NOT_YET => Ok(Outcome::NotYet(answer(&stdout)?)),
+        0 => Ok(Outcome::Done(answer(&stdout))),
+        NOT_YET => Ok(Outcome::NotYet(answer(&stdout))),
         _ => Err(Failure::Error(exit_why(exit, &stderr))),
     }
 }
@@ -591,20 +592,10 @@ pub fn first_line(f: &Path) -> Option<String> {
     Some(line.trim_end().to_string())
 }
 
-/// What an action printed: nothing, or one JSON object.
-fn answer(stdout: &[u8]) -> Result<Map<String, Value>, Failure> {
+/// What an action printed, trimmed, as its `$output`: JSON when it is
+/// JSON, else the text; `""` when it printed nothing.
+fn answer(stdout: &[u8]) -> Value {
     let text = String::from_utf8_lossy(stdout);
     let text = text.trim();
-    if text.is_empty() {
-        return Ok(Map::new());
-    }
-    match serde_json::from_str::<Value>(text) {
-        Ok(Value::Object(m)) => Ok(m),
-        _ => {
-            let start: String = text.chars().take(80).collect();
-            Err(Failure::Error(format!(
-                "it printed something that is not a JSON object: {start}"
-            )))
-        }
-    }
+    serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string()))
 }

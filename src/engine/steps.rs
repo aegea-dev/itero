@@ -35,10 +35,19 @@ pub struct Runtime {
     pub taken: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended: Option<Ended>,
-    /// The undos of the steps that finished, as written, oldest first: run
-    /// newest first when a step breaks.
+    /// The undos of the steps that finished, oldest first: run newest
+    /// first when a step breaks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub undo: Vec<String>,
+    pub undo: Vec<Undo>,
+}
+
+/// What takes a finished step back, as written, and that step's
+/// `$output`, which it is given.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Undo {
+    pub step: String,
+    #[serde(default)]
+    pub output: Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -108,6 +117,10 @@ pub enum At {
         waiting: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         waiting_since: Option<String>,
+        /// Its own `$output` when it runs again: what it printed waiting,
+        /// or the message taken for it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<Value>,
     },
     /// A list run side by side.
     Side { entries: Vec<Entry> },
@@ -120,9 +133,9 @@ pub struct Entry {
     /// `None` once it is done.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<At>,
-    /// The fields it printed, to keep per entry those more than one did.
-    #[serde(default, skip_serializing_if = "Map::is_empty")]
-    pub writes: Map<String, Value>,
+    /// Its `$output` once it is done, for the list's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<Value>,
 }
 
 /// Everything the manager is given for one decision.
@@ -183,6 +196,10 @@ pub struct StepJob {
     /// Since when it has been waiting, when it runs again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_since: Option<String>,
+    /// Its own `$output` when it runs again: what it printed waiting, or
+    /// the message that came for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<Value>,
 }
 
 /// Where a run is, or how it ended, in a word: `running`, `waiting`,
@@ -231,6 +248,7 @@ pub fn decide(input: &StepInput) -> Result<StepAnswer, String> {
         rt: input.runtime.clone(),
         jobs: vec![],
         split: None,
+        broke: None,
         log: vec![],
         notes: vec![],
     };
@@ -272,12 +290,24 @@ struct Machine<'a> {
     jobs: Vec<StepJob>,
     /// An action with a list of args was reached: its name and the items.
     split: Option<(String, Vec<Value>)>,
+    /// A step that could not start, and why: the run breaks there once the
+    /// event is handled.
+    broke: Option<(String, String)>,
     log: Vec<String>,
     notes: Vec<Value>,
 }
 
 impl Machine<'_> {
     fn handle(&mut self) -> Result<(), String> {
+        self.event()?;
+        while let Some((why, step)) = self.broke.take() {
+            self.jobs.clear();
+            self.fail(&why, &step)?;
+        }
+        Ok(())
+    }
+
+    fn event(&mut self) -> Result<(), String> {
         let d = &self.i.event.data;
         match self.i.event.kind.as_str() {
             "run.started" if self.rt.at.is_none() => {
@@ -313,7 +343,7 @@ impl Machine<'_> {
         let root = self.i.workflow.clone();
         let mut p = vec![self.rt.phase.index()];
         self.rt.at = self.start_list(&root, true, 0, &mut p)?;
-        if self.rt.at.is_none() {
+        if self.rt.at.is_none() && self.broke.is_none() {
             self.list_done()?;
         }
         Ok(())
@@ -323,7 +353,9 @@ impl Machine<'_> {
     fn list_done(&mut self) -> Result<(), String> {
         match self.rt.phase {
             Phase::Steps => {
-                let failed = self.rt.state.get("success") == Some(&Value::Bool(false));
+                let no = Some(&Value::Bool(false));
+                let failed = self.rt.state.get("success") == no
+                    || flow::lookup(&self.rt.state, "output.success") == no;
                 self.rt.phase = if failed {
                     Phase::Failure
                 } else {
@@ -410,7 +442,7 @@ impl Machine<'_> {
             }
         }
         self.log.push(format!("undo {step}: {why}"));
-        self.finished(path, &Map::new())
+        self.finished(path, &Value::String(String::new()))
     }
 
     fn list(&self, workflow: &str, root: bool) -> Result<Vec<Step>, String> {
@@ -430,10 +462,11 @@ impl Machine<'_> {
                 .rev()
                 .map(|u| {
                     Ok(Step::One {
-                        name: flow::name(u)?,
-                        data: Map::new(),
+                        name: flow::name(&u.step)?,
+                        args: Value::Object(Map::new()),
                         on: None,
                         undo: None,
+                        strict: false,
                     })
                 })
                 .collect::<Result<_, String>>()?,
@@ -456,9 +489,17 @@ impl Machine<'_> {
     ) -> Result<Option<At>, String> {
         let steps = self.list(workflow, root)?;
         for (idx, step) in steps.iter().enumerate().skip(from) {
+            if root && self.rt.phase == Phase::Undo {
+                // an undo is given the result of the step it takes back
+                let u = &self.rt.undo[self.rt.undo.len() - 1 - idx];
+                self.rt.state.insert("output".into(), u.output.clone());
+            }
             path.push(idx);
             let node = self.start_step(step, path)?;
             path.pop();
+            if self.broke.is_some() {
+                return Ok(None);
+            }
             if let Some(n) = node {
                 return Ok(Some(At::Flow {
                     workflow: workflow.into(),
@@ -472,14 +513,28 @@ impl Machine<'_> {
 
     fn start_step(&mut self, step: &Step, path: &mut Vec<usize>) -> Result<Option<At>, String> {
         match step {
-            Step::One { name, data, on, .. } => {
+            Step::One {
+                name,
+                args,
+                on,
+                strict,
+                ..
+            } => {
                 if let Some(on) = on
                     && !self.holds(on)
                 {
                     self.skipped(&label(name));
                     return Ok(None);
                 }
-                self.start_name(name, data, path, false)
+                let data = match self.args(args, *strict) {
+                    Ok(data) => data,
+                    Err(why) => {
+                        // it cannot start: the run breaks here
+                        self.broke = Some((why, label(name)));
+                        return Ok(None);
+                    }
+                };
+                self.start_name(name, &data, path, false)
             }
             Step::Side(names) => {
                 let mut entries = vec![];
@@ -490,7 +545,7 @@ impl Machine<'_> {
                     entries.push(Entry {
                         name: label(n),
                         at,
-                        writes: Map::new(),
+                        output: None,
                     });
                 }
                 Ok(entries
@@ -517,6 +572,7 @@ impl Machine<'_> {
                     started: false,
                     waiting: false,
                     waiting_since: None,
+                    output: None,
                 };
                 let mine = self.rt.item.as_ref().is_some_and(|it| it.action == *name);
                 if let Some(Value::Array(items)) = self.i.args.get(name)
@@ -561,27 +617,52 @@ impl Machine<'_> {
         self.jobs.extend(jobs);
     }
 
-    /// The leaf at `path`, if it is one of this run's current actions,
-    /// recording `out` in the lists side by side above it.
-    fn leaf(&mut self, path: &[usize], out: &Map<String, Value>) -> Option<&mut At> {
+    /// The leaf at `path`, if it is one of this run's current actions.
+    fn leaf(&mut self, path: &[usize]) -> Option<&mut At> {
         let (&phase, rest) = path.split_first()?;
         if phase != self.rt.phase.index() {
             return None;
         }
-        let leaf = find(self.rt.at.as_mut()?, rest, out)?;
+        let leaf = find(self.rt.at.as_mut()?, rest)?;
         matches!(leaf, At::Action { started: true, .. }).then_some(leaf)
     }
 
-    fn finished(&mut self, path: &[usize], out: &Map<String, Value>) -> Result<(), String> {
-        if self.leaf(path, out).is_none() {
+    /// A step's args filled from the state, an object; unless the step is
+    /// strict, they join the state too.
+    fn args(&mut self, args: &Value, strict: bool) -> Result<Map<String, Value>, String> {
+        let data = match args {
+            Value::Object(a) => a
+                .iter()
+                .map(|(k, v)| (k.clone(), flow::fill(v, &self.rt.state)))
+                .collect(),
+            whole => match flow::fill(whole, &self.rt.state) {
+                Value::Object(a) => a,
+                other => {
+                    return Err(format!("args {whole} is not an object: {}", brief(&other)));
+                }
+            },
+        };
+        if data.contains_key("output") {
+            return Err("args: output is given by itero, the step before's result".into());
+        }
+        if !strict {
+            for (k, v) in &data {
+                self.rt.state.insert(k.clone(), v.clone());
+            }
+        }
+        Ok(data)
+    }
+
+    fn finished(&mut self, path: &[usize], out: &Value) -> Result<(), String> {
+        if self.leaf(path).is_none() {
             self.log
                 .push(format!("an answer for {path:?} ignored: not a step now"));
             return Ok(());
         }
-        merge(&mut self.rt.state, out);
+        self.rt.state.insert("output".into(), out.clone());
         let at = self.rt.at.take().expect("found");
         self.rt.at = self.advance(at, &path[1..], vec![path[0]], 0)?;
-        if self.rt.at.is_none() {
+        if self.rt.at.is_none() && self.broke.is_none() {
             self.list_done()?;
         }
         Ok(())
@@ -622,7 +703,10 @@ impl Machine<'_> {
                             && let Some(Step::One { undo: Some(u), .. }) =
                                 self.flows[&workflow].steps.get(step)
                         {
-                            self.rt.undo.push(written(u));
+                            self.rt.undo.push(Undo {
+                                step: written(u),
+                                output: self.rt.state.get("output").cloned().unwrap_or_default(),
+                            });
                         }
                         let mut p = prefix;
                         self.start_list(&workflow, depth == 0, step + 1, &mut p)
@@ -635,40 +719,27 @@ impl Machine<'_> {
                 p.push(j);
                 if let Some(at) = entries[j].at.take() {
                     entries[j].at = self.advance(at, &path[1..], p, depth + 1)?;
+                    if entries[j].at.is_none() {
+                        entries[j].output = self.rt.state.get("output").cloned();
+                    }
                 }
                 if entries.iter().any(|e| e.at.is_some()) {
                     return Ok(Some(At::Side { entries }));
                 }
-                self.keep_per_entry(&entries);
+                self.rt.state.insert("output".into(), side_output(&entries));
                 Ok(None)
             }
         }
     }
 
-    /// A field more than one entry printed is kept per entry.
-    fn keep_per_entry(&mut self, entries: &[Entry]) {
-        let mut by: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
-        for e in entries {
-            for (k, v) in &e.writes {
-                by.entry(k.clone())
-                    .or_default()
-                    .insert(e.name.clone(), v.clone());
-            }
-        }
-        for (k, values) in by {
-            if values.len() > 1 {
-                self.rt.state.insert(k, Value::Object(values));
-            }
-        }
-    }
-
-    fn waiting(&mut self, path: &[usize], out: &Map<String, Value>) -> Result<(), String> {
+    fn waiting(&mut self, path: &[usize], out: &Value) -> Result<(), String> {
         let now = stamp(self.now);
         let Some(At::Action {
             waiting,
             waiting_since,
+            output,
             ..
-        }) = self.leaf(path, out)
+        }) = self.leaf(path)
         else {
             self.log
                 .push(format!("a wait for {path:?} ignored: not a step now"));
@@ -676,12 +747,12 @@ impl Machine<'_> {
         };
         *waiting = true;
         waiting_since.get_or_insert(now);
-        merge(&mut self.rt.state, out);
+        *output = Some(out.clone());
         Ok(())
     }
 
     fn failed(&mut self, path: &[usize], why: &str) -> Result<(), String> {
-        let Some(At::Action { name, .. }) = self.leaf(path, &Map::new()) else {
+        let Some(At::Action { name, .. }) = self.leaf(path) else {
             self.log
                 .push(format!("a failure for {path:?} ignored: not a step now"));
             return Ok(());
@@ -747,14 +818,34 @@ impl Machine<'_> {
                 .push(format!("message {id} ignored: no step waits"));
             return Ok(());
         }
-        if !ours(&self.rt.state, &data) {
+        // taken by each waiting step whose output it agrees with: it is
+        // that step's output, and the step runs again
+        let item = self.rt.item.clone();
+        let mut jobs = vec![];
+        if let Some(at) = self.rt.at.as_mut() {
+            leaves(at, &mut vec![self.rt.phase.index()], &mut |leaf, p| {
+                if let At::Action {
+                    waiting: true,
+                    output,
+                    ..
+                } = leaf
+                    && output
+                        .as_ref()
+                        .and_then(Value::as_object)
+                        .is_some_and(|o| ours(o, &data))
+                {
+                    *output = Some(Value::Object(data.clone()));
+                    jobs.extend(job(leaf, p, item.as_ref()));
+                }
+            });
+        }
+        if jobs.is_empty() {
             self.log
                 .push(format!("message {id} ignored: not this run's"));
             return Ok(());
         }
-        merge(&mut self.rt.state, &data);
         self.rt.taken.push(id);
-        self.wake();
+        self.jobs.extend(jobs);
         Ok(())
     }
 
@@ -852,6 +943,7 @@ fn job(leaf: &mut At, path: &[usize], item: Option<&Item>) -> Option<StepJob> {
         started,
         waiting,
         waiting_since,
+        output,
     } = leaf
     else {
         return None;
@@ -867,6 +959,7 @@ fn job(leaf: &mut At, path: &[usize], item: Option<&Item>) -> Option<StepJob> {
             .filter(|it| it.action == *name)
             .map(|it| it.value.clone()),
         waiting_since: waiting_since.clone(),
+        output: output.clone(),
     })
 }
 
@@ -893,9 +986,8 @@ fn leaves(node: &mut At, path: &mut Vec<usize>, f: &mut dyn FnMut(&mut At, &[usi
     }
 }
 
-/// The action at `path` under `node`, recording `out` in each list side by
-/// side on the way.
-fn find<'n>(node: &'n mut At, path: &[usize], out: &Map<String, Value>) -> Option<&'n mut At> {
+/// The action at `path` under `node`.
+fn find<'n>(node: &'n mut At, path: &[usize]) -> Option<&'n mut At> {
     if matches!(node, At::Action { .. }) {
         return path.is_empty().then_some(node);
     }
@@ -905,35 +997,61 @@ fn find<'n>(node: &'n mut At, path: &[usize], out: &Map<String, Value>) -> Optio
             if first != *step {
                 return None;
             }
-            find(inner.as_mut()?, rest, out)
+            find(inner.as_mut()?, rest)
         }
-        At::Side { entries } => {
-            let Entry { at, writes, .. } = entries.get_mut(first)?;
-            let leaf = find(at.as_mut()?, rest, out)?;
-            for (k, v) in out {
-                if !v.is_null() {
-                    writes.insert(k.clone(), v.clone());
-                }
-            }
-            Some(leaf)
-        }
+        At::Side { entries } => find(entries.get_mut(first)?.at.as_mut()?, rest),
         At::Action { .. } => None,
     }
 }
 
-/// Adds `out` to the state; a field set to null is removed.
-fn merge(state: &mut Map<String, Value>, out: &Map<String, Value>) {
-    for (k, v) in out {
-        if v.is_null() {
-            state.remove(k);
-        } else {
-            state.insert(k.clone(), v.clone());
+/// The `$output` of a list side by side: the objects its entries printed,
+/// merged; a field more than one printed kept by entry name, and a value
+/// that is no object under its entry's name. One that printed nothing adds
+/// nothing.
+fn side_output(entries: &[Entry]) -> Value {
+    let mut by: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
+    let mut out = Map::new();
+    for e in entries {
+        match &e.output {
+            Some(Value::Object(o)) => {
+                for (k, v) in o {
+                    by.entry(k.clone())
+                        .or_default()
+                        .insert(e.name.clone(), v.clone());
+                }
+            }
+            None | Some(Value::Null) => {}
+            Some(Value::String(t)) if t.is_empty() => {}
+            Some(v) => {
+                out.insert(e.name.clone(), v.clone());
+            }
         }
+    }
+    for (k, values) in by {
+        let v = match values.len() {
+            1 => values
+                .into_iter()
+                .next()
+                .map(|(_, v)| v)
+                .unwrap_or_default(),
+            _ => Value::Object(values),
+        };
+        out.insert(k, v);
+    }
+    Value::Object(out)
+}
+
+/// A value, shortened for a message.
+fn brief(v: &Value) -> String {
+    let t = v.to_string();
+    match t.char_indices().nth(60) {
+        Some((i, _)) => format!("{}...", &t[..i]),
+        None => t,
     }
 }
 
-/// Whether a message is this run's: it shares a field with the state, and
-/// agrees with it on every field they share.
+/// Whether a message is a waiting step's: it shares a field with what the
+/// step printed, and agrees with it on every field they share.
 fn ours(state: &Map<String, Value>, data: &Map<String, Value>) -> bool {
     let mut shared = 0;
     for (k, v) in data {
@@ -952,11 +1070,10 @@ fn path(d: &Value) -> Result<Vec<usize>, String> {
         .map_err(|_| "an answer without its path".to_string())
 }
 
-fn output(d: &Value) -> Map<String, Value> {
+fn output(d: &Value) -> Value {
     d.get("output")
-        .and_then(Value::as_object)
         .cloned()
-        .unwrap_or_default()
+        .unwrap_or_else(|| Value::String(String::new()))
 }
 
 fn stamp(t: DateTime<FixedOffset>) -> String {

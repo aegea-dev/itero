@@ -107,13 +107,18 @@ impl Ws {
 }
 
 /// The order of the design: payment and stock side by side, the payment
-/// waiting for its provider, then the order's processing and a mail.
+/// waiting for its provider, then the order's processing and a mail. Each
+/// result is passed on as the next step's args.
 fn order(ws: &Ws) {
     ws.flow(
         "order",
         json!({
             "on": [{ "event": "order.placed" }],
-            "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"],
+            "steps": [
+                ["#check-payment", "#check-stock"],
+                {"order-process": {"args": "$output"}},
+                {"#send-mail": {"args": "$output"}}
+            ],
             "success": ["#log-result"],
             "failure": ["#log-result"],
             "error": ["#log-result"]
@@ -129,9 +134,10 @@ fn order(ws: &Ws) {
             ]
         }),
     );
+    // the payment's message, when it came, is its output
     ws.action(
         "check-payment",
-        r#"[ -n "$paid" ] && { echo "{\"paid\": $paid}"; exit 0; }
+        r#"case "$output" in *'"paid":true'*) echo '{"paid": true}'; exit 0 ;; esac
 echo '{"payment_ref": "ödeme-1"}'
 exit 75"#,
     );
@@ -156,8 +162,10 @@ fn an_order_waits_for_its_payment_then_ships() {
     ws.pass(NOW);
     assert_eq!(ws.statuses(), vec!["waiting"]);
     let run = &ws.runs()[0];
-    assert_eq!(run.runtime.state["stock"], true);
-    assert_eq!(run.runtime.state["payment_ref"], "ödeme-1");
+    assert!(
+        !run.runtime.state.contains_key("payment_ref"),
+        "nothing merges"
+    );
     // another order's payment: not this run's
     ws.emit(
         "payment.received",
@@ -216,7 +224,12 @@ fn a_message_reaches_every_waiting_run_it_matches() {
         "bekle",
         json!({"on": [{ "event": "order.placed" }], "steps": ["#stok-bekle", "#bitir"]}),
     );
-    ws.action("stok-bekle", r#"[ -n "$arrived" ] || exit 75"#);
+    // it waits for news of its product, which the news is matched on
+    ws.action(
+        "stok-bekle",
+        r#"case "$output" in *'"arrived":true'*) exit 0 ;; esac
+echo "{\"product\": \"$product\"}"; exit 75"#,
+    );
     ws.action("bitir", r#"echo "$order" >> biten.log"#);
     ws.emit("order.placed", json!({"order": 1, "product": "çay"}));
     ws.emit("order.placed", json!({"order": 2, "product": "çay"}));
@@ -251,7 +264,7 @@ fn a_value_comes_from_the_step_then_args_then_the_state() {
     ws.action("renk", r#"echo "$renk" >> renkler.log"#);
     ws.flow(
         "adım",
-        json!({"on": [{ "event": "renk.sor" }], "steps": [{"#renk": {"renk": "adımın"}}]}),
+        json!({"on": [{ "event": "renk.sor" }], "steps": [{"#renk": {"args": {"renk": "adımın"}}}]}),
     );
     ws.emit("renk.sor", json!({"renk": "durumun"}));
     ws.pass(NOW);
@@ -274,7 +287,7 @@ fn a_state_value_can_be_named_in_a_steps_data() {
     ws.action("selam", r#"echo "$kime" >> selam.log"#);
     ws.flow(
         "selam",
-        json!({"on": [{ "event": "selam.ver" }], "steps": [{"#selam": {"kime": "$müşteri"}}]}),
+        json!({"on": [{ "event": "selam.ver" }], "steps": [{"#selam": {"args": {"kime": "$müşteri"}}}]}),
     );
     ws.emit("selam.ver", json!({"müşteri": "Ayşe"}));
     ws.pass(NOW);
@@ -327,12 +340,12 @@ fn a_step_that_prints_as_it_goes_runs_past_its_quiet_limit() {
     );
     ws.action(
         "uzun",
-        "for i in 1 2 3 4 5 6 7 8 9 10; do echo \"adım $i\" >&2; sleep 0.25; done\necho '{\"bitti\": \"evet\"}'",
+        "for i in 1 2 3 4 5 6 7 8 9 10; do echo \"adım $i\" >&2; sleep 0.25; done\necho bitti",
     );
     ws.emit("order.placed", json!({"order": 1}));
     ws.pass(NOW);
     assert_eq!(ws.statuses(), vec!["done"]);
-    assert_eq!(ws.runs()[0].runtime.state["bitti"], "evet");
+    assert_eq!(ws.runs()[0].runtime.state["output"], "bitti");
 }
 
 #[test]
@@ -399,7 +412,8 @@ fn a_workflow_posts_its_result_from_its_success_and_error_steps() {
     );
     w.flow(
         "iyi",
-        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"], "success": ["#gönder"] }),
+        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"],
+                "success": [{ "#gönder": { "args": "$output" } }] }),
     );
     w.flow(
         "kötü",
@@ -496,7 +510,7 @@ fn a_big_value_only_a_step_gives_is_an_error_naming_it() {
     w.flow(
         "büyük",
         json!({ "on": [{ "event": "sayfa.geldi" }],
-                "steps": [{ "#ölç": { "sayfa": "ş".repeat(1_000_000) } }] }),
+                "steps": [{ "#ölç": { "args": { "sayfa": "ş".repeat(1_000_000) }, "strict": true } }] }),
     );
     w.emit("sayfa.geldi", json!({}));
     w.pass(NOW);
@@ -513,7 +527,7 @@ fn a_list_of_args_runs_the_rest_once_per_item() {
     let ws = Ws::new();
     ws.flow(
         "posta",
-        json!({"on": [{ "event": "posta.bak" }], "steps": ["#kutu", "#yaz"]}),
+        json!({"on": [{ "event": "posta.bak" }], "steps": ["#kutu", {"#yaz": {"args": "$output"}}]}),
     );
     ws.args(
         "kutu",
@@ -552,7 +566,7 @@ fn a_run_starts_with_its_workflows_settings_then_the_message() {
     ws.flow(
         "gözcü",
         json!({"on": [{ "event": "saat.geldi" }, { "$bölge": "avrupa" }],
-               "steps": [{ "#bak": { "liste": "$siteler" } }]}),
+               "steps": [{ "#bak": { "args": { "liste": "$siteler" } } }]}),
     );
     ws.action("bak", r#"echo "$liste $en_az" >> görülen.txt"#);
     ws.write(
@@ -687,16 +701,20 @@ fn a_workflow_off_or_outside_its_dates_starts_nothing() {
 #[test]
 fn past_the_runs_limit_messages_wait_their_turn() {
     let w = Ws::with(r#"{"limits": {"runs": 1}}"#);
-    w.action("bekle", "[ -n \"$tamam\" ] || exit 75");
+    w.action(
+        "bekle",
+        r#"case "$output" in *'"tamam":true'*) exit 0 ;; esac
+echo "{\"numara\": $numara}"; exit 75"#,
+    );
     w.flow(
         "sıra",
         json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#bekle"] }),
     );
-    w.emit("iş.geldi", json!({ "iş": 1 }));
-    w.emit("iş.geldi", json!({ "iş": 2 }));
+    w.emit("iş.geldi", json!({ "numara": 1 }));
+    w.emit("iş.geldi", json!({ "numara": 2 }));
     w.pass(NOW);
     assert_eq!(w.statuses(), ["waiting"], "the second waits for room");
-    w.emit("iş.bitti", json!({ "iş": 1, "tamam": true }));
+    w.emit("iş.bitti", json!({ "numara": 1, "tamam": true }));
     w.pass(NOW);
     assert_eq!(w.statuses(), ["done", "waiting"]);
 }

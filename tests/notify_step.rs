@@ -2,7 +2,7 @@
 //! `ITERO_NOTIFY_LOG` for the whole process.
 #![cfg(unix)]
 use itero::engine::worker::{self, Outcome, StepRun};
-use serde_json::Map;
+use serde_json::{Map, json};
 use std::path::PathBuf;
 
 #[test]
@@ -28,7 +28,7 @@ fn the_built_in_notify_shows_text() {
     };
     assert_eq!(
         worker::run_step(&step(&[("text", "Ayşe: Toplantı")])).unwrap(),
-        Outcome::Done(Map::new())
+        Outcome::Done(json!(""))
     );
     worker::run_step(&step(&[("title", "Sipariş"), ("text", "43 kargoda")])).unwrap();
     assert_eq!(
