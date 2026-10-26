@@ -1,8 +1,9 @@
 {
   "on": [{ "schedule": "*/10 * * * *" }],
   "steps": [
-    { "#check-disk": { "min_free": "$min_free" } },
+    { "#check-disk": { "args": { "min_free": "$min_free" } } },
     "#changed",
-    { "#notify": { "on": [{ "has": "$text" }], "title": "beacon: disk" } }
+    { "#notify": { "on": [{ "has": "$output.text" }],
+                  "args": { "title": "beacon: disk", "text": "$output.text" } } }
   ]
 }

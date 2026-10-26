@@ -24,10 +24,8 @@ describe("beacon", () => {
     ws.pass(at(1));
     const [run] = ws.runs();
     expect(run).toMatchObject({ workflow: "sites", status: "done" });
-    expect(ws.state(run)).toMatchObject({
-      status: { "http://127.0.0.1:9": "down" },
-      text: "http://127.0.0.1:9: down",
-    });
+    // #changed's result, passed to #notify as its text
+    expect(ws.output(run, "#changed")).toEqual({ text: "http://127.0.0.1:9: down" });
   });
 
   it("tells nothing when nothing changed", () => {
@@ -36,7 +34,7 @@ describe("beacon", () => {
     ws.pass(at(2));
     const runs = ws.runs();
     expect(runs).toHaveLength(2);
-    expect(ws.state(runs[0])).not.toHaveProperty("text");
+    expect(ws.output(runs[0], "#changed")).toEqual({});
   });
 
   it("tells again when a site's state changes", () => {
@@ -44,6 +42,6 @@ describe("beacon", () => {
     ws.pass(at(1));
     ws.manifest((m) => m.workflow.sites.settings.sites.push("http://127.0.0.1:19"));
     ws.pass(at(2));
-    expect(ws.state(ws.runs()[0]).text).toBe("http://127.0.0.1:19: down");
+    expect(ws.output(ws.runs()[0], "#changed").text).toBe("http://127.0.0.1:19: down");
   });
 });
