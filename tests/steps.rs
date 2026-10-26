@@ -650,3 +650,32 @@ fn a_step_that_cannot_start_starts_nothing_after_it() {
     assert!(!r.rt.state.contains_key("z"), "#üç never started");
     assert_eq!(r.rt.state["failed_step"], "#iki");
 }
+
+#[test]
+fn a_run_written_before_output_is_read_and_goes_on() {
+    // as 0.11 kept it: its undos by name, a list side by side with the
+    // fields each entry printed
+    let old = r##"{"phase": "steps", "state": {"ad": "deneme", "küme": "k-1"},
+                   "undo": ["#küme-sil"],
+                   "at": {"kind": "flow", "workflow": "küme", "step": 2,
+                          "inner": {"kind": "action", "name": "uygula", "started": true}}}"##;
+    let rt: Runtime = serde_json::from_str(old).unwrap();
+    assert_eq!(rt.undo.len(), 1);
+    assert_eq!(rt.undo[0].step, "#küme-sil");
+    assert_eq!(rt.undo[0].output, Value::Null);
+    let mut r = Run::new(&[("küme", cluster())]);
+    r.rt = rt;
+    let a = r.failed(
+        &StepJob {
+            path: vec![0, 2],
+            action: "uygula".into(),
+            version: None,
+            data: Map::new(),
+            item: None,
+            waiting_since: None,
+            output: None,
+        },
+        "exit 1",
+    );
+    assert_eq!(names(&a), vec!["küme-sil"]);
+}
