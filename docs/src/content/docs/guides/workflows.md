@@ -215,6 +215,8 @@ is given its count, which joins the state as `count`; `#notify` comes after
   `"$output"` is `524` when the step before printed `524`. `"$output.count"`
   is one field of an object (one level; `null` when it is not there).
   `"$$NAME"` is a secret ([Args and secrets](/guides/secrets/)).
+- Inside text, each `$name` is filled ([below](#a-state-variable-inside-text)):
+  `"$count files in ~/$folder"`.
 - `"args": "$output"` passes a whole object on: each field is an arg. A
   result that is not an object is an error there.
 - `output` is itero's: no arg has that name.
@@ -225,6 +227,32 @@ is given its count, which joins the state as `count`; `#notify` comes after
 - Conditions read `$output` as any value:
   `{ "#apply": { "on": [{ "$output": true }] } }` runs when the step before
   printed `true`.
+
+### A state variable inside text
+
+```json
+{ "#notify": { "args": { "text": "$output.count files in ~/$folder" } } }
+```
+
+With `{"count": 3}` as the step before's result and `folder` set to
+`Downloads`, the text is "3 files in ~/Downloads".
+
+- A state variable inside text is written as itself when it is text, as
+  JSON otherwise (`3`, `true`, `[1,2]`). One that is not there, `null` or
+  `""` is nothing: `"answer: $answer"` is "answer: ".
+- A name is a letter or `_`, then letters, digits or `_`; it ends at
+  anything else: `"$count."` is the count and a full stop.
+- A dot reads a field when the value is an object that has it; otherwise
+  the dot is text: `"$file.txt"`, with `file` set to `report`, is
+  "report.txt".
+- Texts inside lists and objects in args are filled too:
+  `"buttons": ["Ship $order", "Cancel"]`.
+- `\$` is a dollar sign, written `\\$` in a JSON file, as JSON has no `\$`:
+  `"text": "\\$count is not filled"`. A `$` that starts no name is itself
+  already: `"costs $5"`.
+- A secret is a whole value only, never part of a text: `"Bearer $$TOKEN"`
+  is refused by `itero check` and by a run, and so is a state variable
+  holding a secret, passed in args, inside text.
 
 ## How it ended: `success`, `failure`, `error`
 

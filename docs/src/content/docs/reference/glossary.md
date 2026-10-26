@@ -108,7 +108,8 @@ skipped.
 Values for an action: a step's `args` in its workflow, which join the
 run's state unless the step is `strict`; and the action's own,
 `action.<name>.args` in `itero.config.json`, set with `itero action args set`, where a list
-runs the step once per item. A connector has args too, `connector.<name>.args`:
+runs the step once per item. A `$name` in an arg's text is filled from
+the state. A connector has args too, `connector.<name>.args`:
 an object.
 
 ### settings

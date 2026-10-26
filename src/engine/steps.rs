@@ -659,9 +659,9 @@ impl Machine<'_> {
         let data = match args {
             Value::Object(a) => a
                 .iter()
-                .map(|(k, v)| (k.clone(), flow::fill(v, &self.rt.state)))
-                .collect(),
-            whole => match flow::fill(whole, &self.rt.state) {
+                .map(|(k, v)| Ok((k.clone(), flow::fill(v, &self.rt.state)?)))
+                .collect::<Result<_, String>>()?,
+            whole => match flow::fill(whole, &self.rt.state)? {
                 Value::Object(a) => a,
                 other => {
                     return Err(format!("args {whole} is not an object: {}", brief(&other)));

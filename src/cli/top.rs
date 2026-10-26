@@ -35,6 +35,14 @@ fn check_manifest(ws: &Workspace, flows: &[(String, Flow)]) -> Result<()> {
             wrong.push(why);
         }
     }
+    // with no state, filling an action's args refuses only a secret inside text
+    for (name, e) in ws.entries("action")? {
+        if let Some(args) = e.get("args")
+            && let Err(why) = crate::flow::fill(args, &serde_json::Map::new())
+        {
+            wrong.push(format!("action.{name}.args: {why}"));
+        }
+    }
     for (kind, known) in [
         (
             "workflow",

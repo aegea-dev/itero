@@ -1063,7 +1063,7 @@ fn env_name(n: &str) -> bool {
 fn resolve(v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
     match flow::secret_ref(v) {
         Some(n) => secret(n),
-        None => Ok(flow::fill(v, state)),
+        None => flow::fill(v, state),
     }
 }
 
@@ -1131,8 +1131,8 @@ pub fn connector_args(ws: &Workspace, connector: &str) -> Result<Map<String, Val
         if !env_name(k) {
             return Err(format!("{at}: not a name an environment variable can have"));
         }
-        if flow::state_ref(v).is_some() {
-            return Err(format!("{at}: a connector has no run state for {v}"));
+        if let Some(n) = flow::names_in(v).first() {
+            return Err(format!("{at}: a connector has no run state for ${n}"));
         }
     }
     Ok(args)

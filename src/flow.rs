@@ -215,14 +215,177 @@ pub fn lookup<'s>(state: &'s Map<String, Value>, name: &str) -> Option<&'s Value
     state.get(n)?.as_object()?.get(field)
 }
 
-/// A value of a step's args filled from the state: `"$name"` and
-/// `"$name.field"` are the state's, null when it has none; a secret,
-/// `"$$NAME"`, stays as written; anything else is itself.
-pub fn fill(v: &Value, state: &Map<String, Value>) -> Value {
-    match state_ref(v) {
-        Some(n) => lookup(state, n).cloned().unwrap_or(Value::Null),
-        None => v.clone(),
+/// A value of args filled from the state. A whole `"$name"` or
+/// `"$name.field"` is the state's value, with its type, null when it has
+/// none; a whole secret, `"$$NAME"`, stays as written, for the action
+/// alone. Inside text each name is filled ([`pieces`]); texts in lists and
+/// objects are filled too. A secret inside text is refused, and so is a
+/// state value holding one.
+pub fn fill(v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
+    match v {
+        Value::String(_) if secret_ref(v).is_some() => Ok(v.clone()),
+        Value::String(text) => match state_ref(v) {
+            // "$file.txt", file not an object: the dot is text
+            Some(n)
+                if !state.contains_key(n)
+                    && n.split_once('.').is_some_and(|(base, _)| {
+                        state
+                            .get(base)
+                            .is_some_and(|b| !b.is_object() && !b.is_null())
+                    }) =>
+            {
+                fill_text(text, state).map(Value::String)
+            }
+            Some(n) => Ok(lookup(state, n).cloned().unwrap_or(Value::Null)),
+            None => fill_text(text, state).map(Value::String),
+        },
+        Value::Array(items) => items
+            .iter()
+            .map(|i| fill(i, state))
+            .collect::<Result<_, _>>()
+            .map(Value::Array),
+        Value::Object(o) => o
+            .iter()
+            .map(|(k, i)| Ok((k.clone(), fill(i, state)?)))
+            .collect::<Result<_, String>>()
+            .map(Value::Object),
+        other => Ok(other.clone()),
     }
+}
+
+/// The state names a value of args uses, whole or inside its texts, at
+/// any depth.
+pub fn names_in(v: &Value) -> Vec<String> {
+    match v {
+        Value::String(_) if secret_ref(v).is_some() => vec![],
+        Value::String(_) if state_ref(v).is_some() => {
+            state_ref(v).map(str::to_string).into_iter().collect()
+        }
+        Value::String(text) => pieces(text)
+            .into_iter()
+            .filter_map(|p| match p {
+                Piece::Name { name, .. } => Some(name.to_string()),
+                _ => None,
+            })
+            .collect(),
+        Value::Array(items) => items.iter().flat_map(names_in).collect(),
+        Value::Object(o) => o.values().flat_map(names_in).collect(),
+        _ => vec![],
+    }
+}
+
+/// A piece of a text with names in it.
+#[derive(Debug, PartialEq)]
+pub enum Piece<'t> {
+    Text(String),
+    /// `$name`, or `$name.field`: a field when the value is an object that
+    /// has it, else the dot and the rest are text.
+    Name {
+        name: &'t str,
+        field: Option<&'t str>,
+    },
+    /// `$$NAME`, which no text may hold.
+    Secret(&'t str),
+}
+
+/// A text cut into its pieces: `\$` is a dollar sign, and a `$` that
+/// starts no name is itself.
+pub fn pieces(text: &str) -> Vec<Piece<'_>> {
+    let mut out = vec![];
+    let mut plain = String::new();
+    let mut rest = text;
+    while let Some(i) = rest.find(['\\', '$']) {
+        plain.push_str(&rest[..i]);
+        let at = &rest[i..];
+        if let Some(after) = at.strip_prefix("\\$") {
+            plain.push('$');
+            rest = after;
+            continue;
+        }
+        if let Some(after) = at.strip_prefix('\\') {
+            plain.push('\\');
+            rest = after;
+            continue;
+        }
+        let after = &at[1..];
+        let secret = after.strip_prefix('$').map(|s| (s, name_len(s)));
+        if let Some((s, n)) = secret
+            && n > 0
+        {
+            out.push(Piece::Text(std::mem::take(&mut plain)));
+            out.push(Piece::Secret(&s[..n]));
+            rest = &s[n..];
+            continue;
+        }
+        let n = name_len(after);
+        if n == 0 {
+            plain.push('$');
+            rest = after;
+            continue;
+        }
+        let (name, mut tail) = after.split_at(n);
+        let mut field = None;
+        if let Some(f) = tail.strip_prefix('.')
+            && name_len(f) > 0
+        {
+            field = Some(&f[..name_len(f)]);
+            tail = &f[name_len(f)..];
+        }
+        out.push(Piece::Text(std::mem::take(&mut plain)));
+        out.push(Piece::Name { name, field });
+        rest = tail;
+    }
+    plain.push_str(rest);
+    out.push(Piece::Text(plain));
+    out.retain(|p| *p != Piece::Text(String::new()));
+    out
+}
+
+fn fill_text(text: &str, state: &Map<String, Value>) -> Result<String, String> {
+    let refused = |what: String| format!("a secret is a whole value only: {what} inside text");
+    let mut out = String::new();
+    for p in pieces(text) {
+        match p {
+            Piece::Text(t) => out.push_str(&t),
+            Piece::Secret(n) => return Err(refused(format!("$${n}"))),
+            Piece::Name { name, field } => {
+                let whole = state.get(name);
+                let (v, rest) = match field {
+                    Some(f) => match whole.and_then(Value::as_object).and_then(|o| o.get(f)) {
+                        Some(v) => (Some(v), String::new()),
+                        None => (whole, format!(".{f}")),
+                    },
+                    None => (whole, String::new()),
+                };
+                match v {
+                    None | Some(Value::Null) => {}
+                    Some(v) if secret_ref(v).is_some() => {
+                        return Err(refused(format!(
+                            "${name}, which holds {}",
+                            v.as_str().unwrap_or("")
+                        )));
+                    }
+                    Some(Value::String(t)) => out.push_str(t),
+                    Some(other) => out.push_str(&other.to_string()),
+                }
+                out.push_str(&rest);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The length of the name `s` starts with: a letter or `_`, then letters,
+/// digits or `_`; 0 when it starts with none.
+fn name_len(s: &str) -> usize {
+    let mut chars = s.char_indices();
+    match chars.next() {
+        Some((_, c)) if c.is_alphabetic() || c == '_' => {}
+        _ => return 0,
+    }
+    chars
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+        .map_or(s.len(), |(i, _)| i)
 }
 
 /// Whether anything in `on` starts a run: an event, a schedule or a path.
@@ -381,7 +544,10 @@ fn step(v: &Value) -> Result<Step, String> {
                             "{k}: args: output is given by itero, the step before's result"
                         ));
                     }
-                    Value::Object(a)
+                    let a = Value::Object(a);
+                    // a secret inside text: with no state, only that is refused
+                    fill(&a, &Map::new()).map_err(|why| format!("{k}: args: {why}"))?;
+                    a
                 }
                 Some(a) if state_ref(&a).is_some() => a,
                 Some(_) => {
@@ -519,16 +685,26 @@ impl Flow {
     }
 }
 
-/// `"$$NAME"`: the name of the environment variable or secret it stands for.
+/// `"$$NAME"`, the whole value: the name of the environment variable or
+/// secret it stands for.
 pub fn secret_ref(v: &Value) -> Option<&str> {
-    v.as_str()?.strip_prefix("$$").filter(|n| !n.is_empty())
+    let n = v.as_str()?.strip_prefix("$$")?;
+    (!n.is_empty() && name_len(n) == n.len()).then_some(n)
 }
 
-/// `"$name"`: the state value it stands for.
+/// `"$name"` or `"$name.field"`, the whole value: the state value it
+/// stands for.
 pub fn state_ref(v: &Value) -> Option<&str> {
-    let s = v.as_str()?;
-    if s.starts_with("$$") {
+    let s = v.as_str()?.strip_prefix('$')?;
+    let n = name_len(s);
+    if n == 0 {
         return None;
     }
-    s.strip_prefix('$').filter(|n| !n.is_empty())
+    match &s[n..] {
+        "" => Some(s),
+        dot => {
+            let f = dot.strip_prefix('.')?;
+            (!f.is_empty() && name_len(f) == f.len()).then_some(s)
+        }
+    }
 }
