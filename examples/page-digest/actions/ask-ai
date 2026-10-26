@@ -1,6 +1,6 @@
 #!/bin/sh
-# Asks an AI assistant (Anthropic's API) $prompt about $page: {"text": ...}.
-# The key goes to curl on stdin, never on its command line.
+# Asks an AI assistant (Anthropic's API) $prompt about $page: the answer,
+# its result. The key goes to curl on stdin, never on its command line.
 body=$(mktemp) || exit 1
 trap 'rm -f "$body"' EXIT
 jq -n --arg q "$prompt
@@ -11,4 +11,4 @@ printf 'header = "x-api-key: %s"\n' "$key" |
   curl -fsS --max-time 120 -K - https://api.anthropic.com/v1/messages \
     -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' \
     --data-binary @"$body" |
-  jq '{text: .content[0].text}'
+  jq -r '.content[0].text'

@@ -105,11 +105,11 @@ fn example(d: &Path, workflow: &str, port: u16, user: &str, host: &str) -> PathB
     let mut f: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     let action = format!("#{}", workflow.replace("-alert", "-check"));
-    let with = &mut f["steps"][0][action.as_str()];
-    with["host"] = host.into();
-    with["port"] = port.into();
-    with["tls"] = false.into();
-    with["user"] = user.into();
+    let args = &mut f["steps"][0][action.as_str()]["args"];
+    args["host"] = host.into();
+    args["port"] = port.into();
+    args["tls"] = false.into();
+    args["user"] = user.into();
     std::fs::write(&file, serde_json::to_string_pretty(&f).unwrap()).unwrap();
     ws
 }

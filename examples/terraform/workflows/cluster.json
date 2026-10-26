@@ -2,13 +2,14 @@
   "on": [{ "event": "cluster.requested" }, { "has": "$name" }],
   "steps": [
     { "#cluster-create": { "undo": "#cluster-delete" } },
-    "#tf-plan",
+    { "#tf-plan": { "args": "$output" } },
     "#check-plan",
     "#tf-apply",
     "#web-check"
   ],
   "error": [
-    { "#notify": { "title": "$name", "text": "$why" } },
-    { "#notify": { "on": [{ "has": "$undo_failed" }], "title": "$name is left", "text": "$undo_failed" } }
+    { "#notify": { "args": { "title": "$name", "text": "$why" } } },
+    { "#notify": { "on": [{ "has": "$undo_failed" }],
+                   "args": { "title": "$name is left", "text": "$undo_failed" } } }
   ]
 }

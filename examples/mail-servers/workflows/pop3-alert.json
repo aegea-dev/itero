@@ -1,8 +1,9 @@
 {
   "on": [{ "schedule": "* * * * *" }],
   "steps": [
-    { "#pop3-check": { "host": "pop.example.com", "port": 995, "tls": true,
-                       "user": "me@example.com", "password": "$$POP3_PASS" } },
-    { "#notify": { "on": [{ "has": "$text" }] } }
+    { "#pop3-check": { "args": { "host": "pop.example.com", "port": 995, "tls": true,
+                                 "user": "me@example.com", "password": "$$POP3_PASS" },
+                       "strict": true } },
+    { "#notify": { "on": [{ "has": "$output.text" }], "args": "$output" } }
   ]
 }
