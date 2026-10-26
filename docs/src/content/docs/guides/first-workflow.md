@@ -60,6 +60,7 @@ its result, `true` or `false`: the next step has it as `$output`.
 |---|---|
 | `"$url"` | the state's `url` |
 | `"$output"` | the step before's result |
+| `"$url is down"` | a text with the state's `url` in it |
 | `{ "$output": false }` | holds when the step before printed exactly `false` |
 | `{ "has": "$url" }` | holds when there is a `url` |
 | `"$$TOKEN"` | the secret `TOKEN` ([Args and secrets](/guides/secrets/)) |
