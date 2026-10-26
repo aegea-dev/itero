@@ -7,7 +7,8 @@ workflow says so; an action that prints a plain `3` fails. This plan makes
 every step's result one field, `$output`, overwritten by the next step,
 and the workflow passes on what it keeps, by name, as a step's args.
 
-Status: spec decided with the owner (2026-10-26); building.
+Status: spec decided with the owner (2026-10-26); built on its branch,
+with the examples and the docs.
 
 ## Spec
 
@@ -51,11 +52,15 @@ Status: spec decided with the owner (2026-10-26); building.
   a field that is not there is `null`. Any `"$name.field"` reads the same
   way.
 - **`"args": "$output"` passes a whole object:** each of its fields
-  becomes an arg (an error when `$output` is not an object).
+  becomes an arg. When it is not an object, or has a field `output`, the
+  step cannot start: the run breaks there, with `why` saying so, and no
+  later step starts.
 - **A step's args join the run's state before it runs**, the newer over
   the older, so every later step sees them.
 - **`"strict": true` keeps a step's args to that step:** its action gets
   them, and the state does not. For values later steps should not see.
+  On a workflow's step it is an error for now: its args would have to
+  reach that workflow's actions without the state.
 - **Secrets:** an arg `"$$NAME"` joins the state as any arg does, unless
   the step is strict. (Today a secret reaches only its own step's
   environment, never the state.)
@@ -81,7 +86,9 @@ Then `{"order-process": {"args": "$output"}}` passes both.
   step's `$output` object on the fields they share, and shares at least
   one (today it is checked against the whole state).
 - **The message becomes that step's `$output`** when it comes, and the
-  step runs again with it.
+  step runs again with it. Only the steps it matched run again; the
+  hourly retry runs every waiting step, each with what it printed as its
+  `$output`.
 - **`#notify` with `$wait` or `$buttons`** prints `{"notification":
   "<id>"}`; the click (`itero.notification.clicked`, with `notification`
   and `answer`) is taken by that step, and `#notify` finishes with the
