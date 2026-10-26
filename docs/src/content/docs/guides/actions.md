@@ -1,6 +1,6 @@
 ---
 title: Actions
-description: An executable file that reads its values from the environment, prints JSON, and says with its exit code how it went.
+description: An executable file that reads its values from the environment, prints its result, and says with its exit code how it went.
 ---
 
 An action is an executable file in `actions/` or any subfolder of it, in
@@ -14,19 +14,20 @@ beside actions; they are not actions.
 
 ```sh
 #!/bin/sh
-# hands $order to the carrier
-curl -fsS "https://carrier.example.com/ship?order=$order" | jq '{tracking: .id}'
+# hands $order to the carrier; prints its tracking number
+curl -fsS "https://carrier.example.com/ship?order=$order" | jq -r '.id'
 ```
 
 ## What it gets
 
 - **Its values, as environment variables**: `$order`, `$host`. A value is
-  the first found in the step's data, the action's args, then the run's
-  state ([Args and secrets](/guides/secrets/)). A value that is not text
-  arrives as JSON text. A name that cannot be an environment variable,
-  and a state value over 64 KB (a whole web page, say), are on stdin
-  only: the system would refuse to start the action with them. A value
-  that big in a step's data or args is an error naming it.
+  the first found in the step's args, the action's own args, then the
+  run's state ([Args and secrets](/guides/secrets/)), where `$output` is
+  the step before's result. A value that is not text arrives as JSON
+  text. A name that cannot be an environment variable, and a state value
+  over 64 KB (a whole web page, say), are on stdin only: the system would
+  refuse to start the action with them. A value that big in a step's
+  args is an error naming it.
 - **The run's whole state, as JSON on stdin.**
 - **`$ITERO_MEMORY`**: a file it may read and write, kept between runs, one
   per workflow (for "the last mail seen").
@@ -37,13 +38,18 @@ It runs in the workspace, with the daemon's own `itero` first on its
 
 ## What it says
 
-It prints one JSON object, whose fields join the run's state; a field set
-to `null` is removed. Printing nothing adds nothing. Its exit code:
+What it prints is its result, the next step's `$output`: read as JSON
+when it is JSON (`3`, `true`, `[1, 2]`, `{"count": 3}`), else kept as
+text, trimmed. A plain command's output is enough (`ls | wc -l`), and an
+object carries several values. Printing nothing is `""`. Nothing it prints
+joins the state by itself: the workflow passes on what it keeps, as a
+later step's args ([Workflows](/guides/workflows/#a-steps-result-output)).
+Its exit code:
 
 | Exit | Means |
 |---|---|
 | `0` | done |
-| `75` | not yet: what it printed joins the state, and the run waits; the step runs again when a matching event comes, or every hour |
+| `75` | not yet: the run waits. The step runs again every hour, or when an event comes that agrees with what it printed (an object, such as `{"payment_ref": "pay-1"}`); then that event is its `$output` |
 | anything else | an error: the end of its stderr says why |
 
 A step may print nothing for 10 minutes, `quiet` in
@@ -77,7 +83,7 @@ secrets are the action's, whatever the version.
 | `$data` | an object a click on it passes on, as `data` |
 
 ```json
-{ "#notify": { "title": "Backup", "subtitle": "disk 2", "text": "$why", "sound": "Basso" } }
+{ "#notify": { "args": { "title": "Backup", "subtitle": "disk 2", "text": "$why", "sound": "Basso" } } }
 ```
 
 On macOS, each click on a notification from `#notify` is an event,
@@ -85,14 +91,15 @@ On macOS, each click on a notification from `#notify` is an event,
 the button's label, `open` for a click on the notification itself, or
 `dismissed` when one that waits is closed without one. A workflow can start
 on it ([Events from the daemon](/guides/maintenance/#events-from-the-daemon)),
-and a step with `$buttons` or `$wait` waits for it, then the run goes on
-with `$answer` in its state:
+and a step with `$buttons` or `$wait` waits for it; then the click is
+its `$output`, and the run goes on:
 
 ```json
 { "steps": [
     "#plan",
-    { "#notify": { "title": "Deploy?", "text": "$summary", "buttons": ["Deploy", "Cancel"] } },
-    { "#apply": { "on": [{ "$answer": "Deploy" }] } }
+    { "#notify": { "args": { "title": "Deploy?", "text": "$output",
+                             "buttons": ["Deploy", "Cancel"] } } },
+    { "#apply": { "on": [{ "$output.answer": "Deploy" }] } }
 ] }
 ```
 
@@ -117,7 +124,7 @@ The first line picks the language. A Python action:
 #!/usr/bin/env python3
 import json, os, sys
 state = json.load(sys.stdin)
-print(json.dumps({"total": state["price"] * state["count"]}))
+print(state["price"] * state["count"])
 ```
 
 An action that uses packages should bring them, so it runs the same on any
@@ -183,14 +190,15 @@ into its project before it starts the program.
 ### Docker
 
 A program that comes as an image runs in it, with Docker pulling it the
-first time. `examples/languages`'s `docker/to-markdown` turns a page's HTML
-into Markdown with pandoc, reading the page from the state on stdin:
+first time. `examples/languages`'s `docker/to-markdown` turns a page's HTML,
+the step before's result, into Markdown with pandoc, reading it from the
+state on stdin:
 
 ```sh
 #!/bin/sh
-jq -r '.page' |
+jq -r '.output' |
   docker run --rm -i pandoc/minimal:3.11.0 -f html -t gfm-raw_html --wrap=none |
-  jq -Rs '{page: .[0:20000]}'
+  jq -Rrs '.[0:20000]'
 ```
 
 Pin the image's version, as here, so a new release does not change what

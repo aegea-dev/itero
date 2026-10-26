@@ -1,6 +1,6 @@
 ---
 title: Workflows
-description: on, meta, steps, side by side, conditions, workflows as steps, and the lists run at the end.
+description: on, meta, steps, a step's result and args, side by side, conditions, workflows as steps, and the lists run at the end.
 ---
 
 A workflow says when something should happen, and what to do then,
@@ -17,19 +17,21 @@ These are from the `examples/` folder, each a workspace you can run.
 {
   "on": [{ "schedule": "* * * * *" }],
   "steps": [
-    { "#check-sites": { "sites": "$sites" } },
+    { "#check-sites": { "args": { "sites": "$sites" } } },
     "#changed",
-    { "#notify": { "on": [{ "has": "$text" }], "title": "beacon: sites" } }
+    { "#notify": { "on": [{ "has": "$output.text" }],
+                   "args": { "title": "beacon: sites", "text": "$output.text" } } }
   ]
 }
 ```
 
 - `on`: every minute.
 - `#check-sites` fetches each site in `$sites` (the workflow's
-  [settings](#settings)) and says which are down.
-- `#changed` keeps only what changed since the last run, as `$text`.
-- `#notify` shows a notification, but only when there is a `$text`: no
-  news, no notification.
+  [settings](#settings)) and says which are down: its result.
+- `#changed` reads that result as `$output`, and keeps only what changed
+  since the last run, as `{"text": ...}`.
+- `#notify` shows that text, but only when there is one: no news, no
+  notification.
 
 **A notification for each new mail** (`examples/mail-alert`):
 
@@ -48,20 +50,24 @@ These are from the `examples/` folder, each a workspace you can run.
 {
   "on": [{ "schedule": "0 9 * * *" }],
   "steps": [
-    { "#fetch": { "url": "https://example.com/news" } },
-    { "#ask-ai": { "prompt": "Summarize this page in 5 bullets.", "key": "$$ANTHROPIC_KEY" } },
-    { "#send-mail": { "host": "smtp.example.com", "user": "me@example.com",
-                      "password": "$$SMTP_PASS", "to": "me@example.com",
-                      "subject": "Daily digest" } }
+    { "#fetch": { "args": { "url": "https://example.com/news" } } },
+    { "#ask-ai": { "args": { "prompt": "Summarize this page in 5 bullets.",
+                             "key": "$$ANTHROPIC_KEY", "page": "$output" },
+                   "strict": true } },
+    { "#send-mail": { "args": { "host": "smtp.example.com", "user": "me@example.com",
+                                "password": "$$SMTP_PASS", "to": "me@example.com",
+                                "subject": "Daily digest", "text": "$output" },
+                      "strict": true } }
   ]
 }
 ```
 
 - `on`: every day at 09:00.
-- `#fetch` gets the page; what it prints joins the state for the next step.
+- `#fetch` gets the page: its result, `$output`, for the next step.
 - `#ask-ai` summarizes it, with the API key kept as a secret
   (`$$ANTHROPIC_KEY`, [Args and secrets](/guides/secrets/)).
-- `#send-mail` mails the summary, its password a secret too.
+- `#send-mail` mails the summary, its password a secret too. Both steps
+  are `strict`: the page, the key and the password reach no later step.
 
 **An order** (`examples/order`, `workflows/order.json`):
 
@@ -70,8 +76,8 @@ These are from the `examples/` folder, each a workspace you can run.
   "on": [{ "event": "order.placed" }],
   "steps": [
     ["#check-payment", "#check-stock"],
-    "order-process",
-    "#send-mail"
+    { "order-process": { "args": "$output" } },
+    { "#send-mail": { "args": "$output" } }
   ],
   "success": ["#log-result"],
   "failure": ["#log-result"],
@@ -84,8 +90,9 @@ These are from the `examples/` folder, each a workspace you can run.
 - `["#check-payment", "#check-stock"]` run side by side; the next step
   waits for both.
 - `order-process` is another workflow, used as a step: it ships, reminds
-  or cancels, depending on payment and stock ([below](#what-it-does-steps)).
-- `#send-mail` tells the customer.
+  or cancels, depending on payment and stock ([below](#what-it-does-steps)),
+  which the two checks printed and the step passes on as its args.
+- `#send-mail` tells the customer, with what `order-process` gave.
 - At the end, `success`, `failure` or `error` runs, by how it went
   ([How it ended](#how-it-ended-success-failure-error)).
 
@@ -99,6 +106,7 @@ A list of objects, each saying one thing:
 | `{ "schedule": "0 9 * * *" }` | a schedule starts a run (cron, the machine's local time) |
 | `{ "path": "~/Pictures/inbox" }` | a change to this file or folder starts a run ([Watching files](/guides/connectors/#watching-files)) |
 | `{ "$paid": true }` | condition: the state's `paid` is exactly `true` |
+| `{ "$output.answer": "Yes" }` | condition: one field of a value, here the step before's result |
 | `{ "has": "$order" }` | condition: `order` is in the state |
 | `{ "has": ["$order", "$$API"] }` | condition: both are there; `$$API` is an environment variable or a secret |
 
@@ -153,20 +161,19 @@ Steps run in order. A step is:
 - **an action**, `"#check-payment"`: an executable in `actions/`. `#name`
   is its latest version, `#name@0.2` a pinned one.
 - **a workflow**, `"order-process"`: its steps run there, with the same
-  state.
+  state. Its result is its last step's.
 - **a list**, `["#check-payment", "stock-check"]`: those run side by side,
   actions or workflows, and the next step waits for all of them.
-- **an object**: a name with data for it, and when it runs:
+- **an object**: a name with its args, and when it runs:
 
   ```json
-  { "#ship": { "carrier": "PTT Kargo", "on": [{ "$paid": true, "$stock": true }] } }
+  { "#ship": { "args": { "carrier": "PTT Kargo" }, "on": [{ "$paid": true, "$stock": true }] } }
   ```
 
-  The step runs only if its `on` holds; otherwise it is skipped. `undo`
-  names what takes it back ([Undo](#undo-taking-steps-back)). The other
-  keys are data for the action. A value that is exactly `"$name"` takes the
-  state's value, `"$$NAME"` the secret's: `{"#ask-ai": {"key":
-  "$$ANTHROPIC_KEY"}}`.
+  The step runs only if its `on` holds; otherwise it is skipped. `args`
+  are values for it ([below](#a-steps-result-output)), `undo` names what
+  takes it back ([Undo](#undo-taking-steps-back)), and `strict` keeps its
+  args to itself. It has no other keys.
 
 So branches are steps with conditions. `order-process` picks one of four:
 
@@ -182,6 +189,43 @@ So branches are steps with conditions. `order-process` picks one of four:
 }
 ```
 
+## A step's result: `$output`
+
+What a step prints is its result, `$output` to the next step: a number,
+`true`, a list, an object or text ([Actions](/guides/actions/#what-it-says)).
+The next step's result takes its place, so a step reads only the result
+of the one just before it. A step skipped by its `on` leaves it as it was.
+
+To keep a result, pass it on as a step's **args**. A step's args join the
+run's state when it starts, so every later step sees them too:
+
+```json
+{ "steps": [
+    "#count-files",
+    { "#archive": { "args": { "count": "$output.count" } } },
+    { "#notify": { "args": { "title": "Downloads", "text": "$count" } } }
+] }
+```
+
+`#count-files` prints `{"count": 3, "folder": "Downloads"}`. `#archive`
+is given its count, which joins the state as `count`; `#notify` comes after
+`#archive`, whose result is now `$output`, and still has `$count`.
+
+- A value that is exactly `"$name"` takes the state's value, with its type:
+  `"$output"` is `524` when the step before printed `524`. `"$output.count"`
+  is one field of an object (one level; `null` when it is not there).
+  `"$$NAME"` is a secret ([Args and secrets](/guides/secrets/)).
+- `"args": "$output"` passes a whole object on: each field is an arg. A
+  result that is not an object is an error there.
+- `output` is itero's: no arg has that name.
+- `"strict": true` keeps a step's args to that step: its action gets
+  them, and the state does not. For values no later step should see,
+  such as a password: a secret in args otherwise joins the state as its
+  name, `$$NAME`, and later actions get its value.
+- Conditions read `$output` as any value:
+  `{ "#apply": { "on": [{ "$output": true }] } }` runs when the step before
+  printed `true`.
+
 ## How it ended: `success`, `failure`, `error`
 
 Steps run at the end, by the outcome:
@@ -189,8 +233,9 @@ Steps run at the end, by the outcome:
 - **error**: something broke: an action exited with a code other than 0
   or 75, a step was lost three times, or a run waited too long. The steps
   stop at once and `error` runs.
-- **failure**: the steps all ran, and the state says `"success": false`, a
-  business outcome such as out of stock. `failure` runs.
+- **failure**: the steps all ran, and the state says `"success": false`
+  (passed on as an arg), or the last step's result does: a business
+  outcome such as out of stock. `failure` runs.
 - **success**: anything else.
 
 These steps get `$why` and `$failed_step` (and `$undo_failed` when an
@@ -209,11 +254,13 @@ steps post the result there. From `examples/notify-api`:
 
 ```json
 { "on": [{ "event": "app.notify" }], "steps": ["#notify"], "timeout": "1h",
-  "success": ["#post-answer"], "failure": ["#post-answer"], "error": ["#post-answer"] }
+  "success": [{ "#post-answer": { "args": "$output" } }],
+  "failure": ["#post-answer"], "error": ["#post-answer"] }
 ```
 
-`actions/post-answer` posts the run's state, which an action gets on its
-stdin:
+`#notify`'s result is the click; `success` passes it on, so it joins the
+state, and `actions/post-answer` posts the run's state, which an action
+gets on its stdin:
 
 ```sh
 #!/bin/sh
@@ -233,7 +280,7 @@ its entry in `itero.config.json`, set with
 
 ```json
 { "on": [{ "schedule": "* * * * *" }],
-  "steps": [{ "#check-sites": { "sites": "$sites" } }, "#changed", "#notify"] }
+  "steps": [{ "#check-sites": { "args": { "sites": "$sites" } } }, "#changed", "#notify"] }
 ```
 
 ```sh
@@ -258,21 +305,22 @@ Args are an action's settings; settings are a workflow's.
 ## Undo: taking steps back
 
 A step that makes something (a cluster, an order, a booking) can name
-what takes it back, with `undo` in its data:
+what takes it back, with `undo`:
 
 ```json
 {
   "on": [{ "event": "cluster.requested" }],
   "steps": [
     { "#cluster-create": { "undo": "#cluster-delete" } },
-    "#tf-plan",
+    { "#tf-plan": { "args": "$output" } },
     "#check-plan",
     "#tf-apply",
     "#web-check"
   ],
   "error": [
-    { "#notify": { "title": "$name", "text": "$why" } },
-    { "#notify": { "on": [{ "has": "$undo_failed" }], "title": "$name is left", "text": "$undo_failed" } }
+    { "#notify": { "args": { "title": "$name", "text": "$why" } } },
+    { "#notify": { "on": [{ "has": "$undo_failed" }],
+                   "args": { "title": "$name is left", "text": "$undo_failed" } } }
   ]
 }
 ```
@@ -284,7 +332,8 @@ it, then the notification. If `#cluster-create` breaks: nothing to undo.
 This is `examples/terraform`'s `cluster` workflow.
 
 - An undo is an action or a workflow. It gets the state, with `$why` and
-  `$failed_step`.
+  `$failed_step`, and the result of the step it takes back as `$output`
+  (`#cluster-create`'s cluster, whatever ran after it).
 - Only steps that finished are undone: a step that broke half way cleans
   up after itself, or the `error` list does.
 - A workflow used as a step can have an undo, and its own steps can too:
@@ -299,16 +348,18 @@ This is `examples/terraform`'s `cluster` workflow.
 ## Waiting: `timeout`
 
 A step that exits 75 is not ready yet: the run waits for an event that
-matches it ([What an event does](/guides/connectors/#what-an-event-does)). `timeout` is how
-long a run may wait, like `"2h"`; unless given, a day.
+agrees with what the step printed ([What an event does](/guides/connectors/#what-an-event-does)).
+That event is then the step's `$output`, and it runs again. `timeout` is
+how long a run may wait, like `"2h"`; unless given, a day.
 
-## Two fields printed side by side
+## The result of steps side by side
 
-Steps side by side start from the same state. A field only one of them
-prints joins the state as it is; one that both print is kept per step:
+Steps side by side start from the same state, and give one `$output`: the
+objects they print, merged. A field more than one prints is kept by step,
+and a result that is not an object is kept under its step's name:
 
 ```json
-"status": { "#check-payment": "ok", "stock-check": "low" }
+{ "paid": true, "stock": false, "status": { "#check-payment": "ok", "stock-check": "low" } }
 ```
 
 All keys: [Workflow files](/reference/workflow-file/).

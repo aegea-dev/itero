@@ -42,8 +42,8 @@ and a workflow, `workflows/beacon.json`:
 
 ```json
 { "on": [{ "schedule": "* * * * *" }],
-  "steps": [{ "#check-site": { "url": "http://localhost:3000" } }],
-  "error": [{ "#notify": { "title": "beacon", "text": "$why" } }] }
+  "steps": [{ "#check-site": { "args": { "url": "http://localhost:3000" } } }],
+  "error": [{ "#notify": { "args": { "title": "beacon", "text": "$why" } } }] }
 ```
 
 With `{}` in an `itero.config.json` beside them, `itero daemon` runs it. The
@@ -94,15 +94,16 @@ A model is one more program to chain, used only where judgment is needed:
 {
   "on": [{ "event": "mail.received" }],
   "steps": [
-    { "#ai": { "ask": "Summarize this mail in one line, and rate it: important, normal or spam." } },
-    { "#notify": { "on": [{ "$rating": "important" }], "title": "$from", "text": "$summary" } }
+    { "#ai": { "args": { "ask": "Summarize this mail in one line, and rate it: important, normal or spam." } } },
+    { "#notify": { "on": [{ "$output.rating": "important" }],
+                   "args": { "title": "$from", "text": "$output.summary" } } }
   ]
 }
 ```
 
 A mail arrives; `#ai`, a few lines of shell around `curl`, asks a model to
-read and rate it, and prints `{"summary": "...", "rating": "important"}`
-into the run's state. The rating decides the rest: you hear only about
+read and rate it, and prints `{"summary": "...", "rating": "important"}`,
+its result. The rating decides the rest: you hear only about
 the important mails, and the spam and the ads pass quietly.
 
 ## Why itero
@@ -110,7 +111,7 @@ the important mails, and the spam and the ads pass quietly.
 <CardGrid>
 	<Card title="Anything is a step" icon="seti:shell">
 		An action is an executable in any language. It reads its values as
-		environment variables, prints JSON, and its exit code says how it
+		environment variables, prints its result, and its exit code says how it
 		went: done, not yet, or broken.
 	</Card>
 	<Card title="Plain files in git" icon="document">
