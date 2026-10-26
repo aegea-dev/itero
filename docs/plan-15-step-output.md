@@ -182,6 +182,8 @@ its `bun test`:
   the workflow passes it on as args to keep it.
 - A step's args join the state.
 - `output` is reserved.
+- Conditions read `$output` as any field: `{"on": [{"$output": true}]}`;
+  another name holds only when it was passed on as args.
 
 ## Open
 
