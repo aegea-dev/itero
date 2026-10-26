@@ -7,8 +7,7 @@ workflow says so; an action that prints a plain `3` fails. This plan makes
 every step's result one field, `$output`, overwritten by the next step,
 and the workflow passes on what it keeps, by name, as a step's args.
 
-Status: spec for the owner's review. Points marked **(suggestion)** are
-mine and wait for a yes; the rest the owner decided (Decided, below).
+Status: spec decided with the owner (2026-10-26); building.
 
 ## Spec
 
@@ -25,8 +24,7 @@ mine and wait for a yes; the rest the owner decided (Decided, below).
 - **`$output` is overwritten at every step's end**, so a step reads only
   the result of the step just before it. To keep a result for later, the
   workflow passes it on as args (below).
-- A step skipped by its `on` leaves `$output` as it was, since nothing ran
-  **(suggestion)**.
+- **A step skipped by its `on` leaves `$output` as it was:** nothing ran.
 - **`output` is reserved:** args may not name it, and `itero check` says
   so.
 - **Conditions read `$output` as any field:** `{"#ship": {"on":
@@ -43,40 +41,37 @@ mine and wait for a yes; the rest the owner decided (Decided, below).
 ]}
 ```
 
-- **A step's values go under `args`,** next to `on` and `undo`; a step has
-  these three keys and no others **(suggestion: an object, as an entry's
-  `args` in `itero.config.json` already is, rather than a list of `name`
-  and `value`; today the values sit straight in the step object)**.
+- **A step's values go under `args`, an object,** as an entry's `args` in
+  `itero.config.json` already is. A step object has `args`, `on`, `undo`
+  and `strict`, and no other key; today's values straight in the step
+  object are an error that names `args`.
 - **A value `"$name"` is the state's, with its type**: `"file_count":
   "$output"` is the number `524`. `"$$NAME"` stays a secret.
+- **`"$output.count"` is one field of an object**, typed; one level only;
+  a field that is not there is `null`. Any `"$name.field"` reads the same
+  way.
 - **`"args": "$output"` passes a whole object:** each of its fields
   becomes an arg (an error when `$output` is not an object).
 - **A step's args join the run's state before it runs**, the newer over
-  the older, so later steps see them too **(suggestion: the run's state,
-  not only that step's; with `$output` overwritten every step, a value
-  could otherwise travel only one step)**.
-- The action gets the state as today: as environment variables and as
-  JSON on stdin; the entry's args in `itero.config.json` come under the
-  step's.
+  the older, so every later step sees them.
+- **`"strict": true` keeps a step's args to that step:** its action gets
+  them, and the state does not. For values later steps should not see.
+- **Secrets:** an arg `"$$NAME"` joins the state as any arg does, unless
+  the step is strict. (Today a secret reaches only its own step's
+  environment, never the state.)
+- The action gets the state as today, as environment variables and as
+  JSON on stdin, with its args over it; the entry's args in
+  `itero.config.json` come under the step's.
 - **A workflow run as a step** takes args the same way; its `$output` is
-  its last step's **(suggestion)**.
-- **One field of an object**, `"$output.count"` **(question: a new term;
-  without it, keeping one field means passing the whole object)**.
+  its last step's.
 
 ### Steps side by side
 
-`["#check-payment", "#check-stock"]` gives one `$output`. Two ways
-**(to settle)**:
-
-- **A, by step name:** `{"#check-payment": {"paid": true},
-  "#check-stock": {"stock": false}}`. Plain, but reading one needs
-  `"$output.#check-payment"`, or passing the whole and then names with a
-  `#` in them.
-- **B, objects merged (suggestion):** objects printed side by side merge
-  into one `$output` (`{"paid": true, "stock": false}`); a field two of
-  them print is kept by step name, as itero does today; a plain value is
-  kept under its step's name. Then `{"order-process": {"args":
-  "$output"}}` passes both.
+`["#check-payment", "#check-stock"]` gives one `$output`: **the objects
+they print, merged** (`{"paid": true, "stock": false}`). A field two of
+them print is kept by step name (`{"#check-payment": ..., "#check-stock":
+...}`), as itero does today; a plain value is kept under its step's name.
+Then `{"order-process": {"args": "$output"}}` passes both.
 
 ### Waiting, and messages
 
@@ -84,14 +79,13 @@ mine and wait for a yes; the rest the owner decided (Decided, below).
   `$output` too.
 - **A message is the waiting run's** when it agrees with the waiting
   step's `$output` object on the fields they share, and shares at least
-  one (today it is checked against the whole state) **(suggestion)**.
-- **The message becomes that step's `$output`** when it comes; the step
-  runs again and finishes with it **(suggestion)**.
-- **`#notify` with `$wait` or `$buttons`:** prints `{"notification":
+  one (today it is checked against the whole state).
+- **The message becomes that step's `$output`** when it comes, and the
+  step runs again with it.
+- **`#notify` with `$wait` or `$buttons`** prints `{"notification":
   "<id>"}`; the click (`itero.notification.clicked`, with `notification`
-  and `answer`) is taken by that step; `#notify` finishes with the click
-  as its `$output`, so the next step reads `$output`, or is passed
-  `"args": "$output"` to have `$answer`.
+  and `answer`) is taken by that step, and `#notify` finishes with the
+  click as its `$output`: the next step reads `"$output.answer"`.
 - A run started by a message starts its state with the message's data, as
   today; so do a workflow's settings.
 
@@ -99,11 +93,9 @@ mine and wait for a yes; the rest the owner decided (Decided, below).
 
 - **An undo gets the result of the step it takes back as `$output`**
   (`#cluster-create` prints the cluster's id; `#cluster-delete` reads it
-  as `$output`, whatever ran in between) **(suggestion)**.
+  as `$output`, whatever ran in between).
 - **The `failure` list** runs when the steps ended with `"success":
-  false` in the state, or in the last step's `$output` object
-  **(suggestion: today an action's printed `success` joins the state; the
-  last step has no next step to pass it on)**.
+  false` in the state, or in the last step's `$output` object.
 - itero's own fields stay as they are: `why`, `failed_step`,
   `undo_failed`.
 
@@ -121,21 +113,22 @@ mine and wait for a yes; the rest the owner decided (Decided, below).
 | Where | What changes |
 |---|---|
 | `src/engine/worker.rs` | `answer()` returns any JSON value or text, not only an object; `Outcome` carries a `Value`; `#notify` prints only its id and finishes with the click |
-| `src/engine/steps.rs` | `finished`, `waiting` and a message set `output` instead of `merge`; `find` and `keep_per_entry` build the side-by-side `$output`; `ours` checks the waiting step's `$output`; `Runtime.undo` keeps each undo with its step's `$output`; the failure route reads `$output` too |
-| `src/engine/daemon.rs` | `bind` and `resolve`: args joined into the state before a step; `"args": "$output"`; the log's `output` |
-| `src/flow.rs` | a step object has `args`, `on`, `undo`; `output` reserved; `$output.field` if agreed |
-| `src/cli/top.rs` | `itero check`: an old-style step (values straight in it) is an error naming `args`; args naming `output` |
+| `src/engine/steps.rs` | `finished`, `waiting` and a message set `output` instead of `merge`; `find` and `keep_per_entry` build the side-by-side `$output`; `ours` checks the waiting step's `$output`; `Runtime.undo` keeps each undo with its step's `$output`; the failure route reads `$output` too; args join the state when a step starts |
+| `src/engine/daemon.rs` | `bind` and `resolve`: args, `"$name.field"`, `"args": "$output"`; the log's `output` |
+| `src/flow.rs` | a step object has `args`, `on`, `undo`, `strict`; `output` reserved |
+| `src/cli/top.rs` | `itero check`: an old-style step is an error naming `args`; args naming `output` |
 | `src/cli/workflow.rs` | `wf runs RUN` shows any `output` |
 
 ## Docs
 
 - Guides: `actions.md` (what an action prints), `workflows.md` (the
-  state, `$output`, args, side by side, waiting, undo, failure),
+  state, `$output`, args, strict, side by side, waiting, undo, failure),
   `first-workflow.md`, `connectors.md` (a message's data starts a run's
-  state), `log.md`.
+  state), `log.md`, `secrets.md` (a secret in args joins the state unless
+  strict).
 - Start: `concepts.md`, `quickstart.md`.
 - Reference: `workflow-file.md`, `action-file.md`, `glossary.md`
-  (`$output`, args), `http.md`.
+  (`$output`, args, strict), `http.md`.
 - Commands: `workflow.md`, `emit.md`, `help.md` where they show a printed
   object.
 
@@ -158,15 +151,17 @@ its `bun test`:
 ## Tasks
 
 1. Tests first, each watched failing: a plain value as `$output`; an
-   object not merged; `""` after a silent step; args into the state;
-   `"args": "$output"`; side by side; a waiting step and its message;
-   `#notify` with a click; an undo with its step's `$output`; the failure
-   route; `itero check` on an old-style step and on `output`.
-2. The worker's `answer()` and `Outcome`.
-3. `steps.rs`: `output` instead of `merge`, side by side, messages, undo,
-   failure.
-4. `flow.rs` and `daemon.rs`: `args`, the whole-object pass, the reserved
-   name, `$output.field` if agreed.
+   object not merged; `""` after a silent step; a skipped step; args into
+   the state, and kept out with `strict`; `"$output.count"`; `"args":
+   "$output"`; side by side; a workflow step's `$output`; a waiting step
+   and its message; `#notify` with a click; an undo with its step's
+   `$output`; the failure route; `itero check` on an old-style step and on
+   `output`.
+2. The worker's `answer()` and `Outcome`, and `#notify`.
+3. `steps.rs`: `output` instead of `merge`, args into the state, side by
+   side, messages, undo, failure.
+4. `flow.rs` and `daemon.rs`: `args`, `strict`, `"$name.field"`, the
+   whole-object pass, the reserved name.
 5. `itero check` and `wf runs`.
 6. The examples, then their tests.
 7. The docs.
@@ -177,20 +172,26 @@ its `bun test`:
 - A step's result is the state's field `output`, `$output` to the next
   step, typed: a number stays a number, text stays text.
 - `$output` changes at every step; what is not passed on as args is gone
-  after the next step.
+  after the next step. A skipped step leaves it as it was.
 - A printed object no longer merges into the state; it is `$output`, and
   the workflow passes it on as args to keep it.
-- A step's args join the state.
+- A step's values go under `args`, an object; args join the run's state,
+  unless the step says `"strict": true` (the owner's idea, so values such
+  as secrets reach no later step).
+- `"$output.count"` reads one field, one level.
 - `output` is reserved.
 - Conditions read `$output` as any field: `{"on": [{"$output": true}]}`;
   another name holds only when it was passed on as args.
+- Side by side: the printed objects merged into one `$output`, a field
+  two print kept by step name.
+- A workflow step's `$output` is its last step's.
+- A message is matched against the waiting step's `$output` and becomes
+  it.
+- An undo gets its own step's `$output`.
+- The failure list runs on `"success": false` in the state or in the
+  last step's `$output`.
 
 ## Open
 
-- The suggestions above: args under `args` as an object, args for the
-  run, a skipped step's `$output`, a workflow step's `$output`, side by
-  side (A or B), messages matched by the waiting step's `$output`, an
-  undo's `$output`, the failure route.
-- `"$output.count"`: one field of an object.
 - A `$name` filled inside text (`"$output files in ~/$folder"`) and `\$`
   for a dollar sign: their own plan, after this one.
