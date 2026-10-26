@@ -56,10 +56,11 @@ fn a_connector_gets_its_args_and_secrets_as_environment_variables() {
 
     // its args, a secret among them; the daemon's environment as well
     let d = tempfile::tempdir().unwrap();
+    // \\$ in JSON is a dollar sign
     let ws = ws_with(
         d.path(),
         r#"{"connector": {"posta.geldi": {"args": {
-            "user": "ayşe@örnek.test", "password": "$$ITERO_TEST_POSTA_SIFRE", "count": 3, "none": null}}}}"#,
+            "user": "ayşe@örnek.test", "password": "$$ITERO_TEST_POSTA_SIFRE", "count": "\\$3", "none": null}}}}"#,
         PRINTS,
     );
     run_it(&ws);
@@ -75,7 +76,7 @@ fn a_connector_gets_its_args_and_secrets_as_environment_variables() {
         .data;
     assert_eq!(got["user"], "ayşe@örnek.test");
     assert_eq!(got["password"], "gizli-şifre-123");
-    assert_eq!(got["count"], "3");
+    assert_eq!(got["count"], "$3");
     assert_eq!(got["home"], "çatı katı");
     // the secret is in nothing itero writes itself
     let log = std::fs::read_to_string(d.path().join(".itero/itero.log")).unwrap();
@@ -98,7 +99,12 @@ fn a_connector_gets_its_args_and_secrets_as_environment_variables() {
 
     // a connector has no run state: "$name" is refused, as is a name no
     // environment variable can have
-    for args in [r#"{"user": "$kişi"}"#, r#"{"kullanıcı": "ayşe"}"#] {
+    for args in [
+        r#"{"user": "$kişi"}"#,
+        r#"{"user": "posta: $kişi"}"#,
+        r#"{"user": "giriş $$ITERO_TEST_POSTA_SIFRE"}"#,
+        r#"{"kullanıcı": "ayşe"}"#,
+    ] {
         let d = tempfile::tempdir().unwrap();
         let ws = ws_with(
             d.path(),

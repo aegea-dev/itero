@@ -909,3 +909,26 @@ fn check_says_a_steps_values_go_under_args() {
         "{said}"
     );
 }
+
+#[test]
+fn check_refuses_a_secret_inside_text() {
+    let d = workspace();
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"action": {"gönder": {"args": {"başlık": "Bearer $$POSTA_ANAHTARI"}}}}"#,
+    );
+    file(
+        d.path(),
+        "workflows/kargo.json",
+        r##"{ "on": [{ "event": "kargo.hazır" }], "steps": ["#gönder"] }"##,
+    );
+    file(d.path(), "actions/gönder", "#!/bin/sh\n");
+    let o = itero(d.path(), &["check"]);
+    assert!(!o.status.success(), "{o:?}");
+    let said = format!("{}{}", out(&o), err(&o));
+    assert!(
+        said.contains("action.gönder.args") && said.contains("a secret is a whole value only"),
+        "{said}"
+    );
+}

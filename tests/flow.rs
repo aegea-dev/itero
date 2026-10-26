@@ -14,6 +14,11 @@ fn action(name: &str) -> Name {
     }
 }
 
+/// A value filled from `state`, when nothing in it is refused.
+fn fill(v: Value, state: &Map<String, Value>) -> Value {
+    flow::fill(&v, state).unwrap()
+}
+
 fn err(text: &str) -> String {
     flow::parse(text).unwrap_err()
 }
@@ -344,20 +349,21 @@ fn args_may_come_whole_from_a_name_and_stay_with_their_step() {
 #[test]
 fn a_name_reads_the_state_and_a_dot_one_field_of_it() {
     let state = obj(json!({"output": {"sayı": 3, "klasör": "İndirilenler"}, "adet": 5}));
-    assert_eq!(flow::fill(&json!("$adet"), &state), json!(5));
+    assert_eq!(fill(json!("$adet"), &state), json!(5));
     assert_eq!(
-        flow::fill(&json!("$output"), &state),
+        fill(json!("$output"), &state),
         json!({"sayı": 3, "klasör": "İndirilenler"})
     );
-    assert_eq!(flow::fill(&json!("$output.sayı"), &state), json!(3));
-    // a field that is not there, or a name with no value, is null
-    assert_eq!(flow::fill(&json!("$output.yok"), &state), Value::Null);
-    assert_eq!(flow::fill(&json!("$adet.yok"), &state), Value::Null);
-    assert_eq!(flow::fill(&json!("$yok"), &state), Value::Null);
+    assert_eq!(fill(json!("$output.sayı"), &state), json!(3));
+    // a field an object does not have, or a name with no value, is null
+    assert_eq!(fill(json!("$output.yok"), &state), Value::Null);
+    assert_eq!(fill(json!("$yok"), &state), Value::Null);
+    // a value that is no object has no fields: the dot is text
+    assert_eq!(fill(json!("$adet.yok"), &state), json!("5.yok"));
     // a secret stays as written, and anything else is itself
-    assert_eq!(flow::fill(&json!("$$API"), &state), json!("$$API"));
-    assert_eq!(flow::fill(&json!("çay"), &state), json!("çay"));
-    assert_eq!(flow::fill(&json!(7), &state), json!(7));
+    assert_eq!(fill(json!("$$API"), &state), json!("$$API"));
+    assert_eq!(fill(json!("çay"), &state), json!("çay"));
+    assert_eq!(fill(json!(7), &state), json!(7));
 }
 
 #[test]
@@ -381,4 +387,62 @@ fn conditions_read_one_field_with_a_dot() {
         &none
     ));
     assert!(!flow::holds(on, &obj(json!({"output": true})), &none));
+}
+
+#[test]
+fn names_are_filled_inside_text() {
+    let state = obj(json!({
+        "count": 3, "folder": "İndirilenler", "dosya": "rapor", "boş": "",
+        "liste": [1, 2], "nesne": {"a": 1},
+        "output": {"sayı": 4, "hiç": null}
+    }));
+    for (text, filled) in [
+        ("$count files in ~/$folder", "3 files in ~/İndirilenler"),
+        ("$count.", "3."),
+        ("$count$count", "33"),
+        // not there, null or "": empty
+        ("x $yok y", "x  y"),
+        ("[$boş]", "[]"),
+        ("[$output.hiç]", "[]"),
+        // a field when the object has it, else the dot is text
+        ("$output.sayı files", "4 files"),
+        ("$dosya.txt", "rapor.txt"),
+        // a list or an object as its JSON
+        ("$liste and $nesne", "[1,2] and {\"a\":1}"),
+        // \$ is a dollar sign; a $ that starts no name is itself
+        ("\\$count costs \\$5", "$count costs $5"),
+        ("\\$$count", "$3"),
+        ("a $ b $5 $", "a $ b $5 $"),
+    ] {
+        assert_eq!(fill(json!(text), &state), json!(filled), "{text}");
+    }
+    // a whole value keeps its type
+    assert_eq!(fill(json!("$count"), &state), json!(3));
+    assert_eq!(fill(json!("$yok"), &state), Value::Null);
+    // texts nested in lists and objects are filled too
+    assert_eq!(
+        fill(
+            json!({"buttons": ["Gönder $count", "$count"], "iç": {"t": "~/$folder"}}),
+            &state
+        ),
+        json!({"buttons": ["Gönder 3", 3], "iç": {"t": "~/İndirilenler"}})
+    );
+}
+
+#[test]
+fn a_secret_is_never_filled_inside_text() {
+    let state = obj(json!({"parola": "$$POSTA_PAROLA"}));
+    // a whole value stays as written, for the action alone
+    assert_eq!(
+        fill(json!("$$POSTA_PAROLA"), &state),
+        json!("$$POSTA_PAROLA")
+    );
+    assert_eq!(fill(json!("$parola"), &state), json!("$$POSTA_PAROLA"));
+    for text in ["giriş $$POSTA_PAROLA", "giriş $parola"] {
+        let e = flow::fill(&json!(text), &state).unwrap_err();
+        assert!(e.contains("a secret is a whole value only"), "{text}: {e}");
+    }
+    // a workflow that writes one inside text is refused when it is read
+    let e = err(r##"{ "steps": [{ "#a": { "args": { "t": ["x $$API"] } } }] }"##);
+    assert!(e.contains("a secret is a whole value only"), "{e}");
 }

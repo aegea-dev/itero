@@ -679,3 +679,20 @@ fn a_run_written_before_output_is_read_and_goes_on() {
     );
     assert_eq!(names(&a), vec!["küme-sil"]);
 }
+
+#[test]
+fn a_secret_held_by_a_state_value_breaks_a_step_that_puts_it_in_text() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            {"#gir": {"args": {"parola": "$$POSTA"}}},
+            {"#bildir": {"args": {"text": "giriş: $parola"}}}
+        ], "error": ["#uyar"]}),
+    )]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!(""));
+    assert_eq!(names(&a), vec!["uyar"]);
+    assert_eq!(r.rt.state["failed_step"], "#bildir");
+    let why = r.rt.state["why"].as_str().unwrap();
+    assert!(why.contains("a secret is a whole value only"), "{why}");
+}
