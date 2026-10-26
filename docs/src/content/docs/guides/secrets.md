@@ -11,14 +11,16 @@ far. Passwords and tokens are kept as secrets, out of every file.
 
 An action's environment variables are found by name, the first in:
 
-1. **the step's data** in the workflow: `{"#imap-check": {"host": "imap.example.com"}}`;
+1. **the step's args** in the workflow: `{"#imap-check": {"args": {"host": "imap.example.com"}}}`;
 2. **the action's args**, `action.<name>.args` in `itero.config.json`;
-3. **the run's state**: the event that started it, events since, and what
-   earlier steps printed.
+3. **the run's state**: the event that started it, the args of earlier
+   steps, and `$output`, the step before's result.
 
-In the step's data and in args, a value that is exactly `"$name"` takes
-the state's value, and `"$$NAME"` a secret's or an environment variable's
-([Secrets](#secrets)).
+In a step's args and in an action's, a value that is exactly `"$name"`
+takes the state's value, and `"$$NAME"` a secret's or an environment
+variable's ([Secrets](#secrets)). A step's args join the state, for the
+steps after it, unless the step is `strict`
+([Workflows](/guides/workflows/#a-steps-result-output)).
 
 ## Args
 
@@ -57,9 +59,11 @@ says which.
 ## Secrets
 
 `"$$NAME"` stands for a secret: a token, a password, an API key. It is
-looked up only when the step or the connector starts, and the value never
-reaches the run's state, the journal, a log or a command line. itero looks
-in two places, in this order:
+looked up only when an action or the connector starts, and the value never
+reaches the run's state, the journal, a log or a command line. A secret in
+a step's args joins the state as its name, `"$$NAME"`, so the actions of
+later steps get its value too; make the step `"strict": true` to keep it to
+that step. itero looks in two places, in this order:
 
 1. **the OS secret store** (the macOS Keychain, the Secret Service on
    Linux), where [`itero secret`](/commands/secret/) keeps it;

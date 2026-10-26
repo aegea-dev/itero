@@ -89,7 +89,7 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
             ["#check-payment", "stock-check"],
             "order-process",
             "#notify@0.2",
-            { "#ship": { "carrier": "PTT Kargo", "on": [{ "$paid": true }] } },
+            { "#ship": { "args": { "carrier": "PTT Kargo" }, "on": [{ "$paid": true }] } },
             { "#küme-kur": { "undo": "#küme-sil" } },
             { "altyapı": { "undo": "yıkım" } }
           ],
@@ -111,9 +111,10 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
         f.steps[1],
         Step::One {
             name: Name::Workflow("order-process".into()),
-            data: Map::new(),
+            args: json!({}),
             on: None,
-            undo: None
+            undo: None,
+            strict: false
         }
     );
     let Step::One { name, .. } = &f.steps[2] else {
@@ -128,22 +129,23 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
     );
     let Step::One {
         name,
-        data,
+        args,
         on,
         undo,
+        strict,
     } = &f.steps[3]
     else {
         panic!()
     };
     assert_eq!(*name, action("ship"));
-    assert_eq!(*data, obj(json!({"carrier": "PTT Kargo"})));
+    assert_eq!(*args, json!({"carrier": "PTT Kargo"}));
+    assert!(!strict);
     assert_eq!(on.as_ref().unwrap().equal, obj(json!({"paid": true})));
     assert_eq!(*undo, None);
-    // undo is taken out of the step's data
-    let Step::One { data, undo, .. } = &f.steps[4] else {
+    let Step::One { args, undo, .. } = &f.steps[4] else {
         panic!()
     };
-    assert!(data.is_empty());
+    assert_eq!(*args, json!({}));
     assert_eq!(*undo, Some(action("küme-sil")));
     let Step::One { undo, .. } = &f.steps[5] else {
         panic!()
@@ -212,6 +214,31 @@ fn mistakes_are_named() {
         (r##"{ "steps": ["#a@x.1"] }"##, "version"),
         (r##"{ "steps": [{ "#a": { "undo": 3 } }] }"##, "undo"),
         (r##"{ "steps": [{ "#a": { "undo": "#" } }] }"##, "\"#\""),
+        // a step's values go under args
+        (
+            r##"{ "steps": [{ "#a": { "carrier": "PTT Kargo" } }] }"##,
+            "\"carrier\" is not one of args, on, undo, strict",
+        ),
+        (
+            r##"{ "steps": [{ "#a": { "args": 3 } }] }"##,
+            "args is an object",
+        ),
+        (
+            r##"{ "steps": [{ "#a": { "args": "çay" } }] }"##,
+            "args is an object",
+        ),
+        (
+            r##"{ "steps": [{ "#a": { "args": { "output": 1 } } }] }"##,
+            "output is given by itero",
+        ),
+        (
+            r##"{ "steps": [{ "#a": { "strict": "evet" } }] }"##,
+            "strict is true or false",
+        ),
+        (
+            r##"{ "steps": [{ "işlem": { "strict": true } }] }"##,
+            "strict is for an action's step",
+        ),
         (r##"[]"##, "an object"),
     ] {
         let e = err(text);
@@ -294,4 +321,64 @@ fn entry_mistakes_are_named() {
         let e = flow::entry(&entry).unwrap_err();
         assert!(e.contains(says), "{entry}: {e}");
     }
+}
+
+#[test]
+fn args_may_come_whole_from_a_name_and_stay_with_their_step() {
+    let f = flow::parse(
+        r##"{ "steps": [{ "#a": { "args": "$output", "strict": true } }, { "#b": { "args": "$output.sipariş" } }] }"##,
+    )
+    .unwrap();
+    let Step::One { args, strict, .. } = &f.steps[0] else {
+        panic!()
+    };
+    assert_eq!(*args, json!("$output"));
+    assert!(strict);
+    let Step::One { args, strict, .. } = &f.steps[1] else {
+        panic!()
+    };
+    assert_eq!(*args, json!("$output.sipariş"));
+    assert!(!strict);
+}
+
+#[test]
+fn a_name_reads_the_state_and_a_dot_one_field_of_it() {
+    let state = obj(json!({"output": {"sayı": 3, "klasör": "İndirilenler"}, "adet": 5}));
+    assert_eq!(flow::fill(&json!("$adet"), &state), json!(5));
+    assert_eq!(
+        flow::fill(&json!("$output"), &state),
+        json!({"sayı": 3, "klasör": "İndirilenler"})
+    );
+    assert_eq!(flow::fill(&json!("$output.sayı"), &state), json!(3));
+    // a field that is not there, or a name with no value, is null
+    assert_eq!(flow::fill(&json!("$output.yok"), &state), Value::Null);
+    assert_eq!(flow::fill(&json!("$adet.yok"), &state), Value::Null);
+    assert_eq!(flow::fill(&json!("$yok"), &state), Value::Null);
+    // a secret stays as written, and anything else is itself
+    assert_eq!(flow::fill(&json!("$$API"), &state), json!("$$API"));
+    assert_eq!(flow::fill(&json!("çay"), &state), json!("çay"));
+    assert_eq!(flow::fill(&json!(7), &state), json!(7));
+}
+
+#[test]
+fn conditions_read_one_field_with_a_dot() {
+    let f = flow::parse(
+        r##"{ "steps": [{ "#ship": { "on": [{ "$output.ödendi": true }, { "has": "$output.cevap" }] } }] }"##,
+    )
+    .unwrap();
+    let Step::One { on: Some(on), .. } = &f.steps[0] else {
+        panic!()
+    };
+    let none = |_: &str| false;
+    assert!(flow::holds(
+        on,
+        &obj(json!({"output": {"ödendi": true, "cevap": "Evet"}})),
+        &none
+    ));
+    assert!(!flow::holds(
+        on,
+        &obj(json!({"output": {"ödendi": true}})),
+        &none
+    ));
+    assert!(!flow::holds(on, &obj(json!({"output": true})), &none));
 }

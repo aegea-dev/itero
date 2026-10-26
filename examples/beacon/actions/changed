@@ -1,8 +1,9 @@
 #!/bin/sh
-# What changed since the last run: the state's "status" against the one
-# kept in $ITERO_MEMORY. Prints {"text": "<what>: <how it is now>", ...}
-# for each change, one a line, or nothing when all is as it was.
-now=$(jq -c '.status // {}')
+# What changed since the last run: the step before's result, $output (what
+# each thing is now), against the one kept in $ITERO_MEMORY. Prints
+# {"text": "<what>: <how it is now>"}, a line for each change, or {} when
+# all is as it was.
+now=$(jq -c '.output // {}')
 before=$(cat "$ITERO_MEMORY" 2>/dev/null || echo '{}')
 printf '%s\n' "$now" > "$ITERO_MEMORY.new" && mv "$ITERO_MEMORY.new" "$ITERO_MEMORY"
 jq -cn --argjson a "$before" --argjson b "$now" '

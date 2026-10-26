@@ -15,7 +15,8 @@ describe("order", () => {
     ws.pass();
     const [run] = ws.runs();
     expect(run.status).toBe("waiting");
-    expect(ws.state(run)).toMatchObject({ order: 43, payment_ref: "pay-43", stock: true });
+    expect(ws.output(run, "#check-payment")).toBeUndefined();
+    expect(ws.output(run, "#check-stock")).toEqual({ stock: true });
     expect(ws.read(".itero/sent.log")).toBe("");
   });
 
@@ -26,7 +27,8 @@ describe("order", () => {
     ws.pass();
     const [run] = ws.runs();
     expect(run.status).toBe("done");
-    expect(ws.state(run)).toMatchObject({ paid: true, tracking: "TR-43" });
+    // each result passed on as args: into the state
+    expect(ws.state(run)).toMatchObject({ paid: true, stock: true, tracking: "TR-43" });
     expect(ws.read(".itero/sent.log")).toBe("to ayşe@örnek.test: order 43, TR-43\n");
     expect(ws.read(".itero/results.log")).toBe("order 43: done\n");
   });

@@ -27,7 +27,7 @@ A workflow on one is written like any other:
 
 ```json
 { "on": [{ "event": "itero.run.error" }],
-  "steps": [{ "#notify": { "title": "itero", "text": "$workflow: $why" } }] }
+  "steps": [{ "#notify": { "args": { "title": "itero", "text": "$workflow: $why" } } }] }
 ```
 
 An event about a run never starts its own workflow, so a broken workflow

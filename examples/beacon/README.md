@@ -11,8 +11,9 @@ tells you what it watches; after that, only changes. Your own sites:
   itero wf config set sites '{"sites": ["https://example.com"]}'
 (the sites workflow's settings in itero.config.json; the disk
 workflow's have its min_free). Your own
-checks: an action that prints {"status": {"<what>": "<how it is>"}},
-followed by #changed and #notify. The actions need curl, jq, df and awk.
+checks: an action that prints {"<what>": "<how it is>"}, its result,
+followed by #changed (it reads that as $output) and #notify (it shows
+$output.text). The actions need curl, jq, df and awk.
 
 ## Tests
 

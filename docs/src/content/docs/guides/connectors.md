@@ -79,12 +79,12 @@ Types starting with `itero.`, `action.`, `timer.`, `run.`, `workflow.` or
   outside its `from` and `until`. Its data is the run's first state.
   Every such workflow starts, side by side. With `runs` runs under way
   ([`limits`](/reference/itero-config/#limits)), it waits its turn.
-- **It reaches the runs waiting for data** (a step exited 75) that it
-  matches: it shares at least one field with the run's state and agrees
-  with it on every one they share. `{"payment_ref": "pay-1", "paid": true}`
-  matches the run whose state has `"payment_ref": "pay-1"`, and every run
-  it matches gets it. Its data joins the state, and the waiting step runs
-  again.
+- **It reaches the steps waiting for data** (a step exited 75) that it
+  matches: it shares at least one field with what the waiting step
+  printed and agrees with it on every one they share. `{"payment_ref":
+  "pay-1", "paid": true}` matches the step that printed `{"payment_ref":
+  "pay-1"}`, and every waiting step it matches gets it. Its data is that
+  step's `$output`, and the step runs again.
 - A run that starts waiting gets the matching events that came since it
   started, so a fast reply is not missed.
 

@@ -16,14 +16,16 @@ curl -s -X POST http://127.0.0.1:8800/events -H 'content-type: application/json'
 
 `workflows/app-notify.json` shows it with `#notify`, which takes `title`,
 `text`, `subtitle`, `sound`, `url`, `buttons`, `wait` and `data` from the
-event. With `buttons` (or `"wait": true`) it waits for a click; then its
-`success` step, `actions/post-answer`, posts the run's state to
-`reply_url`:
+event. With `buttons` (or `"wait": true`) it waits for a click, which is
+its result, `$output`; then its `success` step, `actions/post-answer`,
+is given that click as its args, so it joins the run's state, and posts
+the state to `reply_url`:
 
 ```json
 { "title": "Deploy?", "text": "3 changes", "buttons": ["Deploy", "Cancel"],
   "reply_url": "http://localhost:3000/notified",
-  "notification": "01a1…", "answer": "Deploy", "workflow": "app-notify" }
+  "notification": "01a1…", "answer": "Deploy", "workflow": "app-notify",
+  "output": { "notification": "01a1…", "answer": "Deploy", "workflow": "app-notify" } }
 ```
 
 `answer` is the button's label, `open` for a click on the notification

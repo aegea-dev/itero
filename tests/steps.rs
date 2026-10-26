@@ -104,19 +104,110 @@ fn a_run_starts_with_the_message_as_its_state() {
 }
 
 #[test]
-fn an_output_joins_the_state_and_the_next_step_follows() {
+fn a_step_s_result_is_output_and_nothing_else_joins_the_state() {
     let mut r = Run::new(&[("a", json!({"steps": ["#bir", "#iki", "#üç"]}))]);
     let a = r.start(json!({"geçici": "x", "kalıcı": 1}));
     let a = r.done(&a.jobs[0], json!({"metin": "çay", "geçici": null}));
-    assert_eq!(state(&r), json!({"metin": "çay", "kalıcı": 1}));
+    assert_eq!(
+        state(&r),
+        json!({"geçici": "x", "kalıcı": 1, "output": {"metin": "çay", "geçici": null}})
+    );
     assert_eq!(names(&a), vec!["iki"]);
-    // printing nothing adds nothing
-    let a = r.done(&a.jobs[0], Value::Null);
-    assert_eq!(state(&r), json!({"metin": "çay", "kalıcı": 1}));
+    // the next step's result takes its place, printing nothing too
+    let a = r.done(&a.jobs[0], json!(""));
+    assert_eq!(state(&r), json!({"geçici": "x", "kalıcı": 1, "output": ""}));
     assert_eq!(names(&a), vec!["üç"]);
-    let a = r.done(&a.jobs[0], json!({}));
+    let a = r.done(&a.jobs[0], json!(524));
+    assert_eq!(r.rt.state["output"], 524);
     assert!(a.jobs.is_empty());
     assert_eq!(r.rt.ended, Some(Ended::Done));
+}
+
+#[test]
+fn a_step_s_args_join_the_state_unless_it_is_strict() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            {"#say": {"args": {"klasör": "İndirilenler", "parola": "$$POSTA"}}},
+            {"#bildir": {"args": {"adet": "$output", "nerede": "$klasör"}, "strict": true}},
+            "#son"
+        ]}),
+    )]);
+    let a = r.start(json!({}));
+    assert_eq!(
+        a.jobs[0].data,
+        json!({"klasör": "İndirilenler", "parola": "$$POSTA"})
+            .as_object()
+            .unwrap()
+            .clone()
+    );
+    // a secret joins as its name, never its value
+    assert_eq!(
+        state(&r),
+        json!({"klasör": "İndirilenler", "parola": "$$POSTA"})
+    );
+    let a = r.done(&a.jobs[0], json!(524));
+    assert_eq!(names(&a), vec!["bildir"]);
+    assert_eq!(
+        a.jobs[0].data,
+        json!({"adet": 524, "nerede": "İndirilenler"})
+            .as_object()
+            .unwrap()
+            .clone()
+    );
+    assert!(!r.rt.state.contains_key("adet"), "strict: the step's only");
+    let a = r.done(&a.jobs[0], json!(""));
+    assert_eq!(names(&a), vec!["son"]);
+}
+
+#[test]
+fn args_may_be_a_whole_object_or_one_field_of_it() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            "#say",
+            {"#taşı": {"args": "$output"}},
+            {"#bildir": {"args": {"n": "$output.sayı", "yok": "$output.hiç"}}},
+            {"#son": {"args": "$output"}}
+        ]}),
+    )]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"sayı": 3, "klasör": "İndirilenler"}));
+    assert_eq!(
+        state(&r),
+        json!({"sayı": 3, "klasör": "İndirilenler",
+               "output": {"sayı": 3, "klasör": "İndirilenler"}})
+    );
+    assert_eq!(a.jobs[0].data["sayı"], 3);
+    let a = r.done(&a.jobs[0], json!({"sayı": 4}));
+    assert_eq!(
+        a.jobs[0].data,
+        json!({"n": 4, "yok": null}).as_object().unwrap().clone()
+    );
+    // a whole $output that is no object: the run stops there
+    let a = r.done(&a.jobs[0], json!("çay"));
+    assert!(a.jobs.is_empty());
+    let Some(Ended::Error { why }) = &r.rt.ended else {
+        panic!("{:?}", r.rt.ended)
+    };
+    assert!(why.contains("not an object"), "{why}");
+    assert_eq!(r.rt.state["failed_step"], "#son");
+}
+
+#[test]
+fn a_skipped_step_leaves_output_and_conditions_read_it() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            "#kontrol",
+            {"#uyar": {"on": [{"$output": false}]}},
+            {"#gönder": {"on": [{"$output": true}]}}
+        ]}),
+    )]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!(true));
+    assert_eq!(names(&a), vec!["gönder"]);
+    assert_eq!(r.rt.state["output"], true);
 }
 
 #[test]
@@ -132,11 +223,25 @@ fn side_by_side_steps_run_together_and_the_next_waits_for_all() {
     assert!(a.jobs.is_empty(), "the list is not done yet");
     let a = r.done(&pay, json!({"paid": true, "durum": "tamam"}));
     assert_eq!(names(&a), vec!["ship"]);
+    // their objects merged into one output, a field both print by step name
     assert_eq!(
         state(&r),
-        json!({"order": 43, "stock": true, "paid": true,
-               "durum": {"#check-payment": "tamam", "#check-stock": "düşük"}})
+        json!({"order": 43, "output": {"stock": true, "paid": true,
+               "durum": {"#check-payment": "tamam", "#check-stock": "düşük"}}})
     );
+}
+
+#[test]
+fn a_plain_value_side_by_side_is_kept_under_its_step_s_name() {
+    let mut r = Run::new(&[("a", json!({"steps": [["#bir", "#iki", "#üç"], "#son"]}))]);
+    let a = r.start(json!({}));
+    let jobs = a.jobs.clone();
+    r.done(&jobs[0], json!(3));
+    r.done(&jobs[1], json!({"renk": "mavi"}));
+    let a = r.done(&jobs[2], json!(""));
+    assert_eq!(names(&a), vec!["son"]);
+    // printing nothing adds nothing
+    assert_eq!(r.rt.state["output"], json!({"#bir": 3, "renk": "mavi"}));
 }
 
 #[test]
@@ -158,6 +263,27 @@ fn a_workflow_side_by_side_runs_its_steps_beside_the_action() {
     assert!(a.jobs.is_empty(), "stok is not done yet");
     let a = r.done(&ayir, json!({"stock": true}));
     assert_eq!(names(&a), vec!["ship"]);
+    // the workflow's result is its last step's
+    assert_eq!(r.rt.state["output"], json!({"paid": true, "stock": true}));
+}
+
+#[test]
+fn a_workflow_as_a_step_takes_args_and_gives_its_last_step_s_output() {
+    let mut r = Run::new(&[
+        (
+            "sipariş",
+            json!({"steps": [{"stok": {"args": {"depo": "İzmir"}}}, "#ship"]}),
+        ),
+        ("stok", json!({"steps": ["#depo-bak", "#ayır"]})),
+    ]);
+    let a = r.start(json!({"order": 43}));
+    assert_eq!(names(&a), vec!["depo-bak"]);
+    assert_eq!(r.rt.state["depo"], "İzmir");
+    let a = r.done(&a.jobs[0], json!("A-3"));
+    assert_eq!(names(&a), vec!["ayır"]);
+    let a = r.done(&a.jobs[0], json!({"ayrıldı": true}));
+    assert_eq!(names(&a), vec!["ship"]);
+    assert_eq!(r.rt.state["output"], json!({"ayrıldı": true}));
 }
 
 #[test]
@@ -167,7 +293,7 @@ fn a_step_runs_only_when_its_on_holds() {
             "sipariş",
             json!({"steps": [
                 "#check",
-                "işle",
+                {"işle": {"args": "$output"}},
                 {"#bildir": {"on": [{ "has": "$$API" }]}},
                 "#bitir"
             ]}),
@@ -212,27 +338,29 @@ fn a_step_that_is_not_ready_waits_for_matching_data() {
     r.done(&stock, json!({"stock": true}));
     let a = r.waiting(&pay, json!({"payment_ref": "ödeme-1"}));
     assert!(a.jobs.is_empty());
-    assert_eq!(
-        r.rt.state["payment_ref"], "ödeme-1",
-        "a waiting step's output joins"
-    );
+    assert!(!r.rt.state.contains_key("payment_ref"), "nothing joins");
     let timers = a.timers.clone();
     let at: Vec<&str> = timers.iter().map(|t| t.at.as_str()).collect();
     assert_eq!(at, vec!["2026-10-21T11:00:00Z", "2026-10-22T10:00:00Z"]);
 
-    // no field in common, or one that disagrees: not this run's
+    // no field in common with the waiting step's output, or one that
+    // disagrees: not this run's; the state is not what it is matched on
+    assert!(r.message("m0", json!({"order": 43})).jobs.is_empty());
     assert!(r.message("m1", json!({"tutar": 120})).jobs.is_empty());
     assert!(
         r.message("m2", json!({"payment_ref": "ödeme-2", "paid": true}))
             .jobs
             .is_empty()
     );
-    assert!(!r.rt.state.contains_key("paid"));
-    // this run's: it joins, and the step runs again
+    // this run's: it is the step's output, and the step runs again
     let a = r.message("m3", json!({"payment_ref": "ödeme-1", "paid": true}));
     assert_eq!(names(&a), vec!["check-payment"]);
     assert_eq!(a.jobs[0].path, pay.path);
-    assert_eq!(r.rt.state["paid"], true);
+    assert_eq!(
+        a.jobs[0].output,
+        Some(json!({"payment_ref": "ödeme-1", "paid": true}))
+    );
+    assert!(!r.rt.state.contains_key("paid"));
     assert!(a.timers.is_empty(), "no step waits now");
     // the same message again changes nothing
     assert!(
@@ -242,6 +370,7 @@ fn a_step_that_is_not_ready_waits_for_matching_data() {
     );
     let a = r.done(&a.jobs[0], json!({"paid": true}));
     assert_eq!(names(&a), vec!["ship"]);
+    assert_eq!(r.rt.state["output"], json!({"stock": true, "paid": true}));
 }
 
 #[test]
@@ -310,18 +439,25 @@ fn cluster() -> Value {
 fn on_error_the_finished_steps_are_undone_newest_first_then_the_error_list() {
     let mut r = Run::new(&[("küme", cluster())]);
     let mut a = r.start(json!({"ad": "deneme"}));
-    for step in ["küme-kur", "plan", "uygula"] {
+    for (step, output) in [
+        ("küme-kur", json!({"küme": "k-1"})),
+        ("plan", json!("plan-tamam")),
+        ("uygula", json!({"sürüm": 2})),
+    ] {
         assert_eq!(names(&a), vec![step]);
-        a = r.done(&a.jobs[0], json!({}));
+        a = r.done(&a.jobs[0], output);
     }
     let a = r.failed(&a.jobs[0], "exit 1: yanıt yok");
     assert_eq!(names(&a), vec!["geri-al"]);
     assert_eq!(r.rt.phase, Phase::Undo);
+    // each undo gets the result of the step it takes back
+    assert_eq!(r.rt.state["output"], json!({"sürüm": 2}));
     // the undos are told what broke, as the error list is
     assert_eq!(r.rt.state["why"], "exit 1: yanıt yok");
     assert_eq!(r.rt.state["failed_step"], "#dene");
     let a = r.done(&a.jobs[0], json!({}));
     assert_eq!(names(&a), vec!["küme-sil"]);
+    assert_eq!(r.rt.state["output"], json!({"küme": "k-1"}));
     let a = r.done(&a.jobs[0], json!({}));
     assert_eq!(names(&a), vec!["bildir"]);
     assert_eq!(r.rt.phase, Phase::Error);
@@ -439,6 +575,15 @@ fn success_false_runs_failure_otherwise_success() {
     r.done(&a.jobs[0], json!({}));
     assert_eq!(r.rt.ended, Some(Ended::Failed));
 
+    // or success passed on as args, into the state
+    let passed = json!({"steps": ["#remind-stock", {"#kaydet": {"args": {"success": "$output"}}}],
+                        "success": ["#teşekkür"], "failure": ["#log"]});
+    let mut r = Run::new(&[("sipariş", passed)]);
+    let a = r.start(json!({"order": 43}));
+    let a = r.done(&a.jobs[0], json!(false));
+    let a = r.done(&a.jobs[0], json!("kaydedildi"));
+    assert_eq!(names(&a), vec!["log"]);
+
     let mut r = Run::new(&[("sipariş", flow)]);
     let a = r.start(json!({"order": 43}));
     let a = r.done(&a.jobs[0], json!({}));
@@ -490,4 +635,18 @@ fn runtimes_go_through_json() {
     let back: Runtime = serde_json::from_str(&text).unwrap();
     assert_eq!(back, r.rt);
     let _: Map<String, Value> = r.rt.state.clone();
+}
+
+#[test]
+fn a_step_that_cannot_start_starts_nothing_after_it() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": ["#bir", {"#iki": {"args": "$output"}}, {"#üç": {"args": {"z": 1}}}],
+               "error": ["#bildir"]}),
+    )]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!("çay"));
+    assert_eq!(names(&a), vec!["bildir"]);
+    assert!(!r.rt.state.contains_key("z"), "#üç never started");
+    assert_eq!(r.rt.state["failed_step"], "#iki");
 }

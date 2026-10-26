@@ -54,9 +54,9 @@ fn asking(d: &Path) {
         "workflows/dağıt.json",
         r##"{ "on": [{ "event": "dağıtım.istendi" }],
              "steps": [
-               { "#notify": { "title": "Dağıtılsın mı?", "text": "3 değişiklik",
-                              "buttons": ["Dağıt", "Vazgeç"] } },
-               { "#uygula": { "on": [{ "$answer": "Dağıt" }] } } ] }"##,
+               { "#notify": { "args": { "title": "Dağıtılsın mı?", "text": "3 değişiklik",
+                                        "buttons": ["Dağıt", "Vazgeç"] } } },
+               { "#uygula": { "on": [{ "$output.answer": "Dağıt" }] } } ] }"##,
     );
     file(
         d,
@@ -107,7 +107,7 @@ fn a_notification_with_buttons_waits_for_its_answer() {
     click(d.path(), "başka-bildirim", "Dağıt");
     pass(d.path());
     assert!(!d.path().join("uygulandı.txt").exists());
-    // its own does: the answer joins the state and the run goes on
+    // its own does: the click is #notify's output, and the run goes on
     click(d.path(), &id, "Dağıt");
     pass(d.path());
     assert_eq!(
@@ -152,7 +152,7 @@ fn notify_s_buttons_are_a_short_list_of_labels() {
             "workflows/sor.json",
             &format!(
                 r##"{{ "on": [{{ "event": "soru.geldi" }}],
-                     "steps": [{{ "#notify": {{ "text": "?", "buttons": {bad} }} }}] }}"##
+                     "steps": [{{ "#notify": {{ "args": {{ "text": "?", "buttons": {bad} }} }} }}] }}"##
             ),
         );
         assert!(itero(d.path(), &["emit", "soru.geldi"]).status.success());

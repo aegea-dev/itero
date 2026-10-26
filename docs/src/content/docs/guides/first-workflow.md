@@ -22,16 +22,15 @@ fetches a page and says whether it answered:
 
 ```sh
 #!/bin/sh
-if curl -fsS -o /dev/null --max-time 10 "$url"; then up=true; else up=false; fi
-echo "{\"url\": \"$url\", \"up\": $up}"
+if curl -fsS -o /dev/null --max-time 10 "$url"; then echo true; else echo false; fi
 ```
 
 ```sh
 chmod +x actions/ping
 ```
 
-It gets its values as environment variables (`$url`). What it prints, one
-JSON object, joins the run's **state**: the values the next steps see.
+It gets its values as environment variables (`$url`). What it prints is
+its result, `true` or `false`: the next step has it as `$output`.
 
 ## 3. The workflow
 
@@ -41,24 +40,27 @@ JSON object, joins the run's **state**: the values the next steps see.
 {
   "on": [{ "schedule": "*/5 * * * *" }, { "event": "site.check" }],
   "steps": [
-    { "#ping": { "url": "https://example.com" } },
-    { "#notify": { "on": [{ "$up": false }], "title": "Site is down", "text": "$url" } }
+    { "#ping": { "args": { "url": "https://example.com" } } },
+    { "#notify": { "on": [{ "$output": false }],
+                   "args": { "title": "Site is down", "text": "$url" } } }
   ]
 }
 ```
 
 - `on`: when it runs. Every five minutes, or when a `site.check` event
   comes, so you can try it now.
-- `#ping`: run the action, with `url` as its value.
+- `#ping`: run the action, with `url` as its value. A step's args also
+  join the run's **state**, the values every later step sees.
 - `#notify`: show a notification (it is built in), but only when its `on`
-  holds: `up` is `false`.
+  holds: `#ping` printed `false`. Its text is the state's `url`.
 
 ## The expressions
 
 | Write | Means |
 |---|---|
 | `"$url"` | the state's `url` |
-| `{ "$up": false }` | holds when `up` is exactly `false` |
+| `"$output"` | the step before's result |
+| `{ "$output": false }` | holds when the step before printed exactly `false` |
 | `{ "has": "$url" }` | holds when there is a `url` |
 | `"$$TOKEN"` | the secret `TOKEN` ([Args and secrets](/guides/secrets/)) |
 
@@ -83,7 +85,7 @@ itero wf runs <name>    # what each step did
 ```
 hidden-beacon  01a17240-01ec-745c-889b-a153818de0c8  site  done
   2026-10-25T08:49:19Z  started  {}
-  2026-10-25T08:49:19Z  #ping  done  {"url":"https://example.com","up":true}
+  2026-10-25T08:49:19Z  #ping  done  true
   2026-10-25T08:49:19Z  ended done
 ```
 

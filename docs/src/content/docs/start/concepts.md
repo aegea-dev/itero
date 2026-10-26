@@ -28,12 +28,14 @@ looked into. [`itero which`](/commands/which/) says where a name is.
 **A workflow** says when it runs (`on`) and what it does (`steps`):
 
 ```json
-{ "on": [{ "event": "order.placed" }], "steps": [["#check-payment", "#check-stock"], "order-process", "#send-mail"] }
+{ "on": [{ "event": "order.placed" }],
+  "steps": [["#check-payment", "#check-stock"], { "order-process": { "args": "$output" } }, "#send-mail"] }
 ```
 
 **An action** (`#check-payment`) is a small program. It reads its values
-as environment variables, prints JSON, and its exit code says how it
-went. **A workflow** can be a step too (`order-process`).
+as environment variables, prints its result, and its exit code says how
+it went. The next step has that result as `$output`, and a step's `args`
+pass on what to keep. **A workflow** can be a step too (`order-process`).
 
 **An event** (a message) has a type, two or more words joined by dots
 (`order.placed`), and data. Apps send them with `itero emit` or `POST
@@ -43,7 +45,7 @@ watched file starts runs too.
 
 **A run** is one go through a workflow, with an id and a name of two
 random words (`misty-lake`). It has a **state**: the data of the event
-that started it, plus what each step printed. A step that is
+that started it, plus the args its steps were given, and `$output`. A step that is
 not ready yet (exit 75) makes the run **wait** until an event for it
 arrives. A run ends as `done`, `failed` (the state says
 `"success": false`) or `error` (something broke).
@@ -89,4 +91,5 @@ Names at a glance:
 | `{"schedule": "0 9 * * *"}` | a schedule in `on` |
 | `{"path": "inbox"}` | a watched file or folder in `on` |
 | `$order` | a value in the run's state |
+| `$output` | the step before's result |
 | `$$API_KEY` | an environment variable or a secret |

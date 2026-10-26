@@ -1,3 +1,3 @@
 #!/bin/sh
-# The page at $url, as {"page": "..."}.
-curl -fsSL --max-time 30 "$url" | jq -Rs '{page: .}'
+# The page at $url: its result.
+curl -fsSL --max-time 30 "$url"

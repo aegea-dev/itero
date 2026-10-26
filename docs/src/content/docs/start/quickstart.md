@@ -15,16 +15,17 @@ A workflow, `workflows/greet.json`: on a `greet.someone` event, run the
 action `#hello`, then show what it said.
 
 ```json
-{ "on": [{ "event": "greet.someone" }], "steps": ["#hello", "#notify"] }
+{ "on": [{ "event": "greet.someone" }],
+  "steps": ["#hello", { "#notify": { "args": { "text": "$output" } } }] }
 ```
 
 An action, `actions/hello`: any executable file. It gets the event's
-fields as environment variables, and what it prints joins the run's
-state, so `#notify` finds `$text` there.
+fields as environment variables, and what it prints is its result, which
+`#notify` is given as its text: `$output`.
 
 ```sh
 #!/bin/sh
-echo "{\"text\": \"Merhaba, $name!\"}"
+echo "Merhaba, $name!"
 ```
 
 ```sh

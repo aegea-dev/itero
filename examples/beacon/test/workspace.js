@@ -51,6 +51,12 @@ export class Workspace {
     return JSON.parse(this.itero("workflow", "runs", run.id, "--json")).state;
   }
 
+  /** What `step` (like "#changed") printed in a run: its result. */
+  output(run, step) {
+    const story = JSON.parse(this.itero("workflow", "runs", run.id, "--json"));
+    return story.steps.findLast((s) => s.what === "done" && s.step === step)?.data;
+  }
+
   /** Changes the manifest: `edit` gets it as an object and changes it. */
   manifest(edit) {
     const f = join(this.dir, "itero.config.json");

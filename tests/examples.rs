@@ -117,21 +117,25 @@ fn the_beacon_tells_only_what_changed() {
         &[("sites", r#"["http://127.0.0.1:9"]"#)],
         "{}",
     );
-    assert_eq!(sites, r#"{"status": {"http://127.0.0.1:9":"down"}}"#);
+    assert_eq!(sites, r#"{"http://127.0.0.1:9":"down"}"#);
     let memory = d.path().join("hafıza");
     let memory = memory.to_str().unwrap();
-    let changed = |state: &str| run_action(&ws, "changed", &[("ITERO_MEMORY", memory)], state);
+    // it reads the step before's result, $output, from the state on stdin
+    let changed = |output: &str| {
+        let state = format!(r#"{{"output": {output}}}"#);
+        run_action(&ws, "changed", &[("ITERO_MEMORY", memory)], &state)
+    };
     // the first run tells what it watches, then only changes
     assert_eq!(changed(&sites), r#"{"text":"http://127.0.0.1:9: down"}"#);
     assert_eq!(changed(&sites), "{}");
-    let back = r#"{"status": {"http://127.0.0.1:9": "up", "disk": "ok"}}"#;
+    let back = r#"{"http://127.0.0.1:9": "up", "disk": "ok"}"#;
     assert_eq!(
         changed(back),
         r#"{"text":"http://127.0.0.1:9: up\ndisk: ok"}"#
     );
     let disk = |min: &str| run_action(&ws, "check-disk", &[("min_free", min)], "{}");
-    assert_eq!(disk("0"), r#"{"status":{"disk":"ok"}}"#);
-    assert_eq!(disk("101"), r#"{"status":{"disk":"under 101% free"}}"#);
+    assert_eq!(disk("0"), r#"{"disk":"ok"}"#);
+    assert_eq!(disk("101"), r#"{"disk":"under 101% free"}"#);
 }
 
 #[test]

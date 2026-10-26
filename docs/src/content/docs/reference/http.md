@@ -69,7 +69,7 @@ the event started have ended, and answers 200 with them:
 ```json
 { "id": "01a1…", "message": "01a1…",
   "runs": [ { "run": "01a1…", "name": "misty-lake", "workflow": "order",
-              "status": "done", "state": { "order": 43, "tracking": "TR-43" } } ] }
+              "status": "done", "state": { "order": 43, "tracking": "TR-43", "output": "" } } ] }
 ```
 
 When the time runs out first, it answers 202 with the runs so far.

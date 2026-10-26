@@ -71,7 +71,7 @@ fn a_run_is_told_step_by_step() {
     executable(
         root,
         "actions/öde",
-        "#!/bin/sh\n[ -n \"$tamam\" ] || { echo '{\"ödeme\": \"bekliyor\"}'; exit 75; }\n",
+        "#!/bin/sh\ncase \"$output\" in *'\"tamam\":true'*) exit 0 ;; esac\necho '{\"ödeme\": \"bekliyor\", \"sipariş\": 1}'; exit 75\n",
     );
     executable(root, "actions/atla", "#!/bin/sh\n");
     executable(

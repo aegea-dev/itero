@@ -29,8 +29,8 @@ chmod +x actions/check-site
 
 cat > workflows/beacon.json <<'EOF'
 { "on": [{ "schedule": "* * * * *" }],
-  "steps": [{ "#check-site": { "url": "http://localhost:3000" } }],
-  "error": [{ "#notify": { "title": "beacon", "text": "$why" } }] }
+  "steps": [{ "#check-site": { "args": { "url": "http://localhost:3000" } } }],
+  "error": [{ "#notify": { "args": { "title": "beacon", "text": "$why" } } }] }
 EOF
 
 itero daemon
@@ -135,16 +135,17 @@ a name stays its file name, and `itero which <name>` says where it is.
   schedule (`{"schedule": "0 9 * * *"}`) or a watched file
   (`{"path": "inbox"}`), under conditions (`{"$paid": true}`,
   `{"has": ["$order", "$$API"]}`). Its steps are actions (`#name`),
-  workflows, lists that run side by side, and steps with data and their
-  own `on`. `success`, `failure` and `error` run at the end.
-- **An action** reads its values as environment variables (from the step,
-  its args, then the run's state; `$$NAME` for a secret) and the state on
-  stdin, prints a JSON object, and exits 0 (done), 75 (not yet: wait for a
-  matching message) or anything else (an error). A program or a package it
+  workflows, lists that run side by side, and steps with their `args` and
+  their own `on`. `success`, `failure` and `error` run at the end.
+- **An action** reads its values as environment variables (from the step's
+  args, its own, then the run's state; `$$NAME` for a secret) and the state
+  on stdin, prints its result (the next step's `$output`, passed on as args
+  to keep), and exits 0 (done), 75 (not yet: wait for a matching message)
+  or anything else (an error). A program or a package it
   needs and lacks is named: in the run's error when a step fails, and by
   `itero check` before anything runs.
 - **A message** starts runs of the workflows on its type, and reaches the
-  runs waiting for it that it matches by their data.
+  steps waiting for it that it matches by what they printed.
 
 Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero check`,
 `itero workflow` (`wf`) `list|runs|config`, `itero action list|errors|args`,

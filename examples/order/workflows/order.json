@@ -2,8 +2,8 @@
   "on": [{ "event": "order.placed" }],
   "steps": [
     ["#check-payment", "#check-stock"],
-    "order-process",
-    "#send-mail"
+    { "order-process": { "args": "$output" } },
+    { "#send-mail": { "args": "$output" } }
   ],
   "success": ["#log-result"],
   "failure": ["#log-result"],

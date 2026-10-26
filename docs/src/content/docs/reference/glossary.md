@@ -19,14 +19,15 @@ when it runs (`on`) and its `steps`, with optional `success`,
 ### step
 
 One thing a workflow does: an action (`#name`), a workflow (`name`), a
-list of them side by side, or one of those with data and an `on`.
+list of them side by side, or one of those with its `args` and an `on`.
 
 ### action <span class="act">■</span>
 
 An executable file in `actions/` or a subfolder of it, any language, named
 by its file name, a version in it if any (`notify@0.2`). It reads its values
-as environment variables, prints JSON, and its exit code says how it went: 0
-done, 75 not yet, anything else an error. See [Actions](/guides/actions/).
+as environment variables, prints its result (`$output`), and its exit code
+says how it went: 0 done, 75 not yet, anything else an error. See
+[Actions](/guides/actions/).
 
 ### subfolder
 
@@ -73,30 +74,40 @@ version of its workflows it started with. It ends as `done`, `failed` or
 
 ### state
 
-A run's values: the data of the event that started it, the events
-that reached it, and what its steps printed. An action gets it as
+A run's values: its workflow's settings, the data of the event that
+started it, the args of its steps, and `$output`. An action gets it as
 environment variables and on stdin.
+
+### output
+
+`$output`: the result of the step just before, what it printed, read as
+JSON when it is JSON. Each step's result takes its place; to keep one, a
+workflow passes it on as a step's [args](#args).
 
 ### waiting
 
-A run whose step exited 75: it waits for an event that matches it (shares
-a field with its state and agrees on all it shares), runs the step again
-every hour, and gives up after its `timeout`.
+A run whose step exited 75: it waits for an event that matches the step
+(shares a field with what it printed and agrees on all it shares), which
+is then the step's `$output`; it runs the step again every hour, and gives
+up after its `timeout`.
 
 ### side by side
 
 A list in `steps`: its entries run at the same time, and the next step
-waits for all of them.
+waits for all of them. Their results merge into one `$output`.
 
 ### condition
 
 An entry of `on` in a workflow or a step: `{"has": "$name"}` (in the
-state), `{"has": "$$NAME"}` (defined), or `{"$name": value}` (exactly). A
-step whose `on` does not hold is skipped.
+state), `{"has": "$$NAME"}` (defined), or `{"$name": value}` (exactly);
+`$output.answer` reads one field. A step whose `on` does not hold is
+skipped.
 
 ### args
 
-Data for an action, `action.<name>.args` in `itero.config.json`, set with `itero action args set`. A list
+Values for an action: a step's `args` in its workflow, which join the
+run's state unless the step is `strict`; and the action's own,
+`action.<name>.args` in `itero.config.json`, set with `itero action args set`, where a list
 runs the step once per item. A connector has args too, `connector.<name>.args`:
 an object.
 

@@ -20,15 +20,22 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
         d.path().join("workflows/kapı.json"),
         json!({
             "on": [{ "event": "kapı.çal" }, { "has": "$$ITERO_TEST_ANAHTAR" }],
-            "steps": [{"#aç": {"anahtar": "$$ITERO_TEST_ANAHTAR"}}]
+            "steps": [{"#aç": {"args": {"anahtar": "$$ITERO_TEST_ANAHTAR"}}}, "#kapat"]
         })
         .to_string(),
     )
     .unwrap();
-    let action = d.path().join("actions/aç");
-    std::fs::write(&action, "#!/bin/sh\necho \"$anahtar\" > açıldı.txt\n").unwrap();
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&action, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // a secret in args joins the state as its name: the next step gets
+    // its value too, on stdin as well
+    for (name, body) in [
+        ("aç", "echo \"$anahtar\" > açıldı.txt"),
+        ("kapat", "echo \"$anahtar\" > kapandı.txt; cat > durum.json"),
+    ] {
+        let action = d.path().join("actions").join(name);
+        std::fs::write(&action, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&action, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let ws = itero::workspace::find(d.path()).unwrap();
     let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
     let pass = || itero::engine::daemon::run_once(&ws, NOW.parse().unwrap(), exe).unwrap();
@@ -48,10 +55,18 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
     let runs = j.runs().unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(itero::engine::steps::status(&runs[0].runtime), "done");
-    assert_eq!(
-        std::fs::read_to_string(d.path().join("açıldı.txt")).unwrap(),
-        "gizli-şifre-123\n"
-    );
+    for f in ["açıldı.txt", "kapandı.txt"] {
+        assert_eq!(
+            std::fs::read_to_string(d.path().join(f)).unwrap(),
+            "gizli-şifre-123\n",
+            "{f}"
+        );
+    }
+    let stdin: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(d.path().join("durum.json")).unwrap())
+            .unwrap();
+    assert_eq!(stdin["anahtar"], "gizli-şifre-123");
+    assert_eq!(runs[0].runtime.state["anahtar"], "$$ITERO_TEST_ANAHTAR");
     // nowhere in the journal, its write-ahead log, nor the log
     let wal = ws.journal().with_extension("sqlite-wal");
     let log = d.path().join(".itero/itero.log");

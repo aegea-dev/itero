@@ -1,9 +1,9 @@
 #!/bin/sh
-# The page's HTML in the run's state as Markdown, by pandoc in Docker:
-# {"page": "..."}, at most 20000 characters, for a model to read. Docker
+# The page's HTML, the step before's result ($output), as Markdown by
+# pandoc in Docker: at most 20000 characters, for a model to read. Docker
 # pulls pandoc/minimal (about 30 MB) the first time. The page is read from
 # the state on stdin: a big one is not in the environment.
 set -eu
-jq -r '.page' |
+jq -r '.output' |
   docker run --rm -i pandoc/minimal:3.11.0 -f html -t gfm-raw_html --wrap=none |
-  jq -Rs '{page: .[0:20000]}'
+  jq -Rrs '.[0:20000]'

@@ -1058,24 +1058,42 @@ fn env_name(n: &str) -> bool {
         && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// A value of a step's data or args: `"$name"` is the state's, `"$$NAME"`
+/// A value of an action's args: `"$name"` is the state's, `"$$NAME"`
 /// the secret's (or the environment variable's); anything else itself.
 fn resolve(v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
-    if let Some(n) = flow::secret_ref(v) {
-        return super::secrets::get(n)
-            .map(Value::String)
-            .ok_or_else(|| format!("{n} is not set: no secret, no environment variable"));
+    match flow::secret_ref(v) {
+        Some(n) => secret(n),
+        None => Ok(flow::fill(v, state)),
     }
-    if let Some(n) = flow::state_ref(v) {
-        return Ok(state.get(n).cloned().unwrap_or(Value::Null));
-    }
-    Ok(v.clone())
 }
 
-/// An action's environment: each value found first in the step's data,
-/// then its args (its item, after a split), then the run's state. Names
+fn secret(n: &str) -> Result<Value, String> {
+    super::secrets::get(n)
+        .map(Value::String)
+        .ok_or_else(|| format!("{n} is not set: no secret, no environment variable"))
+}
+
+/// The state an action is given: the run's, with the step's own
+/// `$output` when it runs again, and each `"$$NAME"` in it, joined from a
+/// step's args, as the secret's value. The journal keeps only the name.
+pub fn given(state: &Map<String, Value>, job: &StepJob) -> Result<Map<String, Value>, String> {
+    let mut given = state.clone();
+    if let Some(o) = &job.output {
+        given.insert("output".into(), o.clone());
+    }
+    for v in given.values_mut() {
+        if let Some(n) = flow::secret_ref(v) {
+            *v = secret(n)?;
+        }
+    }
+    Ok(given)
+}
+
+/// An action's environment: each value found first in the step's args
+/// (filled from the state when the step started), then the action's own
+/// args (its item, after a split), then the state it is `given`. Names
 /// that cannot be environment variables, and state values past `ENV_MAX`,
-/// are on stdin only; a bigger value from the data or args is an error.
+/// are on stdin only; a bigger value from the args is an error.
 pub fn bind(
     state: &Map<String, Value>,
     args: Option<&Value>,
@@ -1087,10 +1105,15 @@ pub fn bind(
         (None, Some(Value::Object(o))) => Some(o.clone()),
         _ => None,
     };
-    for layer in [args.unwrap_or_default(), job.data.clone()] {
-        for (k, v) in layer {
-            values.insert(k, resolve(&v, state)?);
-        }
+    for (k, v) in args.unwrap_or_default() {
+        values.insert(k, resolve(&v, state)?);
+    }
+    for (k, v) in &job.data {
+        let v = match flow::secret_ref(v) {
+            Some(n) => secret(n)?,
+            None => v.clone(),
+        };
+        values.insert(k.clone(), v);
     }
     to_env(values, state)
 }
@@ -1183,12 +1206,13 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
     let args = ws.args(&job.action).map_err(|e| format!("{e:#}"))?;
+    let state = given(&run.runtime.state, &job)?;
     Ok(StepRun {
         file,
         root: ws.root.clone(),
         workflow: workflow.into(),
-        env: bind(&run.runtime.state, args.as_ref(), &job)?,
-        state: run.runtime.state.clone(),
+        env: bind(&state, args.as_ref(), &job)?,
+        state,
         memory: ws.root.join(".itero").join("memory").join(workflow),
         waiting_since: job.waiting_since.clone(),
         quiet: ws.limits.quiet.as_secs(),

@@ -2,7 +2,8 @@
 # A k3d cluster named $name: 1 server and 2 agents (3 machines, each a
 # container), its load balancer serving $port (8080 unless given) on
 # 127.0.0.1. Its kubeconfig goes in .itero/clusters/$name/, so your own
-# ~/.kube/config is left alone. Prints {"cluster", "kubeconfig", "url"}.
+# ~/.kube/config is left alone. Prints {"cluster", "kubeconfig", "url"},
+# which the workflow passes on, so #web-check has $url.
 set -eu
 port=${port:-8080}
 k3d cluster create "$name" --servers 1 --agents 2 \
