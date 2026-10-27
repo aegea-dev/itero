@@ -823,7 +823,7 @@ fn any_ends_with_the_first_step_to_end_well() {
     assert!(goes_on(&a));
     assert_eq!(
         r.rt.state["output"],
-        json!({"tatlı": 1, "winner": "#şeker"})
+        json!({"tatlı": 1, "winner": "#şeker", "failed": ["#çay"], "why": {"#çay": "exit 1"}})
     );
     assert_eq!(stopped(&a), vec!["#ılık"]);
     assert_eq!(sorted(&a), vec![j[2].path.clone()]);
@@ -862,13 +862,16 @@ fn some_with_a_count_ends_when_that_many_ended_well() {
         assert_eq!(stopped(&a), vec![AD[left]]);
         assert_eq!(sorted(&a), vec![j[left].path.clone()]);
     }
-    // a step that broke does not count, and does not matter
+    // a step that broke does not count, and is named
     let (mut r, j) = grup(json!({"some": AD, "count": 2}));
     assert!(r.failed(&j[1], "exit 1").jobs.is_empty());
     assert!(r.done(&j[0], basar(0)).jobs.is_empty());
     let a = r.done(&j[2], basar(2));
     assert!(goes_on(&a));
-    assert_eq!(r.rt.state["output"], json!({"sıcak": 0, "ılık": 2}));
+    assert_eq!(
+        r.rt.state["output"],
+        json!({"sıcak": 0, "ılık": 2, "failed": ["#şeker"], "why": {"#şeker": "exit 1"}})
+    );
     assert!(a.stopped.is_empty());
 }
 
@@ -1016,7 +1019,11 @@ fn fail_all_breaks_only_when_every_step_broke() {
     r.failed(&j[1], "exit 2");
     let a = r.done(&j[2], basar(2));
     assert!(goes_on(&a));
-    assert_eq!(r.rt.state["output"], json!({"ılık": 2}));
+    assert_eq!(
+        r.rt.state["output"],
+        json!({"ılık": 2, "failed": ["#çay", "#şeker"],
+               "why": {"#çay": "exit 1", "#şeker": "exit 2"}})
+    );
 }
 
 #[test]
@@ -1036,7 +1043,10 @@ fn fail_with_names_breaks_when_one_of_them_broke() {
     r.done(&j[2], basar(2));
     let a = r.done(&j[1], basar(1));
     assert!(goes_on(&a));
-    assert_eq!(r.rt.state["output"], json!({"tatlı": 1, "ılık": 2}));
+    assert_eq!(
+        r.rt.state["output"],
+        json!({"tatlı": 1, "ılık": 2, "failed": ["#çay"], "why": {"#çay": "exit 1"}})
+    );
 }
 
 #[test]
@@ -1115,6 +1125,75 @@ fn a_workflow_stopped_by_a_race_stops_all_its_actions() {
     );
     // what the workflow's actions print now reaches nothing
     assert!(r.done(&jobs[1], json!({})).jobs.is_empty());
+}
+
+/// A run of `group`, then `#sonra`, where `önbellek` and `arşiv` are
+/// workflows whose `on` does not hold; a break goes to `#hata`.
+fn atlanan(group: Value) -> (Run, StepAnswer) {
+    let mut r = Run::new(&[
+        (
+            "küme",
+            json!({"steps": [group, "#sonra"], "error": ["#hata"]}),
+        ),
+        (
+            "önbellek",
+            json!({"on": [{"has": "$yok"}], "steps": ["#oku"]}),
+        ),
+        ("arşiv", json!({"on": [{"has": "$yok"}], "steps": ["#oku"]})),
+    ]);
+    let a = r.start(json!({}));
+    (r, a)
+}
+
+#[test]
+fn a_step_that_does_not_run_is_out_of_its_group() {
+    // it does not win a race or any: the others are waited for
+    for key in ["race", "any"] {
+        let (mut r, a) = atlanan(json!({ key: ["önbellek", "#canlı"] }));
+        assert_eq!(names(&a), vec!["canlı"], "{key}");
+        assert!(stopped(&a).is_empty(), "{key}");
+        let a = r.done(&a.jobs[0], json!({"fiyat": 5}));
+        assert!(goes_on(&a), "{key}");
+        assert_eq!(
+            r.rt.state["output"],
+            json!({"fiyat": 5, "winner": "#canlı"}),
+            "{key}"
+        );
+    }
+    // nor count toward some, nor break all
+    let (mut r, a) = atlanan(json!({"some": ["önbellek", "#canlı", "#yedek"], "count": 2}));
+    assert!(r.done(&a.jobs[0], json!({"a": 1})).jobs.is_empty());
+    assert!(goes_on(&r.done(&a.jobs[1], json!({"b": 2}))));
+    let (mut r, a) = atlanan(json!({"all": ["önbellek", "#canlı"]}));
+    assert!(goes_on(&r.done(&a.jobs[0], json!({"fiyat": 5}))));
+    assert_eq!(r.rt.state["output"], json!({"fiyat": 5}));
+    // when no step of it runs, the group ends with nothing
+    let (_, a) = atlanan(json!({"race": ["önbellek", "arşiv"]}));
+    assert!(goes_on(&a));
+}
+
+#[test]
+fn a_group_that_ends_while_a_step_broke_says_which_and_why() {
+    // a race whose first step broke, kept going by fail
+    let (mut r, j) = grup(json!({"race": AD, "fail": "all"}));
+    let a = r.failed(&j[1], "exit 7: bağlantı yok");
+    assert!(goes_on(&a));
+    assert_eq!(
+        r.rt.state["output"],
+        json!({"failed": ["#şeker"], "why": {"#şeker": "exit 7: bağlantı yok"}})
+    );
+    // any, its winner after a break
+    let (mut r, j) = grup(json!({"any": AD}));
+    r.failed(&j[0], "exit 1: çay");
+    assert!(goes_on(&r.done(&j[2], basar(2))));
+    assert_eq!(
+        r.rt.state["output"],
+        json!({"ılık": 2, "winner": "#ılık", "failed": ["#çay"], "why": {"#çay": "exit 1: çay"}})
+    );
+    // nothing broke: no failed, but for settled and fail never
+    let (mut r, j) = grup(json!({"any": AD}));
+    assert!(goes_on(&r.done(&j[0], basar(0))));
+    assert_eq!(r.rt.state["output"], json!({"sıcak": 0, "winner": "#çay"}));
 }
 
 #[test]

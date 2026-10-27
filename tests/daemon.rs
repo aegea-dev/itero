@@ -441,7 +441,8 @@ fn any_waits_for_the_slow_step_when_the_fast_one_breaks() {
     assert_eq!(ws.statuses(), vec!["done"]);
     assert_eq!(
         ws.runs()[0].runtime.state["output"],
-        json!({"#yavaş": "yavaş", "winner": "#yavaş"})
+        json!({"#yavaş": "yavaş", "winner": "#yavaş",
+               "failed": ["#kırık"], "why": {"#kırık": "exit 1: bozuldu"}})
     );
 }
 

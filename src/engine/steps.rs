@@ -194,6 +194,9 @@ pub enum Outcome {
     },
     /// The group ended without it: it was running or waiting.
     Stopped,
+    /// It did not run (a workflow whose `on` does not hold, or none of
+    /// whose steps ran): out of the group, as if not written.
+    Skipped,
 }
 
 /// Everything the manager is given for one decision.
@@ -620,13 +623,12 @@ impl Machine<'_> {
                         e.outcome = Some(Outcome::Broke { step, why });
                         e.order = next_order(&entries);
                     } else if e.at.is_none() {
-                        // its on does not hold: it ended, with nothing
-                        e.outcome = Some(Outcome::Done);
-                        e.order = next_order(&entries);
+                        // it did not run: out of the group
+                        e.outcome = Some(Outcome::Skipped);
                     }
                     entries.push(e);
                 }
-                if entries.iter().all(|e| e.at.is_none() && e.is_ok()) {
+                if entries.iter().all(|e| e.outcome == Some(Outcome::Skipped)) {
                     // nothing ran
                     return Ok(None);
                 }
@@ -1149,7 +1151,11 @@ fn next_order(entries: &[Entry]) -> usize {
 /// Whether a group goes on, ended, or broke, over its entries: its wait's
 /// rule, or `fail`'s in its place for when it breaks.
 fn judge(wait: &Wait, fail: &Option<Fail>, entries: &[Entry]) -> Verdict {
-    let n = entries.len();
+    // a step that did not run is out of the group
+    let n = entries
+        .iter()
+        .filter(|e| e.outcome != Some(Outcome::Skipped))
+        .count();
     let good = entries.iter().filter(|e| e.is_ok()).count();
     let bad = entries.iter().filter(|e| e.broke()).count();
     let running = entries.iter().filter(|e| e.at.is_some()).count();
@@ -1230,7 +1236,11 @@ fn group_output(wait: &Wait, fail: &Option<Fail>, entries: &[Entry]) -> Value {
     if let Some(w) = winner {
         fields.insert("winner".into(), w.name.clone().into());
     }
-    if matches!(wait, Wait::Settled) || matches!(fail, Some(Fail::Never)) {
+    // which steps broke, when one did; always for settled and fail never
+    if matches!(wait, Wait::Settled)
+        || matches!(fail, Some(Fail::Never))
+        || entries.iter().any(Entry::broke)
+    {
         let mut failed = vec![];
         let mut why = Map::new();
         for e in entries {
