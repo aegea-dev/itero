@@ -72,6 +72,7 @@ anything.
 | `most` | how long a step may run, printing or not | `"1d"` |
 
 What happens at each: [The daemon's own workflows](/guides/maintenance/#limits).
+An action's entry may set its own `quiet` and `most` (below).
 
 ## `workflow`, `action`, `connector`
 
@@ -91,6 +92,7 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 |---|---|
 | `description`, `tags`, your own keys | what it is |
 | `args` | data for the action, whatever workflow runs it: an object, or a list of objects (the step runs once per item); [Args and secrets](/guides/secrets/) |
+| `limits` | `quiet` and `most` for this action's steps, like `{"quiet": "1h", "most": "2d"}`; unless given, the workspace's [`limits`](#limits) |
 
 | In a `connector` entry | Is |
 |---|---|
