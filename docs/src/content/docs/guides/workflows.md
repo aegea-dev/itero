@@ -390,4 +390,15 @@ and a result that is not an object is kept under its step's name:
 { "paid": true, "stock": false, "status": { "#check-payment": "ok", "stock-check": "low" } }
 ```
 
+A step after them reads a field as usual, `$output.paid`, and a result
+kept under a step's name by that name: two steps that print plain values,
+`#size` printing `1064` and `#type` printing `image/png`, give
+`{"#size": 1064, "#type": "image/png"}`, read as `$output.#size` and
+`$output.#type`:
+
+```json
+{ "steps": [["#size", "#type"],
+            { "#notify": { "args": { "text": "$output.#size bytes, $output.#type" } } }] }
+```
+
 All keys: [Workflow files](/reference/workflow-file/).
