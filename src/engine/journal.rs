@@ -427,6 +427,26 @@ impl Journal {
             .flatten())
     }
 
+    /// The type of the message that started a run, through the runs it
+    /// split from; `None` when no message did (a schedule, a split's lost
+    /// parent).
+    pub fn started_on(&self, run: &Run) -> Result<Option<String>> {
+        let mut cause = run.message.clone();
+        while let Some(id) = cause {
+            if let Some(parent) = self.run(&id)? {
+                cause = parent.message;
+                continue;
+            }
+            return Ok(self
+                .db
+                .query_row("SELECT type FROM events WHERE id = ?1", params![id], |r| {
+                    r.get(0)
+                })
+                .optional()?);
+        }
+        Ok(None)
+    }
+
     /// The runs a message started (and those split from them), oldest
     /// first; `None` while no daemon has taken the message.
     pub fn runs_of(&self, message: &str) -> Result<Option<Vec<Run>>> {

@@ -920,8 +920,13 @@ fn deliver(
             events.push(journal::copy(&m.event, &id, &at));
         }
     }
-    // a run ending in error or failed: the daemon's own message says so
+    // a run ending: the daemon's own message says how; one that a run's
+    // message started says nothing when done, or two workflows watching
+    // every run's end would start each other forever
     if run.runtime.ended.is_none() {
+        let quiet_when_done = j
+            .started_on(&run)?
+            .is_some_and(|t| t.starts_with("itero.run."));
         let why = answer
             .runtime
             .state
@@ -939,6 +944,13 @@ fn deliver(
             Some(steps::Ended::Failed) => Some((
                 "itero.run.failed",
                 json!({ "workflow": run.workflow, "run": id, "why": why }),
+            )),
+            Some(steps::Ended::Done) if !quiet_when_done => Some((
+                "itero.run.done",
+                json!({
+                    "workflow": run.workflow, "run": id,
+                    "output": answer.runtime.state.get("output"),
+                }),
             )),
             _ => None,
         };
