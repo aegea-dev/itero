@@ -18,6 +18,7 @@ notification comes through Itero.app):
 | `itero.daemon.started` | the daemon starts | `daemon`, `name`, `itero` |
 | `itero.run.error` | a run ended in error | `workflow`, `run`, `failed_step`, `why` |
 | `itero.run.failed` | a run ended as failed | `workflow`, `run`, `why` |
+| `itero.run.done` | a run ended done (not one started by an `itero.run.` event) | `workflow`, `run`, `output` (its last result) |
 | `itero.connector.gave-up` | a connector kept ending and was given up on | `connector`, `why` |
 | `itero.space.full` | `.itero/` is past its `space` limit | `used`, `limit` |
 | `itero.log.full` | the log is past its `log` limit | `path`, `size`, `limit` |
@@ -31,7 +32,15 @@ A workflow on one is written like any other:
 ```
 
 An event about a run never starts its own workflow, so a broken workflow
-cannot set itself off again and again. No run waits for these events:
+cannot set itself off again and again. A run that an `itero.run.` event
+started sends no `itero.run.done`: two workflows that watch every run's
+end would otherwise start each other forever. To start a workflow when
+another one is done, name it in the event's condition:
+
+```json
+{ "on": [{ "event": "itero.run.done" }, { "$workflow": "nightly-backup" }],
+  "steps": ["#upload-report"] }
+``` No run waits for these events:
 they only start workflows.
 
 ## Internal workflows
