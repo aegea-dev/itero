@@ -328,6 +328,153 @@ fn steps_side_by_side_that_print_plain_values_are_read_by_name() {
     assert_eq!(ws.read("yazılan.txt"), "1064 bayt, image/png\n");
 }
 
+/// Whether process `pid` still runs: one ended and not yet reaped (in a
+/// container, nothing may reap it) does not.
+fn alive(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    let state = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|s| s.rsplit_once(") ").and_then(|(_, r)| r.chars().next()));
+    #[cfg(not(target_os = "linux"))]
+    let state = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().chars().next());
+    state.is_some_and(|c| c != 'Z')
+}
+
+/// The pid an action wrote to `file`, once it is there.
+fn pid_in(ws: &Ws, file: &str) -> u32 {
+    assert!(soon(|| !ws.read(file).trim().is_empty()), "no {file}");
+    ws.read(file).trim().parse().unwrap()
+}
+
+/// The journal's jobs: each one's action, whether it was handled, and its
+/// note.
+fn jobs(ws: &Ws) -> Vec<(String, bool, Option<String>)> {
+    Journal::open(&ws.ws)
+        .unwrap()
+        .events(Some("itero.worker"))
+        .unwrap()
+        .into_iter()
+        .map(|r| {
+            let action = r.event.data["job"]["action"].as_str().unwrap().to_string();
+            (action, r.handled.is_some(), r.note)
+        })
+        .collect()
+}
+
+/// The one job of `action`, saved as stopped.
+fn saved_as_stopped(ws: &Ws, action: &str) {
+    let found: Vec<_> = jobs(ws).into_iter().filter(|j| j.0 == action).collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (_, handled, note) = &found[0];
+    assert!(handled, "{found:?}");
+    assert!(
+        note.as_deref().unwrap_or("").contains("stopped"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_race_ends_with_its_first_step_and_stops_the_slow_ones_process() {
+    let ws = Ws::new();
+    ws.flow(
+        "yarış",
+        json!({"on": [{ "event": "yarış.başladı" }],
+               "steps": [{ "race": ["#hızlı", "#yavaş"] }]}),
+    );
+    ws.action("hızlı", "sleep 0.5; echo hızlı");
+    // its sleep runs apart from its shell, in its process group
+    ws.action("yavaş", "sleep 30 &\necho $! > uyku.pid\nwait");
+    ws.emit("yarış.başladı", json!({}));
+    let started = std::time::Instant::now();
+    let pass = ws.pass(NOW);
+    let took = started.elapsed();
+    let pid = pid_in(&ws, "uyku.pid");
+    assert!(soon(|| !alive(pid)), "sleep {pid} still runs");
+    assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(
+        ws.runs()[0].runtime.state["output"],
+        json!({"#hızlı": "hızlı", "winner": "#hızlı"})
+    );
+    // the slow one is saved as stopped, not lost: it does not run again
+    assert_eq!(pass.lost, 0);
+    saved_as_stopped(&ws, "yavaş");
+    ws.pass(NOW);
+    saved_as_stopped(&ws, "yavaş");
+    assert!(ws.log().iter().any(|l| l["event"] == "step.stopped"));
+}
+
+#[test]
+fn a_step_stopped_before_it_started_never_runs() {
+    // one step at a time: the slow one waits its turn, and loses meanwhile
+    let ws = Ws::with(r#"{"limits": {"steps": 1}}"#);
+    ws.flow(
+        "yarış",
+        json!({"on": [{ "event": "yarış.başladı" }],
+               "steps": [{ "race": ["#hızlı", "#yavaş"] }]}),
+    );
+    ws.action("hızlı", "echo hızlı");
+    ws.action("yavaş", "echo koştu > yavaş.txt");
+    ws.emit("yarış.başladı", json!({}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(ws.read("yavaş.txt"), "");
+    saved_as_stopped(&ws, "yavaş");
+}
+
+#[test]
+fn any_waits_for_the_slow_step_when_the_fast_one_breaks() {
+    let ws = Ws::new();
+    ws.flow(
+        "biri",
+        json!({"on": [{ "event": "biri.başladı" }],
+               "steps": [{ "any": ["#kırık", "#yavaş"] }]}),
+    );
+    ws.action("kırık", "echo bozuldu >&2; exit 1");
+    ws.action("yavaş", "sleep 1; echo yavaş");
+    ws.emit("biri.başladı", json!({}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(
+        ws.runs()[0].runtime.state["output"],
+        json!({"#yavaş": "yavaş", "winner": "#yavaş",
+               "failed": ["#kırık"], "why": {"#kırık": "exit 1: bozuldu"}})
+    );
+}
+
+#[test]
+fn a_waiting_step_that_lost_a_race_is_not_woken_by_a_later_message() {
+    let ws = Ws::new();
+    ws.flow(
+        "bekleyen",
+        json!({"on": [{ "event": "yarış.başladı" }],
+               "steps": [{ "race": ["#bekle", "#hızlı"] }, "#sonra"]}),
+    );
+    // both wait for the same message: only the step still in the run gets it
+    ws.action(
+        "bekle",
+        r#"echo uyandı >> bekle.log; echo '{"sipariş": "ş-1"}'; exit 75"#,
+    );
+    ws.action("hızlı", "sleep 1; echo hızlı");
+    ws.action(
+        "sonra",
+        r#"case "$output" in *geldi*) echo bitti; exit 0 ;; esac
+echo '{"sipariş": "ş-1"}'; exit 75"#,
+    );
+    ws.emit("yarış.başladı", json!({}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["waiting"]);
+    assert_eq!(ws.read("bekle.log"), "uyandı\n");
+    ws.emit("veri.geldi", json!({"sipariş": "ş-1", "geldi": "şimdi"}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(ws.read("bekle.log"), "uyandı\n", "the loser ran again");
+}
+
 #[test]
 fn a_step_quiet_past_its_limit_is_stopped_and_run_again() {
     let ws = Ws::with(r#"{"limits": {"quiet": "1s"}}"#);

@@ -2,6 +2,7 @@
 //! `steps`, and the `success`, `failure` and `error` lists run at the end.
 //! Its name is its file name, so the file has none.
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::time::Duration;
 
@@ -135,9 +136,59 @@ pub enum Step {
         /// Its args reach its action only, not the run's state.
         strict: bool,
     },
-    /// Actions and workflows that run side by side; the next step waits
-    /// for all of them.
-    Side(Vec<Name>),
+    /// Actions and workflows that run side by side; the next step waits as
+    /// the group says.
+    Side(Group),
+}
+
+/// Steps side by side, how the next step waits for them, and when the
+/// group breaks. A bare list is `Wait::All` with no `fail`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Group {
+    pub names: Vec<Name>,
+    pub wait: Wait,
+    /// `None`: the wait's own rule says when the group breaks.
+    pub fail: Option<Fail>,
+}
+
+/// When the group ends: the key of its object.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Wait {
+    /// Every step ended well.
+    #[default]
+    All,
+    /// The first step ended.
+    Race,
+    /// The first step ended well.
+    Any,
+    /// Some of the steps ended well.
+    Some(Need),
+    /// Every step ended.
+    Settled,
+}
+
+/// What `some` needs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Need {
+    /// This many steps ended well.
+    Count(usize),
+    /// These steps ended well, as the labels `#a` and `workflow`.
+    Names(Vec<String>),
+}
+
+/// When the group breaks, replacing its wait's own rule.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Fail {
+    /// One step broke.
+    Any,
+    /// Every step broke.
+    All,
+    Never,
+    /// One of these steps broke, as the labels `#a` and `workflow`.
+    Steps(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -149,6 +200,17 @@ pub enum Name {
     },
     /// `order-process`.
     Workflow(String),
+}
+
+impl Name {
+    /// `#name` for an action, whatever its version, the name for a
+    /// workflow: how a step is told apart in a group.
+    pub fn label(&self) -> String {
+        match self {
+            Name::Action { name, .. } => format!("#{name}"),
+            Name::Workflow(w) => w.clone(),
+        }
+    }
 }
 
 /// Reads a workflow file's text.
@@ -516,19 +578,12 @@ fn step(v: &Value) -> Result<Step, String> {
             undo: None,
             strict: false,
         }),
-        Value::Array(items) => {
-            let names = items
-                .iter()
-                .map(|i| {
-                    i.as_str()
-                        .ok_or(
-                            "a list side by side holds names of actions and workflows".to_string(),
-                        )
-                        .and_then(name)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Step::Side(names))
-        }
+        Value::Array(items) => Ok(Step::Side(Group {
+            names: side_names(items, "a list side by side")?,
+            wait: Wait::All,
+            fail: None,
+        })),
+        Value::Object(m) if is_group(m) => group(v, m),
         Value::Object(m) => {
             let mut it = m.iter();
             let (Some((k, v)), None) = (it.next(), it.next()) else {
@@ -596,6 +651,152 @@ fn step(v: &Value) -> Result<Step, String> {
     }
 }
 
+/// The names in a list side by side; `what` says whose list it is.
+fn side_names(items: &[Value], what: &str) -> Result<Vec<Name>, String> {
+    items
+        .iter()
+        .map(|i| {
+            i.as_str()
+                .ok_or(format!("{what} holds names of actions and workflows"))
+                .and_then(name)
+        })
+        .collect()
+}
+
+const WAITS: [&str; 5] = ["all", "race", "any", "some", "settled"];
+
+/// Whether a step object is a group: it holds one of the group's keys,
+/// unless it is one step named like a key (`{ "all": { ... } }`, a
+/// workflow called `all`).
+fn is_group(m: &Map<String, Value>) -> bool {
+    let one_step = m.len() == 1 && m.values().all(Value::is_object);
+    !one_step
+        && m.keys().any(|k| {
+            WAITS.contains(&k.as_str()) || ["fail", "count", "names"].contains(&k.as_str())
+        })
+}
+
+/// `{ "race": ["#a", "#b"], "fail": ... }`: steps side by side that say
+/// how to wait. Every error shows the step as written.
+fn group(v: &Value, m: &Map<String, Value>) -> Result<Step, String> {
+    let bad = |why: String| format!("{v}: {why}");
+    let keys: Vec<&str> = m
+        .keys()
+        .map(String::as_str)
+        .filter(|k| WAITS.contains(k))
+        .collect();
+    let key = match keys.as_slice() {
+        [one] => *one,
+        [] => {
+            return Err(bad(
+                "a group holds one of all, race, any, some or settled, with a list of steps".into(),
+            ));
+        }
+        several => {
+            return Err(bad(format!(
+                "a group holds one of all, race, any, some or settled, not both {}",
+                several.join(" and ")
+            )));
+        }
+    };
+    if let Some(other) = m
+        .keys()
+        .find(|k| !WAITS.contains(&k.as_str()) && !["fail", "count", "names"].contains(&k.as_str()))
+    {
+        return Err(bad(format!(
+            "\"{other}\" is not one of {key}, fail, count, names"
+        )));
+    }
+    let items = match &m[key] {
+        Value::Array(items) if items.len() >= 2 => items,
+        _ => {
+            return Err(bad(format!(
+                "{key} is a list of two or more steps, like [\"#a\", \"#b\"]"
+            )));
+        }
+    };
+    let names = side_names(items, key).map_err(&bad)?;
+    let labels: Vec<String> = names.iter().map(Name::label).collect();
+    // a step is told apart by its name, whatever its version
+    for (i, l) in labels.iter().enumerate() {
+        if labels[..i].contains(l) {
+            return Err(bad(format!(
+                "{l} is in the list twice: the steps of a group are told apart by their names"
+            )));
+        }
+    }
+    // a list of names that must be steps of this group
+    let steps_of = |what: &str, v: &Value| -> Result<Vec<String>, String> {
+        let list: Vec<&Value> = match v {
+            Value::Array(a) => a.iter().collect(),
+            one => vec![one],
+        };
+        let mut out = vec![];
+        for n in list {
+            let s = n.as_str().unwrap_or("");
+            if !labels.iter().any(|l| l == s) {
+                return Err(bad(format!(
+                    "{what}: {n} is not one of the steps in the list"
+                )));
+            }
+            out.push(s.to_string());
+        }
+        Ok(out)
+    };
+    let wait = match key {
+        "all" => Wait::All,
+        "race" => Wait::Race,
+        "any" => Wait::Any,
+        "settled" => Wait::Settled,
+        _ => match (m.get("count"), m.get("names")) {
+            (None, None) => return Err(bad("some needs count or names".into())),
+            (Some(_), Some(_)) => return Err(bad("some takes count or names, not both".into())),
+            (Some(c), None) => match c.as_u64() {
+                Some(n) if (1..=names.len() as u64).contains(&n) => {
+                    Wait::Some(Need::Count(n as usize))
+                }
+                _ => {
+                    return Err(bad(format!(
+                        "count is a whole number from 1 to {}, the steps in the list",
+                        names.len()
+                    )));
+                }
+            },
+            (None, Some(n)) => match n {
+                Value::Array(a) if !a.is_empty() => Wait::Some(Need::Names(steps_of("names", n)?)),
+                _ => {
+                    return Err(bad(
+                        "names is a list of the steps that must end well, like [\"#a\", \"#c\"]"
+                            .into(),
+                    ));
+                }
+            },
+        },
+    };
+    for k in ["count", "names"] {
+        if key != "some" && m.contains_key(k) {
+            return Err(bad(format!("{k} goes with some")));
+        }
+    }
+    let fail = match m.get("fail") {
+        None => None,
+        Some(Value::String(s)) if s == "any" => Some(Fail::Any),
+        Some(Value::String(s)) if s == "all" => Some(Fail::All),
+        Some(Value::String(s)) if s == "never" => Some(Fail::Never),
+        Some(f @ (Value::String(_) | Value::Array(_)))
+            if f.as_array().is_none_or(|a| !a.is_empty()) =>
+        {
+            Some(Fail::Steps(steps_of("fail", f)?))
+        }
+        Some(_) => {
+            return Err(bad(
+                "fail is \"any\", \"all\", \"never\", a step's name or a list of names".into(),
+            ));
+        }
+    };
+    Ok(Step::Side(Group { names, wait, fail }))
+}
+
 /// `#name` or `#name@1.2` is an action, any other name a workflow.
 pub fn name(s: &str) -> Result<Name, String> {
     let ok = |n: &str| {
@@ -651,7 +852,7 @@ impl Flow {
         for s in self.all_steps() {
             let names: Vec<&Name> = match s {
                 Step::One { name, undo, .. } => std::iter::once(name).chain(undo).collect(),
-                Step::Side(names) => names.iter().collect(),
+                Step::Side(g) => g.names.iter().collect(),
             };
             for n in names {
                 if !out.contains(n) {

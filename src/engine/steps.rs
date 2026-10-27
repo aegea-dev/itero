@@ -9,7 +9,7 @@
 //! node, starting with the phase, so a late answer from a branch already
 //! left behind is recognised and ignored.
 use super::{Event, Timer};
-use crate::flow::{self, Flow, Name, On, Step};
+use crate::flow::{self, Fail, Flow, Name, Need, On, Step, Wait};
 use chrono::{DateTime, FixedOffset, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -148,20 +148,55 @@ pub enum At {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output: Option<Value>,
     },
-    /// A list run side by side.
-    Side { entries: Vec<Entry> },
+    /// A list run side by side, and how the next step waits for it.
+    Side {
+        #[serde(default)]
+        wait: Wait,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fail: Option<Fail>,
+        entries: Vec<Entry>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
     /// `#check-payment` or `stock-check`.
     pub name: String,
-    /// `None` once it is done.
+    /// `None` once it has ended: done, broke or stopped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<At>,
     /// Its `$output` once it is done, for the list's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<Value>,
+    /// How it ended; `None` while it runs (and, in a run written before
+    /// groups said how to wait, once it is done).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<Outcome>,
+    /// Which end it was in the group, counting from 1: how the group tells
+    /// the first from the rest. 0 while it runs.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub order: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// How an entry of a group ended.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Outcome {
+    Done,
+    /// A step of it broke: that step's name, and why.
+    Broke {
+        step: String,
+        why: String,
+    },
+    /// The group ended without it: it was running or waiting.
+    Stopped,
+    /// It did not run (a workflow whose `on` does not hold, or none of
+    /// whose steps ran): out of the group, as if not written.
+    Skipped,
 }
 
 /// Everything the manager is given for one decision.
@@ -203,6 +238,11 @@ pub struct StepAnswer {
     /// `{"event": "step.skipped", "step": "#ship"}`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<Value>,
+    /// The paths (as in `StepJob::path`) of the actions a group stopped in
+    /// this decision, running, waiting or just started: their jobs are to
+    /// be ended, and their answers are ignored from now on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stopped: Vec<Vec<usize>>,
 }
 
 /// One action to run.
@@ -277,6 +317,7 @@ pub fn decide(input: &StepInput) -> Result<StepAnswer, String> {
         broke: None,
         log: vec![],
         notes: vec![],
+        stopped: vec![],
     };
     if m.rt.ended.is_some() {
         m.log
@@ -305,6 +346,7 @@ pub fn decide(input: &StepInput) -> Result<StepAnswer, String> {
         timers,
         log: m.log,
         notes: m.notes,
+        stopped: m.stopped,
     })
 }
 
@@ -321,6 +363,7 @@ struct Machine<'a> {
     broke: Option<(String, String)>,
     log: Vec<String>,
     notes: Vec<Value>,
+    stopped: Vec<Vec<usize>>,
 }
 
 impl Machine<'_> {
@@ -562,22 +605,43 @@ impl Machine<'_> {
                 };
                 self.start_name(name, &data, path, false)
             }
-            Step::Side(names) => {
-                let mut entries = vec![];
-                for (j, n) in names.iter().enumerate() {
+            Step::Side(group) => {
+                let mut entries: Vec<Entry> = vec![];
+                for (j, n) in group.names.iter().enumerate() {
                     path.push(j);
                     let at = self.start_name(n, &Map::new(), path, true)?;
                     path.pop();
-                    entries.push(Entry {
+                    let mut e = Entry {
                         name: label(n),
                         at,
                         output: None,
-                    });
+                        outcome: None,
+                        order: 0,
+                    };
+                    if let Some((why, step)) = self.broke.take() {
+                        // it cannot start: that step of the group broke
+                        e.outcome = Some(Outcome::Broke { step, why });
+                        e.order = next_order(&entries);
+                    } else if e.at.is_none() {
+                        // it did not run: out of the group
+                        e.outcome = Some(Outcome::Skipped);
+                    }
+                    entries.push(e);
                 }
-                Ok(entries
-                    .iter()
-                    .any(|e| e.at.is_some())
-                    .then_some(At::Side { entries }))
+                if entries.iter().all(|e| e.outcome == Some(Outcome::Skipped)) {
+                    // nothing ran
+                    return Ok(None);
+                }
+                Ok(
+                    match self.settle(group.wait.clone(), group.fail.clone(), entries, path) {
+                        Adv::Going(at) => Some(at),
+                        Adv::Done => None,
+                        Adv::Broke { step, why } => {
+                            self.broke = Some((why, step));
+                            None
+                        }
+                    },
+                )
             }
         }
     }
@@ -686,25 +750,41 @@ impl Machine<'_> {
             return Ok(());
         }
         self.rt.state.insert("output".into(), out.clone());
-        let at = self.rt.at.take().expect("found");
-        self.rt.at = self.advance(at, &path[1..], vec![path[0]], 0)?;
-        if self.rt.at.is_none() && self.broke.is_none() {
-            self.list_done()?;
-        }
-        Ok(())
+        self.settle_leaf(path, Leaf::Done)
     }
 
-    /// The node after the leaf at `path` (under `node`) is done: the same
-    /// node going on, or `None` when it is done too.
+    /// The action at `path` ended, well or not: its place in the position
+    /// is settled, and the run goes on, or breaks.
+    fn settle_leaf(&mut self, path: &[usize], leaf: Leaf) -> Result<(), String> {
+        let at = self.rt.at.take().expect("found");
+        match self.advance(at, &path[1..], vec![path[0]], 0, &leaf)? {
+            Adv::Going(at) => {
+                self.rt.at = Some(at);
+                Ok(())
+            }
+            Adv::Done => self.list_done(),
+            Adv::Broke { step, why } => self.fail(&why, &step),
+        }
+    }
+
+    /// The node after the leaf at `path` (under `node`) ended is settled:
+    /// the same node going on, or done, or broken.
     fn advance(
         &mut self,
         node: At,
         path: &[usize],
         prefix: Vec<usize>,
         depth: usize,
-    ) -> Result<Option<At>, String> {
+        leaf: &Leaf,
+    ) -> Result<Adv, String> {
         match node {
-            At::Action { .. } => Ok(None),
+            At::Action { .. } => Ok(match leaf {
+                Leaf::Done => Adv::Done,
+                Leaf::Broke { step, why } => Adv::Broke {
+                    step: step.clone(),
+                    why: why.clone(),
+                },
+            }),
             At::Flow {
                 workflow,
                 step,
@@ -713,16 +793,17 @@ impl Machine<'_> {
                 let mut p = prefix.clone();
                 p.push(step);
                 let next = match inner {
-                    Some(i) => self.advance(*i, &path[1..], p, depth + 1)?,
-                    None => None,
+                    Some(i) => self.advance(*i, &path[1..], p, depth + 1, leaf)?,
+                    None => Adv::Done,
                 };
                 match next {
-                    Some(n) => Ok(Some(At::Flow {
+                    Adv::Going(n) => Ok(Adv::Going(At::Flow {
                         workflow,
                         step,
                         inner: Some(Box::new(n)),
                     })),
-                    None => {
+                    broke @ Adv::Broke { .. } => Ok(broke),
+                    Adv::Done => {
                         // the step finished: what takes it back, if the run
                         // breaks later
                         if self.rt.phase == Phase::Steps
@@ -735,26 +816,91 @@ impl Machine<'_> {
                             });
                         }
                         let mut p = prefix;
-                        self.start_list(&workflow, depth == 0, step + 1, &mut p)
+                        let next = self.start_list(&workflow, depth == 0, step + 1, &mut p)?;
+                        if let Some((why, step)) = self.broke.take() {
+                            return Ok(Adv::Broke { step, why });
+                        }
+                        Ok(match next {
+                            Some(n) => Adv::Going(n),
+                            None => Adv::Done,
+                        })
                     }
                 }
             }
-            At::Side { mut entries } => {
+            At::Side {
+                wait,
+                fail,
+                mut entries,
+            } => {
                 let j = path[0];
-                let mut p = prefix;
+                let mut p = prefix.clone();
                 p.push(j);
                 if let Some(at) = entries[j].at.take() {
-                    entries[j].at = self.advance(at, &path[1..], p, depth + 1)?;
-                    if entries[j].at.is_none() {
-                        entries[j].output = self.rt.state.get("output").cloned();
+                    match self.advance(at, &path[1..], p, depth + 1, leaf)? {
+                        Adv::Going(at) => entries[j].at = Some(at),
+                        Adv::Done => {
+                            entries[j].outcome = Some(Outcome::Done);
+                            entries[j].output = self.rt.state.get("output").cloned();
+                            entries[j].order = next_order(&entries);
+                        }
+                        Adv::Broke { step, why } => {
+                            entries[j].outcome = Some(Outcome::Broke { step, why });
+                            entries[j].order = next_order(&entries);
+                        }
                     }
                 }
-                if entries.iter().any(|e| e.at.is_some()) {
-                    return Ok(Some(At::Side { entries }));
-                }
-                self.rt.state.insert("output".into(), side_output(&entries));
-                Ok(None)
+                Ok(self.settle(wait, fail, entries, &prefix))
             }
+        }
+    }
+
+    /// A group after a change: it goes on, or it ends (the steps still
+    /// running are stopped, and `$output` is its result), or it broke.
+    /// `at` is the group's own path.
+    fn settle(
+        &mut self,
+        wait: Wait,
+        fail: Option<Fail>,
+        mut entries: Vec<Entry>,
+        at: &[usize],
+    ) -> Adv {
+        match judge(&wait, &fail, &entries) {
+            Verdict::Going => Adv::Going(At::Side {
+                wait,
+                fail,
+                entries,
+            }),
+            Verdict::Ended => {
+                self.stop(&mut entries, at);
+                let out = group_output(&wait, &fail, &entries);
+                self.rt.state.insert("output".into(), out);
+                Adv::Done
+            }
+            Verdict::Broke { step, why } => {
+                self.stop(&mut entries, at);
+                Adv::Broke { step, why }
+            }
+        }
+    }
+
+    /// The entries still running or waiting are stopped: their actions
+    /// leave the position (so nothing they answer reaches the run), their
+    /// jobs not yet handed out are dropped, and the daemon is told which
+    /// to end. `at` is the group's own path.
+    fn stop(&mut self, entries: &mut [Entry], at: &[usize]) {
+        for (j, e) in entries.iter_mut().enumerate() {
+            let Some(mut node) = e.at.take() else {
+                continue;
+            };
+            let mut gone = vec![];
+            let mut p = at.to_vec();
+            p.push(j);
+            leaves(&mut node, &mut p, &mut |_, leaf| gone.push(leaf.to_vec()));
+            self.jobs.retain(|job| !gone.contains(&job.path));
+            self.stopped.extend(gone);
+            e.outcome = Some(Outcome::Stopped);
+            self.notes
+                .push(json!({"event": "step.stopped", "step": e.name}));
         }
     }
 
@@ -787,7 +933,13 @@ impl Machine<'_> {
         if self.rt.phase == Phase::Undo {
             return self.undo_failed(path, &step, why);
         }
-        self.fail(why, &step)
+        self.settle_leaf(
+            path,
+            Leaf::Broke {
+                step,
+                why: why.into(),
+            },
+        )
     }
 
     /// The waiting actions: their paths and names.
@@ -883,23 +1035,31 @@ impl Machine<'_> {
             }
             Some("deadline") => {
                 let limit = self.timeout();
-                let late = self.waiting_leaves().into_iter().find(|(_, _, since)| {
-                    since
-                        .as_deref()
-                        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                        .is_some_and(|s| s + limit <= self.now)
-                });
-                match late {
-                    Some((path, name, _)) => {
-                        let wait = humantime::format_duration(limit.to_std().unwrap_or_default());
-                        let (why, step) = (format!("waited {wait} for data"), format!("#{name}"));
-                        if self.rt.phase == Phase::Undo {
-                            return self.undo_failed(&path, &step, &why);
-                        }
-                        self.fail(&why, &step)
+                let late: Vec<_> = self
+                    .waiting_leaves()
+                    .into_iter()
+                    .filter(|(_, _, since)| {
+                        since
+                            .as_deref()
+                            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                            .is_some_and(|s| s + limit <= self.now)
+                    })
+                    .collect();
+                for (path, name, _) in late {
+                    // one that a group stopped, or a run that went on, is not
+                    // a step now
+                    if self.leaf(&path).is_none() {
+                        continue;
                     }
-                    None => Ok(()),
+                    let wait = humantime::format_duration(limit.to_std().unwrap_or_default());
+                    let (why, step) = (format!("waited {wait} for data"), format!("#{name}"));
+                    if self.rt.phase == Phase::Undo {
+                        self.undo_failed(&path, &step, &why)?;
+                    } else {
+                        self.settle_leaf(&path, Leaf::Broke { step, why })?;
+                    }
                 }
+                Ok(())
             }
             _ => {
                 self.log.push("a timer of no kind ignored".into());
@@ -940,12 +1100,164 @@ impl Machine<'_> {
     }
 }
 
+/// How an action ended, for the position to settle.
+enum Leaf {
+    Done,
+    Broke { step: String, why: String },
+}
+
+/// A node of the position after a leaf ended.
+enum Adv {
+    Going(At),
+    Done,
+    /// A step broke: its name, and why.
+    Broke {
+        step: String,
+        why: String,
+    },
+}
+
+/// What a group decides after a change.
+enum Verdict {
+    Going,
+    Ended,
+    Broke { step: String, why: String },
+}
+
+impl Entry {
+    /// It ended well (a run written before groups said how to wait kept an
+    /// entry that was done with no outcome).
+    fn is_ok(&self) -> bool {
+        match &self.outcome {
+            Some(o) => *o == Outcome::Done,
+            None => self.at.is_none(),
+        }
+    }
+
+    fn broke(&self) -> bool {
+        matches!(self.outcome, Some(Outcome::Broke { .. }))
+    }
+
+    fn ended(&self) -> bool {
+        self.is_ok() || self.broke()
+    }
+}
+
+/// The order number of the next entry to end.
+fn next_order(entries: &[Entry]) -> usize {
+    entries.iter().map(|e| e.order).max().unwrap_or(0) + 1
+}
+
+/// Whether a group goes on, ended, or broke, over its entries: its wait's
+/// rule, or `fail`'s in its place for when it breaks.
+fn judge(wait: &Wait, fail: &Option<Fail>, entries: &[Entry]) -> Verdict {
+    // a step that did not run is out of the group
+    let n = entries
+        .iter()
+        .filter(|e| e.outcome != Some(Outcome::Skipped))
+        .count();
+    let good = entries.iter().filter(|e| e.is_ok()).count();
+    let bad = entries.iter().filter(|e| e.broke()).count();
+    let running = entries.iter().filter(|e| e.at.is_some()).count();
+    let first = |keep: &dyn Fn(&Entry) -> bool| {
+        entries
+            .iter()
+            .filter(|e| e.broke() && keep(e))
+            .min_by_key(|e| e.order)
+    };
+    let any = |_: &Entry| true;
+    let named = |names: &[String]| {
+        let names = names.to_vec();
+        move |e: &Entry| names.contains(&e.name)
+    };
+    let culprit = match (fail, wait) {
+        (Some(Fail::Any), _) | (None, Wait::All) => first(&any),
+        (Some(Fail::All), _) | (None, Wait::Any) => first(&any).filter(|_| bad == n),
+        (Some(Fail::Never), _) | (None, Wait::Settled) => None,
+        (Some(Fail::Steps(names)), _) | (None, Wait::Some(Need::Names(names))) => {
+            first(&named(names))
+        }
+        (None, Wait::Race) => entries
+            .iter()
+            .filter(|e| e.ended())
+            .min_by_key(|e| e.order)
+            .filter(|e| e.broke()),
+        (None, Wait::Some(Need::Count(c))) => first(&any).filter(|_| bad > n.saturating_sub(*c)),
+    };
+    if let Some(Entry {
+        outcome: Some(Outcome::Broke { step, why }),
+        ..
+    }) = culprit
+    {
+        return Verdict::Broke {
+            step: step.clone(),
+            why: why.clone(),
+        };
+    }
+    let satisfied = match wait {
+        Wait::All => good == n,
+        Wait::Race => good + bad > 0,
+        Wait::Any => good > 0,
+        Wait::Some(Need::Count(c)) => good >= *c,
+        Wait::Some(Need::Names(names)) => names
+            .iter()
+            .all(|nm| entries.iter().any(|e| e.is_ok() && e.name == *nm)),
+        Wait::Settled => running == 0,
+    };
+    // with `fail` replacing the rule, a group whose wait cannot be met waits
+    // for the rest to end, as `settled` does
+    if satisfied || running == 0 {
+        Verdict::Ended
+    } else {
+        Verdict::Going
+    }
+}
+
+/// The `$output` of a group that ended: the results of its steps, and
+/// itero's own keys (they win over a step's field of the same name).
+fn group_output(wait: &Wait, fail: &Option<Fail>, entries: &[Entry]) -> Value {
+    let winner = match wait {
+        Wait::Race => entries
+            .iter()
+            .filter(|e| e.ended())
+            .min_by_key(|e| e.order)
+            .filter(|e| e.is_ok()),
+        Wait::Any => entries.iter().filter(|e| e.is_ok()).min_by_key(|e| e.order),
+        _ => None,
+    };
+    let mut out = match (wait, winner) {
+        (Wait::Race | Wait::Any, Some(w)) => side_output(std::slice::from_ref(w)),
+        (Wait::Race | Wait::Any, None) => Value::Object(Map::new()),
+        _ => side_output(entries),
+    };
+    let Value::Object(fields) = &mut out else {
+        unreachable!("side_output is an object");
+    };
+    if let Some(w) = winner {
+        fields.insert("winner".into(), w.name.clone().into());
+    }
+    // which steps broke, when one did; always for settled and fail never
+    if matches!(wait, Wait::Settled)
+        || matches!(fail, Some(Fail::Never))
+        || entries.iter().any(Entry::broke)
+    {
+        let mut failed = vec![];
+        let mut why = Map::new();
+        for e in entries {
+            if let Some(Outcome::Broke { why: w, .. }) = &e.outcome {
+                failed.push(Value::String(e.name.clone()));
+                why.insert(e.name.clone(), w.clone().into());
+            }
+        }
+        fields.insert("failed".into(), Value::Array(failed));
+        fields.insert("why".into(), Value::Object(why));
+    }
+    out
+}
+
 /// `#name` for an action, the name for a workflow.
 fn label(n: &Name) -> String {
-    match n {
-        Name::Action { name, .. } => format!("#{name}"),
-        Name::Workflow(w) => w.clone(),
-    }
+    n.label()
 }
 
 /// A name as a workflow writes it: `#name@0.2` for an action, the name for
@@ -1000,7 +1312,7 @@ fn leaves(node: &mut At, path: &mut Vec<usize>, f: &mut dyn FnMut(&mut At, &[usi
                 path.pop();
             }
         }
-        At::Side { entries } => {
+        At::Side { entries, .. } => {
             for (j, e) in entries.iter_mut().enumerate() {
                 if let Some(at) = e.at.as_mut() {
                     path.push(j);
@@ -1025,7 +1337,7 @@ fn find<'n>(node: &'n mut At, path: &[usize]) -> Option<&'n mut At> {
             }
             find(inner.as_mut()?, rest)
         }
-        At::Side { entries } => find(entries.get_mut(first)?.at.as_mut()?, rest),
+        At::Side { entries, .. } => find(entries.get_mut(first)?.at.as_mut()?, rest),
         At::Action { .. } => None,
     }
 }

@@ -1,6 +1,6 @@
 //! A workflow file in the simple form: `on`, `steps`, and the lists run at
 //! the end.
-use itero::flow::{self, Name, Step};
+use itero::flow::{self, Fail, Group, Name, Need, Step, Wait};
 use serde_json::{Map, Value, json};
 
 fn obj(v: Value) -> Map<String, Value> {
@@ -107,10 +107,14 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
     .unwrap();
     assert_eq!(
         f.steps[0],
-        Step::Side(vec![
-            action("check-payment"),
-            Name::Workflow("stock-check".into())
-        ])
+        Step::Side(Group {
+            names: vec![
+                action("check-payment"),
+                Name::Workflow("stock-check".into())
+            ],
+            wait: Wait::All,
+            fail: None,
+        })
     );
     assert_eq!(
         f.steps[1],
@@ -472,4 +476,202 @@ fn a_secret_is_never_filled_inside_text() {
     // a workflow that writes one inside text is refused when it is read
     let e = err(r##"{ "steps": [{ "#a": { "args": { "t": ["x $$API"] } } }] }"##);
     assert!(e.contains("a secret is a whole value only"), "{e}");
+}
+
+fn group(step: &str) -> Group {
+    let f = flow::parse(&format!(r##"{{ "steps": [{step}] }}"##)).unwrap();
+    let Step::Side(g) = &f.steps[0] else {
+        panic!("{:?}", f.steps[0]);
+    };
+    g.clone()
+}
+
+fn names(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn a_bare_list_is_all() {
+    let bare = group(r##"["#kontrol", "#tarama", "yedekle"]"##);
+    assert_eq!(
+        bare,
+        group(r##"{ "all": ["#kontrol", "#tarama", "yedekle"] }"##)
+    );
+    assert_eq!(bare.wait, Wait::All);
+    assert_eq!(bare.fail, None);
+    assert_eq!(
+        bare.names,
+        vec![
+            action("kontrol"),
+            action("tarama"),
+            Name::Workflow("yedekle".into())
+        ]
+    );
+}
+
+#[test]
+fn a_group_says_how_to_wait() {
+    for (key, wait) in [
+        ("all", Wait::All),
+        ("race", Wait::Race),
+        ("any", Wait::Any),
+        ("settled", Wait::Settled),
+    ] {
+        let g = group(&format!(r##"{{ "{key}": ["#şu", "#bu"] }}"##));
+        assert_eq!(g.wait, wait, "{key}");
+        assert_eq!(g.fail, None, "{key}");
+        assert_eq!(g.names, vec![action("şu"), action("bu")], "{key}");
+    }
+    let g = group(r##"{ "some": ["#a", "#b", "#c"], "count": 2 }"##);
+    assert_eq!(g.wait, Wait::Some(Need::Count(2)));
+    assert_eq!(g.names.len(), 3);
+    let g = group(r##"{ "some": ["#a", "#b", "#c"], "names": ["#a", "#c"] }"##);
+    assert_eq!(g.wait, Wait::Some(Need::Names(names(&["#a", "#c"]))));
+}
+
+#[test]
+fn fail_says_when_the_group_breaks() {
+    for (value, fail) in [
+        (r##""any""##, Fail::Any),
+        (r##""all""##, Fail::All),
+        (r##""never""##, Fail::Never),
+        (r##""#şu""##, Fail::Steps(names(&["#şu"]))),
+        (r##"["#şu", "bu"]"##, Fail::Steps(names(&["#şu", "bu"]))),
+    ] {
+        let g = group(&format!(
+            r##"{{ "all": ["#şu", "bu", "#ğ"], "fail": {value} }}"##
+        ));
+        assert_eq!(g.wait, Wait::All, "{value}");
+        assert_eq!(g.fail, Some(fail), "{value}");
+    }
+    let g = group(r##"{ "some": ["#a", "#b"], "count": 1, "fail": "never" }"##);
+    assert_eq!(g.wait, Wait::Some(Need::Count(1)));
+    assert_eq!(g.fail, Some(Fail::Never));
+}
+
+#[test]
+fn a_workflow_may_be_named_like_a_key() {
+    let f = flow::parse(r##"{ "steps": [{ "all": { "args": { "n": 1 } } }, { "fail": {} }] }"##)
+        .unwrap();
+    assert!(matches!(&f.steps[0], Step::One { name: Name::Workflow(w), .. } if w == "all"));
+    assert!(matches!(&f.steps[1], Step::One { name: Name::Workflow(w), .. } if w == "fail"));
+}
+
+#[test]
+fn a_group_in_the_error_list_and_the_use_of_its_names() {
+    let f =
+        flow::parse(r##"{ "steps": ["#a"], "error": [{ "settled": ["#günlük", "bildir"] }] }"##)
+            .unwrap();
+    assert!(f.uses().contains(&action("günlük")));
+    assert!(f.uses().contains(&Name::Workflow("bildir".into())));
+}
+
+#[test]
+fn a_group_mistake_is_named_with_the_step() {
+    for (step, says) in [
+        // no key, two keys, an unknown key
+        (
+            r##"{ "fail": "any" }"##,
+            "one of all, race, any, some or settled",
+        ),
+        (
+            r##"{ "all": ["#a", "#b"], "race": ["#a", "#b"] }"##,
+            "not both all and race",
+        ),
+        (
+            r##"{ "all": ["#a", "#b"], "sınır": 2 }"##,
+            "\"sınır\" is not one of",
+        ),
+        // the list
+        (
+            r##"{ "race": "#a" }"##,
+            "race is a list of two or more steps",
+        ),
+        (
+            r##"{ "race": ["#a"] }"##,
+            "race is a list of two or more steps",
+        ),
+        (r##"{ "any": [] }"##, "any is a list of two or more steps"),
+        (
+            r##"{ "settled": ["#a", { "#b": {} }] }"##,
+            "settled holds names of actions and workflows",
+        ),
+        (r##"{ "all": ["#a", "#"] }"##, "\"#\""),
+        // count and names
+        (r##"{ "some": ["#a", "#b"] }"##, "some needs count or names"),
+        (
+            r##"{ "some": ["#a", "#b"], "count": 1, "names": ["#a"] }"##,
+            "count or names, not both",
+        ),
+        (
+            r##"{ "some": ["#a", "#b"], "count": 0 }"##,
+            "count is a whole number from 1 to 2",
+        ),
+        (
+            r##"{ "some": ["#a", "#b"], "count": 3 }"##,
+            "count is a whole number from 1 to 2",
+        ),
+        (
+            r##"{ "some": ["#a", "#b"], "count": "iki" }"##,
+            "count is a whole number from 1 to 2",
+        ),
+        (
+            r##"{ "some": ["#a", "#b"], "names": [] }"##,
+            "names is a list of the steps",
+        ),
+        (
+            r##"{ "some": ["#a", "#b"], "names": "#a" }"##,
+            "names is a list of the steps",
+        ),
+        (
+            r##"{ "some": ["#a", "#b"], "names": ["#a", "#ç"] }"##,
+            "names: \"#ç\" is not one of the steps",
+        ),
+        (
+            r##"{ "race": ["#a", "#b"], "count": 1 }"##,
+            "count goes with some",
+        ),
+        (
+            r##"{ "race": ["#a", "#b"], "names": ["#a"] }"##,
+            "names goes with some",
+        ),
+        // fail
+        (
+            r##"{ "all": ["#a", "#b"], "fail": "#ç" }"##,
+            "fail: \"#ç\" is not one of the steps",
+        ),
+        (
+            r##"{ "all": ["#a", "#b"], "fail": ["#a", "ç"] }"##,
+            "fail: \"ç\" is not one of the steps",
+        ),
+        (r##"{ "all": ["#a", "#b"], "fail": [] }"##, "fail is"),
+        (r##"{ "all": ["#a", "#b"], "fail": 3 }"##, "fail is"),
+        // two steps with the same name, whatever their versions
+        (
+            r##"{ "all": ["#a", "#b", "#a"] }"##,
+            "#a is in the list twice",
+        ),
+        (
+            r##"{ "race": ["#a", "#a@0.2"] }"##,
+            "#a is in the list twice",
+        ),
+        (
+            r##"{ "settled": ["yedekle", "#a", "yedekle"] }"##,
+            "yedekle is in the list twice",
+        ),
+    ] {
+        let e = err(&format!(r##"{{ "steps": [{step}] }}"##));
+        assert!(e.contains(says), "{step}: {e}");
+        // the step is shown as written
+        assert!(
+            e.contains(&step.replace(' ', "")) || e.contains(step),
+            "{step}: {e}"
+        );
+    }
+}
+
+#[test]
+fn a_bare_list_may_name_a_step_twice() {
+    let g = group(r##"["#kontrol", "#kontrol"]"##);
+    assert_eq!(g.names.len(), 2);
 }

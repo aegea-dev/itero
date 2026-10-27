@@ -34,6 +34,10 @@ const MIGRATIONS: [&str; 2] = [
 /// while it ran.
 const STOPPED: &str = "the daemon stopped while it ran";
 
+/// The note on a job whose step was stopped (its group ended without it):
+/// handled, never run again, and its answer, if any, not saved.
+pub const JOB_STOPPED: &str = "stopped: its group ended without it";
+
 /// The tables at `SCHEMA_VERSION`: a new journal is made with them.
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS events (
@@ -229,6 +233,9 @@ pub struct Handled<'a> {
     pub events: Vec<Envelope>,
     /// Runs split from this one.
     pub splits: Vec<Split<'a>>,
+    /// Jobs (by `seq`) whose steps this answer stopped: handled, noted
+    /// `JOB_STOPPED`, so none runs again.
+    pub stopped: Vec<i64>,
 }
 
 pub struct Journal {
@@ -779,6 +786,12 @@ impl Journal {
                     )?;
                 }
             }
+        }
+        for seq in &h.stopped {
+            tx.execute(
+                "UPDATE events SET handled = ?2, note = ?3 WHERE seq = ?1 AND handled IS NULL",
+                params![seq, now, JOB_STOPPED],
+            )?;
         }
         for e in &h.events {
             publish(&tx, e)?;

@@ -440,6 +440,25 @@ fn runs_with_a_name_or_id_tells_the_runs_story() {
 }
 
 #[test]
+fn a_step_that_lost_a_race_is_stopped_in_the_story() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/yarış.json",
+        r##"{ "on": [{ "event": "yarış.başladı" }], "steps": [{ "race": ["#hızlı", "#yavaş"] }] }"##,
+    );
+    file(d.path(), "actions/hızlı", "#!/bin/sh\necho hızlı\n");
+    file(d.path(), "actions/yavaş", "#!/bin/sh\nsleep 30\n");
+    itero(d.path(), &["emit", "yarış.başladı", "{}"]);
+    itero(d.path(), &["daemon", "--once"]);
+    let list = out(&itero(d.path(), &["wf", "runs"]));
+    let id = list.split_whitespace().next().unwrap();
+    let story = out(&itero(d.path(), &["wf", "runs", id]));
+    assert!(story.contains("#yavaş  stopped"), "{story}");
+    assert!(story.contains("#hızlı  done"), "{story}");
+}
+
+#[test]
 fn a_step_that_breaks_undoes_those_before_it_and_the_story_says_so() {
     let d = workspace();
     file(

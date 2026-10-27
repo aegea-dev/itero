@@ -1,6 +1,6 @@
 //! `itero workflow` (`itero wf`): the workflows, their runs, their settings.
 use super::out::{ago, given, plain_name, show, table, text};
-use crate::engine::journal::{Journal, Run, subject};
+use crate::engine::journal::{JOB_STOPPED, Journal, Recorded, Run, subject};
 use crate::engine::{progress, steps};
 use crate::workspace::Workspace;
 use anyhow::{Result, bail};
@@ -236,6 +236,7 @@ pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
             let line = match s["what"].as_str().unwrap_or("") {
                 "started" => format!("started  {}", s["data"]),
                 "timed out" => "waited too long".to_string(),
+                "stopped" => format!("{}  stopped", text(&s["step"])),
                 "event" => format!("event {}  {}", text(&s["type"]), s["data"]),
                 "running" => format!("{}  running  {}", text(&s["step"]), text(&s["data"])),
                 what => format!("{}  {what}  {}", text(&s["step"]), s["data"]),
@@ -252,16 +253,23 @@ pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
 /// A run's story, as one value.
 fn story(j: &Journal, r: &Run) -> Result<Value> {
     // each result's cause is its job, which names the action
-    let jobs: std::collections::BTreeMap<String, String> = j
+    let mine: Vec<_> = j
         .events(Some(&subject("worker")))?
         .into_iter()
         .filter(|e| e.event.data["run"] == r.id.as_str())
-        .map(|e| {
-            let action = e.event.data["job"]["action"].as_str().unwrap_or("?");
-            (e.event.id, format!("#{action}"))
-        })
         .collect();
-    let mut steps_ = vec![];
+    let action =
+        |e: &Recorded| format!("#{}", e.event.data["job"]["action"].as_str().unwrap_or("?"));
+    let jobs: std::collections::BTreeMap<String, String> = mine
+        .iter()
+        .map(|e| (e.event.id.clone(), action(e)))
+        .collect();
+    // a job whose step lost, at the time the group ended without it
+    let mut steps_: Vec<Value> = mine
+        .iter()
+        .filter(|e| e.note.as_deref() == Some(JOB_STOPPED))
+        .map(|e| json!({ "what": "stopped", "step": action(e), "time": e.handled }))
+        .collect();
     for e in j.events(Some(&subject(&r.id)))? {
         let d = &e.event.data;
         let step = || {
@@ -295,6 +303,7 @@ fn story(j: &Journal, r: &Run) -> Result<Value> {
         s["time"] = json!(e.event.time);
         steps_.push(s);
     }
+    steps_.sort_by(|a, b| a["time"].as_str().cmp(&b["time"].as_str()));
     Ok(json!({
         "name": r.name,
         "id": r.id,

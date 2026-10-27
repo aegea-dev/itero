@@ -38,7 +38,7 @@ In between it waits and uses no CPU.
 $ itero daemon
 itero: running the workflows in /Users/me/home, each as it comes due (Ctrl-C stops); log: .itero/itero.log
 itero: serving on http://127.0.0.1:8787/
-3 events, 1 jobs, 0 lost (run again), 0 waiting
+3 events, 1 jobs, 0 lost (run again), 0 stopped, 0 waiting
 ```
 
 In a terminal it prints a line for each pass that did something. What it

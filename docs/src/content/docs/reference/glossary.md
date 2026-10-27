@@ -19,7 +19,8 @@ when it runs (`on`) and its `steps`, with optional `success`,
 ### step
 
 One thing a workflow does: an action (`#name`), a workflow (`name`), a
-list of them side by side, or one of those with its `args` and an `on`.
+list or group of them side by side, or one of those with its `args` and
+an `on`.
 
 ### action <span class="act">■</span>
 
@@ -94,7 +95,10 @@ up after its `timeout`.
 ### side by side
 
 A list in `steps`: its entries run at the same time, and the next step
-waits for all of them. Their results merge into one `$output`.
+waits for all of them. Their results merge into one `$output`. An object
+says how else to wait: `race`, `any`, `some`, `settled`; the steps that
+lose are stopped. See
+[How steps side by side wait](/guides/workflows/#how-steps-side-by-side-wait).
 
 ### condition
 
