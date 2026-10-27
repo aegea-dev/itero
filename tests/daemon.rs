@@ -802,6 +802,82 @@ fn a_run_in_error_sends_itero_run_error_never_to_its_own_workflow() {
 }
 
 #[test]
+fn a_run_done_sends_itero_run_done_with_its_last_result() {
+    let w = Ws::new();
+    w.action("söyle", "echo 'merhaba dünya'");
+    w.action("yaz", "echo \"$workflow: $output\" >> bitenler.txt");
+    w.flow(
+        "selam",
+        json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#söyle"] }),
+    );
+    w.flow(
+        "izle",
+        json!({ "on": [{ "event": "itero.run.done" }], "steps": ["#yaz"] }),
+    );
+    w.emit("iş.geldi", json!({}));
+    w.pass(NOW);
+    w.pass(NOW);
+    assert_eq!(w.read("bitenler.txt"), "selam: merhaba dünya\n");
+    let done = w
+        .log()
+        .into_iter()
+        .find(|l| l["event"] == "message" && l["type"] == "itero.run.done")
+        .unwrap();
+    assert_eq!(done["data"]["workflow"], "selam");
+    assert_eq!(done["data"]["output"], "merhaba dünya");
+}
+
+#[test]
+fn a_workflow_can_start_when_one_named_workflow_is_done() {
+    let w = Ws::new();
+    w.action("söyle", "echo 'tamam'");
+    w.action("yaz", "echo \"$workflow\" >> bitenler.txt");
+    for name in ["yedek", "başka"] {
+        w.flow(
+            name,
+            json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#söyle"] }),
+        );
+    }
+    w.flow(
+        "rapor",
+        json!({ "on": [{ "event": "itero.run.done" }, { "$workflow": "yedek" }], "steps": ["#yaz"] }),
+    );
+    w.emit("iş.geldi", json!({}));
+    w.pass(NOW);
+    w.pass(NOW);
+    assert_eq!(w.read("bitenler.txt"), "yedek\n");
+}
+
+#[test]
+fn a_run_started_by_a_run_message_sends_no_itero_run_done() {
+    // two workflows that watch every run's end would start each other forever
+    let w = Ws::new();
+    w.action("söyle", "echo 'tamam'");
+    w.action("yaz", "echo \"$workflow\" >> bitenler.txt");
+    w.flow(
+        "selam",
+        json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#söyle"] }),
+    );
+    for name in ["izle", "gözle"] {
+        w.flow(
+            name,
+            json!({ "on": [{ "event": "itero.run.done" }], "steps": ["#yaz"] }),
+        );
+    }
+    w.emit("iş.geldi", json!({}));
+    for _ in 0..4 {
+        w.pass(NOW);
+    }
+    assert_eq!(w.read("bitenler.txt"), "selam\nselam\n");
+    let done = w
+        .messages()
+        .iter()
+        .filter(|t| *t == "itero.run.done")
+        .count();
+    assert_eq!(done, 1, "only selam's run says it is done");
+}
+
+#[test]
 fn itero_messages_cannot_be_sent_from_outside() {
     let w = Ws::new();
     let e = itero::engine::events::emit(&w.ws, "itero.run.error", Some(json!({})), NOW)
