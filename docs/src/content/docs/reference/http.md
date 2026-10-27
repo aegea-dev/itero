@@ -29,10 +29,10 @@ cannot post one without a preflight, which is never granted.
 
 ```json
 { "ok": true, "pid": 4242,
-  "workspace": { "id": "01a0f3…", "name": "quiet-river", "created": "...", "itero": "0.13.0",
+  "workspace": { "id": "01a0f3…", "name": "quiet-river", "created": "...", "itero": "0.14.0",
                  "path": "/Users/me/home", "meta": { "owner": "ayşe" } },
   "daemon": { "id": "01a15f2c…", "name": "brave-otter", "started": "...", "pid": 4242,
-              "host": "mini", "itero": "0.13.0" },
+              "host": "mini", "itero": "0.14.0" },
   "started": "...", "passes": 42, "last_pass": "...", "last_error": null, "busy_since": null,
   "connectors": { "mail.received": { "state": "running", "restarts": 0, "last_exit": null } } }
 ```
