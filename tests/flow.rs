@@ -390,6 +390,33 @@ fn conditions_read_one_field_with_a_dot() {
 }
 
 #[test]
+fn a_plain_result_of_steps_side_by_side_is_read_by_its_steps_name() {
+    // side by side, a step that prints no object is kept under its name
+    let state = obj(json!({"output": {"#boyut": 1064, "#tür": "image/png", "#kontrol-a": "açık"}}));
+    assert_eq!(fill(json!("$output.#boyut"), &state), json!(1064));
+    assert_eq!(fill(json!("$output.#kontrol-a"), &state), json!("açık"));
+    assert_eq!(
+        fill(json!("$output.#boyut bayt, $output.#tür"), &state),
+        json!("1064 bayt, image/png")
+    );
+    assert_eq!(
+        fill(json!("a: $output.#kontrol-a."), &state),
+        json!("a: açık.")
+    );
+    // a # with no name after it is text
+    assert_eq!(
+        fill(json!("$output.# yok"), &state),
+        json!(format!("{}.# yok", state["output"]))
+    );
+    let f = flow::parse(r##"{ "steps": [{ "#ship": { "on": [{ "$output.#boyut": 1064 }] } }] }"##)
+        .unwrap();
+    let Step::One { on: Some(on), .. } = &f.steps[0] else {
+        panic!()
+    };
+    assert!(flow::holds(on, &state, &|_: &str| false));
+}
+
+#[test]
 fn names_are_filled_inside_text() {
     let state = obj(json!({
         "count": 3, "folder": "İndirilenler", "dosya": "rapor", "boş": "",

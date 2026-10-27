@@ -326,10 +326,10 @@ pub fn pieces(text: &str) -> Vec<Piece<'_>> {
         let (name, mut tail) = after.split_at(n);
         let mut field = None;
         if let Some(f) = tail.strip_prefix('.')
-            && name_len(f) > 0
+            && field_len(f) > 0
         {
-            field = Some(&f[..name_len(f)]);
-            tail = &f[name_len(f)..];
+            field = Some(&f[..field_len(f)]);
+            tail = &f[field_len(f)..];
         }
         out.push(Piece::Text(std::mem::take(&mut plain)));
         out.push(Piece::Name { name, field });
@@ -386,6 +386,20 @@ fn name_len(s: &str) -> usize {
     chars
         .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
         .map_or(s.len(), |(i, _)| i)
+}
+
+/// The length of the field `s` starts with: a name, or `#` and an action's
+/// name (letters, digits, `_` or `-`), which is how steps side by side
+/// keep a result that is no object: `$output.#size`. 0 when it starts with
+/// neither.
+fn field_len(s: &str) -> usize {
+    let Some(rest) = s.strip_prefix('#') else {
+        return name_len(s);
+    };
+    let n = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
+        .unwrap_or(rest.len());
+    if n == 0 { 0 } else { 1 + n }
 }
 
 /// Whether anything in `on` starts a run: an event, a schedule or a path.
@@ -704,7 +718,7 @@ pub fn state_ref(v: &Value) -> Option<&str> {
         "" => Some(s),
         dot => {
             let f = dot.strip_prefix('.')?;
-            (!f.is_empty() && name_len(f) == f.len()).then_some(s)
+            (!f.is_empty() && field_len(f) == f.len()).then_some(s)
         }
     }
 }
