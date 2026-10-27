@@ -666,6 +666,48 @@ impl Workspace {
         Ok(Some(v))
     }
 
+    /// How long a step of the action may print nothing, and run at most:
+    /// `action.<name>.limits` in the manifest, `quiet` and `most`, else the
+    /// workspace's.
+    pub fn step_limits(&self, action: &str) -> Result<(std::time::Duration, std::time::Duration)> {
+        let (quiet, most) = (self.limits.quiet.as_secs(), self.limits.most.as_secs());
+        let wrong = |e: anyhow::Error| {
+            anyhow!(
+                "{}: action.{action}.{e:#}",
+                self.root.join(MANIFEST).display()
+            )
+        };
+        let limits = match self.entries("action")?.remove(action) {
+            Some(Value::Object(mut e)) => e.remove("limits"),
+            _ => None,
+        };
+        let mut limits = match limits {
+            None | Some(Value::Null) => return Ok((self.limits.quiet, self.limits.most)),
+            Some(Value::Object(m)) => m,
+            Some(_) => bail!(
+                "{}: action.{action}.limits are an object: {{\"quiet\": \"1h\", \"most\": \"2d\"}}",
+                self.root.join(MANIFEST).display()
+            ),
+        };
+        let mut text = |key: &str| match limits.remove(key) {
+            None => Ok(None),
+            Some(Value::String(t)) => Ok(Some(t)),
+            Some(v) => Err(anyhow!(
+                "limits: {key}: a duration is like 30m, 2h or 1d, not {v}"
+            )),
+        };
+        let (q, m) = (text("quiet").map_err(wrong)?, text("most").map_err(wrong)?);
+        if let Some(other) = limits.keys().next() {
+            return Err(wrong(anyhow!(
+                "limits: {other}: an action's limits are quiet and most"
+            )));
+        }
+        Ok((
+            duration("quiet", q, quiet).map_err(wrong)?,
+            duration("most", m, most).map_err(wrong)?,
+        ))
+    }
+
     /// A connector's args, `connector.<name>.args` in the manifest: an object (a
     /// connector runs once). None when its entry has none.
     pub fn connector_args(&self, connector: &str) -> Result<Option<Map<String, Value>>> {

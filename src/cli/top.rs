@@ -42,6 +42,12 @@ fn check_manifest(ws: &Workspace, flows: &[(String, Flow)]) -> Result<()> {
         {
             wrong.push(format!("action.{name}.args: {why}"));
         }
+        // its error names the manifest, which the list below names once
+        if let Err(why) = ws.step_limits(&name) {
+            let why = format!("{why:#}");
+            let path = format!("{}: ", ws.root.join(manifest).display());
+            wrong.push(why.strip_prefix(&path).unwrap_or(&why).to_string());
+        }
     }
     for (kind, known) in [
         (
