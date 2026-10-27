@@ -332,6 +332,26 @@ fn a_step_quiet_past_its_limit_is_stopped_and_run_again() {
 }
 
 #[test]
+fn an_actions_own_quiet_overrides_the_workspaces() {
+    let ws = Ws::with(
+        r#"{"limits": {"quiet": "1s"}, "action": {"düşünen": {"limits": {"quiet": "10s"}}}}"#,
+    );
+    ws.flow(
+        "yavaş",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#düşünen", "#sessiz"]}),
+    );
+    ws.action("düşünen", "sleep 2; echo düşündü");
+    ws.action("sessiz", "sleep 30");
+    ws.emit("order.placed", json!({"order": 1}));
+    ws.pass(NOW);
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["error"]);
+    let run = &ws.runs()[0];
+    assert_eq!(run.runtime.state["why"], "lost 3 times: quiet for 1s");
+    assert_eq!(run.runtime.state["failed_step"], "#sessiz");
+}
+
+#[test]
 fn a_step_that_prints_as_it_goes_runs_past_its_quiet_limit() {
     let ws = Ws::with(r#"{"limits": {"quiet": "1s"}}"#);
     ws.flow(

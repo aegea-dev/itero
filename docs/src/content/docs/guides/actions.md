@@ -58,7 +58,9 @@ or stderr, starts the 10 minutes again, so a long step that tells how it
 goes (`creating the cluster...` on stderr) runs as long as it needs, up to
 `most` (a day). Past either, or when the daemon stops while it runs, it
 runs again, up to 3 times; then it is an error, `quiet for 10m` or
-`ran for 1d`.
+`ran for 1d`. An action that thinks long before it prints, or runs for
+days, gets its own in its entry in `itero.config.json`:
+`"action": {"train-model": {"limits": {"quiet": "1h", "most": "3d"}}}`.
 
 Its last line on stderr is also its progress: `itero wf runs` shows it
 beside a running run, and the run's story on the step, so a step of hours

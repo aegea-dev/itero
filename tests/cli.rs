@@ -309,6 +309,30 @@ fn check_says_what_each_workflow_uses_and_what_is_not_there() {
 }
 
 #[test]
+fn check_names_a_wrong_limit_of_an_action_once() {
+    let d = tempfile::tempdir().unwrap();
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"action": {"depo": {"limits": {"runs": 2}}}}"#,
+    );
+    file(
+        d.path(),
+        "actions/depo",
+        "#!/bin/sh
+",
+    );
+    let o = itero(d.path(), &["check"]);
+    assert!(!o.status.success());
+    let e = err(&o);
+    assert!(
+        e.contains("action.depo.limits: runs: an action's limits are quiet and most"),
+        "{e}"
+    );
+    assert_eq!(e.matches("itero.config.json").count(), 1, "{e}");
+}
+
+#[test]
 fn runs_and_errors_say_how_each_run_is_doing() {
     let d = workspace();
     file(

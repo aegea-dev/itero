@@ -1228,6 +1228,7 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
     let args = ws.args(&job.action).map_err(|e| format!("{e:#}"))?;
+    let (quiet, most) = ws.step_limits(&job.action).map_err(|e| format!("{e:#}"))?;
     let state = given(&run.runtime.state, &job)?;
     Ok(StepRun {
         file,
@@ -1237,8 +1238,8 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         state,
         memory: ws.root.join(".itero").join("memory").join(workflow),
         waiting_since: job.waiting_since.clone(),
-        quiet: ws.limits.quiet.as_secs(),
-        most: ws.limits.most.as_secs(),
+        quiet: quiet.as_secs(),
+        most: most.as_secs(),
         now: now.into(),
     })
 }
