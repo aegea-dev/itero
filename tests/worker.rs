@@ -124,4 +124,40 @@ printf '{"n": %s, "since": "%s"}' "$n" "$ITERO_WAITING_SINCE""#,
         assert_eq!(out["n"], 2);
         assert_eq!(out["since"], "2026-10-21T10:00:00Z");
     }
+
+    #[test]
+    fn each_line_an_action_prints_on_stderr_is_told_as_it_comes() {
+        let d = tempfile::tempdir().unwrap();
+        let f = action(
+            d.path(),
+            "uzun",
+            "echo 'adım 1' >&2; sleep 0.2; printf 'adım 2\\nadım 3\\n' >&2; sleep 0.2; echo bitti",
+        );
+        let told = std::sync::Mutex::new(vec![]);
+        let out = worker::run_step_telling(&step(d.path(), f, &[], json!({})), &|line| {
+            if let Some(l) = line {
+                told.lock().unwrap().push(l.to_string());
+            }
+        });
+        assert_eq!(done(out), "bitti");
+        assert_eq!(*told.lock().unwrap(), ["adım 1", "adım 3"]);
+    }
+
+    #[test]
+    fn a_long_line_on_stderr_is_told_cut_to_200_characters() {
+        let d = tempfile::tempdir().unwrap();
+        let f = action(
+            d.path(),
+            "uzun",
+            "printf 'ğ%.0s' $(seq 300) >&2; echo >&2; echo bitti",
+        );
+        let told = std::sync::Mutex::new(vec![]);
+        let out = worker::run_step_telling(&step(d.path(), f, &[], json!({})), &|line| {
+            if let Some(l) = line {
+                told.lock().unwrap().push(l.to_string());
+            }
+        });
+        assert_eq!(done(out), "bitti");
+        assert_eq!(*told.lock().unwrap(), ["ğ".repeat(200)]);
+    }
 }

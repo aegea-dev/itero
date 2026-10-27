@@ -18,6 +18,7 @@ extension, in any language its first line names.
 | It gives | |
 |---|---|
 | stdout | its result, the next step's `$output`: JSON when it is JSON, else the text, trimmed; `""` for nothing |
+| stderr | while it runs, its last line is its progress, shown by `itero wf runs` (cut to 200 characters); when it fails, its end says why |
 | exit `0` | done |
 | exit `75` | not yet: the run waits for an event that agrees with what it printed (then its `$output`), or the hourly retry |
 | any other exit | an error; the end of stderr says why |
