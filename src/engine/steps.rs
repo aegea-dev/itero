@@ -562,9 +562,9 @@ impl Machine<'_> {
                 };
                 self.start_name(name, &data, path, false)
             }
-            Step::Side(names) => {
+            Step::Side(group) => {
                 let mut entries = vec![];
-                for (j, n) in names.iter().enumerate() {
+                for (j, n) in group.names.iter().enumerate() {
                     path.push(j);
                     let at = self.start_name(n, &Map::new(), path, true)?;
                     path.pop();
@@ -942,10 +942,7 @@ impl Machine<'_> {
 
 /// `#name` for an action, the name for a workflow.
 fn label(n: &Name) -> String {
-    match n {
-        Name::Action { name, .. } => format!("#{name}"),
-        Name::Workflow(w) => w.clone(),
-    }
+    n.label()
 }
 
 /// A name as a workflow writes it: `#name@0.2` for an action, the name for
