@@ -18,8 +18,9 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::Receiver;
-use std::sync::{Mutex, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex, PoisonError};
 use wait_timeout::ChildExt;
 
 /// What one pass did.
@@ -31,6 +32,8 @@ pub struct Pass {
     pub worked: usize,
     /// Jobs lost (killed, or past their time), to run again.
     pub lost: usize,
+    /// Jobs stopped, running or not yet: their group ended without them.
+    pub stopped: usize,
     /// Events left for the next pass: their manager kept being killed.
     pub deferred: usize,
     /// It stopped at its cap of events with more waiting.
@@ -50,8 +53,9 @@ const MAX_RUNS: i64 = 3;
 
 /// What became of an event given to `deliver`.
 enum Delivered {
-    /// Answered (or given up on with an error) and saved.
-    Handled,
+    /// Answered (or given up on with an error) and saved; the jobs (by
+    /// `seq`) whose steps the answer stopped.
+    Handled(Vec<i64>),
     /// Left unhandled: its manager kept being killed.
     Deferred,
 }
@@ -430,7 +434,6 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
 fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let mut j = Journal::open(ws)?;
     let log = Log::new(ws, &j.workspace()?.id);
-    let mut pass = Pass::default();
     let flows = Flows::load(ws)?;
     j.see_workflows(flows.read.keys(), &stamp(now))?;
     let no_room = watch_limits(ws, &j, now, &log)?;
@@ -447,23 +450,145 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
         j.fire_timer(id, &e)?;
     }
     // runs' events first; then the waiting jobs, whose results are the
-    // next events. Messages that would start a run while `runs` are under
-    // way are held; they are taken again once a run has ended.
+    // next events. Each worker's result is saved as it ends, while others
+    // still run; whatever stops the pass early, what runs is still saved.
+    let mut pass = Pass::default();
+    std::thread::scope(|scope| {
+        let mut w = Workers::new(scope, exe);
+        let mut done = work(ws, &flows, &mut j, &mut w, now, &log, no_room, &mut pass);
+        while !w.running.is_empty() {
+            let saved = end_one(ws, &mut j, &mut w, now, &mut pass);
+            if done.is_ok() {
+                done = saved;
+            }
+        }
+        done
+    })?;
+    Ok(pass)
+}
+
+/// A job running in a worker.
+struct Running {
+    r: Recorded,
+    /// Which run of the job it is, counting from 1.
+    run: i64,
+    /// Set when its step was stopped: its worker ends it.
+    cancel: Arc<AtomicBool>,
+}
+
+/// What a worker's thread sends back: its job, and how it ended.
+type Finished = (i64, Result<Outcome, Failure>);
+
+/// The pass's workers: each a thread in `scope`, sending its job's outcome
+/// back as it ends.
+struct Workers<'s, 'e> {
+    scope: &'s std::thread::Scope<'s, 'e>,
+    exe: &'e Path,
+    tx: Sender<Finished>,
+    rx: Receiver<Finished>,
+    /// By the job's `seq`.
+    running: BTreeMap<i64, Running>,
+}
+
+impl<'s, 'e> Workers<'s, 'e> {
+    fn new(scope: &'s std::thread::Scope<'s, 'e>, exe: &'e Path) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        Workers {
+            scope,
+            exe,
+            tx,
+            rx,
+            running: BTreeMap::new(),
+        }
+    }
+
+    /// Runs a job in a worker of its own.
+    fn start(&mut self, root: &Path, r: Recorded, run: i64, step: Result<StepRun, String>) {
+        let seq = r.seq;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, exe, stop) = (self.tx.clone(), self.exe, cancel.clone());
+        let id = r.event.data["run"].as_str().unwrap_or("").to_string();
+        let action = r.event.data["job"]["action"].as_str().unwrap_or("?");
+        let (name, root) = (format!("#{action}"), root.to_path_buf());
+        // what the step says last on stderr, while it runs
+        let said = Arc::new(move |text: &str| {
+            let at = stamp(Utc::now());
+            let _ = super::progress::write(&root, seq, &id, &name, text, &at);
+        });
+        self.scope.spawn(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match &step {
+                Ok(step) => spawn_worker(exe, step, said, &stop),
+                Err(why) => Err(Failure::Error(why.clone())),
+            }))
+            .unwrap_or_else(|_| Err(Failure::Error("the worker's runner panicked".into())));
+            // the pass holds the receiver until every worker has sent
+            let _ = tx.send((seq, outcome));
+        });
+        self.running.insert(seq, Running { r, run, cancel });
+    }
+
+    /// Ends the workers of these jobs, those running: their steps were
+    /// stopped. A job not running is left alone.
+    fn stop(&self, seqs: &[i64]) {
+        for seq in seqs {
+            if let Some(job) = self.running.get(seq) {
+                job.cancel.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Waits for the next worker to end.
+    fn next(&mut self) -> Result<(Running, Result<Outcome, Failure>)> {
+        let (seq, outcome) = self
+            .rx
+            .recv()
+            .map_err(|_| anyhow!("the workers are gone"))?;
+        let job = self
+            .running
+            .remove(&seq)
+            .ok_or_else(|| anyhow!("an answer for job {seq}, which is not running"))?;
+        Ok((job, outcome))
+    }
+}
+
+/// Delivers events and starts jobs, saving each result as its worker ends,
+/// until nothing is left; or until a manager keeps being killed, or the
+/// pass reaches its cap of events: then no job starts, and what runs is
+/// saved by the caller.
+#[allow(clippy::too_many_arguments)]
+fn work(
+    ws: &Workspace,
+    flows: &Flows,
+    j: &mut Journal,
+    w: &mut Workers,
+    now: DateTime<Utc>,
+    log: &Log,
+    no_room: bool,
+    pass: &mut Pass,
+) -> Result<()> {
+    // Messages that would start a run while `runs` are under way are held;
+    // they are taken again once a run has ended.
     let mut held = vec![];
     loop {
         while let Some(r) = j.next(&held)? {
             if r.event.subject == journal::subject("app") {
-                if route(ws, &flows, &mut j, &r, now, &log, no_room)? {
+                if route(ws, flows, j, &r, now, log, no_room)? {
                     pass.delivered += 1;
                 } else {
                     held.push(r.seq);
                 }
                 continue;
             }
-            if let Delivered::Deferred = deliver(ws, &mut j, &r, now, exe, &log)? {
+            match deliver(ws, j, &r, now, w.exe, log)? {
                 // events are delivered in order: the rest waits with it
-                pass.deferred += 1;
-                return Ok(pass);
+                Delivered::Deferred => {
+                    pass.deferred += 1;
+                    return Ok(());
+                }
+                Delivered::Handled(stopped) => {
+                    pass.stopped += stopped.len();
+                    w.stop(&stopped);
+                }
             }
             pass.delivered += 1;
             if !held.is_empty() && j.active_count(&flows.internals())? < ws.limits.runs {
@@ -471,79 +596,75 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
             }
             if pass.delivered >= MAX_EVENTS {
                 pass.more = true;
-                return Ok(pass);
+                return Ok(());
             }
         }
-        let batch: Vec<Recorded> = j.jobs()?.into_iter().take(ws.limits.steps).collect();
-        if batch.is_empty() {
-            break;
-        }
+        let room = ws.limits.steps.saturating_sub(w.running.len());
+        let waiting: Vec<Recorded> = j
+            .jobs()?
+            .into_iter()
+            .filter(|r| !w.running.contains_key(&r.seq))
+            .take(room)
+            .collect();
         // each run of a job is counted before it starts, so one the daemon
         // stopped during counts too
-        let mut starting = vec![];
-        for r in batch {
+        let mut saved = false;
+        for r in waiting {
             let (runs, lost) = j.job_runs(r.seq)?;
             if runs >= MAX_RUNS {
                 let why = lost.unwrap_or_default();
-                save_result(&mut j, &r, Err(lost_too_often(&why)), now)?;
+                save_result(j, &r, Err(lost_too_often(&why)), now)?;
                 pass.worked += 1;
+                saved = true;
             } else {
                 j.start_job(r.seq)?;
-                let step = step_run(ws, &j, &r.event.data, &stamp(now));
-                starting.push((r, runs + 1, step));
+                super::die_at("job-started");
+                let step = step_run(ws, j, &r.event.data, &stamp(now));
+                w.start(&ws.root, r, runs + 1, step);
             }
         }
-        super::die_at("job-started");
-        // the workers run side by side; each result is saved on its own
-        let outcomes: Vec<Result<Outcome, Failure>> = std::thread::scope(|s| {
-            let running: Vec<_> = starting
-                .iter()
-                .map(|(r, _, step)| {
-                    let (seq, root) = (r.seq, ws.root.clone());
-                    let run = r.event.data["run"].as_str().unwrap_or("").to_string();
-                    let action = r.event.data["job"]["action"].as_str().unwrap_or("?");
-                    let name = format!("#{action}");
-                    // what the step says last on stderr, while it runs
-                    let said = std::sync::Arc::new(move |text: &str| {
-                        let at = stamp(Utc::now());
-                        let _ = super::progress::write(&root, seq, &run, &name, text, &at);
-                    });
-                    s.spawn(move || match step {
-                        Ok(step) => spawn_worker(exe, step, said),
-                        Err(why) => Err(Failure::Error(why.clone())),
-                    })
-                })
-                .collect();
-            running
-                .into_iter()
-                .map(|h| {
-                    h.join().unwrap_or_else(|_| {
-                        Err(Failure::Error("the worker's runner panicked".into()))
-                    })
-                })
-                .collect()
-        });
-        super::die_at("job-done");
-        for ((r, run, _), outcome) in starting.iter().zip(outcomes) {
-            super::progress::clear(&ws.root, r.seq);
-            match outcome {
-                Err(Failure::Lost(why)) if *run < MAX_RUNS => {
-                    j.lose_job(r.seq, &why)?;
-                    pass.lost += 1;
-                }
-                Err(Failure::Lost(why)) => {
-                    save_result(&mut j, r, Err(lost_too_often(&why)), now)?;
-                    pass.worked += 1;
-                }
-                other => {
-                    save_result(&mut j, r, other.map_err(|f| f.to_string()), now)?;
-                    pass.worked += 1;
-                }
-            }
-            super::die_at("result");
+        if saved {
+            continue;
+        }
+        if w.running.is_empty() {
+            return Ok(());
+        }
+        end_one(ws, j, w, now, pass)?;
+    }
+}
+
+/// Waits for the next worker to end, and saves its job's result: a job
+/// lost runs again, up to `MAX_RUNS`; one whose step was stopped was saved
+/// so by the answer that stopped it, and what it did is not.
+fn end_one(
+    ws: &Workspace,
+    j: &mut Journal,
+    w: &mut Workers,
+    now: DateTime<Utc>,
+    pass: &mut Pass,
+) -> Result<()> {
+    let (job, outcome) = w.next()?;
+    super::die_at("job-done");
+    super::progress::clear(&ws.root, job.r.seq);
+    if job.cancel.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    match outcome {
+        Err(Failure::Lost(why)) if job.run < MAX_RUNS => {
+            j.lose_job(job.r.seq, &why)?;
+            pass.lost += 1;
+        }
+        Err(Failure::Lost(why)) => {
+            save_result(j, &job.r, Err(lost_too_often(&why)), now)?;
+            pass.worked += 1;
+        }
+        other => {
+            save_result(j, &job.r, other.map_err(|f| f.to_string()), now)?;
+            pass.worked += 1;
         }
     }
-    Ok(pass)
+    super::die_at("result");
+    Ok(())
 }
 
 /// Sends `itero.space.full` when `.itero/` grows past its `space`, and
@@ -819,8 +940,9 @@ fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Resul
         timers: None,
         events: vec![],
         splits: vec![],
+        stopped: vec![],
     })?;
-    Ok(Delivered::Handled)
+    Ok(Delivered::Handled(vec![]))
 }
 
 /// Delivers one event to its run's manager and saves the answer.
@@ -979,6 +1101,11 @@ fn deliver(
             message: run.message.as_deref(),
         })
         .collect();
+    // the jobs of the steps it stopped, running or waiting their turn,
+    // saved as stopped with the answer: none of them runs again. A job it
+    // stopped in the same decision it would have started was never given
+    // out, so is not in the journal: nothing to stop.
+    let stopped = stopped_jobs(j, &id, &answer.stopped)?;
     j.handle(Handled {
         seq: r.seq,
         at: &at,
@@ -987,10 +1114,28 @@ fn deliver(
         timers: Some(&answer.timers),
         events,
         splits,
+        stopped: stopped.clone(),
     })?;
     tell(log, &who, r, &answer);
     super::die_at("answer");
-    Ok(Delivered::Handled)
+    Ok(Delivered::Handled(stopped))
+}
+
+/// The jobs not yet handled, running or not, of run `id`'s actions at
+/// `paths`.
+fn stopped_jobs(j: &Journal, id: &str, paths: &[Vec<usize>]) -> Result<Vec<i64>> {
+    if paths.is_empty() {
+        return Ok(vec![]);
+    }
+    Ok(j.jobs()?
+        .into_iter()
+        .filter(|r| r.event.data["run"].as_str() == Some(id))
+        .filter(|r| {
+            serde_json::from_value::<Vec<usize>>(r.event.data["job"]["path"].clone())
+                .is_ok_and(|p| paths.contains(&p))
+        })
+        .map(|r| r.seq)
+        .collect())
 }
 
 /// The run a log line is about, and whether its workflow is internal.
@@ -1257,15 +1402,23 @@ fn stop(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+/// How often a running worker looks whether its step was stopped.
+const CANCEL_CHECK: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// Runs `itero worker` on a step in its own process group, with the
 /// daemon's own folder first on its PATH. Quiet past its `quiet`, or
 /// running past its `most`, the group is killed and the job is lost: it
-/// runs again. What the step says on stderr goes to `said` as it comes.
+/// runs again. Once `cancel` is set (its step was stopped), the group is
+/// killed too. What the step says on stderr goes to `said` as it comes.
 fn spawn_worker(
     exe: &Path,
     step: &StepRun,
-    said: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+    said: Arc<dyn Fn(&str) + Send + Sync>,
+    cancel: &AtomicBool,
 ) -> Result<Outcome, Failure> {
+    if cancel.load(Ordering::SeqCst) {
+        return Err(Failure::Lost(journal::JOB_STOPPED.into()));
+    }
     let mut c = Command::new(exe);
     c.arg("worker")
         .env("PATH", crate::connectors::supervise::path_with(exe))
@@ -1297,7 +1450,7 @@ fn spawn_worker(
     // sign of life; a `said` line, what it said on stderr; its answer is
     // one line of JSON, kept without them
     let started = std::time::Instant::now();
-    let heard = std::sync::Arc::new(Mutex::new(started));
+    let heard = Arc::new(Mutex::new(started));
     let out = {
         let heard = heard.clone();
         let stdout = child.stdout.take();
@@ -1339,7 +1492,9 @@ fn spawn_worker(
             .unwrap_or_else(PoisonError::into_inner)
             .elapsed();
         let ran = started.elapsed();
-        let why = if ran >= most {
+        let why = if cancel.load(Ordering::SeqCst) {
+            Some(journal::JOB_STOPPED.to_string())
+        } else if ran >= most {
             Some(format!("ran for {}", humantime::format_duration(most)))
         } else if silent >= quiet {
             Some(format!("quiet for {}", humantime::format_duration(quiet)))
@@ -1351,7 +1506,7 @@ fn spawn_worker(
             stop(&mut child);
             return Err(Failure::Lost(why));
         }
-        let next = (quiet - silent).min(most - ran);
+        let next = (quiet - silent).min(most - ran).min(CANCEL_CHECK);
         if let Some(status) = child.wait_timeout(next).map_err(|e| e.to_string())? {
             break status;
         }
@@ -1416,5 +1571,6 @@ fn save_result(
         timers: None,
         events: vec![e],
         splits: vec![],
+        stopped: vec![],
     })
 }
