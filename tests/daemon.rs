@@ -349,6 +349,51 @@ fn a_step_that_prints_as_it_goes_runs_past_its_quiet_limit() {
 }
 
 #[test]
+fn a_running_step_shows_its_last_line_on_stderr() {
+    let ws = Ws::new();
+    ws.flow(
+        "uzun",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#uzun"]}),
+    );
+    ws.action(
+        "uzun",
+        "echo '[1/2] ilk' >&2; sleep 1; echo '[2/2] ikinci' >&2; sleep 3; echo bitti",
+    );
+    ws.emit("order.placed", json!({"order": 1}));
+    let root = ws.d.path().to_path_buf();
+    let pass = std::thread::spawn(move || {
+        let ws = itero::workspace::find(&root).unwrap();
+        run_once(&ws, NOW.parse().unwrap(), exe()).unwrap();
+    });
+    let runs = || {
+        let o = std::process::Command::new(exe())
+            .args(["wf", "runs", "--json"])
+            .current_dir(ws.d.path())
+            .output()
+            .unwrap();
+        serde_json::from_slice::<Value>(&o.stdout).unwrap_or(Value::Null)
+    };
+    let started = std::time::Instant::now();
+    let mut seen = Value::Null;
+    while started.elapsed() < std::time::Duration::from_secs(4) {
+        seen = runs()[0]["progress"].clone();
+        if seen["said"] == "[2/2] ikinci" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert_eq!(seen["step"], "#uzun", "{seen}");
+    assert_eq!(seen["said"], "[2/2] ikinci", "{seen}");
+    pass.join().unwrap();
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(
+        runs()[0]["progress"],
+        Value::Null,
+        "a step that ended shows none"
+    );
+}
+
+#[test]
 fn a_step_past_its_most_is_stopped_even_while_it_prints() {
     let ws = Ws::with(r#"{"limits": {"quiet": "1s", "most": "1s"}}"#);
     ws.flow(

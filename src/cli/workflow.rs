@@ -1,7 +1,7 @@
 //! `itero workflow` (`itero wf`): the workflows, their runs, their settings.
 use super::out::{ago, given, plain_name, show, table, text};
 use crate::engine::journal::{Journal, Run, subject};
-use crate::engine::steps;
+use crate::engine::{progress, steps};
 use crate::workspace::Workspace;
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
@@ -158,9 +158,18 @@ pub fn runs(ws: &Workspace, f: &Filter, json: bool) -> Result<()> {
             f.limit.unwrap_or(usize::MAX)
         },
     )?;
+    // a running run shows what its newest running step said last
     let rows: Vec<Value> = found
         .iter()
-        .map(row)
+        .map(|r| {
+            let mut v = row(r);
+            if v["status"] == "running"
+                && let Some(p) = progress::of_run(&ws.root, &r.id).into_iter().next()
+            {
+                v["progress"] = p;
+            }
+            v
+        })
         .filter(|r| step.as_ref().is_none_or(|s| r["failed_step"] == s.as_str()))
         .take(f.limit.unwrap_or(usize::MAX))
         .collect();
@@ -180,6 +189,10 @@ pub fn runs(ws: &Workspace, f: &Filter, json: bool) -> Result<()> {
                 ];
                 if r["status"] == "error" {
                     cells.push(format!("{}: {}", text(&r["failed_step"]), text(&r["why"])));
+                }
+                if r["progress"].is_object() {
+                    let p = &r["progress"];
+                    cells.push(format!("{}: {}", text(&p["step"]), text(&p["said"])));
                 }
                 cells
             })
@@ -202,7 +215,15 @@ pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
             found.len()
         );
     }
-    let v = story(&j, r)?;
+    let mut v = story(&j, r)?;
+    // the steps running now, and what each said last
+    if v["status"] == "running" {
+        for p in progress::of_run(&ws.root, &r.id) {
+            v["steps"].as_array_mut().expect("a list").push(json!({
+                "what": "running", "step": p["step"], "data": p["said"], "time": p["at"],
+            }));
+        }
+    }
     show(json, &v, |v| {
         println!(
             "{}  {}  {}  {}",
@@ -216,6 +237,7 @@ pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
                 "started" => format!("started  {}", s["data"]),
                 "timed out" => "waited too long".to_string(),
                 "event" => format!("event {}  {}", text(&s["type"]), s["data"]),
+                "running" => format!("{}  running  {}", text(&s["step"]), text(&s["data"])),
                 what => format!("{}  {what}  {}", text(&s["step"]), s["data"]),
             };
             println!("  {}  {line}", text(&s["time"]));

@@ -488,12 +488,17 @@ pub const NOT_YET: i32 = 75;
 /// Runs one step: the action with its values in its environment and the
 /// state on stdin; or a built-in one.
 pub fn run_step(r: &StepRun) -> Result<Outcome, Failure> {
-    run_step_telling(r, &|| ())
+    run_step_telling(r, &|_| ())
 }
 
-/// `run_step`, calling `printed` each time the action prints something, on
+/// `run_step`, calling `told` each time the action prints something, on
 /// stdout or stderr: how the daemon knows a long step is still working.
-pub fn run_step_telling(r: &StepRun, printed: &(dyn Fn() + Sync)) -> Result<Outcome, Failure> {
+/// When a piece on stderr ends a line, `told` gets the last whole line of
+/// it, the step's progress (`[21/40] ...`); else `None`.
+pub fn run_step_telling(
+    r: &StepRun,
+    told: &(dyn Fn(Option<&str>) + Sync),
+) -> Result<Outcome, Failure> {
     if r.file == Path::new(FORGET) {
         return forget(r);
     }
@@ -537,9 +542,24 @@ pub fn run_step_telling(r: &StepRun, printed: &(dyn Fn() + Sync)) -> Result<Outc
     let _ = writeln!(stdin, "{}", Value::Object(r.state.clone()));
     drop(stdin);
     let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+    // a line on stderr may come in two pieces: the start of one is kept
+    let partial = std::sync::Mutex::new(Vec::new());
     let (stdout, stderr) = std::thread::scope(|s| {
-        let out = s.spawn(|| read_telling(stdout, printed));
-        let err = s.spawn(|| read_telling(stderr, printed));
+        let out = s.spawn(|| read_telling(stdout, &|_| told(None)));
+        let err = s.spawn(|| {
+            read_telling(stderr, &|piece| {
+                let mut line = partial.lock().unwrap_or_else(|e| e.into_inner());
+                line.extend_from_slice(piece);
+                match last_line(&line) {
+                    Some(said) => {
+                        told(Some(&said));
+                        let end = line.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+                        line.drain(..end);
+                    }
+                    None => told(None),
+                }
+            })
+        });
         let join = |h: std::thread::ScopedJoinHandle<std::io::Result<Vec<u8>>>| {
             h.join()
                 .unwrap_or_else(|_| Err(std::io::Error::other("its reader panicked")))
@@ -558,10 +578,22 @@ pub fn run_step_telling(r: &StepRun, printed: &(dyn Fn() + Sync)) -> Result<Outc
     }
 }
 
-/// Reads a pipe to its end, calling `printed` for each piece read.
+/// The last whole, non-blank line of `text`, trimmed and cut to 200
+/// characters: what a step said last. `None` when no line has ended yet.
+fn last_line(text: &[u8]) -> Option<String> {
+    let end = text.iter().rposition(|&b| b == b'\n')?;
+    String::from_utf8_lossy(&text[..end])
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(|l| l.chars().take(200).collect())
+}
+
+/// Reads a pipe to its end, calling `printed` with each piece read.
 pub fn read_telling(
     pipe: Option<impl std::io::Read>,
-    printed: &(dyn Fn() + Sync),
+    printed: &(dyn Fn(&[u8]) + Sync),
 ) -> std::io::Result<Vec<u8>> {
     let mut all = vec![];
     let Some(mut pipe) = pipe else {
@@ -573,7 +605,7 @@ pub fn read_telling(
             Ok(0) => break,
             Ok(n) => {
                 all.extend_from_slice(&buf[..n]);
-                printed();
+                printed(&buf[..n]);
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),

@@ -839,19 +839,50 @@ fn dispatch(cli: Cli) -> Result<()> {
             crate::engine::worker::stop_with_parent();
             crate::engine::die_at("worker");
             // while the action prints, a blank line on stdout now and then
-            // tells the daemon it is working; the answer after them is read
-            // all the same. A daemon gone stops this worker anyway, so a
-            // line it cannot take is no error.
+            // tells the daemon it is working, and `said <JSON text>` what it
+            // said last on stderr, at most twice a second; the answer after
+            // them is read all the same. A daemon gone stops this worker
+            // anyway, so a line it cannot take is no error.
+            let line = |text: &[u8]| {
+                let mut out = std::io::stdout().lock();
+                let _ = out.write_all(text).and_then(|()| out.flush());
+            };
             let last = std::sync::Mutex::new(None::<Instant>);
-            let printed = || {
+            let said = std::sync::Mutex::new((None::<String>, None::<String>));
+            let ended = std::sync::atomic::AtomicBool::new(false);
+            let printed = |now_said: Option<&str>| {
+                if let Some(s) = now_said {
+                    said.lock().unwrap_or_else(|e| e.into_inner()).0 = Some(s.to_string());
+                }
                 let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
                 if last.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
                     *last = Some(Instant::now());
-                    let mut out = std::io::stdout().lock();
-                    let _ = out.write_all(b"\n").and_then(|()| out.flush());
+                    line(b"\n");
                 }
             };
-            match run_step_telling(&step, &printed) {
+            let outcome = std::thread::scope(|s| {
+                // the latest line goes on even when the action falls silent
+                s.spawn(|| {
+                    let mut told = Instant::now() - Duration::from_secs(1);
+                    while !ended.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::thread::sleep(Duration::from_millis(50));
+                        if told.elapsed() < Duration::from_millis(500) {
+                            continue;
+                        }
+                        let mut said = said.lock().unwrap_or_else(|e| e.into_inner());
+                        if said.0.is_some() && said.0 != said.1 {
+                            said.1 = said.0.clone();
+                            told = Instant::now();
+                            let text = serde_json::to_string(&said.1).unwrap_or_default();
+                            line(format!("said {text}\n").as_bytes());
+                        }
+                    }
+                });
+                let outcome = run_step_telling(&step, &printed);
+                ended.store(true, std::sync::atomic::Ordering::Relaxed);
+                outcome
+            });
+            match outcome {
                 Ok(outcome) => {
                     // the step's effect is done; its answer is not yet given
                     crate::engine::die_at("worker-done");

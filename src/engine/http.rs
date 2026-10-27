@@ -265,6 +265,9 @@ async fn run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Json<Val
             })
             .collect();
         let mut v = run_row(&r);
+        if v["status"] == "running" {
+            v["progress"] = Value::Array(super::progress::of_run(&ws.root, &id));
+        }
         v["input"] = r.input.clone();
         v["state"] = Value::Object(r.runtime.state.clone());
         v["events"] = Value::Array(events);

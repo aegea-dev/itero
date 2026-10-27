@@ -498,9 +498,18 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
         let outcomes: Vec<Result<Outcome, Failure>> = std::thread::scope(|s| {
             let running: Vec<_> = starting
                 .iter()
-                .map(|(_, _, step)| {
+                .map(|(r, _, step)| {
+                    let (seq, root) = (r.seq, ws.root.clone());
+                    let run = r.event.data["run"].as_str().unwrap_or("").to_string();
+                    let action = r.event.data["job"]["action"].as_str().unwrap_or("?");
+                    let name = format!("#{action}");
+                    // what the step says last on stderr, while it runs
+                    let said = std::sync::Arc::new(move |text: &str| {
+                        let at = stamp(Utc::now());
+                        let _ = super::progress::write(&root, seq, &run, &name, text, &at);
+                    });
                     s.spawn(move || match step {
-                        Ok(step) => spawn_worker(exe, step),
+                        Ok(step) => spawn_worker(exe, step, said),
                         Err(why) => Err(Failure::Error(why.clone())),
                     })
                 })
@@ -516,6 +525,7 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
         });
         super::die_at("job-done");
         for ((r, run, _), outcome) in starting.iter().zip(outcomes) {
+            super::progress::clear(&ws.root, r.seq);
             match outcome {
                 Err(Failure::Lost(why)) if *run < MAX_RUNS => {
                     j.lose_job(r.seq, &why)?;
@@ -1237,8 +1247,12 @@ fn stop(child: &mut std::process::Child) {
 /// Runs `itero worker` on a step in its own process group, with the
 /// daemon's own folder first on its PATH. Quiet past its `quiet`, or
 /// running past its `most`, the group is killed and the job is lost: it
-/// runs again.
-fn spawn_worker(exe: &Path, step: &StepRun) -> Result<Outcome, Failure> {
+/// runs again. What the step says on stderr goes to `said` as it comes.
+fn spawn_worker(
+    exe: &Path,
+    step: &StepRun,
+    said: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+) -> Result<Outcome, Failure> {
     let mut c = Command::new(exe);
     c.arg("worker")
         .env("PATH", crate::connectors::supervise::path_with(exe))
@@ -1267,19 +1281,33 @@ fn spawn_worker(exe: &Path, step: &StepRun) -> Result<Outcome, Failure> {
         })
     };
     // the worker's blank lines say the action printed: each is the latest
-    // sign of life; its answer is one line of JSON, kept without them
+    // sign of life; a `said` line, what it said on stderr; its answer is
+    // one line of JSON, kept without them
     let started = std::time::Instant::now();
     let heard = std::sync::Arc::new(Mutex::new(started));
     let out = {
         let heard = heard.clone();
         let stdout = child.stdout.take();
         std::thread::spawn(move || {
-            let mut buf = worker::read_telling(stdout, &|| {
+            let partial = Mutex::new(Vec::new());
+            let buf = worker::read_telling(stdout, &|piece| {
                 *heard.lock().unwrap_or_else(PoisonError::into_inner) = std::time::Instant::now();
+                let mut line = partial.lock().unwrap_or_else(PoisonError::into_inner);
+                line.extend_from_slice(piece);
+                while let Some(end) = line.iter().position(|&b| b == b'\n') {
+                    let whole: Vec<u8> = line.drain(..=end).collect();
+                    if let Some(text) = whole.strip_prefix(b"said ")
+                        && let Ok(text) = serde_json::from_slice::<String>(text)
+                    {
+                        said(&text);
+                    }
+                }
             })
             .unwrap_or_default();
-            buf.retain(|&b| b != b'\n');
-            buf
+            buf.split(|&b| b == b'\n')
+                .rfind(|l| !l.is_empty() && !l.starts_with(b"said "))
+                .unwrap_or_default()
+                .to_vec()
         })
     };
     let err = read(
