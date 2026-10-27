@@ -646,6 +646,19 @@ fn a_group_mistake_is_named_with_the_step() {
         ),
         (r##"{ "all": ["#a", "#b"], "fail": [] }"##, "fail is"),
         (r##"{ "all": ["#a", "#b"], "fail": 3 }"##, "fail is"),
+        // two steps with the same name, whatever their versions
+        (
+            r##"{ "all": ["#a", "#b", "#a"] }"##,
+            "#a is in the list twice",
+        ),
+        (
+            r##"{ "race": ["#a", "#a@0.2"] }"##,
+            "#a is in the list twice",
+        ),
+        (
+            r##"{ "settled": ["yedekle", "#a", "yedekle"] }"##,
+            "yedekle is in the list twice",
+        ),
     ] {
         let e = err(&format!(r##"{{ "steps": [{step}] }}"##));
         assert!(e.contains(says), "{step}: {e}");
@@ -655,4 +668,10 @@ fn a_group_mistake_is_named_with_the_step() {
             "{step}: {e}"
         );
     }
+}
+
+#[test]
+fn a_bare_list_may_name_a_step_twice() {
+    let g = group(r##"["#kontrol", "#kontrol"]"##);
+    assert_eq!(g.names.len(), 2);
 }

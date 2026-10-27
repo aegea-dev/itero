@@ -2,6 +2,7 @@
 //! `steps`, and the `success`, `failure` and `error` lists run at the end.
 //! Its name is its file name, so the file has none.
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::time::Duration;
 
@@ -151,9 +152,11 @@ pub struct Group {
 }
 
 /// When the group ends: the key of its object.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Wait {
     /// Every step ended well.
+    #[default]
     All,
     /// The first step ended.
     Race,
@@ -166,7 +169,8 @@ pub enum Wait {
 }
 
 /// What `some` needs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Need {
     /// This many steps ended well.
     Count(usize),
@@ -175,7 +179,8 @@ pub enum Need {
 }
 
 /// When the group breaks, replacing its wait's own rule.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Fail {
     /// One step broke.
     Any,
@@ -712,6 +717,14 @@ fn group(v: &Value, m: &Map<String, Value>) -> Result<Step, String> {
     };
     let names = side_names(items, key).map_err(&bad)?;
     let labels: Vec<String> = names.iter().map(Name::label).collect();
+    // a step is told apart by its name, whatever its version
+    for (i, l) in labels.iter().enumerate() {
+        if labels[..i].contains(l) {
+            return Err(bad(format!(
+                "{l} is in the list twice: the steps of a group are told apart by their names"
+            )));
+        }
+    }
     // a list of names that must be steps of this group
     let steps_of = |what: &str, v: &Value| -> Result<Vec<String>, String> {
         let list: Vec<&Value> = match v {
