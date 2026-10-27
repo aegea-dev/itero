@@ -43,6 +43,7 @@ its settings) is in its entry in
 | `"#name@0.2"` | an action at a version |
 | `"name"` | a workflow, run here with the same state; its result is its last step's |
 | `["#a", "b"]` | side by side; the next step waits for all, and their results merge into one |
+| `{"race": ["#a", "b"]}` | side by side, waiting as its key says (below) |
 | `{"#name": {...}}` | with keys of its own (below) |
 
 | A step's key | Is |
@@ -58,3 +59,22 @@ one field of it (a field may be `#step`, a step side by side's result:
 objects, each `$name` is filled (`""` when it is not there); `\\$` is a
 dollar sign; a secret inside text is refused. `$output` is the step
 before's result; `output` is no arg's name. See [Workflows](/guides/workflows/).
+
+## Steps side by side
+
+| A group's key | Is |
+|---|---|
+| `all` | its steps; it ends when every one ended well (a plain list) |
+| `race` | its steps; it ends with the first to end, `$output.winner` its name |
+| `any` | its steps; it ends with the first to end well, `$output.winner` its name |
+| `some` | its steps; it ends when `count` of them, or those in `names`, ended well |
+| `settled` | its steps; it ends when every one ended, and never breaks |
+| `count` | with `some`: how many, 1 to the number of steps |
+| `names` | with `some`: which, by name |
+| `fail` | when it breaks instead: `"any"`, `"all"`, `"never"`, a step's name, or a list of names |
+
+An object has one of the five keys, with two or more steps, each named
+once. `$output.failed` and `$output.why` name the steps that broke and why,
+whenever one did (always with `settled` and `"fail": "never"`). The steps
+that lose are stopped, never undone. See
+[How steps side by side wait](/guides/workflows/#how-steps-side-by-side-wait).

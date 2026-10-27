@@ -1,6 +1,6 @@
 ---
 title: Workflows
-description: on, meta, steps, a step's result and args, side by side, conditions, workflows as steps, and the lists run at the end.
+description: on, meta, steps, a step's result and args, side by side and how it waits, conditions, workflows as steps, and the lists run at the end.
 ---
 
 A workflow says when something should happen, and what to do then,
@@ -400,5 +400,61 @@ kept under a step's name by that name: two steps that print plain values,
 { "steps": [["#size", "#type"],
             { "#notify": { "args": { "text": "$output.#size bytes, $output.#type" } } }] }
 ```
+
+## How steps side by side wait
+
+A list waits for all its steps, and one that breaks breaks the run. An
+object says how else to wait, with one of five keys and a list of two or
+more steps:
+
+```json
+"steps": [
+  { "race":    ["#mirror-eu", "#mirror-us"] },
+  { "any":     ["#mirror-eu", "#mirror-us"] },
+  { "some":    ["#replica-a", "#replica-b", "#replica-c"], "count": 2 },
+  { "some":    ["#replica-a", "#replica-b", "#replica-c"], "names": ["#replica-a", "#replica-c"] },
+  { "settled": ["#check-web", "#check-mail", "#check-db"] }
+]
+```
+
+| Key | Ends when | Breaks when |
+|---|---|---|
+| `all` | every step ended well (a plain list is `all`) | a step breaks |
+| `race` | the first step ends | that first step broke |
+| `any` | the first step ends well | every step broke |
+| `some` with `count` | that many ended well | too many broke to reach `count` |
+| `some` with `names` | the named steps ended well | a named step broke |
+| `settled` | every step ended | never |
+
+`fail` says when the group breaks in place of its key's rule: `"any"`
+(a step broke), `"all"` (every step broke), `"never"`, a step's name, or
+a list of names (one of them broke). `{ "all": [...], "fail": "never" }`
+waits for all and never breaks. A group that breaks breaks the run, as a
+step does: `$failed_step` is its first step that broke, `$why` its
+reason. A group whose key can no longer be met and that does not break
+(`any` with `"fail": "never"`, every step broke) ends when all have.
+
+When a group ends before all its steps have (`race`, `any`, `some`), the
+others are stopped: a running one's process is ended, a waiting one waits
+no more, and the run's story shows them `stopped`. itero undoes nothing
+for them; to clean up after them, write the next step to do it.
+
+A workflow in a group whose `on` does not hold did not run: it is out of
+the group, as if not written. It wins no race and counts for nothing.
+
+After the group, `$output` is:
+
+- `all`, `some`: the results merged, as above.
+- `race`, `any`: the winner's result, and `$output.winner`, its name
+  (`"#mirror-eu"`).
+- `$output.failed`, the names of the steps that broke, and `$output.why`,
+  each one's reason (`{"#mirror-eu": "exit 7: connection refused"}`),
+  whenever a step broke; with `settled` or `"fail": "never"` always, `[]`
+  when none broke.
+
+`winner`, `failed` and `why` are itero's: a step's own field of that name
+is not kept. Two versions of one action cannot be in one group object: names,
+`fail` and `$output` tell its steps apart by name. `{"race": {...}}`, with
+an object, is a workflow named `race` used as a step.
 
 All keys: [Workflow files](/reference/workflow-file/).
