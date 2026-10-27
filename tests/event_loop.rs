@@ -1,7 +1,7 @@
 //! The daemon as it runs: it waits for something to do, and makes no pass
 //! until a message, an edit or the next due time wakes it.
 #![cfg(unix)]
-use itero::engine::journal::Journal;
+use itero::engine::journal::{Journal, subject};
 use itero::engine::steps;
 use serde_json::Value;
 use std::path::Path;
@@ -131,21 +131,31 @@ fn a_message_wakes_it_and_a_deadline_ends_a_waiting_run_on_time() {
     );
     action(d.path(), "bekle", "exit 75");
     let (_daemon, port) = start(d.path());
-    let sent = Instant::now();
     itero(d.path(), &["emit", "order.placed", r#"{"order": 1}"#]);
-    until("the run to wait", Duration::from_secs(3), || {
-        (statuses(d.path()) == ["waiting"]).then_some(())
-    });
-    // nothing but the alarm wakes it at its deadline
-    until("the deadline", Duration::from_secs(8), || {
+    // nothing but the alarm wakes it at its deadline; the waiting itself is
+    // read from the journal after, not watched for: on a slow machine the
+    // run can start late, and its 2 s of waiting pass between two looks
+    until("the deadline", Duration::from_secs(15), || {
         (statuses(d.path()) == ["error"]).then_some(())
     });
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let j = Journal::open(&ws).unwrap();
+    let run = j.runs().unwrap().remove(0);
+    assert_eq!(run.runtime.state["why"], "waited 2s for data");
+    let waited = j
+        .events(Some(&subject(&run.id)))
+        .unwrap()
+        .into_iter()
+        .find(|e| e.event.kind == "action.waiting")
+        .expect("the run waited");
     // the journal keeps times to the second, and "waiting since" is the
-    // second it began: a 2 s deadline comes between 1 s and 2 s on
+    // second it began: a 2 s deadline comes between 1 s and 2 s on, and
+    // the pass that ends it may take a moment more
+    let at = |t: &str| chrono::DateTime::parse_from_rfc3339(t).unwrap();
+    let took = at(run.ended.as_deref().unwrap()) - at(&waited.event.time);
     assert!(
-        sent.elapsed() >= Duration::from_millis(1000),
-        "{:?}",
-        sent.elapsed()
+        (1..=3).contains(&took.num_seconds()),
+        "the deadline came {took} after the run began waiting"
     );
     // a pass for the message, its job, the deadline: a few, not one a second
     assert!(passes(port) <= 8, "{}", passes(port));
