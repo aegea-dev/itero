@@ -53,7 +53,8 @@ its settings) is in its entry in
 | `strict` | `true`: its args reach its action only, not the state (an action's step) |
 
 In `args`, `"$name"` is the state's value with its type, `"$name.field"`
-one field of it, `"$$NAME"` a secret's. Inside text, and in lists and
+one field of it (a field may be `#step`, a step side by side's result:
+`$output.#size`), `"$$NAME"` a secret's. Inside text, and in lists and
 objects, each `$name` is filled (`""` when it is not there); `\\$` is a
 dollar sign; a secret inside text is refused. `$output` is the step
 before's result; `output` is no arg's name. See [Workflows](/guides/workflows/).

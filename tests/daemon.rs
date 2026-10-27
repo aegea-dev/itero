@@ -311,6 +311,24 @@ fn a_run_that_waits_past_its_timeout_ends_in_error() {
 }
 
 #[test]
+fn steps_side_by_side_that_print_plain_values_are_read_by_name() {
+    let ws = Ws::new();
+    ws.flow(
+        "fotoğraf",
+        json!({"on": [{ "event": "photo.added" }],
+               "steps": [["#boyut", "#tür"],
+                         { "#yaz": { "args": { "metin": "$output.#boyut bayt, $output.#tür" } } }]}),
+    );
+    ws.action("boyut", "echo 1064");
+    ws.action("tür", "echo image/png");
+    ws.action("yaz", "echo \"$metin\" > yazılan.txt");
+    ws.emit("photo.added", json!({"path": "p.png"}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(ws.read("yazılan.txt"), "1064 bayt, image/png\n");
+}
+
+#[test]
 fn a_step_quiet_past_its_limit_is_stopped_and_run_again() {
     let ws = Ws::with(r#"{"limits": {"quiet": "1s"}}"#);
     ws.flow(
