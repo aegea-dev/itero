@@ -60,6 +60,23 @@ goes (`creating the cluster...` on stderr) runs as long as it needs, up to
 runs again, up to 3 times; then it is an error, `quiet for 10m` or
 `ran for 1d`.
 
+Its last line on stderr is also its progress: `itero wf runs` shows it
+beside a running run, and the run's story on the step, so a step of hours
+can say how far it is:
+
+```sh
+#!/bin/sh
+for f in data/*.csv; do
+  n=$((n + 1)); echo "[$n] $f" >&2
+  ./import "$f"
+done
+```
+
+```
+$ itero wf runs
+0199...  calm-river  import  running  2026-10-27T10:00:00Z  -  #import: [21] data/orders-21.csv
+```
+
 ## Versions
 
 A version is part of the file name: `notify@0.2`, `notify@0.10`. `#notify`

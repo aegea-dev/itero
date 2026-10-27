@@ -94,7 +94,8 @@ runs only with `?all=true`.
 
 The run as in the list, with its `input` (the data it started with), its
 `state`, and its `events`: each with `seq`, `type`, `time`, `handled`,
-`error` and `data`. Of two runs with one name, the newest. 404 for a run
+`error` and `data`. A running run also has `progress`: each running step's
+`step`, what it `said` last on stderr, and `at` when, newest first. Of two runs with one name, the newest. 404 for a run
 there is not.
 
 ## GET /workflows

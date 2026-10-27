@@ -37,7 +37,9 @@ daemon running means [`itero daemon`](/commands/daemon/) is not running.
 ## runs
 
 The runs, newest first: id, name, workflow, status, when it started and
-ended. A run that broke also says at which step, and why.
+ended. A run that broke also says at which step, and why; a running one,
+what its step said last on stderr (its progress, see
+[Actions](/guides/actions/)).
 
 ```
 $ itero wf runs
@@ -58,7 +60,8 @@ run that went on as one run per item of a list, see
 | `--all` | the internal workflows' runs too |
 
 With a run's name or id, its story: how it started, each step and how it
-went, the events it took, how it ended, and its state.
+went, the events it took, how it ended, and its state. A step still running
+is shown as `running`, with what it said last.
 
 ```
 $ itero wf runs sunny-lake
