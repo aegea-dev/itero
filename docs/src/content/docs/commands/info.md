@@ -21,7 +21,7 @@ workspace
   name warm-otter
   created 2026-10-21T19:46:51Z
   path /Users/me/home
-  itero 0.13.0
+  itero 0.14.0
   limits
     workflows 100
     runs 1000
