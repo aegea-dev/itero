@@ -403,9 +403,9 @@ kept under a step's name by that name: two steps that print plain values,
 
 ## How steps side by side wait
 
-A list waits for all its steps, and one that breaks breaks the run. An
-object says how else to wait, with one of five keys and a list of two or
-more steps:
+A list waits for all its steps, and one that breaks breaks the run once
+the others have ended. An object says how else to wait, with one of five
+keys and a list of two or more steps:
 
 ```json
 "steps": [
@@ -431,13 +431,23 @@ more steps:
 a list of names (one of them broke). `{ "all": [...], "fail": "never" }`
 waits for all and never breaks. A group that breaks breaks the run, as a
 step does: `$failed_step` is its first step that broke, `$why` its
-reason. A group whose key can no longer be met and that does not break
-(`any` with `"fail": "never"`, every step broke) ends when all have.
+reason. When `fail` names steps, `$failed_step` is the first of those
+that broke: with `"fail": "#b"`, when `#a` breaks before `#b`,
+`$failed_step` is `#b`. A group whose key can no longer be met and that
+does not break (`any` with `"fail": "never"`, every step broke) ends when
+all have.
 
-When a group ends before all its steps have (`race`, `any`, `some`), the
-others are stopped: a running one's process is ended, a waiting one waits
-no more, and the run's story shows them `stopped`. itero undoes nothing
-for them; to clean up after them, write the next step to do it.
+When a group ends or breaks before all its steps have (`race`, `any`,
+`some`), the others are stopped: a running one's process is ended, a
+waiting one waits no more, and the run's story shows them `stopped` (a
+workflow by its own name). itero undoes nothing for them; to clean up
+after them, write the next step to do it.
+
+`all` and `settled` wait for every step, even once one broke them: the
+steps still running run to their end, then the group breaks (and the run
+takes its undos and its `error` list). What those steps print is not
+kept, a workflow among them goes on to no next step, and a step waiting
+for an event waits no more, shown `stopped`.
 
 A workflow in a group whose `on` does not hold did not run: it is out of
 the group, as if not written. It wins no race and counts for nothing.
