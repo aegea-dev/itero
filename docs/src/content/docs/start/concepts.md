@@ -65,7 +65,8 @@ itero daemon  (one per workspace)
      2. runs       → decide each run's next steps
      3. steps      → run each step's action, side by side (up to 8 at a time),
                      each as its own process
-     4. results    → saved; they are the next pass's input
+     4. results    → saved as each step ends, and decided on at once,
+                     while other steps still run and new events come in
 ```
 
 A run moves through its workflow's steps:

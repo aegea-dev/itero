@@ -62,7 +62,8 @@ run that went on as one run per item of a list, see
 With a run's name or id, its story: how it started, each step and how it
 went, the events it took, how it ended, and its state. A step still running
 is shown as `running`, with what it said last; one whose group ended
-without it, `stopped` ([How steps side by side wait](/guides/workflows/#how-steps-side-by-side-wait)).
+without it, running or waiting, as `stopped` (a workflow under its own
+name; [How steps side by side wait](/guides/workflows/#how-steps-side-by-side-wait)).
 
 ```
 $ itero wf runs sunny-lake

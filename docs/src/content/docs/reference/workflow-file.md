@@ -76,5 +76,6 @@ before's result; `output` is no arg's name. See [Workflows](/guides/workflows/).
 An object has one of the five keys, with two or more steps, each named
 once. `$output.failed` and `$output.why` name the steps that broke and why,
 whenever one did (always with `settled` and `"fail": "never"`). The steps
-that lose are stopped, never undone. See
+that lose are stopped, never undone. A group of `all` or `settled` that
+breaks waits for its running steps to end first. See
 [How steps side by side wait](/guides/workflows/#how-steps-side-by-side-wait).

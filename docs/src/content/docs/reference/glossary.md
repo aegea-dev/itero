@@ -97,7 +97,8 @@ up after its `timeout`.
 A list in `steps`: its entries run at the same time, and the next step
 waits for all of them. Their results merge into one `$output`. An object
 says how else to wait: `race`, `any`, `some`, `settled`; the steps that
-lose are stopped. See
+lose are stopped. A list whose step breaks breaks the run once the others
+have ended. See
 [How steps side by side wait](/guides/workflows/#how-steps-side-by-side-wait).
 
 ### condition

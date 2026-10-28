@@ -475,6 +475,158 @@ echo '{"sipariş": "ş-1"}'; exit 75"#,
     assert_eq!(ws.read("bekle.log"), "uyandı\n", "the loser ran again");
 }
 
+/// A pass over `ws`, on a thread of its own.
+fn pass_apart(ws: &Ws) -> std::thread::JoinHandle<Pass> {
+    let root = ws.d.path().to_path_buf();
+    std::thread::spawn(move || {
+        let ws = itero::workspace::find(&root).unwrap();
+        run_once(&ws, NOW.parse().unwrap(), exe()).unwrap()
+    })
+}
+
+/// Ends process `pid`, if it still runs: what a failing test leaves.
+fn end(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .output();
+}
+
+#[test]
+fn a_waiting_step_wins_a_race_when_its_data_comes_while_the_other_runs() {
+    let ws = Ws::new();
+    ws.flow(
+        "onay",
+        json!({"on": [{ "event": "iş.başladı" }],
+               "steps": [{ "race": ["#onay", "#derle"] }]}),
+    );
+    ws.action(
+        "onay",
+        r#"case "$output" in *onaylandı*) echo onaylandı; exit 0 ;; esac
+echo '{"iş": "ş-1"}'; exit 75"#,
+    );
+    ws.action("derle", "sleep 20 &\necho $! > derle.pid\nwait");
+    ws.emit("iş.başladı", json!({}));
+    let started = std::time::Instant::now();
+    let pass = pass_apart(&ws);
+    let pid = pid_in(&ws, "derle.pid");
+    assert!(soon(|| ws.statuses() == vec!["waiting"]));
+    // the approval comes while the build still runs
+    ws.emit("onay.geldi", json!({"iş": "ş-1", "onaylandı": true}));
+    pass.join().unwrap();
+    let took = started.elapsed();
+    let gone = soon(|| !alive(pid));
+    end(pid);
+    assert!(took < secs(15), "the pass waited for the build: {took:?}");
+    assert!(gone, "sleep {pid} still ran");
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(
+        ws.runs()[0].runtime.state["output"],
+        json!({"#onay": "onaylandı", "winner": "#onay"})
+    );
+    saved_as_stopped(&ws, "derle");
+}
+
+#[test]
+fn a_list_whose_step_breaks_lets_the_others_run_to_their_end_then_breaks() {
+    for group in [
+        json!(["#kırık", "#yavaş"]),
+        json!({ "all": ["#kırık", "#yavaş"] }),
+    ] {
+        let ws = Ws::new();
+        ws.flow(
+            "liste",
+            json!({"on": [{ "event": "liste.başladı" }],
+                   "steps": [group, "#sonra"], "error": ["#hata"]}),
+        );
+        ws.action("kırık", "echo bozuldu >&2; exit 1");
+        ws.action("yavaş", "sleep 1; echo bitti > yavaş.txt");
+        ws.action("sonra", "echo koştu > sonra.txt");
+        // the error list runs once the slow step has ended
+        ws.action("hata", r#"echo "$failed_step $(cat yavaş.txt)" > hata.txt"#);
+        ws.emit("liste.başladı", json!({}));
+        let pass = ws.pass(NOW);
+        assert_eq!(ws.statuses(), vec!["error"], "{group}");
+        assert_eq!(ws.read("yavaş.txt"), "bitti\n", "{group}");
+        assert_eq!(ws.read("hata.txt"), "#kırık bitti\n", "{group}");
+        assert_eq!(ws.read("sonra.txt"), "", "{group}");
+        assert_eq!(ws.runs()[0].runtime.state["why"], "exit 1: bozuldu");
+        assert_eq!(pass.stopped, 0, "{group}");
+        assert!(jobs(&ws).iter().all(|j| j.2.is_none()), "{:?}", jobs(&ws));
+    }
+}
+
+#[test]
+fn a_pass_whose_manager_keeps_being_killed_still_stops_the_steps_that_lose() {
+    let ws = Ws::new();
+    ws.flow(
+        "yarış",
+        json!({"on": [{ "event": "yarış.başladı" }],
+               "steps": [{ "race": ["#hızlı", "#yavaş"] }]}),
+    );
+    ws.action("hızlı", "sleep 2; echo hızlı");
+    ws.action("yavaş", "sleep 30 &\necho $! > uyku.pid\nwait");
+    ws.emit("yarış.başladı", json!({}));
+    // every manager dies while this file is there
+    let die = ws.d.path().join("ölsün");
+    let mut daemon = std::process::Command::new(exe())
+        .args(["daemon", "--once", "--now", NOW])
+        .current_dir(ws.d.path())
+        .env("ITERO_TEST_DIE_AT", "manager")
+        .env("ITERO_TEST_DIE_WHILE", &die)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = pid_in(&ws, "uyku.pid");
+    std::fs::write(&die, "").unwrap();
+    // the fast step's result waits: its manager keeps being killed
+    let deferred = soon(|| {
+        ws.log()
+            .iter()
+            .any(|l| l["why"].as_str().is_some_and(|w| w.contains("given again")))
+    });
+    std::fs::remove_file(&die).unwrap();
+    let ended = soon(|| daemon.try_wait().unwrap().is_some());
+    let gone = soon(|| !alive(pid));
+    if !ended {
+        let _ = daemon.kill();
+        let _ = daemon.wait();
+    }
+    end(pid);
+    assert!(deferred, "no manager was killed: {:?}", ws.log());
+    assert!(ended, "the pass waited for the slow step");
+    assert!(gone, "sleep {pid} still ran");
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(ws.runs()[0].runtime.state["output"]["winner"], "#hızlı");
+    saved_as_stopped(&ws, "yavaş");
+}
+
+#[test]
+fn what_a_pass_saves_has_the_time_it_was_saved() {
+    let ws = Ws::new();
+    ws.flow(
+        "uyku",
+        json!({"on": [{ "event": "uyku.başladı" }], "steps": ["#uyku"]}),
+    );
+    ws.action("uyku", "sleep 2; echo uyandı");
+    ws.emit("uyku.başladı", json!({}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
+    let run = &ws.runs()[0];
+    let j = Journal::open(&ws.ws).unwrap();
+    let events = j
+        .events(Some(&itero::engine::journal::subject(&run.id)))
+        .unwrap();
+    let done = events
+        .iter()
+        .find(|e| e.event.kind == "action.finished")
+        .unwrap();
+    // two seconds after the pass began, not when it began
+    let later = "2026-10-21T10:00:02Z";
+    assert!(done.event.time.as_str() >= later, "{:?}", done.event);
+    assert!(run.ended.as_deref().unwrap() >= later, "{:?}", run.ended);
+}
+
 #[test]
 fn a_step_quiet_past_its_limit_is_stopped_and_run_again() {
     let ws = Ws::with(r#"{"limits": {"quiet": "1s"}}"#);
@@ -1345,8 +1497,26 @@ fn the_next_time_is_a_waiting_runs_deadline() {
     ws.emit("order.placed", json!({"order": 1}));
     ws.pass(NOW);
     assert_eq!(ws.statuses(), vec!["waiting"]);
-    // its deadline, a minute on, before its hourly retry
-    assert_eq!(ws.next_due(NOW), Some(at("2026-10-21T10:01:00Z")));
+    // its deadline, a minute after it began to wait, before its hourly retry
+    let since = waiting_since(&ws);
+    assert!(since >= at(NOW), "{since}");
+    assert_eq!(ws.next_due(NOW), Some(since + chrono::Duration::minutes(1)));
+}
+
+/// When the one waiting step of the workspace's one run began to wait.
+fn waiting_since(ws: &Ws) -> DateTime<Utc> {
+    fn find(v: &Value) -> Option<&str> {
+        match v {
+            Value::Object(o) => o
+                .get("waiting_since")
+                .and_then(Value::as_str)
+                .or_else(|| o.values().find_map(find)),
+            Value::Array(a) => a.iter().find_map(find),
+            _ => None,
+        }
+    }
+    let rt = serde_json::to_value(&ws.runs()[0].runtime).unwrap();
+    at(find(&rt).expect("a step waits"))
 }
 
 #[test]
@@ -1364,8 +1534,14 @@ fn the_next_time_is_the_earliest_of_them() {
     ws.action("bekle", "exit 75");
     ws.emit("order.placed", json!({"order": 1}));
     ws.pass("2026-10-21T10:00:10Z");
-    // the schedule at 10:01, the deadline at 10:00:40
-    assert_eq!(ws.next_due(NOW), Some(at("2026-10-21T10:00:40Z")));
+    // the schedule at 10:01, the deadline 30 seconds after the step began
+    // to wait, at 10:00:40 or a moment later
+    let since = waiting_since(&ws);
+    assert!(since < at("2026-10-21T10:00:30Z"), "{since}");
+    assert_eq!(
+        ws.next_due(NOW),
+        Some(since + chrono::Duration::seconds(30))
+    );
 }
 
 #[test]

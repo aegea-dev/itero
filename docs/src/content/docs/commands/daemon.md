@@ -28,7 +28,10 @@ It works in passes, and makes one only when something wakes it:
   so a time that passes while the computer sleeps comes due as soon as it
   wakes.
 
-In between it waits and uses no CPU.
+A pass lasts while the steps it started run. Meanwhile it still takes the
+events that come and the times that come due, so an event a waiting step
+needs can end a [race](/guides/workflows/#how-steps-side-by-side-wait)
+while a slow step still runs. Between passes it waits and uses no CPU.
 
 | Option | Does |
 |---|---|

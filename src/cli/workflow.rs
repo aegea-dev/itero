@@ -1,6 +1,6 @@
 //! `itero workflow` (`itero wf`): the workflows, their runs, their settings.
 use super::out::{ago, given, plain_name, show, table, text};
-use crate::engine::journal::{JOB_STOPPED, Journal, Recorded, Run, subject};
+use crate::engine::journal::{Journal, Recorded, Run, subject};
 use crate::engine::{progress, steps};
 use crate::workspace::Workspace;
 use anyhow::{Result, bail};
@@ -264,12 +264,7 @@ fn story(j: &Journal, r: &Run) -> Result<Value> {
         .iter()
         .map(|e| (e.event.id.clone(), action(e)))
         .collect();
-    // a job whose step lost, at the time the group ended without it
-    let mut steps_: Vec<Value> = mine
-        .iter()
-        .filter(|e| e.note.as_deref() == Some(JOB_STOPPED))
-        .map(|e| json!({ "what": "stopped", "step": action(e), "time": e.handled }))
-        .collect();
+    let mut steps_: Vec<Value> = vec![];
     for e in j.events(Some(&subject(&r.id)))? {
         let d = &e.event.data;
         let step = || {
@@ -292,6 +287,8 @@ fn story(j: &Journal, r: &Run) -> Result<Value> {
                 json!({ "what": "waiting", "step": step(), "data": d["output"] })
             }
             "action.failed" => json!({ "what": "error", "step": step(), "data": d["error"] }),
+            // a step whose group ended without it, as the workflow names it
+            "step.stopped" => json!({ "what": "stopped", "step": d["step"] }),
             "timer.fired" => json!({ "what": "timed out" }),
             // an event is copied to every waiting run: show those it took
             "message" if r.runtime.taken.iter().any(|t| d["id"] == t.as_str()) => {
@@ -303,6 +300,7 @@ fn story(j: &Journal, r: &Run) -> Result<Value> {
         s["time"] = json!(e.event.time);
         steps_.push(s);
     }
+    // in the journal's order when two have the same time
     steps_.sort_by(|a, b| a["time"].as_str().cmp(&b["time"].as_str()));
     Ok(json!({
         "name": r.name,
