@@ -40,11 +40,12 @@ pub struct Pass {
     pub more: bool,
 }
 
-/// More events than this in one pass wait for the next.
+/// Past this many events, a pass starts no more jobs, and ends once none
+/// runs: the rest wait for the next.
 const MAX_EVENTS: usize = 10_000;
 
 /// How many times a manager killed before it answered is asked again,
-/// before the event waits for the next pass.
+/// before the event waits a second.
 const MAX_TRIES: usize = 3;
 
 /// How many times a job runs, the first run and those after it was lost,
@@ -431,6 +432,31 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
     runs_pass(ws, now, exe)
 }
 
+/// The time in a pass: when it began, and how long it has run since. What
+/// the pass saves has the time it is saved.
+#[derive(Clone, Copy)]
+struct Clock {
+    began: DateTime<Utc>,
+    since: std::time::Instant,
+}
+
+impl Clock {
+    fn new(began: DateTime<Utc>) -> Clock {
+        Clock {
+            began,
+            since: std::time::Instant::now(),
+        }
+    }
+
+    fn now(&self) -> DateTime<Utc> {
+        self.began + chrono::Duration::from_std(self.since.elapsed()).unwrap_or_default()
+    }
+
+    fn stamp(&self) -> String {
+        stamp(self.now())
+    }
+}
+
 fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let mut j = Journal::open(ws)?;
     let log = Log::new(ws, &j.workspace()?.id);
@@ -438,26 +464,16 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     j.see_workflows(flows.read.keys(), &stamp(now))?;
     let no_room = watch_limits(ws, &j, now, &log)?;
     fire_schedules(&flows, &mut j, now, &log)?;
-    for (id, run, data) in j.due_timers(&stamp(now))? {
-        let e = Envelope::new(
-            "daemon",
-            "timer.fired",
-            &journal::subject(&run),
-            &stamp(now),
-            None,
-            data,
-        );
-        j.fire_timer(id, &e)?;
-    }
     // runs' events first; then the waiting jobs, whose results are the
     // next events. Each worker's result is saved as it ends, while others
-    // still run; whatever stops the pass early, what runs is still saved.
+    // still run; when the pass fails, what runs is still saved.
+    let clock = Clock::new(now);
     let mut pass = Pass::default();
     std::thread::scope(|scope| {
         let mut w = Workers::new(scope, exe);
-        let mut done = work(ws, &flows, &mut j, &mut w, now, &log, no_room, &mut pass);
+        let mut done = work(ws, &flows, &mut j, &mut w, clock, &log, no_room, &mut pass);
         while !w.running.is_empty() {
-            let saved = end_one(ws, &mut j, &mut w, now, &mut pass);
+            let saved = end_one(ws, &mut j, &mut w, clock, &mut pass, None);
             if done.is_ok() {
                 done = saved;
             }
@@ -465,6 +481,23 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
         done
     })?;
     Ok(pass)
+}
+
+/// Sends `timer.fired` to the runs whose timers are due.
+fn fire_timers(j: &mut Journal, clock: Clock) -> Result<()> {
+    let at = clock.stamp();
+    for (id, run, data) in j.due_timers(&at)? {
+        let e = Envelope::new(
+            "daemon",
+            "timer.fired",
+            &journal::subject(&run),
+            &at,
+            None,
+            data,
+        );
+        j.fire_timer(id, &e)?;
+    }
+    Ok(())
 }
 
 /// A job running in a worker.
@@ -537,31 +570,52 @@ impl<'s, 'e> Workers<'s, 'e> {
         }
     }
 
-    /// Waits for the next worker to end.
-    fn next(&mut self) -> Result<(Running, Result<Outcome, Failure>)> {
-        let (seq, outcome) = self
-            .rx
-            .recv()
-            .map_err(|_| anyhow!("the workers are gone"))?;
+    /// Waits for the next worker to end, for `wait` at most (or until one
+    /// does): `None` when none ended meanwhile.
+    fn next(
+        &mut self,
+        wait: Option<std::time::Duration>,
+    ) -> Result<Option<(Running, Result<Outcome, Failure>)>> {
+        use std::sync::mpsc::RecvTimeoutError;
+        let gone = || anyhow!("the workers are gone");
+        let (seq, outcome) = match wait {
+            None => self.rx.recv().map_err(|_| gone())?,
+            Some(d) => match self.rx.recv_timeout(d) {
+                Ok(ended) => ended,
+                Err(RecvTimeoutError::Timeout) => return Ok(None),
+                Err(RecvTimeoutError::Disconnected) => return Err(gone()),
+            },
+        };
         let job = self
             .running
             .remove(&seq)
             .ok_or_else(|| anyhow!("an answer for job {seq}, which is not running"))?;
-        Ok((job, outcome))
+        Ok(Some((job, outcome)))
     }
 }
 
-/// Delivers events and starts jobs, saving each result as its worker ends,
-/// until nothing is left; or until a manager keeps being killed, or the
-/// pass reaches its cap of events: then no job starts, and what runs is
-/// saved by the caller.
+/// How long a pass waits for a worker to end before it looks for new
+/// events and due timers: a waiting step's data may end a race while the
+/// other steps still run.
+const LOOK: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// How long an event whose manager kept being killed waits before it is
+/// given again, while the pass's steps still run.
+const AGAIN: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Delivers events (and fires due timers) and starts jobs, saving each
+/// result as its worker ends, until nothing is left. Once a manager keeps
+/// being killed, or the pass reaches its cap of events, no job starts, and
+/// the pass ends as soon as none runs; until then it goes on delivering,
+/// so a group decided meanwhile still stops the steps that lost (the event
+/// whose manager was killed is given again every `AGAIN`).
 #[allow(clippy::too_many_arguments)]
 fn work(
     ws: &Workspace,
     flows: &Flows,
     j: &mut Journal,
     w: &mut Workers,
-    now: DateTime<Utc>,
+    clock: Clock,
     log: &Log,
     no_room: bool,
     pass: &mut Pass,
@@ -569,23 +623,36 @@ fn work(
     // Messages that would start a run while `runs` are under way are held;
     // they are taken again once a run has ended.
     let mut held = vec![];
+    // when the event whose manager kept being killed is given again
+    let mut again: Option<std::time::Instant> = None;
     loop {
-        while let Some(r) = j.next(&held)? {
+        fire_timers(j, clock)?;
+        loop {
+            if again.is_some_and(|t| std::time::Instant::now() < t) {
+                break;
+            }
+            let Some(r) = j.next(&held)? else {
+                again = None;
+                break;
+            };
+            again = None;
             if r.event.subject == journal::subject("app") {
-                if route(ws, flows, j, &r, now, log, no_room)? {
+                if route(ws, flows, j, &r, clock.now(), log, no_room)? {
                     pass.delivered += 1;
                 } else {
                     held.push(r.seq);
                 }
                 continue;
             }
-            match deliver(ws, j, &r, now, w.exe, log)? {
+            match deliver(ws, j, &r, clock, w.exe, log)? {
                 // events are delivered in order: the rest waits with it
                 Delivered::Deferred => {
-                    pass.deferred += 1;
-                    return Ok(());
+                    pass.deferred = 1;
+                    again = Some(std::time::Instant::now() + AGAIN);
+                    continue;
                 }
                 Delivered::Handled(stopped) => {
+                    pass.deferred = 0;
                     pass.stopped += stopped.len();
                     w.stop(&stopped);
                 }
@@ -596,8 +663,22 @@ fn work(
             }
             if pass.delivered >= MAX_EVENTS {
                 pass.more = true;
+                if w.running.is_empty() {
+                    return Ok(());
+                }
+            }
+        }
+        // stopped early: no job starts, and the pass ends once none runs
+        if pass.more || again.is_some() {
+            if w.running.is_empty() {
                 return Ok(());
             }
+            let wait = again.map_or(LOOK, |t| {
+                t.saturating_duration_since(std::time::Instant::now())
+                    .min(LOOK)
+            });
+            end_one(ws, j, w, clock, pass, Some(wait))?;
+            continue;
         }
         let room = ws.limits.steps.saturating_sub(w.running.len());
         let waiting: Vec<Recorded> = j
@@ -613,13 +694,13 @@ fn work(
             let (runs, lost) = j.job_runs(r.seq)?;
             if runs >= MAX_RUNS {
                 let why = lost.unwrap_or_default();
-                save_result(j, &r, Err(lost_too_often(&why)), now)?;
+                save_result(j, &r, Err(lost_too_often(&why)), clock)?;
                 pass.worked += 1;
                 saved = true;
             } else {
                 j.start_job(r.seq)?;
                 super::die_at("job-started");
-                let step = step_run(ws, j, &r.event.data, &stamp(now));
+                let step = step_run(ws, j, &r.event.data, &clock.stamp());
                 w.start(&ws.root, r, runs + 1, step);
             }
         }
@@ -629,21 +710,25 @@ fn work(
         if w.running.is_empty() {
             return Ok(());
         }
-        end_one(ws, j, w, now, pass)?;
+        end_one(ws, j, w, clock, pass, Some(LOOK))?;
     }
 }
 
-/// Waits for the next worker to end, and saves its job's result: a job
-/// lost runs again, up to `MAX_RUNS`; one whose step was stopped was saved
-/// so by the answer that stopped it, and what it did is not.
+/// Waits for the next worker to end (for `wait` at most, when given), and
+/// saves its job's result: a job lost runs again, up to `MAX_RUNS`; one
+/// whose step was stopped was saved so by the answer that stopped it, and
+/// what it did is not.
 fn end_one(
     ws: &Workspace,
     j: &mut Journal,
     w: &mut Workers,
-    now: DateTime<Utc>,
+    clock: Clock,
     pass: &mut Pass,
+    wait: Option<std::time::Duration>,
 ) -> Result<()> {
-    let (job, outcome) = w.next()?;
+    let Some((job, outcome)) = w.next(wait)? else {
+        return Ok(());
+    };
     super::die_at("job-done");
     super::progress::clear(&ws.root, job.r.seq);
     if job.cancel.load(Ordering::SeqCst) {
@@ -655,11 +740,11 @@ fn end_one(
             pass.lost += 1;
         }
         Err(Failure::Lost(why)) => {
-            save_result(j, &job.r, Err(lost_too_often(&why)), now)?;
+            save_result(j, &job.r, Err(lost_too_often(&why)), clock)?;
             pass.worked += 1;
         }
         other => {
-            save_result(j, &job.r, other.map_err(|f| f.to_string()), now)?;
+            save_result(j, &job.r, other.map_err(|f| f.to_string()), clock)?;
             pass.worked += 1;
         }
     }
@@ -939,6 +1024,7 @@ fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Resul
         run: None,
         timers: None,
         events: vec![],
+        shown: vec![],
         splits: vec![],
         stopped: vec![],
     })?;
@@ -950,11 +1036,11 @@ fn deliver(
     ws: &Workspace,
     j: &mut Journal,
     r: &Recorded,
-    now: DateTime<Utc>,
+    clock: Clock,
     exe: &Path,
     log: &Log,
 ) -> Result<Delivered> {
-    let at = stamp(now);
+    let at = clock.stamp();
     let Some(id) = journal::run_of(&r.event.subject).map(str::to_string) else {
         return give_up(log, j, r.seq, &at, format!("no run in {}", r.event.subject));
     };
@@ -1025,7 +1111,7 @@ fn deliver(
             log.write(
                 "error",
                 who.line(
-                    json!({ "why": format!("{why}; {} waits for the next pass", r.event.kind) }),
+                    json!({ "why": format!("{why}; {} is given again in a second", r.event.kind) }),
                 ),
             );
             return Ok(Delivered::Deferred);
@@ -1106,6 +1192,23 @@ fn deliver(
     // stopped in the same decision it would have started was never given
     // out, so is not in the journal: nothing to stop.
     let stopped = stopped_jobs(j, &id, &answer.stopped)?;
+    // each step the answer stopped, as the workflow names it, for the run's
+    // story
+    let shown = answer
+        .notes
+        .iter()
+        .filter(|n| n["event"] == "step.stopped")
+        .map(|n| {
+            Envelope::new(
+                &format!("manager/{id}"),
+                "step.stopped",
+                &journal::subject(&id),
+                &at,
+                Some(r.event.id.clone()),
+                json!({ "step": n["step"] }),
+            )
+        })
+        .collect();
     j.handle(Handled {
         seq: r.seq,
         at: &at,
@@ -1113,6 +1216,7 @@ fn deliver(
         run: Some((&id, &answer.runtime, answer.runtime.ended.is_some())),
         timers: Some(&answer.timers),
         events,
+        shown,
         splits,
         stopped: stopped.clone(),
     })?;
@@ -1402,6 +1506,9 @@ fn stop(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+/// How long a worker that was killed is given to tell what it said before.
+const READERS: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// How often a running worker looks whether its step was stopped.
 const CANCEL_CHECK: std::time::Duration = std::time::Duration::from_millis(100);
 
@@ -1483,7 +1590,8 @@ fn spawn_worker(
             .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
     );
     // when the group is killed, the readers end as its pipes close; they
-    // are not waited for, in case something outside the group holds them
+    // are waited for a little only, in case something outside the group
+    // holds them
     let quiet = std::time::Duration::from_secs(step.quiet);
     let most = std::time::Duration::from_secs(step.most);
     let status = loop {
@@ -1504,6 +1612,12 @@ fn spawn_worker(
         if let Some(why) = why {
             // still running, not yet reaped: its group's id is still its own
             stop(&mut child);
+            // what it said before is told now, not after its progress is
+            // cleared
+            let until = std::time::Instant::now() + READERS;
+            while !out.is_finished() && std::time::Instant::now() < until {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
             return Err(Failure::Lost(why));
         }
         let next = (quiet - silent).min(most - ran).min(CANCEL_CHECK);
@@ -1535,8 +1649,9 @@ fn save_result(
     j: &mut Journal,
     r: &Recorded,
     outcome: Result<Outcome, String>,
-    now: DateTime<Utc>,
+    clock: Clock,
 ) -> Result<()> {
+    let at = clock.stamp();
     let data = &r.event.data;
     let path = data.pointer("/job/path").cloned().unwrap_or(Value::Null);
     let step = format!("#{}", data["job"]["action"].as_str().unwrap_or("?"));
@@ -1559,18 +1674,74 @@ fn save_result(
         &format!("worker/{}", r.event.id),
         kind,
         &journal::subject(run),
-        &stamp(now),
+        &at,
         Some(r.event.id.clone()),
         result,
     );
     j.handle(Handled {
         seq: r.seq,
-        at: &stamp(now),
+        at: &at,
         error: None,
         run: None,
         timers: None,
         events: vec![e],
+        shown: vec![],
         splits: vec![],
         stopped: vec![],
     })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::AtomicBool;
+
+    /// A worker stopped while it talks: everything it said is told before
+    /// `spawn_worker` returns, so nothing lands after the daemon clears
+    /// its progress.
+    #[test]
+    fn a_stopped_worker_says_nothing_after_it_returns() {
+        let d = tempfile::tempdir().unwrap();
+        // stands in for `itero worker`: says a line, then keeps running
+        let exe = d.path().join("işçi");
+        std::fs::write(
+            &exe,
+            "#!/bin/sh\nprintf 'said \"hâlâ çalışıyor\"\\n'\nsleep 30\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let step = StepRun {
+            file: exe.clone(),
+            root: d.path().into(),
+            workflow: "iş".into(),
+            env: BTreeMap::new(),
+            state: Map::new(),
+            memory: d.path().join("bellek"),
+            waiting_since: None,
+            quiet: 60,
+            most: 60,
+            now: String::new(),
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let told = Arc::new(AtomicBool::new(false));
+        let said = {
+            let (cancel, told) = (cancel.clone(), told.clone());
+            Arc::new(move |_: &str| {
+                // the step is stopped while what it said is being kept
+                cancel.store(true, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                told.store(true, Ordering::SeqCst);
+            })
+        };
+        let outcome = spawn_worker(&exe, &step, said, &cancel);
+        assert!(
+            matches!(&outcome, Err(Failure::Lost(w)) if w == journal::JOB_STOPPED),
+            "{outcome:?}"
+        );
+        assert!(
+            told.load(Ordering::SeqCst),
+            "a line was told after it returned"
+        );
+    }
 }

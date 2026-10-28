@@ -21,10 +21,15 @@ use serde_json::Value;
 /// Kills this process at the named point when `ITERO_TEST_DIE_AT` names
 /// it: how the kill tests stop the daemon, a manager or a worker at one
 /// exact step. With `ITERO_TEST_DIE_ONCE` (a file's path), only the first
-/// process to get there dies, making that file first. Unset, it does
-/// nothing.
+/// process to get there dies, making that file first; with
+/// `ITERO_TEST_DIE_WHILE` (a file's path), only while that file is there.
+/// Unset, it does nothing.
 pub fn die_at(point: &str) {
     if std::env::var("ITERO_TEST_DIE_AT").ok().as_deref() != Some(point) {
+        return;
+    }
+    if std::env::var_os("ITERO_TEST_DIE_WHILE").is_some_and(|f| !std::path::Path::new(&f).exists())
+    {
         return;
     }
     if let Some(once) = std::env::var_os("ITERO_TEST_DIE_ONCE")

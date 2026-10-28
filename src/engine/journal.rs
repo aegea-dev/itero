@@ -223,7 +223,7 @@ pub fn run_of(subject: &str) -> Option<&str> {
 pub struct Handled<'a> {
     /// The event answered.
     pub seq: i64,
-    /// When: the daemon's pass time (RFC 3339), never the clock's.
+    /// When (RFC 3339): the daemon's, as its pass tells the time.
     pub at: &'a str,
     pub error: Option<String>,
     /// The run's runtime after it, and whether the run has ended.
@@ -231,6 +231,9 @@ pub struct Handled<'a> {
     /// The run's timers from now on; `None` leaves them.
     pub timers: Option<&'a [Timer]>,
     pub events: Vec<Envelope>,
+    /// Events about a run that only its story shows (a step stopped): saved
+    /// handled, so no manager is given them.
+    pub shown: Vec<Envelope>,
     /// Runs split from this one.
     pub splits: Vec<Split<'a>>,
     /// Jobs (by `seq`) whose steps this answer stopped: handled, noted
@@ -795,6 +798,13 @@ impl Journal {
         }
         for e in &h.events {
             publish(&tx, e)?;
+        }
+        for e in &h.shown {
+            publish(&tx, e)?;
+            tx.execute(
+                "UPDATE events SET handled = ?2 WHERE id = ?1",
+                params![e.id, now],
+            )?;
         }
         for s in &h.splits {
             insert_run(

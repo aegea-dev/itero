@@ -459,6 +459,47 @@ fn a_step_that_lost_a_race_is_stopped_in_the_story() {
 }
 
 #[test]
+fn a_waiting_step_and_a_workflow_that_lost_are_stopped_in_the_story_after_the_winner() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/yarış.json",
+        r##"{ "on": [{ "event": "yarış.başladı" }],
+              "steps": [{ "race": ["#bekle", "demleme", "#hızlı"] }] }"##,
+    );
+    file(
+        d.path(),
+        "workflows/demleme.json",
+        r##"{ "steps": ["#su"] }"##,
+    );
+    file(
+        d.path(),
+        "actions/bekle",
+        "#!/bin/sh\necho '{\"sipariş\": 1}'; exit 75\n",
+    );
+    file(d.path(), "actions/su", "#!/bin/sh\nsleep 30\n");
+    file(
+        d.path(),
+        "actions/hızlı",
+        "#!/bin/sh\nsleep 1; echo hızlı\n",
+    );
+    itero(d.path(), &["emit", "yarış.başladı", "{}"]);
+    itero(d.path(), &["daemon", "--once"]);
+    let list = out(&itero(d.path(), &["wf", "runs"]));
+    let id = list.split_whitespace().next().unwrap();
+    let story = out(&itero(d.path(), &["wf", "runs", id]));
+    let at = |says: &str| {
+        story
+            .find(says)
+            .unwrap_or_else(|| panic!("no {says}: {story}"))
+    };
+    let won = at("#hızlı  done");
+    assert!(at("#bekle  stopped") > won, "{story}");
+    assert!(at("demleme  stopped") > won, "{story}");
+    assert!(!story.contains("#su  stopped"), "{story}");
+}
+
+#[test]
 fn a_step_that_breaks_undoes_those_before_it_and_the_story_says_so() {
     let d = workspace();
     file(
