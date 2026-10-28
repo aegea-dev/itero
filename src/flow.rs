@@ -874,6 +874,9 @@ fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, String> {
                     label,
                 })
             }
+            Value::Object(_) => Err(format!(
+                "a group inside a group goes in a workflow of its own, used here by its name: {i}"
+            )),
             _ => Err(format!(
                 "a step of {what} is a name or an object, like {{ \"#ask\": {{ \"args\": ... }} }}, not {i}"
             )),

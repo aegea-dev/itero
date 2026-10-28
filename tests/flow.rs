@@ -828,6 +828,10 @@ fn a_step_of_a_group_says_what_is_wrong() {
             r##"{ "all": ["#a", 7] }"##,
             "a step of all is a name or an object",
         ),
+        (
+            r##"{ "race": ["#a", { "any": ["#b", "#c"] }] }"##,
+            "a group inside a group goes in a workflow of its own",
+        ),
     ] {
         let e = err(&format!(r##"{{ "steps": [{step}] }}"##));
         assert!(e.contains(says), "{step}: {e}");
