@@ -405,14 +405,15 @@ fn an_error_stops_the_steps_and_runs_the_error_list() {
     )]);
     let a = r.start(json!({"order": 43}));
     let (pay, stock) = (a.jobs[0].clone(), a.jobs[1].clone());
-    let a = r.failed(&pay, "exit 3: bağlantı yok");
+    // the other branch runs to its end first; what it gives is not kept
+    assert!(r.failed(&pay, "exit 3: bağlantı yok").jobs.is_empty());
+    let a = r.done(&stock, json!({"stock": true}));
     assert_eq!(names(&a), vec!["log"]);
+    assert!(!r.rt.state.contains_key("stock"));
+    assert_eq!(r.rt.state.get("output"), None);
     let log = a.jobs[0].clone();
     assert_eq!(r.rt.state["why"], "exit 3: bağlantı yok");
     assert_eq!(r.rt.state["failed_step"], "#check-payment");
-    // the other branch's late answer is ignored
-    assert!(r.done(&stock, json!({"stock": true})).jobs.is_empty());
-    assert!(!r.rt.state.contains_key("stock"));
     let a = r.done(&log, json!({}));
     assert_eq!(names(&a), vec!["alert-team"]);
     let a = r.done(&a.jobs[0], json!({}));
@@ -769,24 +770,67 @@ fn all_ends_when_every_step_ended_well_in_any_order() {
 }
 
 #[test]
-fn all_breaks_when_a_step_breaks_and_stops_the_rest() {
-    for i in 0..3 {
-        let (mut r, j) = grup(json!({"all": AD}));
-        let a = r.failed(&j[i], "exit 3: bağlantı yok");
-        assert!(breaks(&a), "{i}");
-        assert_eq!(r.rt.state["failed_step"], AD[i]);
-        assert_eq!(r.rt.state["why"], "exit 3: bağlantı yok");
-        let others: Vec<&StepJob> = (0..3).filter(|k| *k != i).map(|k| &j[k]).collect();
-        assert_eq!(sorted(&a), paths(&others), "{i}");
-        let mut want: Vec<String> = (0..3).filter(|k| *k != i).map(|k| AD[k].into()).collect();
-        want.sort();
-        assert_eq!(stopped(&a), want, "{i}");
-        // a late answer from a stopped step is ignored
-        for o in others {
-            assert!(r.done(o, json!({"geç": 1})).jobs.is_empty());
-            assert!(!r.rt.state.contains_key("geç"));
+fn all_breaks_when_a_step_broke_once_the_others_ran_to_their_end() {
+    for group in [json!(AD), json!({"all": AD})] {
+        for i in 0..3 {
+            let (mut r, j) = grup(group.clone());
+            let a = r.failed(&j[i], "exit 3: bağlantı yok");
+            assert!(a.jobs.is_empty(), "{group} {i}");
+            assert!(a.stopped.is_empty() && stopped(&a).is_empty(), "{i}");
+            assert_eq!(r.rt.ended, None);
+            let others: Vec<&StepJob> = (0..3).filter(|k| *k != i).map(|k| &j[k]).collect();
+            // what the others print is not kept, and one more break is not
+            // the first
+            assert!(r.done(others[0], json!({"geç": 1})).jobs.is_empty());
+            let a = r.failed(others[1], "exit 4: geç");
+            assert!(breaks(&a), "{group} {i}");
+            assert_eq!(r.rt.state["failed_step"], AD[i]);
+            assert_eq!(r.rt.state["why"], "exit 3: bağlantı yok");
+            assert_eq!(r.rt.state.get("output"), None, "{group} {i}");
+            assert!(a.stopped.is_empty() && stopped(&a).is_empty(), "{i}");
         }
     }
+}
+
+#[test]
+fn all_that_breaks_stops_a_waiting_step_and_a_workflow_goes_no_further() {
+    let mut r = Run::new(&[
+        (
+            "küme",
+            json!({"steps": [["#çay", "#şeker", "demleme"], "#sonra"], "error": ["#hata"]}),
+        ),
+        ("demleme", json!({"steps": ["#su", "#yaprak"]})),
+    ]);
+    let a = r.start(json!({}));
+    assert_eq!(names(&a), vec!["çay", "şeker", "su"]);
+    let (cay, seker, su) = (a.jobs[0].clone(), a.jobs[1].clone(), a.jobs[2].clone());
+    r.waiting(&cay, json!({"sipariş": 7}));
+    let a = r.failed(&seker, "exit 1: şeker yok");
+    assert!(a.jobs.is_empty());
+    // the waiting step waits no more; #su still runs
+    assert_eq!(stopped(&a), vec!["#çay"]);
+    assert_eq!(sorted(&a), vec![cay.path.clone()]);
+    assert!(a.timers.is_empty(), "nothing waits now");
+    assert_eq!(r.rt.ended, None);
+    assert!(r.message("m1", json!({"sipariş": 7})).jobs.is_empty());
+    // #su ends: its workflow goes no further, and the group breaks
+    let a = r.done(&su, json!({"sıcak": true}));
+    assert!(breaks(&a), "{:?}", names(&a));
+    assert_eq!(r.rt.state["failed_step"], "#şeker");
+    assert_eq!(r.rt.state.get("output"), None);
+}
+
+#[test]
+fn a_step_that_starts_to_wait_in_a_group_that_broke_waits_no_more() {
+    let (mut r, j) = grup(json!(AD));
+    assert!(r.failed(&j[0], "exit 1: çay").jobs.is_empty());
+    let a = r.waiting(&j[1], json!({"sipariş": 7}));
+    assert!(a.jobs.is_empty() && a.timers.is_empty(), "{a:?}");
+    assert_eq!(stopped(&a), vec!["#şeker"]);
+    assert!(r.message("m1", json!({"sipariş": 7})).jobs.is_empty());
+    let a = r.done(&j[2], basar(2));
+    assert!(breaks(&a));
+    assert_eq!(r.rt.state["failed_step"], "#çay");
 }
 
 #[test]
@@ -995,9 +1039,12 @@ fn fail_any_breaks_the_group_at_the_first_break() {
     assert!(breaks(&a));
     assert_eq!(r.rt.state["failed_step"], "#çay");
     assert_eq!(stopped(&a), vec!["#ılık", "#şeker"]);
+    // settled waits for its steps all the same: #şeker runs to its end
     let (mut r, j) = grup(json!({"settled": AD, "fail": "any"}));
     r.done(&j[0], basar(0));
     let a = r.failed(&j[2], "exit 1: ılık");
+    assert!(a.jobs.is_empty() && a.stopped.is_empty());
+    let a = r.done(&j[1], basar(1));
     assert!(breaks(&a));
     assert_eq!(r.rt.state["failed_step"], "#ılık");
 }
@@ -1029,14 +1076,16 @@ fn fail_all_breaks_only_when_every_step_broke() {
 #[test]
 fn fail_with_names_breaks_when_one_of_them_broke() {
     let (mut r, j) = grup(json!({"all": AD, "fail": ["#ılık"]}));
-    // all would break at once; here only #ılık's break counts
+    // all would break at #çay; here only #ılık's break counts, and the
+    // group breaks once #şeker has ended
     assert!(r.failed(&j[0], "exit 1: çay").jobs.is_empty());
     assert_eq!(r.rt.ended, None);
     let a = r.failed(&j[2], "exit 2: ılık");
+    assert!(a.jobs.is_empty() && a.stopped.is_empty());
+    let a = r.done(&j[1], basar(1));
     assert!(breaks(&a));
     assert_eq!(r.rt.state["failed_step"], "#ılık");
     assert_eq!(r.rt.state["why"], "exit 2: ılık");
-    assert_eq!(stopped(&a), vec!["#şeker"]);
     // and when it did not break, the group ends with the others
     let (mut r, j) = grup(json!({"all": AD, "fail": "#ılık"}));
     r.failed(&j[0], "exit 1");
@@ -1226,12 +1275,13 @@ fn a_workflow_that_breaks_inside_a_group_is_a_step_of_the_group_that_broke() {
         ("demleme", json!({"steps": ["#su", "#yaprak"]})),
     ]);
     let a = r.start(json!({}));
-    let su = a.jobs[1].clone();
+    let (cay, su) = (a.jobs[0].clone(), a.jobs[1].clone());
     let a = r.done(&su, json!({}));
     let a = r.failed(&a.jobs[0], "exit 1: yaprak yok");
+    assert!(a.jobs.is_empty() && a.stopped.is_empty(), "#çay runs on");
+    let a = r.done(&cay, basar(0));
     assert!(breaks(&a));
     assert_eq!(r.rt.state["failed_step"], "#yaprak");
-    assert_eq!(stopped(&a), vec!["#çay"]);
 }
 
 #[test]
@@ -1265,14 +1315,29 @@ fn a_group_in_a_group_decides_for_its_own_steps() {
     let a = r.done(&j[0], basar(0));
     assert!(goes_on(&a));
     // the inner any broke: every step of it did; the outer all breaks
+    // once #çay has ended
     let mut r = Run::new(&flows());
     let j = r.start(json!({})).jobs;
     r.failed(&j[1], "exit 1: şeker");
     let a = r.failed(&j[2], "exit 2: ılık");
+    assert!(a.jobs.is_empty() && a.stopped.is_empty());
+    let a = r.done(&j[0], basar(0));
     assert!(breaks(&a));
     assert_eq!(r.rt.state["failed_step"], "#şeker");
-    assert_eq!(stopped(&a), vec!["#çay"]);
-    assert_eq!(sorted(&a), vec![j[0].path.clone()]);
+    // and a race around a group still breaking stops what runs in it
+    let mut r = Run::new(&[
+        (
+            "küme",
+            json!({"steps": [{"race": ["iç", "#hızlı"]}, "#sonra"], "error": ["#hata"]}),
+        ),
+        ("iç", json!({"steps": [["#çay", "#şeker"]]})),
+    ]);
+    let j = r.start(json!({})).jobs;
+    assert_eq!(names(&r.failed(&j[0], "exit 1: çay")), Vec::<String>::new());
+    let a = r.done(&j[2], json!({"hız": 1}));
+    assert!(goes_on(&a));
+    assert_eq!(stopped(&a), vec!["iç"]);
+    assert_eq!(sorted(&a), vec![j[1].path.clone()]);
 }
 
 #[test]

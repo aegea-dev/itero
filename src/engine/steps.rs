@@ -155,7 +155,18 @@ pub enum At {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fail: Option<Fail>,
         entries: Vec<Entry>,
+        /// The step it broke at, while it waits for the steps still running
+        /// to end (`all`, `settled`): it breaks once none runs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        breaking: Option<Broken>,
     },
+}
+
+/// A step that broke, and why.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Broken {
+    pub step: String,
+    pub why: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -749,8 +760,7 @@ impl Machine<'_> {
                 .push(format!("an answer for {path:?} ignored: not a step now"));
             return Ok(());
         }
-        self.rt.state.insert("output".into(), out.clone());
-        self.settle_leaf(path, Leaf::Done)
+        self.settle_leaf(path, Leaf::Done(out.clone()))
     }
 
     /// The action at `path` ended, well or not: its place in the position
@@ -779,11 +789,16 @@ impl Machine<'_> {
     ) -> Result<Adv, String> {
         match node {
             At::Action { .. } => Ok(match leaf {
-                Leaf::Done => Adv::Done,
+                Leaf::Done(out) => {
+                    self.rt.state.insert("output".into(), out.clone());
+                    Adv::Done
+                }
                 Leaf::Broke { step, why } => Adv::Broke {
                     step: step.clone(),
                     why: why.clone(),
                 },
+                // only a group that is breaking hears of a wait
+                Leaf::Waits => Adv::Going(node),
             }),
             At::Flow {
                 workflow,
@@ -831,6 +846,49 @@ impl Machine<'_> {
                 wait,
                 fail,
                 mut entries,
+                breaking: Some(b),
+            } => {
+                // what a step still running gives is not kept, and it goes
+                // no further: once none runs, the group breaks
+                let j = path[0];
+                let target: Vec<usize> = prefix.iter().chain(path).copied().collect();
+                let mut p = prefix;
+                p.push(j);
+                if let Some(at) = entries[j].at.take() {
+                    entries[j].at = prune(at, &mut p, &mut |_, at| at == target, &mut vec![]);
+                    if entries[j].at.is_none() {
+                        entries[j].outcome = Some(match leaf {
+                            Leaf::Done(_) => Outcome::Done,
+                            Leaf::Broke { step, why } => Outcome::Broke {
+                                step: step.clone(),
+                                why: why.clone(),
+                            },
+                            Leaf::Waits => {
+                                self.stopped_note(&entries[j].name);
+                                Outcome::Stopped
+                            }
+                        });
+                    }
+                }
+                Ok(if entries.iter().any(|e| e.at.is_some()) {
+                    Adv::Going(At::Side {
+                        wait,
+                        fail,
+                        entries,
+                        breaking: Some(b),
+                    })
+                } else {
+                    Adv::Broke {
+                        step: b.step,
+                        why: b.why,
+                    }
+                })
+            }
+            At::Side {
+                wait,
+                fail,
+                mut entries,
+                breaking: None,
             } => {
                 let j = path[0];
                 let mut p = prefix.clone();
@@ -855,8 +913,9 @@ impl Machine<'_> {
     }
 
     /// A group after a change: it goes on, or it ends (the steps still
-    /// running are stopped, and `$output` is its result), or it broke.
-    /// `at` is the group's own path.
+    /// running are stopped, and `$output` is its result), or it broke (the
+    /// steps still running are stopped, but in `all` and `settled`, which
+    /// wait for them to end first). `at` is the group's own path.
     fn settle(
         &mut self,
         wait: Wait,
@@ -869,6 +928,7 @@ impl Machine<'_> {
                 wait,
                 fail,
                 entries,
+                breaking: None,
             }),
             Verdict::Ended => {
                 self.stop(&mut entries, at);
@@ -876,11 +936,62 @@ impl Machine<'_> {
                 self.rt.state.insert("output".into(), out);
                 Adv::Done
             }
+            // all and settled wait for every step, even once one broke them
+            Verdict::Broke { step, why } if matches!(wait, Wait::All | Wait::Settled) => {
+                self.drain(&mut entries, at);
+                if entries.iter().all(|e| e.at.is_none()) {
+                    return Adv::Broke { step, why };
+                }
+                Adv::Going(At::Side {
+                    wait,
+                    fail,
+                    entries,
+                    breaking: Some(Broken { step, why }),
+                })
+            }
             Verdict::Broke { step, why } => {
                 self.stop(&mut entries, at);
                 Adv::Broke { step, why }
             }
         }
+    }
+
+    /// A group that broke, waiting for its steps still running: they run
+    /// to their end; the rest are stopped (a waiting one waits no more, a
+    /// job not yet handed out is dropped). `at` is the group's own path.
+    fn drain(&mut self, entries: &mut [Entry], at: &[usize]) {
+        for (j, e) in entries.iter_mut().enumerate() {
+            let Some(node) = e.at.take() else {
+                continue;
+            };
+            let mut p = at.to_vec();
+            p.push(j);
+            let mut gone = vec![];
+            let given_now: Vec<Vec<usize>> = self.jobs.iter().map(|job| job.path.clone()).collect();
+            let runs = |leaf: &At, at: &[usize]| {
+                matches!(
+                    leaf,
+                    At::Action {
+                        started: true,
+                        waiting: false,
+                        ..
+                    }
+                ) && !given_now.iter().any(|g| g == at)
+            };
+            e.at = prune(node, &mut p, &mut |leaf, at| !runs(leaf, at), &mut gone);
+            self.jobs.retain(|job| !gone.contains(&job.path));
+            self.stopped.extend(gone);
+            if e.at.is_none() {
+                e.outcome = Some(Outcome::Stopped);
+                self.stopped_note(&e.name);
+            }
+        }
+    }
+
+    /// Notes that the group's entry `name` was stopped.
+    fn stopped_note(&mut self, name: &str) {
+        self.notes
+            .push(json!({"event": "step.stopped", "step": name}));
     }
 
     /// The entries still running or waiting are stopped: their actions
@@ -899,13 +1010,19 @@ impl Machine<'_> {
             self.jobs.retain(|job| !gone.contains(&job.path));
             self.stopped.extend(gone);
             e.outcome = Some(Outcome::Stopped);
-            self.notes
-                .push(json!({"event": "step.stopped", "step": e.name}));
+            self.stopped_note(&e.name);
         }
     }
 
     fn waiting(&mut self, path: &[usize], out: &Value) -> Result<(), String> {
         let now = stamp(self.now);
+        // a step that starts to wait in a group that broke runs no more
+        if self.leaf(path).is_some()
+            && let Some(at) = &self.rt.at
+            && breaking(at, &path[1..])
+        {
+            return self.settle_leaf(path, Leaf::Waits);
+        }
         let Some(At::Action {
             waiting,
             waiting_since,
@@ -1102,8 +1219,14 @@ impl Machine<'_> {
 
 /// How an action ended, for the position to settle.
 enum Leaf {
-    Done,
-    Broke { step: String, why: String },
+    /// Its result, its `$output`.
+    Done(Value),
+    Broke {
+        step: String,
+        why: String,
+    },
+    /// It waits for data, in a group that broke.
+    Waits,
 }
 
 /// A node of the position after a leaf ended.
@@ -1320,6 +1443,85 @@ fn leaves(node: &mut At, path: &mut Vec<usize>, f: &mut dyn FnMut(&mut At, &[usi
                     path.pop();
                 }
             }
+        }
+    }
+}
+
+/// `node` without the actions `drop` picks, given each with its path (from
+/// `path`, the node's own): theirs go to `gone`. `None` once no action is
+/// left under it.
+fn prune(
+    node: At,
+    path: &mut Vec<usize>,
+    drop: &mut dyn FnMut(&At, &[usize]) -> bool,
+    gone: &mut Vec<Vec<usize>>,
+) -> Option<At> {
+    match node {
+        At::Action { .. } => {
+            if drop(&node, path) {
+                gone.push(path.clone());
+                return None;
+            }
+            Some(node)
+        }
+        At::Flow {
+            workflow,
+            step,
+            inner,
+        } => {
+            path.push(step);
+            let inner = inner.and_then(|i| prune(*i, path, drop, gone));
+            path.pop();
+            inner.map(|i| At::Flow {
+                workflow,
+                step,
+                inner: Some(Box::new(i)),
+            })
+        }
+        At::Side {
+            wait,
+            fail,
+            mut entries,
+            breaking,
+        } => {
+            for (j, e) in entries.iter_mut().enumerate() {
+                if let Some(at) = e.at.take() {
+                    path.push(j);
+                    e.at = prune(at, path, drop, gone);
+                    path.pop();
+                }
+            }
+            entries.iter().any(|e| e.at.is_some()).then_some(At::Side {
+                wait,
+                fail,
+                entries,
+                breaking,
+            })
+        }
+    }
+}
+
+/// Whether the action at `path` under `node` is in a group that broke and
+/// waits for its running steps to end.
+fn breaking(node: &At, path: &[usize]) -> bool {
+    let Some((&first, rest)) = path.split_first() else {
+        return false;
+    };
+    match node {
+        At::Action { .. } => false,
+        At::Flow { step, inner, .. } => {
+            first == *step && inner.as_deref().is_some_and(|i| breaking(i, rest))
+        }
+        At::Side {
+            entries,
+            breaking: b,
+            ..
+        } => {
+            b.is_some()
+                || entries
+                    .get(first)
+                    .and_then(|e| e.at.as_ref())
+                    .is_some_and(|a| breaking(a, rest))
         }
     }
 }
