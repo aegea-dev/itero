@@ -30,16 +30,23 @@ itero action args set imap-check '{"host": "imap.example.com", "port": 993}'
 itero action args set imap-check --file accounts.json
 ```
 
-Either writes `action.imap-check.args` in `itero.config.json`, which you can also edit. A list runs
-the step once per item, each with its own copy of the state for the rest
-of the run: the run that reaches the step ends as `split`, and one run per
-item goes on from there, through the rest of the steps and the end lists,
-each on its own; they never join. A step side by side cannot have a list.
+Either writes `action.imap-check.args` in `itero.config.json`, which you
+can also edit. Args are an object, or a list of objects read in order as
+a step's are ([Workflows](/guides/workflows/#a-steps-result-output)).
+
+## Repeat
 
 ```sh
-itero action args set imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
-                                   {"user": "you@example.com", "password": "$$YOU_PASS"}]'
+itero action repeat set imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
+                                     {"user": "you@example.com", "password": "$$YOU_PASS"}]'
 ```
+
+writes `action.imap-check.repeat`: the action's step runs once per item,
+each item's values on top of the action's args. Each run has its own copy
+of the state for the rest of the run: the run that reaches the step ends
+as `split`, and one run per item goes on from there, through the rest of
+the steps and the end lists, each on its own; they never join. A step
+side by side cannot repeat.
 
 ## A connector's args
 

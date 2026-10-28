@@ -1,6 +1,6 @@
 ---
 title: action
-description: Your actions, the ones that break, and their args.
+description: Your actions, the ones that break, their args and their repeat.
 ---
 
 `itero action` shows your actions and sets the data they get. Actions
@@ -12,6 +12,8 @@ itero action list
 itero action errors [<action>] [--limit N]
 itero action args get <action>
 itero action args set <action> '<args>'
+itero action repeat get <action>
+itero action repeat set <action> '<items>'
 ```
 
 Each one takes `--json`, to print JSON for scripts instead of a table.
@@ -62,12 +64,26 @@ or a version.
 
 ```sh
 itero action args set imap-check '{"host": "imap.example.com", "port": 993}'
-itero action args set imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
-                                   {"user": "you@example.com", "password": "$$YOU_PASS"}]'
+itero action args set imap-check '[{"host": "imap.example.com"}, {"port": 993}]'
 itero action args get imap-check
 ```
 
-Args are an object, or a list of objects: then the step runs once per item.
+Args are an object, or a list of objects read in order as a step's are.
 `set` prints the file it wrote, which you can also edit. A value that is
 exactly `"$$NAME"` is a secret's or an environment variable's, looked up
 only when the step starts. See [Args and secrets](/guides/secrets/).
+
+## repeat
+
+An action's repeat: its step runs once per item, each item's values on
+top of its args. Kept in `itero.config.json` under `action.<name>.repeat`:
+a list of one or more objects.
+
+```sh
+itero action repeat set imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
+                                     {"user": "you@example.com", "password": "$$YOU_PASS"}]'
+itero action repeat get imap-check
+```
+
+`set` prints the file it wrote. See
+[Args and secrets](/guides/secrets/#repeat).

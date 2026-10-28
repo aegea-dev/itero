@@ -44,3 +44,12 @@ check. See [Actions](/guides/actions/#when-something-it-needs-is-missing).
 Anything wrong is an error naming the file: a key it does not know, a
 event type of one word, an action or a workflow that is not there, an
 action that is not executable. Run it after every edit.
+
+A warning does not fail the check. It says what is likely a mix-up: a
+secret that is also an environment variable, or an arg `#notify` does not
+read (it takes `title`, `text`, `subtitle`, `sound`, `url`, `buttons`,
+`wait` and `data`):
+
+```
+warning: price: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Price
+```
