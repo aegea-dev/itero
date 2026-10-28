@@ -57,9 +57,14 @@ impl Ws {
 
     /// An action's args, in the manifest; `Null` takes them out.
     fn args(&self, action: &str, v: Value) {
+        self.entry(action, "args", v);
+    }
+
+    /// An action's entry's key in the manifest: args, repeat.
+    fn entry(&self, action: &str, key: &str, v: Value) {
         let f = self.d.path().join("itero.config.json");
         let mut m: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
-        m["action"][action]["args"] = v;
+        m["action"][action][key] = v;
         std::fs::write(f, m.to_string()).unwrap();
     }
 
@@ -905,23 +910,31 @@ fn a_big_value_only_a_step_gives_is_an_error_naming_it() {
 }
 
 #[test]
-fn a_list_of_args_runs_the_rest_once_per_item() {
+fn repeat_runs_the_rest_once_per_item_on_top_of_the_args() {
     let ws = Ws::new();
     ws.flow(
         "posta",
         json!({"on": [{ "event": "posta.bak" }], "steps": ["#kutu", {"#yaz": {"args": "$output"}}]}),
     );
-    ws.args(
+    ws.args("kutu", json!({"host": "imap.örnek.test", "user": "kimse"}));
+    ws.entry(
         "kutu",
+        "repeat",
         json!([{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]),
     );
-    ws.action("kutu", r#"echo "{\"kutu\": \"$user\"}""#);
+    ws.action("kutu", r#"echo "{\"kutu\": \"$user@$host\"}""#);
     ws.action("yaz", r#"echo "$kutu" >> kutular.log"#);
     ws.emit("posta.bak", json!({}));
     ws.pass(NOW);
     let mut got: Vec<String> = ws.read("kutular.log").lines().map(str::to_string).collect();
     got.sort();
-    assert_eq!(got, vec!["ayşe@örnek.test", "can@örnek.test"]);
+    assert_eq!(
+        got,
+        vec![
+            "ayşe@örnek.test@imap.örnek.test",
+            "can@örnek.test@imap.örnek.test"
+        ]
+    );
     let mut st = ws.statuses();
     st.sort();
     assert_eq!(st, vec!["done", "done", "split"]);

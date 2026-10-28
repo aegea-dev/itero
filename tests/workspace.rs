@@ -168,7 +168,7 @@ fn args_are_an_object_or_a_list_of_objects() {
         "itero.config.json",
         r##"{ "action": {
               "kargola": { "description": "Kargoya verir", "args": { "firma": "PTT Kargo" } },
-              "posta": { "args": [ { "user": "ayşe@örnek.test" }, { "user": "can@örnek.test" } ] },
+              "posta": { "args": [ { "host": "imap.örnek.test" }, { "user": "can@örnek.test" } ] },
               "sade": { "description": "Args yok" } } }"##,
     );
     assert_eq!(
@@ -580,4 +580,47 @@ fn the_daemon_watches_the_manifest_and_each_workflow_folder_and_file() {
             r("workflows/sipariş.json"),
         ]
     );
+}
+
+#[test]
+fn repeat_is_a_list_of_objects() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = simple(d.path());
+    write(
+        d.path(),
+        "itero.config.json",
+        r##"{ "action": {
+              "posta": { "args": { "host": "imap.örnek.test" },
+                         "repeat": [ { "user": "ayşe@örnek.test" }, { "user": "can@örnek.test" } ] },
+              "sade": { "args": [ { "a": 1 }, { "b": 2 } ] } } }"##,
+    );
+    assert_eq!(
+        ws.repeat("posta").unwrap(),
+        Some(serde_json::json!([{ "user": "ayşe@örnek.test" }, { "user": "can@örnek.test" }]))
+    );
+    assert_eq!(ws.repeat("sade").unwrap(), None);
+    for (repeat, says) in [
+        ("[]", "a list of one or more objects"),
+        ("[1]", "a list of one or more objects"),
+        (r#"{"user": "a"}"#, "a list of one or more objects"),
+    ] {
+        write(
+            d.path(),
+            "itero.config.json",
+            &format!(r#"{{"action": {{"bir": {{"repeat": {repeat}}}}}}}"#),
+        );
+        let e = format!("{:#}", ws.repeat("bir").unwrap_err());
+        assert!(
+            e.contains("action.bir.repeat") && e.contains(says),
+            "{repeat}: {e}"
+        );
+    }
+    // a list of args gives a name once, as a step's does
+    write(
+        d.path(),
+        "itero.config.json",
+        r#"{"action": {"bir": {"args": [{"a": 1}, {"a": 2}]}}}"#,
+    );
+    let e = format!("{:#}", ws.args("bir").unwrap_err());
+    assert!(e.contains("a is given twice"), "{e}");
 }

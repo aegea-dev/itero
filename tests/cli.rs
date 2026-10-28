@@ -53,11 +53,11 @@ fn args_are_written_for_the_action() {
     // the rest is kept as it was, in its order
     let keys: Vec<&String> = m.as_object().unwrap().keys().collect();
     assert_eq!(keys, ["name", "port", "action"]);
-    // from a file, a list of objects
-    let list = d.path().join("hesaplar.json");
+    // from a file, a list of objects: one set of values, read in order
+    let list = d.path().join("hesap.json");
     std::fs::write(
         &list,
-        r#"[{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]"#,
+        r#"[{"host": "imap.örnek.test"}, {"user": "can@örnek.test"}]"#,
     )
     .unwrap();
     let o = itero(
@@ -75,6 +75,27 @@ fn args_are_written_for_the_action() {
     assert_eq!(
         manifest(d.path())["action"]["posta-bak"]["args"][1]["user"],
         "can@örnek.test"
+    );
+    // a name given twice is refused: once per item is repeat's
+    std::fs::write(
+        &list,
+        r#"[{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]"#,
+    )
+    .unwrap();
+    let o = itero(
+        d.path(),
+        &[
+            "action",
+            "args",
+            "set",
+            "posta-bak",
+            "--file",
+            list.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        !o.status.success() && err(&o).contains("user is given twice"),
+        "{o:?}"
     );
     // shown, and as JSON
     let shown = out(&itero(d.path(), &["action", "args", "get", "kargola"]));
@@ -1015,4 +1036,60 @@ fn check_refuses_a_secret_inside_text() {
         said.contains("action.gönder.args") && said.contains("a secret is a whole value only"),
         "{said}"
     );
+}
+
+#[test]
+fn check_warns_of_an_arg_notify_does_not_take() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/fiyat.json",
+        r##"{"on": [{"event": "fiyat.soruldu"}], "steps": [{"#notify": {"args": [{"title": "Fiyat", "text": "$output"}]}}]}"##,
+    );
+    let o = itero(d.path(), &["check"]);
+    assert!(o.status.success(), "{}", err(&o));
+    let e = err(&o);
+    assert!(
+        e.contains("warning: fiyat: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Fiyat"),
+        "{e}"
+    );
+    // the args it takes give no warning
+    file(
+        d.path(),
+        "workflows/fiyat.json",
+        r##"{"on": [{"event": "fiyat.soruldu"}], "steps": [{"#notify": {"args": {"title": "Fiyat", "text": "$output"}}}]}"##,
+    );
+    assert!(!err(&itero(d.path(), &["check"])).contains("#notify takes"));
+}
+
+#[test]
+fn repeat_is_set_and_shown_for_an_action() {
+    let d = workspace();
+    file(d.path(), "actions/imap-check", "#!/bin/sh\n");
+    let o = itero(
+        d.path(),
+        &[
+            "action",
+            "repeat",
+            "set",
+            "imap-check",
+            r#"[{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]"#,
+        ],
+    );
+    assert!(o.status.success(), "{}", err(&o));
+    assert_eq!(
+        manifest(d.path())["action"]["imap-check"]["repeat"],
+        serde_json::json!([{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}])
+    );
+    let o = itero(d.path(), &["action", "repeat", "get", "imap-check"]);
+    assert!(out(&o).contains("can@örnek.test"), "{}", out(&o));
+    for bad in [r#"{"user": "a"}"#, "[]", "[1]"] {
+        let o = itero(d.path(), &["action", "repeat", "set", "imap-check", bad]);
+        assert!(!o.status.success(), "{bad}");
+        assert!(
+            err(&o).contains("repeat is a list of one or more objects"),
+            "{bad}: {}",
+            err(&o)
+        );
+    }
 }

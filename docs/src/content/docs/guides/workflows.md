@@ -170,10 +170,13 @@ Steps run in order. A step is:
   { "#ship": { "args": { "carrier": "PTT Kargo" }, "on": [{ "$paid": true, "$stock": true }] } }
   ```
 
-  The step runs only if its `on` holds; otherwise it is skipped. `args`
-  are values for it ([below](#a-steps-result-output)), `undo` names what
-  takes it back ([Undo](#undo-taking-steps-back)), and `strict` keeps its
-  args to itself. It has no other keys.
+  The step runs only if its `on` holds; otherwise it is skipped. A step's
+  `on` holds conditions only: an event, a schedule or a path starts a
+  workflow, never a step. `args` are values for it
+  ([below](#a-steps-result-output)), `undo` names what takes it back
+  ([Undo](#undo-taking-steps-back)), and `strict` keeps its args to
+  itself. A step side by side may also have `as`
+  ([below](#a-step-side-by-side-with-its-args)). It has no other keys.
 
 So branches are steps with conditions. `order-process` picks one of four:
 
@@ -219,6 +222,20 @@ is given its count, which joins the state as `count`; `#notify` comes after
   `"$count files in ~/$folder"`.
 - `"args": "$output"` passes a whole object on: each field is an arg. A
   result that is not an object is an error there.
+- **Args may be a list** of objects, read in order as one set of values. An
+  item gives each of its keys as it is, or, with exactly the keys `title`
+  and `text`, gives the arg `title` names its `text` formatted as text:
+
+  ```json
+  { "#ask": { "args": [{ "url": "$url1", "tries": 3 }, { "title": "label", "text": "mirror $n" }] } }
+  ```
+
+  With `{"name": "Ayşe", "bar": 42}` in the state, `{"foo": "$bar"}` gives
+  `foo` the number `42`, and `{"title": "foo", "text": "$bar"}` gives it
+  the text `"42"`; `{"title": "foo", "text": "$name is bar"}` gives
+  `"Ayşe is bar"`. A name may be given once in a list. As an object,
+  `{"title": ..., "text": ...}` is the two args `title` and `text`, as
+  `#notify` takes them.
 - `output` is itero's: no arg has that name.
 - `"strict": true` keeps a step's args to that step: its action gets
   them, and the state does not. For values no later step should see,
@@ -449,8 +466,9 @@ takes its undos and its `error` list). What those steps print is not
 kept, a workflow among them goes on to no next step, and a step waiting
 for an event waits no more, shown `stopped`.
 
-A workflow in a group whose `on` does not hold did not run: it is out of
-the group, as if not written. It wins no race and counts for nothing.
+A workflow in a group whose `on` does not hold did not run, and nor does
+a step side by side whose own `on` does not hold: it is out of the group,
+as if not written. It wins no race and counts for nothing.
 
 After the group, `$output` is:
 
@@ -463,8 +481,28 @@ After the group, `$output` is:
   when none broke.
 
 `winner`, `failed` and `why` are itero's: a step's own field of that name
-is not kept. Two versions of one action cannot be in one group object: names,
-`fail` and `$output` tell its steps apart by name. `{"race": {...}}`, with
-an object, is a workflow named `race` used as a step.
+is not kept. `{"race": {...}}`, with an object, is a workflow named `race`
+used as a step.
+
+### A step side by side, with its args
+
+A step in a group, or in a list side by side, may be written as an object,
+as a step in `steps` is: with `args`, `on` and `strict` (not `undo`). To
+ask one action twice side by side, give each step `as`, a name of its own:
+
+```json
+{ "any": [
+    { "#ask-mirror": { "args": { "url": "http://127.0.0.1:9/price" }, "as": "mirror-1" } },
+    { "#ask-mirror": { "args": { "url": "http://127.0.0.1:8765/price" }, "as": "mirror-2" } }
+] }
+```
+
+The group knows a step by its `as`, written as names are (`#mirror-1` for
+an action's step, the name alone for a workflow's), or else by its name:
+`$output.#mirror-2`, `"fail": "#mirror-1"`, `"names"` and
+`$output.winner` use it. Two steps the group would know by one name are
+an error that says to give each `as`. A step's args side by side join the
+state when the group starts, in the group's order, unless it is
+`strict`.
 
 All keys: [Workflow files](/reference/workflow-file/).

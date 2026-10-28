@@ -1,6 +1,6 @@
 //! A workflow file in the simple form: `on`, `steps`, and the lists run at
 //! the end.
-use itero::flow::{self, Fail, Group, Name, Need, Step, Wait};
+use itero::flow::{self, Fail, Group, Member, Name, Need, Step, Wait};
 use serde_json::{Map, Value, json};
 
 fn obj(v: Value) -> Map<String, Value> {
@@ -108,9 +108,9 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
     assert_eq!(
         f.steps[0],
         Step::Side(Group {
-            names: vec![
-                action("check-payment"),
-                Name::Workflow("stock-check".into())
+            members: vec![
+                Member::bare(action("check-payment")),
+                Member::bare(Name::Workflow("stock-check".into()))
             ],
             wait: Wait::All,
             fail: None,
@@ -218,7 +218,10 @@ fn mistakes_are_named() {
         ),
         (r##"{ "steps": [{ "#a": {}, "#b": {} }] }"##, "one name"),
         (r##"{ "steps": [{ "#a": "çay" }] }"##, "an object"),
-        (r##"{ "steps": [["#a", { "#b": {} }]] }"##, "side by side"),
+        (
+            r##"{ "steps": [["#a", 7]] }"##,
+            "side by side is a name or an object",
+        ),
         (r##"{ "steps": ["#"] }"##, "\"#\""),
         (r##"{ "steps": ["#a@x.1"] }"##, "version"),
         (r##"{ "steps": [{ "#a": { "undo": 3 } }] }"##, "undo"),
@@ -486,6 +489,11 @@ fn group(step: &str) -> Group {
     g.clone()
 }
 
+/// The names of a group's steps, in order.
+fn step_names(g: &Group) -> Vec<Name> {
+    g.members.iter().map(|m| m.name.clone()).collect()
+}
+
 fn names(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| s.to_string()).collect()
 }
@@ -500,7 +508,7 @@ fn a_bare_list_is_all() {
     assert_eq!(bare.wait, Wait::All);
     assert_eq!(bare.fail, None);
     assert_eq!(
-        bare.names,
+        step_names(&bare),
         vec![
             action("kontrol"),
             action("tarama"),
@@ -520,11 +528,11 @@ fn a_group_says_how_to_wait() {
         let g = group(&format!(r##"{{ "{key}": ["#şu", "#bu"] }}"##));
         assert_eq!(g.wait, wait, "{key}");
         assert_eq!(g.fail, None, "{key}");
-        assert_eq!(g.names, vec![action("şu"), action("bu")], "{key}");
+        assert_eq!(step_names(&g), vec![action("şu"), action("bu")], "{key}");
     }
     let g = group(r##"{ "some": ["#a", "#b", "#c"], "count": 2 }"##);
     assert_eq!(g.wait, Wait::Some(Need::Count(2)));
-    assert_eq!(g.names.len(), 3);
+    assert_eq!(g.members.len(), 3);
     let g = group(r##"{ "some": ["#a", "#b", "#c"], "names": ["#a", "#c"] }"##);
     assert_eq!(g.wait, Wait::Some(Need::Names(names(&["#a", "#c"]))));
 }
@@ -593,8 +601,8 @@ fn a_group_mistake_is_named_with_the_step() {
         ),
         (r##"{ "any": [] }"##, "any is a list of two or more steps"),
         (
-            r##"{ "settled": ["#a", { "#b": {} }] }"##,
-            "settled holds names of actions and workflows",
+            r##"{ "settled": ["#a", 7] }"##,
+            "a step of settled is a name or an object",
         ),
         (r##"{ "all": ["#a", "#"] }"##, "\"#\""),
         // count and names
@@ -673,5 +681,221 @@ fn a_group_mistake_is_named_with_the_step() {
 #[test]
 fn a_bare_list_may_name_a_step_twice() {
     let g = group(r##"["#kontrol", "#kontrol"]"##);
-    assert_eq!(g.names.len(), 2);
+    assert_eq!(g.members.len(), 2);
+}
+
+#[test]
+fn args_may_be_a_list_of_direct_items_and_formatted_pairs() {
+    let f = flow::parse(
+        r##"{ "steps": [{ "#sor": { "args": [{ "url": "$adres", "deneme": 3 }, { "title": "etiket", "text": "ayna $n" }] } }] }"##,
+    )
+    .unwrap();
+    let Step::One { args, .. } = &f.steps[0] else {
+        panic!()
+    };
+    let state = obj(json!({"adres": "http://127.0.0.1:9/fiyat", "n": 2, "bar": 42, "ad": "Ayşe"}));
+    assert_eq!(
+        flow::fill_args(args, &state).unwrap(),
+        obj(json!({"url": "http://127.0.0.1:9/fiyat", "deneme": 3, "etiket": "ayna 2"}))
+    );
+    // a direct item assigns the value as it is; a pair formats it as text
+    let direct = json!([{ "foo": "$bar" }, { "baz": "$ad is bar" }]);
+    assert_eq!(
+        flow::fill_args(&direct, &state).unwrap(),
+        obj(json!({"foo": 42, "baz": "Ayşe is bar"}))
+    );
+    let pairs =
+        json!([{ "title": "foo", "text": "$bar" }, { "title": "baz", "text": "$ad is bar" }]);
+    assert_eq!(
+        flow::fill_args(&pairs, &state).unwrap(),
+        obj(json!({"foo": "42", "baz": "Ayşe is bar"}))
+    );
+    // an empty list is no args; an object and a whole name are read as before
+    assert_eq!(flow::fill_args(&json!([]), &state).unwrap(), Map::new());
+    assert_eq!(
+        flow::fill_args(&json!({"title": "Fiyat", "text": "$bar"}), &state).unwrap(),
+        obj(json!({"title": "Fiyat", "text": 42}))
+    );
+    assert_eq!(
+        flow::fill_args(&json!("$output"), &obj(json!({"output": {"a": 1}}))).unwrap(),
+        obj(json!({"a": 1}))
+    );
+}
+
+#[test]
+fn a_list_of_args_says_what_is_wrong() {
+    for (args, says) in [
+        (r#"[{ "url": "a" }, { "url": "b" }]"#, "url is given twice"),
+        (
+            r#"[{ "url": "a" }, { "title": "url", "text": "b" }]"#,
+            "url is given twice",
+        ),
+        (r#"["$output"]"#, "each item of the list is an object"),
+        (r#"[{ "output": 1 }]"#, "output is given by itero"),
+        (
+            r#"[{ "title": "output", "text": "x" }]"#,
+            "output is given by itero",
+        ),
+        (
+            r#"[{ "title": "", "text": "x" }]"#,
+            "the title of a pair names an arg",
+        ),
+        (
+            r#"[{ "title": "n", "text": 5 }]"#,
+            "the text of a pair is text",
+        ),
+        (
+            r#"[{ "title": "n", "text": "$$API" }]"#,
+            "a secret goes as a direct arg",
+        ),
+        (r#"[{ "n": "key: $$API" }]"#, "secret"),
+        (r#"7"#, "args is an object, a list of objects"),
+    ] {
+        let e = err(&format!(
+            r##"{{ "steps": [{{ "#sor": {{ "args": {args} }} }}] }}"##
+        ));
+        assert!(e.contains(says), "{args}: {e}");
+        assert!(e.contains("#sor"), "{args}: {e}");
+    }
+}
+
+#[test]
+fn the_secrets_of_a_list_of_args_are_named() {
+    let f = flow::parse(
+        r##"{ "steps": [{ "#sor": { "args": [{ "key": "$$API_KEY" }, { "title": "n", "text": "x" }] } }] }"##,
+    )
+    .unwrap();
+    assert_eq!(f.secret_names(), vec!["API_KEY".to_string()]);
+}
+
+#[test]
+fn a_step_of_a_group_may_be_an_object_with_args_on_strict_and_as() {
+    let g = group(
+        r##"{ "any": [
+              { "#ayna": { "args": [{ "url": "http://127.0.0.1:9/fiyat" }], "as": "ayna-1" } },
+              { "#ayna": { "args": { "url": "$ikinci" }, "as": "ayna-2", "strict": true } },
+              { "yedek": { "on": [{ "$yedekli": true }], "as": "yedek-akış" } },
+              "#son"
+            ] }"##,
+    );
+    let labels: Vec<&str> = g.members.iter().map(|m| m.label.as_str()).collect();
+    // an action's step is read with #, a workflow's without, as names are
+    assert_eq!(labels, vec!["#ayna-1", "#ayna-2", "yedek-akış", "#son"]);
+    assert_eq!(g.members[0].name, action("ayna"));
+    assert_eq!(
+        g.members[0].args,
+        json!([{ "url": "http://127.0.0.1:9/fiyat" }])
+    );
+    assert!(g.members[1].strict);
+    assert!(g.members[2].on.is_some());
+    assert_eq!(g.members[3].args, json!({}));
+    // fail and names go by the labels
+    let g = group(
+        r##"{ "some": [{ "#ayna": { "as": "bir" } }, { "#ayna": { "as": "iki" } }], "names": ["#iki"], "fail": "#bir" }"##,
+    );
+    assert_eq!(g.wait, Wait::Some(Need::Names(names(&["#iki"]))));
+    assert_eq!(g.fail, Some(Fail::Steps(names(&["#bir"]))));
+}
+
+#[test]
+fn a_step_of_a_group_says_what_is_wrong() {
+    for (step, says) in [
+        (
+            r##"{ "any": [{ "#ayna": {} }, { "#ayna": {} }] }"##,
+            "#ayna is in the list twice: give each \"as\"",
+        ),
+        (
+            r##"{ "any": ["#ayna", { "#ayna": { "as": "ayna" } }] }"##,
+            "#ayna is in the list twice",
+        ),
+        (
+            r##"{ "any": [{ "#ayna": { "as": "bir" } }, { "#ayna": { "as": "iki" } }], "fail": "#ayna" }"##,
+            "fail: \"#ayna\" is not one of the steps",
+        ),
+        (
+            r##"{ "all": [{ "#kur": { "undo": "#sil" } }, "#b"] }"##,
+            "undo is for a step of a list, not one side by side",
+        ),
+        (
+            r##"{ "all": [{ "#a": { "as": "" } }, "#b"] }"##,
+            "as names the step",
+        ),
+        (
+            r##"{ "all": [{ "#a": { "as": "#a2" } }, "#b"] }"##,
+            "as names the step",
+        ),
+        (
+            r##"{ "all": ["#a", 7] }"##,
+            "a step of all is a name or an object",
+        ),
+        (
+            r##"{ "race": ["#a", { "any": ["#b", "#c"] }] }"##,
+            "a group inside a group goes in a workflow of its own",
+        ),
+    ] {
+        let e = err(&format!(r##"{{ "steps": [{step}] }}"##));
+        assert!(e.contains(says), "{step}: {e}");
+    }
+    // as names a step side by side only
+    let e = err(r##"{ "steps": [{ "#a": { "as": "bir" } }] }"##);
+    assert!(e.contains("as names a step side by side"), "{e}");
+}
+
+#[test]
+fn the_uses_secrets_and_conditions_of_a_group_s_steps_are_read() {
+    let f = flow::parse(
+        r##"{ "steps": [{ "race": [
+              { "#ayna": { "args": { "key": "$$AYNA_KEY" }, "as": "bir" } },
+              { "yedek": { "on": [{ "has": "$$YEDEK" }] } }
+            ] }] }"##,
+    )
+    .unwrap();
+    assert!(f.uses().contains(&action("ayna")));
+    assert!(f.uses().contains(&Name::Workflow("yedek".into())));
+    assert_eq!(f.secret_names(), vec!["AYNA_KEY".to_string()]);
+    assert_eq!(f.defined_names(), vec!["YEDEK".to_string()]);
+}
+
+#[test]
+fn a_step_s_on_holds_conditions_only() {
+    for (on, what) in [
+        (r#"{ "event": "deploy.finished" }"#, "event"),
+        (r#"{ "schedule": "0 9 * * *" }"#, "schedule"),
+        (r#"{ "path": "~/Gelen" }"#, "path"),
+    ] {
+        for steps in [
+            format!(r##"[{{ "#süre": {{ "on": [{on}] }} }}]"##),
+            format!(r##"[{{ "any": [{{ "#süre": {{ "on": [{on}] }} }}, "#b"] }}]"##),
+        ] {
+            let e = err(&format!(r##"{{ "steps": {steps} }}"##));
+            assert!(
+                e.contains("a step's on holds conditions")
+                    && e.contains(what)
+                    && e.contains("#süre"),
+                "{steps}: {e}"
+            );
+        }
+    }
+    // conditions stay
+    flow::parse(
+        r##"{ "steps": [{ "#a": { "on": [{ "$ödendi": true }, { "has": "$cevap" }] } }] }"##,
+    )
+    .unwrap();
+}
+
+#[test]
+fn the_names_of_the_args_given_to_an_action_are_read() {
+    let f = flow::parse(
+        r##"{ "steps": [
+              { "#notify": { "args": { "title": "Fiyat", "metin": "$output" } } },
+              { "any": [{ "#notify": { "args": [{ "text": "$x" }, { "title": "ses", "text": "çan" }] } }, "#b"] },
+              { "#notify": { "args": "$output" } },
+              { "#başka": { "args": { "adres": "x" } } }
+            ] }"##,
+    )
+    .unwrap();
+    assert_eq!(
+        f.arg_names("notify"),
+        names(&["metin", "ses", "text", "title"])
+    );
 }

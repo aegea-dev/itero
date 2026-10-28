@@ -646,24 +646,36 @@ impl Workspace {
     }
 
     /// An action's args, `action.<name>.args` in the manifest: an object,
-    /// or a list of objects (the step runs once per item). None when its
-    /// entry has none.
+    /// or a list of objects read as a step's are (one set of values). None
+    /// when its entry has none.
     pub fn args(&self, action: &str) -> Result<Option<Value>> {
-        let Some(v) = self.entry_args("action", action)? else {
+        let Some(v) = self.entry_key("action", action, "args")? else {
             return Ok(None);
         };
-        let ok = match &v {
-            Value::Object(_) => true,
-            Value::Array(items) => items.iter().all(|i| i.is_object()),
-            _ => false,
-        };
-        if !ok {
-            bail!(
-                "{}: action.{action}.args are an object, or a list of objects",
-                self.root.join(MANIFEST).display()
-            );
+        let at = format!("{}: action.{action}", self.root.join(MANIFEST).display());
+        if !matches!(&v, Value::Object(_) | Value::Array(_)) {
+            bail!("{at}.args are an object, or a list of objects");
         }
+        crate::flow::read_args(&v).map_err(|why| anyhow!("{at}.{why}"))?;
         Ok(Some(v))
+    }
+
+    /// An action's repeat, `action.<name>.repeat` in the manifest: a list
+    /// of one or more objects; its step runs once per item, each item's
+    /// values on top of its args. None when its entry has none.
+    pub fn repeat(&self, action: &str) -> Result<Option<Value>> {
+        let Some(v) = self.entry_key("action", action, "repeat")? else {
+            return Ok(None);
+        };
+        match &v {
+            Value::Array(items) if !items.is_empty() && items.iter().all(Value::is_object) => {
+                Ok(Some(v))
+            }
+            _ => bail!(
+                "{}: action.{action}.repeat is a list of one or more objects, each one run's values",
+                self.root.join(MANIFEST).display()
+            ),
+        }
     }
 
     /// How long a step of the action may print nothing, and run at most:
@@ -711,7 +723,7 @@ impl Workspace {
     /// A connector's args, `connector.<name>.args` in the manifest: an object (a
     /// connector runs once). None when its entry has none.
     pub fn connector_args(&self, connector: &str) -> Result<Option<Map<String, Value>>> {
-        match self.entry_args("connector", connector)? {
+        match self.entry_key("connector", connector, "args")? {
             None => Ok(None),
             Some(Value::Object(o)) => Ok(Some(o)),
             Some(_) => bail!(
@@ -721,10 +733,10 @@ impl Workspace {
         }
     }
 
-    /// `<kind>.<name>.args` in the manifest, as written; `null` is none.
-    fn entry_args(&self, kind: &str, name: &str) -> Result<Option<Value>> {
+    /// `<kind>.<name>.<key>` in the manifest, as written; `null` is none.
+    fn entry_key(&self, kind: &str, name: &str, key: &str) -> Result<Option<Value>> {
         Ok(match self.entries(kind)?.remove(name) {
-            Some(Value::Object(mut e)) => e.remove("args").filter(|v| !v.is_null()),
+            Some(Value::Object(mut e)) => e.remove(key).filter(|v| !v.is_null()),
             _ => None,
         })
     }

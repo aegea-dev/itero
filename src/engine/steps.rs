@@ -220,9 +220,13 @@ pub struct StepInput {
     /// The run's pinned workflows by name, as JSON: its own and those it
     /// uses as steps.
     pub flows: BTreeMap<String, Value>,
-    /// The args files of the actions they use.
+    /// The args of the actions they use, from the manifest.
     #[serde(default)]
     pub args: BTreeMap<String, Value>,
+    /// The repeat of the actions they use, from the manifest: a step of
+    /// one runs once per item.
+    #[serde(default)]
+    pub repeat: BTreeMap<String, Value>,
     /// The `$$` names that are defined.
     #[serde(default)]
     pub defined: Vec<String>,
@@ -618,12 +622,24 @@ impl Machine<'_> {
             }
             Step::Side(group) => {
                 let mut entries: Vec<Entry> = vec![];
-                for (j, n) in group.names.iter().enumerate() {
+                for (j, m) in group.members.iter().enumerate() {
                     path.push(j);
-                    let at = self.start_name(n, &Map::new(), path, true)?;
+                    let at = if m.on.as_ref().is_some_and(|on| !self.holds(on)) {
+                        self.skipped(&m.label);
+                        None
+                    } else {
+                        match self.args(&m.args, m.strict) {
+                            Ok(data) => self.start_name(&m.name, &data, path, true)?,
+                            Err(why) => {
+                                // it cannot start: that step of the group breaks
+                                self.broke = Some((why, m.label.clone()));
+                                None
+                            }
+                        }
+                    };
                     path.pop();
                     let mut e = Entry {
-                        name: label(n),
+                        name: m.label.clone(),
                         at,
                         output: None,
                         outcome: None,
@@ -676,7 +692,7 @@ impl Machine<'_> {
                     output: None,
                 };
                 let mine = self.rt.item.as_ref().is_some_and(|it| it.action == *name);
-                if let Some(Value::Array(items)) = self.i.args.get(name)
+                if let Some(Value::Array(items)) = self.i.repeat.get(name)
                     && !mine
                 {
                     if side || self.split.is_some() {
@@ -731,18 +747,7 @@ impl Machine<'_> {
     /// A step's args filled from the state, an object; unless the step is
     /// strict, they join the state too.
     fn args(&mut self, args: &Value, strict: bool) -> Result<Map<String, Value>, String> {
-        let data = match args {
-            Value::Object(a) => a
-                .iter()
-                .map(|(k, v)| Ok((k.clone(), flow::fill(v, &self.rt.state)?)))
-                .collect::<Result<_, String>>()?,
-            whole => match flow::fill(whole, &self.rt.state)? {
-                Value::Object(a) => a,
-                other => {
-                    return Err(format!("args {whole} is not an object: {}", brief(&other)));
-                }
-            },
-        };
+        let data = flow::fill_args(args, &self.rt.state)?;
         if data.contains_key("output") {
             return Err("args: output is given by itero, the step before's result".into());
         }
@@ -1579,15 +1584,6 @@ fn side_output(entries: &[Entry]) -> Value {
         out.insert(k, v);
     }
     Value::Object(out)
-}
-
-/// A value, shortened for a message.
-fn brief(v: &Value) -> String {
-    let t = v.to_string();
-    match t.char_indices().nth(60) {
-        Some((i, _)) => format!("{}...", &t[..i]),
-        None => t,
-    }
 }
 
 /// Whether a message is a waiting step's: it shares a field with what the

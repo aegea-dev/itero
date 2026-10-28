@@ -85,8 +85,10 @@ pub fn used(ws: &crate::workspace::Workspace) -> Result<Vec<String>> {
     }
     for kind in ["action", "connector"] {
         for e in ws.entries(kind)?.values() {
-            if let Some(args) = e.get("args") {
-                walk(args, &mut out);
+            for key in ["args", "repeat"] {
+                if let Some(v) = e.get(key) {
+                    walk(v, &mut out);
+                }
             }
         }
     }

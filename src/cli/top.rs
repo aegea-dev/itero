@@ -143,10 +143,24 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
         .into_iter()
         .map(|(kind, file)| json!({ "type": kind, "file": file.display().to_string() }))
         .collect();
-    let warnings: Vec<String> = crate::engine::secrets::shadowed(ws)?
+    let mut warnings: Vec<String> = crate::engine::secrets::shadowed(ws)?
         .iter()
         .map(|n| crate::engine::secrets::shadow_warning(n))
         .collect();
+    // an arg #notify does not read: likely a mix-up, not an error (it still
+    // joins the state)
+    let taken = crate::engine::worker::NOTIFY_ARGS;
+    for (name, f) in &flows {
+        for a in f.arg_names(crate::engine::worker::NOTIFY) {
+            if !taken.contains(&a.as_str()) {
+                let (last, rest) = taken.split_last().expect("NOTIFY_ARGS is not empty");
+                warnings.push(format!(
+                    "{name}: #notify takes {} and {last}, not {a}",
+                    rest.join(", ")
+                ));
+            }
+        }
+    }
     let v =
         json!({ "workflows": out, "connectors": connectors, "notes": notes, "warnings": warnings });
     show(json, &v, |v| {

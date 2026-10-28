@@ -42,16 +42,17 @@ its settings) is in its entry in
 | `"#name"` | an action, its latest version |
 | `"#name@0.2"` | an action at a version |
 | `"name"` | a workflow, run here with the same state; its result is its last step's |
-| `["#a", "b"]` | side by side; the next step waits for all, and their results merge into one |
+| `["#a", "b"]` | side by side; the next step waits for all, and their results merge into one; a step in it may be an object (below) |
 | `{"race": ["#a", "b"]}` | side by side, waiting as its key says (below) |
 | `{"#name": {...}}` | with keys of its own (below) |
 
 | A step's key | Is |
 |---|---|
-| `args` | its values: an object, or a `"$name"` that is one (`"$output"`); they join the run's state when it starts |
-| `on` | when it runs; otherwise it is skipped |
+| `args` | its values: an object, a list of objects read in order (an item with exactly `title` and `text` gives the arg `title` names its text, as text), or a `"$name"` that is one (`"$output"`); they join the run's state when it starts |
+| `on` | when it runs, conditions only; otherwise it is skipped |
 | `undo` | what takes it back when a later step breaks; given this step's result as `$output` |
 | `strict` | `true`: its args reach its action only, not the state (an action's step) |
+| `as` | a step side by side's name in its group, `"mirror-1"`, read as `#mirror-1` for an action's step |
 
 In `args`, `"$name"` is the state's value with its type, `"$name.field"`
 one field of it (a field may be `#step`, a step side by side's result:
@@ -73,8 +74,9 @@ before's result; `output` is no arg's name. See [Workflows](/guides/workflows/).
 | `names` | with `some`: which, by name |
 | `fail` | when it breaks instead: `"any"`, `"all"`, `"never"`, a step's name, or a list of names |
 
-An object has one of the five keys, with two or more steps, each named
-once. `$output.failed` and `$output.why` name the steps that broke and why,
+An object has one of the five keys, with two or more steps, each a name
+or an object with `args`, `on`, `strict` and `as` (not `undo`), each known
+by one name in the group (its `as`, else its name). `$output.failed` and `$output.why` name the steps that broke and why,
 whenever one did (always with `settled` and `"fail": "never"`). The steps
 that lose are stopped, never undone. A group of `all` or `settled` that
 breaks waits for its running steps to end first. See

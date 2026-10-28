@@ -11,6 +11,7 @@ struct Run {
     root: String,
     flows: BTreeMap<String, Value>,
     args: BTreeMap<String, Value>,
+    repeat: BTreeMap<String, Value>,
     defined: Vec<String>,
     rt: Runtime,
     now: String,
@@ -26,6 +27,7 @@ impl Run {
                 .map(|(n, f)| (n.to_string(), f.clone()))
                 .collect(),
             args: BTreeMap::new(),
+            repeat: BTreeMap::new(),
             defined: vec![],
             rt: Runtime::default(),
             now: NOW.into(),
@@ -40,6 +42,7 @@ impl Run {
             workflow: self.root.clone(),
             flows: self.flows.clone(),
             args: self.args.clone(),
+            repeat: self.repeat.clone(),
             defined: self.defined.clone(),
             runtime: self.rt.clone(),
             event: Event {
@@ -601,9 +604,11 @@ fn success_false_runs_failure_otherwise_success() {
 }
 
 #[test]
-fn a_list_of_args_runs_the_rest_once_per_item() {
+fn repeat_runs_the_rest_once_per_item() {
     let mut r = Run::new(&[("posta", json!({"steps": ["#imap-check", "#notify"]}))]);
-    r.args.insert(
+    r.args
+        .insert("imap-check".into(), json!({"host": "imap.örnek.test"}));
+    r.repeat.insert(
         "imap-check".into(),
         json!([{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]),
     );
@@ -614,6 +619,7 @@ fn a_list_of_args_runs_the_rest_once_per_item() {
     for (child, user) in a.split.iter().zip(["ayşe@örnek.test", "can@örnek.test"]) {
         let mut c = Run::new(&[("posta", json!({"steps": ["#imap-check", "#notify"]}))]);
         c.args = r.args.clone();
+        c.repeat = r.repeat.clone();
         c.rt = child.clone();
         let a = c.start(Value::Null);
         assert_eq!(names(&a), vec!["imap-check"]);
@@ -1369,4 +1375,106 @@ fn a_group_is_read_from_a_run_written_before_groups_said_how_to_wait() {
     let (r, _) = grup(json!({"some": AD, "names": ["#çay"], "fail": ["#ılık"]}));
     let text = serde_json::to_string(&r.rt).unwrap();
     assert_eq!(serde_json::from_str::<Runtime>(&text).unwrap(), r.rt);
+}
+
+#[test]
+fn a_list_of_args_joins_the_state_as_one_object_unless_strict() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            {"#sor": {"args": [{"url": "$adres", "adet": "$n"}, {"title": "etiket", "text": "ayna $n"}]}},
+            {"#bildir": {"args": [{"fiyat": "$output"}], "strict": true}},
+            "#son"
+        ]}),
+    )]);
+    let a = r.start(json!({"adres": "http://127.0.0.1:9/fiyat", "n": 2}));
+    assert_eq!(
+        a.jobs[0].data,
+        json!({"url": "http://127.0.0.1:9/fiyat", "adet": 2, "etiket": "ayna 2"})
+            .as_object()
+            .unwrap()
+            .clone()
+    );
+    assert_eq!(r.rt.state["etiket"], "ayna 2");
+    assert_eq!(r.rt.state["adet"], 2);
+    let a = r.done(&a.jobs[0], json!(42.5));
+    assert_eq!(a.jobs[0].data["fiyat"], 42.5);
+    assert!(!r.rt.state.contains_key("fiyat"), "strict: the step's only");
+}
+
+#[test]
+fn one_action_twice_in_a_group_runs_with_each_step_s_args_and_is_read_by_its_as() {
+    let mut r = Run::new(&[(
+        "fiyat",
+        json!({"steps": [
+            {"any": [
+                {"#ayna": {"args": [{"url": "$bir"}], "as": "ayna-1"}},
+                {"#ayna": {"args": [{"url": "$iki"}], "as": "ayna-2"}}
+            ]},
+            "#sonra"
+        ]}),
+    )]);
+    let a =
+        r.start(json!({"bir": "http://127.0.0.1:9/fiyat", "iki": "http://127.0.0.1:8765/fiyat"}));
+    assert_eq!(names(&a), vec!["ayna", "ayna"]);
+    assert_eq!(a.jobs[0].data["url"], "http://127.0.0.1:9/fiyat");
+    assert_eq!(a.jobs[1].data["url"], "http://127.0.0.1:8765/fiyat");
+    // the first copy breaks, the second gives a plain value: it wins by its as
+    assert!(r.failed(&a.jobs[0], "exit 7: bağlantı yok").jobs.is_empty());
+    let a = r.done(&a.jobs[1], json!("42.50"));
+    assert_eq!(names(&a), vec!["sonra"]);
+    // the copy that broke is named by its as too
+    assert_eq!(
+        r.rt.state["output"],
+        json!({"#ayna-2": "42.50", "winner": "#ayna-2",
+               "failed": ["#ayna-1"], "why": {"#ayna-1": "exit 7: bağlantı yok"}})
+    );
+}
+
+#[test]
+fn a_step_of_a_group_whose_on_does_not_hold_is_out_of_it() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            {"race": [{"#önbellek": {"on": [{"$taze": true}]}}, "#canlı"]},
+            "#sonra"
+        ]}),
+    )]);
+    let a = r.start(json!({"taze": false}));
+    assert_eq!(names(&a), vec!["canlı"]);
+    let a = r.done(&a.jobs[0], json!({"fiyat": 5}));
+    assert_eq!(names(&a), vec!["sonra"]);
+    assert_eq!(
+        r.rt.state["output"],
+        json!({"fiyat": 5, "winner": "#canlı"})
+    );
+}
+
+#[test]
+fn a_step_of_a_group_whose_args_cannot_be_read_breaks_in_it() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            {"all": [{"#a": {"args": "$yok"}}, "#b"], "fail": "never"},
+            "#sonra"
+        ]}),
+    )]);
+    let a = r.start(json!({}));
+    assert_eq!(names(&a), vec!["b"]);
+    let a = r.done(&a.jobs[0], json!({"b": 1}));
+    assert_eq!(names(&a), vec!["sonra"]);
+    assert_eq!(r.rt.state["output"]["failed"], json!(["#a"]));
+}
+
+#[test]
+fn an_action_s_list_of_args_is_one_set_of_values_not_a_repeat() {
+    let mut r = Run::new(&[("posta", json!({"steps": ["#imap-check", "#notify"]}))]);
+    r.args.insert(
+        "imap-check".into(),
+        json!([{"host": "imap.örnek.test"}, {"user": "ayşe@örnek.test"}]),
+    );
+    let a = r.start(json!({}));
+    assert!(a.split.is_empty());
+    assert_eq!(names(&a), vec!["imap-check"]);
+    assert_eq!(a.jobs[0].item, None);
 }

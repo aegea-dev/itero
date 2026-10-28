@@ -145,10 +145,37 @@ pub enum Step {
 /// group breaks. A bare list is `Wait::All` with no `fail`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Group {
-    pub names: Vec<Name>,
+    pub members: Vec<Member>,
     pub wait: Wait,
     /// `None`: the wait's own rule says when the group breaks.
     pub fail: Option<Fail>,
+}
+
+/// A step of a group: an action or a workflow, its args and when it runs,
+/// and the label the group knows it by.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Member {
+    pub name: Name,
+    /// As a step's: an object, a list of objects, or a `"$name"`.
+    pub args: Value,
+    pub on: Option<Box<On>>,
+    pub strict: bool,
+    /// `#name` for an action's step, the name for a workflow's, as
+    /// [`Name::label`]; with `as`, that name the same way: `#mirror-1`.
+    pub label: String,
+}
+
+impl Member {
+    /// A step of a group written as its name alone.
+    pub fn bare(name: Name) -> Member {
+        Member {
+            label: name.label(),
+            name,
+            args: Value::Object(Map::new()),
+            on: None,
+            strict: false,
+        }
+    }
 }
 
 /// When the group ends: the key of its object.
@@ -579,86 +606,280 @@ fn step(v: &Value) -> Result<Step, String> {
             strict: false,
         }),
         Value::Array(items) => Ok(Step::Side(Group {
-            names: side_names(items, "a list side by side")?,
+            members: side_members(items, "a list side by side")?,
             wait: Wait::All,
             fail: None,
         })),
         Value::Object(m) if is_group(m) => group(v, m),
         Value::Object(m) => {
-            let mut it = m.iter();
-            let (Some((k, v)), None) = (it.next(), it.next()) else {
-                return Err("a step object has one name: { \"#ship\": { ... } }".into());
-            };
-            let Value::Object(fields) = v else {
+            let w = written(m)?;
+            if w.as_name.is_some() {
                 return Err(format!(
-                    "{k}: a step is an object: {{ \"args\": {{ ... }} }}"
+                    "{}: as names a step side by side, in a group: {{ \"any\": [{{ \"#ask\": {{ \"as\": \"ask-1\" }} }}, ...] }}",
+                    w.key
                 ));
-            };
-            let mut fields = fields.clone();
-            let when = fields.remove("on").map(|w| on(&w)).transpose()?;
-            let undo = fields
-                .remove("undo")
-                .map(|u| match u.as_str() {
-                    Some(s) => name(s).map_err(|e| format!("{k}: undo: {e}")),
-                    None => Err(format!(
-                        "{k}: undo is an action or a workflow, like \"#cluster-delete\""
-                    )),
-                })
-                .transpose()?;
-            let args = match fields.remove("args") {
-                None => Value::Object(Map::new()),
-                Some(Value::Object(a)) => {
-                    if a.contains_key("output") {
-                        return Err(format!(
-                            "{k}: args: output is given by itero, the step before's result"
-                        ));
-                    }
-                    let a = Value::Object(a);
-                    // a secret inside text: with no state, only that is refused
-                    fill(&a, &Map::new()).map_err(|why| format!("{k}: args: {why}"))?;
-                    a
-                }
-                Some(a) if state_ref(&a).is_some() => a,
-                Some(_) => {
-                    return Err(format!(
-                        "{k}: args is an object, or a \"$name\" that is one, like \"$output\""
-                    ));
-                }
-            };
-            let strict = match fields.remove("strict") {
-                None => false,
-                Some(Value::Bool(b)) => b,
-                Some(_) => return Err(format!("{k}: strict is true or false")),
-            };
-            if let Some(other) = fields.keys().next() {
-                return Err(format!(
-                    "{k}: \"{other}\" is not one of args, on, undo, strict: a step's values go under args"
-                ));
-            }
-            let name = name(k)?;
-            if strict && matches!(name, Name::Workflow(_)) {
-                return Err(format!("{k}: strict is for an action's step"));
             }
             Ok(Step::One {
-                name,
-                args,
-                on: when.map(Box::new),
-                undo,
-                strict,
+                name: w.name,
+                args: w.args,
+                on: w.on.map(Box::new),
+                undo: w.undo,
+                strict: w.strict,
             })
         }
         _ => Err("a step is a name, a list side by side, or { name: { data } }".into()),
     }
 }
 
-/// The names in a list side by side; `what` says whose list it is.
-fn side_names(items: &[Value], what: &str) -> Result<Vec<Name>, String> {
+/// A step's args as written, checked: an object, a list of objects, or a
+/// `"$name"` that is one (`"$output"`). An item of a list is direct, each
+/// key an arg given as it is, or a pair `{"title": name, "text": text}`,
+/// the arg `name` formatted as text. A name may be given once; `output` is
+/// itero's.
+pub(crate) fn read_args(a: &Value) -> Result<Value, String> {
+    let given = |name: &str, seen: &mut Vec<String>| -> Result<(), String> {
+        if name == "output" {
+            return Err("args: output is given by itero, the step before's result".into());
+        }
+        if seen.iter().any(|s| s == name) {
+            return Err(format!("args: {name} is given twice"));
+        }
+        seen.push(name.to_string());
+        Ok(())
+    };
+    // a secret inside text: with no state, only that is refused
+    let no_secret = |v: &Value| {
+        fill(v, &Map::new())
+            .map(drop)
+            .map_err(|why| format!("args: {why}"))
+    };
+    match a {
+        Value::Object(o) => {
+            let mut seen = vec![];
+            for (k, v) in o {
+                given(k, &mut seen)?;
+                no_secret(v)?;
+            }
+        }
+        Value::Array(items) => {
+            let mut seen = vec![];
+            for item in items {
+                let Value::Object(o) = item else {
+                    return Err(format!(
+                        "args: each item of the list is an object, like {{\"url\": \"$url1\"}}, not {item}"
+                    ));
+                };
+                match pair(o) {
+                    Some((title, text)) => {
+                        let Some(name) = title.as_str().filter(|n| !n.is_empty()) else {
+                            return Err(format!("args: the title of a pair names an arg: {item}"));
+                        };
+                        let Value::String(_) = text else {
+                            return Err(format!("args: the text of a pair is text: {item}"));
+                        };
+                        if secret_ref(text).is_some() {
+                            return Err(format!(
+                                "args: a secret goes as a direct arg, {{\"{name}\": {text}}}, not formatted as text"
+                            ));
+                        }
+                        given(name, &mut seen)?;
+                        no_secret(text)?;
+                    }
+                    None => {
+                        for (k, v) in o {
+                            given(k, &mut seen)?;
+                            no_secret(v)?;
+                        }
+                    }
+                }
+            }
+        }
+        a if state_ref(a).is_some() => {}
+        _ => {
+            return Err(
+                "args is an object, a list of objects, or a \"$name\" that is one, like \"$output\""
+                    .into(),
+            );
+        }
+    }
+    Ok(a.clone())
+}
+
+/// An item of a list of args that is a pair, `{"title": name, "text": text}`:
+/// its two values.
+fn pair(item: &Map<String, Value>) -> Option<(&Value, &Value)> {
+    if item.len() != 2 {
+        return None;
+    }
+    Some((item.get("title")?, item.get("text")?))
+}
+
+/// A step's args filled from the state, as one object. An object's values
+/// and a list's direct items are filled as [`fill`] does: a whole `"$name"`
+/// keeps its type. A pair's text is always text. A whole `"$name"` is the
+/// state value, which must be an object.
+pub fn fill_args(args: &Value, state: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+    match args {
+        Value::Object(o) => o
+            .iter()
+            .map(|(k, v)| Ok((k.clone(), fill(v, state)?)))
+            .collect(),
+        Value::Array(items) => {
+            let mut out = Map::new();
+            for item in items {
+                let Value::Object(o) = item else {
+                    return Err(format!(
+                        "args: each item of the list is an object, not {item}"
+                    ));
+                };
+                match pair(o) {
+                    Some((Value::String(name), Value::String(text))) => {
+                        out.insert(name.clone(), Value::String(fill_text(text, state)?));
+                    }
+                    _ => {
+                        for (k, v) in o {
+                            out.insert(k.clone(), fill(v, state)?);
+                        }
+                    }
+                }
+            }
+            Ok(out)
+        }
+        whole => match fill(whole, state)? {
+            Value::Object(o) => Ok(o),
+            other => Err(format!("args {whole} is not an object: {}", brief(&other))),
+        },
+    }
+}
+
+/// A value, shortened for a message.
+fn brief(v: &Value) -> String {
+    let t = v.to_string();
+    match t.char_indices().nth(60) {
+        Some((i, _)) => format!("{}...", &t[..i]),
+        None => t,
+    }
+}
+
+/// A step written as an object, `{ "#ship": { "args": ..., "on": ... } }`,
+/// read: what a step of a list and a step of a group share.
+struct Written {
+    /// As written, for the errors: `#ship`.
+    key: String,
+    name: Name,
+    args: Value,
+    on: Option<On>,
+    undo: Option<Name>,
+    strict: bool,
+    /// Its `as`, the name a group knows it by.
+    as_name: Option<String>,
+}
+
+fn written(m: &Map<String, Value>) -> Result<Written, String> {
+    let mut it = m.iter();
+    let (Some((k, v)), None) = (it.next(), it.next()) else {
+        return Err("a step object has one name: { \"#ship\": { ... } }".into());
+    };
+    let Value::Object(fields) = v else {
+        return Err(format!(
+            "{k}: a step is an object: {{ \"args\": {{ ... }} }}"
+        ));
+    };
+    let mut fields = fields.clone();
+    let when = fields.remove("on").map(|w| on(&w)).transpose()?;
+    if let Some(w) = &when {
+        let starts = [
+            (!w.events.is_empty(), "an event"),
+            (!w.schedules.is_empty(), "a schedule"),
+            (!w.paths.is_empty(), "a path"),
+        ];
+        if let Some((_, what)) = starts.iter().find(|(given, _)| *given) {
+            return Err(format!(
+                "{k}: a step's on holds conditions ({{\"$name\": value}}, {{\"has\": ...}}), not {what}: an event, a schedule or a path starts a workflow"
+            ));
+        }
+    }
+    let undo = fields
+        .remove("undo")
+        .map(|u| match u.as_str() {
+            Some(s) => name(s).map_err(|e| format!("{k}: undo: {e}")),
+            None => Err(format!(
+                "{k}: undo is an action or a workflow, like \"#cluster-delete\""
+            )),
+        })
+        .transpose()?;
+    let args = match fields.remove("args") {
+        None => Value::Object(Map::new()),
+        Some(a) => read_args(&a).map_err(|why| format!("{k}: {why}"))?,
+    };
+    let strict = match fields.remove("strict") {
+        None => false,
+        Some(Value::Bool(b)) => b,
+        Some(_) => return Err(format!("{k}: strict is true or false")),
+    };
+    let as_name = match fields.remove("as") {
+        None => None,
+        Some(Value::String(a)) if plain(&a) => Some(a),
+        Some(a) => {
+            return Err(format!(
+                "{k}: as names the step in its group, without # or spaces, like \"mirror-1\", not {a}"
+            ));
+        }
+    };
+    if let Some(other) = fields.keys().next() {
+        return Err(format!(
+            "{k}: \"{other}\" is not one of args, on, undo, strict, as: a step's values go under args"
+        ));
+    }
+    let name = name(k)?;
+    if strict && matches!(name, Name::Workflow(_)) {
+        return Err(format!("{k}: strict is for an action's step"));
+    }
+    Ok(Written {
+        key: k.clone(),
+        name,
+        args,
+        on: when,
+        undo,
+        strict,
+        as_name,
+    })
+}
+
+/// The steps of a list side by side, each a name or a step object; `what`
+/// says whose list it is.
+fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, String> {
     items
         .iter()
-        .map(|i| {
-            i.as_str()
-                .ok_or(format!("{what} holds names of actions and workflows"))
-                .and_then(name)
+        .map(|i| match i {
+            Value::String(s) => name(s).map(Member::bare),
+            Value::Object(m) if !is_group(m) => {
+                let w = written(m)?;
+                if w.undo.is_some() {
+                    return Err(format!(
+                        "{}: undo is for a step of a list, not one side by side",
+                        w.key
+                    ));
+                }
+                let label = match (&w.as_name, &w.name) {
+                    (Some(a), Name::Action { .. }) => format!("#{a}"),
+                    (Some(a), Name::Workflow(_)) => a.clone(),
+                    (None, n) => n.label(),
+                };
+                Ok(Member {
+                    name: w.name,
+                    args: w.args,
+                    on: w.on.map(Box::new),
+                    strict: w.strict,
+                    label,
+                })
+            }
+            Value::Object(_) => Err(format!(
+                "a group inside a group goes in a workflow of its own, used here by its name: {i}"
+            )),
+            _ => Err(format!(
+                "a step of {what} is a name or an object, like {{ \"#ask\": {{ \"args\": ... }} }}, not {i}"
+            )),
         })
         .collect()
 }
@@ -715,13 +936,13 @@ fn group(v: &Value, m: &Map<String, Value>) -> Result<Step, String> {
             )));
         }
     };
-    let names = side_names(items, key).map_err(&bad)?;
-    let labels: Vec<String> = names.iter().map(Name::label).collect();
-    // a step is told apart by its name, whatever its version
+    let members = side_members(items, key).map_err(&bad)?;
+    let labels: Vec<String> = members.iter().map(|m| m.label.clone()).collect();
+    // a step is told apart by its label, whatever its version
     for (i, l) in labels.iter().enumerate() {
         if labels[..i].contains(l) {
             return Err(bad(format!(
-                "{l} is in the list twice: the steps of a group are told apart by their names"
+                "{l} is in the list twice: give each \"as\", a name of its own, to tell them apart"
             )));
         }
     }
@@ -752,13 +973,13 @@ fn group(v: &Value, m: &Map<String, Value>) -> Result<Step, String> {
             (None, None) => return Err(bad("some needs count or names".into())),
             (Some(_), Some(_)) => return Err(bad("some takes count or names, not both".into())),
             (Some(c), None) => match c.as_u64() {
-                Some(n) if (1..=names.len() as u64).contains(&n) => {
+                Some(n) if (1..=members.len() as u64).contains(&n) => {
                     Wait::Some(Need::Count(n as usize))
                 }
                 _ => {
                     return Err(bad(format!(
                         "count is a whole number from 1 to {}, the steps in the list",
-                        names.len()
+                        members.len()
                     )));
                 }
             },
@@ -794,14 +1015,22 @@ fn group(v: &Value, m: &Map<String, Value>) -> Result<Step, String> {
             ));
         }
     };
-    Ok(Step::Side(Group { names, wait, fail }))
+    Ok(Step::Side(Group {
+        members,
+        wait,
+        fail,
+    }))
 }
 
 /// `#name` or `#name@1.2` is an action, any other name a workflow.
+/// A name as an action's or a workflow's is written, without its `#` or
+/// version: no `/`, `#`, `@`, `$` or space.
+fn plain(n: &str) -> bool {
+    !n.is_empty() && !n.contains(['/', '#', '@', '$']) && !n.contains(char::is_whitespace)
+}
+
 pub fn name(s: &str) -> Result<Name, String> {
-    let ok = |n: &str| {
-        !n.is_empty() && !n.contains(['/', '#', '@', '$']) && !n.contains(char::is_whitespace)
-    };
+    let ok = plain;
     match s.strip_prefix('#') {
         Some(rest) => {
             let (n, version) = match rest.split_once('@') {
@@ -852,7 +1081,7 @@ impl Flow {
         for s in self.all_steps() {
             let names: Vec<&Name> = match s {
                 Step::One { name, undo, .. } => std::iter::once(name).chain(undo).collect(),
-                Step::Side(g) => g.names.iter().collect(),
+                Step::Side(g) => g.members.iter().map(|m| &m.name).collect(),
             };
             for n in names {
                 if !out.contains(n) {
@@ -873,8 +1102,35 @@ impl Flow {
         };
         let mut out = names(&self.on);
         for s in self.all_steps() {
-            if let Step::One { on: Some(on), .. } = s {
-                out.extend(names(on));
+            match s {
+                Step::One { on: Some(on), .. } => out.extend(names(on)),
+                Step::Side(g) => {
+                    for on in g.members.iter().filter_map(|m| m.on.as_ref()) {
+                        out.extend(names(on));
+                    }
+                }
+                Step::One { .. } => {}
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// The names of the args its steps give the action `action` (without
+    /// `#`), in a list or side by side, each once, sorted.
+    pub fn arg_names(&self, action: &str) -> Vec<String> {
+        let is = |n: &Name| matches!(n, Name::Action { name, .. } if name == action);
+        let mut out = vec![];
+        for s in self.all_steps() {
+            match s {
+                Step::One { name, args, .. } if is(name) => out.extend(arg_names_of(args)),
+                Step::Side(g) => {
+                    for m in g.members.iter().filter(|m| is(&m.name)) {
+                        out.extend(arg_names_of(&m.args));
+                    }
+                }
+                Step::One { .. } => {}
             }
         }
         out.sort();
@@ -886,17 +1142,50 @@ impl Flow {
     pub fn secret_names(&self) -> Vec<String> {
         let mut out = vec![];
         for s in self.all_steps() {
-            if let Step::One {
-                args: Value::Object(args),
-                ..
-            } = s
-            {
-                out.extend(args.values().filter_map(secret_ref).map(str::to_string));
+            let args: Vec<&Value> = match s {
+                Step::One { args, .. } => vec![args],
+                Step::Side(g) => g.members.iter().map(|m| &m.args).collect(),
+            };
+            for a in args {
+                out.extend(direct_values(a).filter_map(secret_ref).map(str::to_string));
             }
         }
         out.sort();
         out.dedup();
         out
+    }
+}
+
+/// The names of args as written: an object's keys, a list's direct items'
+/// keys and its pairs' titles; a whole `"$name"` names none.
+fn arg_names_of(args: &Value) -> Vec<String> {
+    match args {
+        Value::Object(o) => o.keys().cloned().collect(),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(Value::as_object)
+            .flat_map(|o| match pair(o) {
+                Some((title, _)) => title.as_str().map(str::to_string).into_iter().collect(),
+                None => o.keys().cloned().collect::<Vec<_>>(),
+            })
+            .collect(),
+        _ => vec![],
+    }
+}
+
+/// The values of args given as they are: an object's, and a list's direct
+/// items' (a pair's text is formatted, never a secret).
+fn direct_values(args: &Value) -> Box<dyn Iterator<Item = &Value> + '_> {
+    match args {
+        Value::Object(o) => Box::new(o.values()),
+        Value::Array(items) => Box::new(
+            items
+                .iter()
+                .filter_map(Value::as_object)
+                .filter(|o| pair(o).is_none())
+                .flat_map(|o| o.values()),
+        ),
+        _ => Box::new(std::iter::empty()),
     }
 }
 

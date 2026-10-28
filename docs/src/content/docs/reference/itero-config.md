@@ -91,7 +91,8 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 | In an `action` entry | Is |
 |---|---|
 | `description`, `tags`, your own keys | what it is |
-| `args` | data for the action, whatever workflow runs it: an object, or a list of objects (the step runs once per item); [Args and secrets](/guides/secrets/) |
+| `args` | data for the action, whatever workflow runs it: an object, or a list of objects read in order, as a step's; [Args and secrets](/guides/secrets/) |
+| `repeat` | a list of objects: the step runs once per item, each item's values on top of `args`; [Args and secrets](/guides/secrets/#repeat) |
 | `limits` | `quiet` and `most` for this action's steps, like `{"quiet": "1h", "most": "2d"}`; unless given, the workspace's [`limits`](#limits) |
 
 | In a `connector` entry | Is |
@@ -99,6 +100,6 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 | `description`, `tags`, your own keys | what it is |
 | `args` | data for the connector, as environment variables: an object; [A connector's args](/guides/secrets/#a-connectors-args) |
 
-`itero action args set`, `itero connector args set` and `itero wf config set` write `args` and `settings` here, keeping
+`itero action args set`, `itero action repeat set`, `itero connector args set` and `itero wf config set` write `args`, `repeat` and `settings` here, keeping
 the rest of the file as it was. A workflow file has no `meta`: one is an
 error saying where it goes.

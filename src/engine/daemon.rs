@@ -1059,6 +1059,7 @@ fn deliver(
     // what the manager needs beyond the run: the args of the actions its
     // workflows name, and which of their $$ names are defined
     let mut args = BTreeMap::new();
+    let mut repeat = BTreeMap::new();
     let mut names = vec![];
     let mut who = Who {
         run: &run,
@@ -1080,7 +1081,14 @@ fn deliver(
             {
                 match ws.args(&name) {
                     Ok(Some(a)) => {
-                        args.insert(name, a);
+                        args.insert(name.clone(), a);
+                    }
+                    Ok(None) => {}
+                    Err(e) => return give_up(log, j, r.seq, &at, format!("{e:#}")),
+                }
+                match ws.repeat(&name) {
+                    Ok(Some(items)) => {
+                        repeat.insert(name, items);
                     }
                     Ok(None) => {}
                     Err(e) => return give_up(log, j, r.seq, &at, format!("{e:#}")),
@@ -1096,6 +1104,7 @@ fn deliver(
         workflow: root,
         flows: values,
         args,
+        repeat,
         defined: names.into_iter().filter(|n| defined(n)).collect(),
         runtime: run.runtime.clone(),
         event: Event {
@@ -1362,7 +1371,8 @@ pub fn given(state: &Map<String, Value>, job: &StepJob) -> Result<Map<String, Va
 
 /// An action's environment: each value found first in the step's args
 /// (filled from the state when the step started), then the action's own
-/// args (its item, after a split), then the state it is `given`. Names
+/// args with its repeat item on top (after a split), then the state it is
+/// `given`. Names
 /// that cannot be environment variables, and state values past `ENV_MAX`,
 /// are on stdin only; a bigger value from the args is an error.
 pub fn bind(
@@ -1371,13 +1381,22 @@ pub fn bind(
     job: &StepJob,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut values = state.clone();
-    let args = match (&job.item, args) {
-        (Some(item), _) => item.as_object().cloned(),
-        (None, Some(Value::Object(o))) => Some(o.clone()),
-        _ => None,
+    // the action's own args, read as a step's, and its repeat item on top
+    let mut own = match args {
+        Some(a) => flow::fill_args(a, state)?,
+        None => Map::new(),
     };
-    for (k, v) in args.unwrap_or_default() {
-        values.insert(k, resolve(&v, state)?);
+    if let Some(item) = job.item.as_ref().and_then(Value::as_object) {
+        for (k, v) in item {
+            own.insert(k.clone(), flow::fill(v, state)?);
+        }
+    }
+    for (k, v) in own {
+        let v = match flow::secret_ref(&v) {
+            Some(n) => secret(n)?,
+            None => v,
+        };
+        values.insert(k, v);
     }
     for (k, v) in &job.data {
         let v = match flow::secret_ref(v) {

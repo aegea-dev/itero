@@ -231,6 +231,11 @@ pub enum ActionCmd {
         #[command(subcommand)]
         cmd: ActionArgsCmd,
     },
+    /// An action's repeat: its step runs once per item
+    Repeat {
+        #[command(subcommand)]
+        cmd: ActionRepeatCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -248,6 +253,32 @@ pub enum ConnectorCmd {
 }
 
 #[derive(Subcommand)]
+pub enum ActionRepeatCmd {
+    /// Show an action's repeat
+    Get {
+        #[arg(add = complete::actions())]
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set an action's repeat: a list of objects, one run of its step for each
+    Set {
+        #[arg(add = complete::actions())]
+        name: String,
+        /// The items, as JSON
+        #[arg(
+            value_name = "DATA",
+            required_unless_present = "file",
+            conflicts_with = "file"
+        )]
+        data: Option<String>,
+        /// Read them from this file
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum ActionArgsCmd {
     /// Show an action's args
     Get {
@@ -256,7 +287,7 @@ pub enum ActionArgsCmd {
         #[arg(long)]
         json: bool,
     },
-    /// Set an action's args: an object, or a list of objects (its step runs once per item)
+    /// Set an action's args: an object, or a list of objects read in order
     Set {
         #[arg(add = complete::actions())]
         name: String,
@@ -705,6 +736,12 @@ fn dispatch(cli: Cli) -> Result<()> {
                 ActionCmd::Args {
                     cmd: ActionArgsCmd::Set { name, data, file },
                 } => kinds::args_set(&ws, kinds::Kind::Action, &name, data, file)?,
+                ActionCmd::Repeat {
+                    cmd: ActionRepeatCmd::Get { name, json },
+                } => kinds::entry_get(&ws, kinds::Kind::Action, &name, "repeat", json)?,
+                ActionCmd::Repeat {
+                    cmd: ActionRepeatCmd::Set { name, data, file },
+                } => kinds::repeat_set(&ws, &name, data, file)?,
             }
         }
         Cmd::Connector { cmd } => {
