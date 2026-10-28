@@ -1395,3 +1395,67 @@ fn a_list_of_args_joins_the_state_as_one_object_unless_strict() {
     assert_eq!(a.jobs[0].data["fiyat"], 42.5);
     assert!(!r.rt.state.contains_key("fiyat"), "strict: the step's only");
 }
+
+#[test]
+fn one_action_twice_in_a_group_runs_with_each_step_s_args_and_is_read_by_its_as() {
+    let mut r = Run::new(&[(
+        "fiyat",
+        json!({"steps": [
+            {"any": [
+                {"#ayna": {"args": [{"url": "$bir"}], "as": "ayna-1"}},
+                {"#ayna": {"args": [{"url": "$iki"}], "as": "ayna-2"}}
+            ]},
+            "#sonra"
+        ]}),
+    )]);
+    let a =
+        r.start(json!({"bir": "http://127.0.0.1:9/fiyat", "iki": "http://127.0.0.1:8765/fiyat"}));
+    assert_eq!(names(&a), vec!["ayna", "ayna"]);
+    assert_eq!(a.jobs[0].data["url"], "http://127.0.0.1:9/fiyat");
+    assert_eq!(a.jobs[1].data["url"], "http://127.0.0.1:8765/fiyat");
+    // the first copy breaks, the second gives a plain value: it wins by its as
+    assert!(r.failed(&a.jobs[0], "exit 7: bağlantı yok").jobs.is_empty());
+    let a = r.done(&a.jobs[1], json!("42.50"));
+    assert_eq!(names(&a), vec!["sonra"]);
+    // the copy that broke is named by its as too
+    assert_eq!(
+        r.rt.state["output"],
+        json!({"#ayna-2": "42.50", "winner": "#ayna-2",
+               "failed": ["#ayna-1"], "why": {"#ayna-1": "exit 7: bağlantı yok"}})
+    );
+}
+
+#[test]
+fn a_step_of_a_group_whose_on_does_not_hold_is_out_of_it() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            {"race": [{"#önbellek": {"on": [{"$taze": true}]}}, "#canlı"]},
+            "#sonra"
+        ]}),
+    )]);
+    let a = r.start(json!({"taze": false}));
+    assert_eq!(names(&a), vec!["canlı"]);
+    let a = r.done(&a.jobs[0], json!({"fiyat": 5}));
+    assert_eq!(names(&a), vec!["sonra"]);
+    assert_eq!(
+        r.rt.state["output"],
+        json!({"fiyat": 5, "winner": "#canlı"})
+    );
+}
+
+#[test]
+fn a_step_of_a_group_whose_args_cannot_be_read_breaks_in_it() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            {"all": [{"#a": {"args": "$yok"}}, "#b"], "fail": "never"},
+            "#sonra"
+        ]}),
+    )]);
+    let a = r.start(json!({}));
+    assert_eq!(names(&a), vec!["b"]);
+    let a = r.done(&a.jobs[0], json!({"b": 1}));
+    assert_eq!(names(&a), vec!["sonra"]);
+    assert_eq!(r.rt.state["output"]["failed"], json!(["#a"]));
+}

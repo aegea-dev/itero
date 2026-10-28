@@ -618,12 +618,24 @@ impl Machine<'_> {
             }
             Step::Side(group) => {
                 let mut entries: Vec<Entry> = vec![];
-                for (j, n) in group.names.iter().enumerate() {
+                for (j, m) in group.members.iter().enumerate() {
                     path.push(j);
-                    let at = self.start_name(n, &Map::new(), path, true)?;
+                    let at = if m.on.as_ref().is_some_and(|on| !self.holds(on)) {
+                        self.skipped(&m.label);
+                        None
+                    } else {
+                        match self.args(&m.args, m.strict) {
+                            Ok(data) => self.start_name(&m.name, &data, path, true)?,
+                            Err(why) => {
+                                // it cannot start: that step of the group breaks
+                                self.broke = Some((why, m.label.clone()));
+                                None
+                            }
+                        }
+                    };
                     path.pop();
                     let mut e = Entry {
-                        name: label(n),
+                        name: m.label.clone(),
                         at,
                         output: None,
                         outcome: None,
