@@ -1370,3 +1370,28 @@ fn a_group_is_read_from_a_run_written_before_groups_said_how_to_wait() {
     let text = serde_json::to_string(&r.rt).unwrap();
     assert_eq!(serde_json::from_str::<Runtime>(&text).unwrap(), r.rt);
 }
+
+#[test]
+fn a_list_of_args_joins_the_state_as_one_object_unless_strict() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            {"#sor": {"args": [{"url": "$adres", "adet": "$n"}, {"title": "etiket", "text": "ayna $n"}]}},
+            {"#bildir": {"args": [{"fiyat": "$output"}], "strict": true}},
+            "#son"
+        ]}),
+    )]);
+    let a = r.start(json!({"adres": "http://127.0.0.1:9/fiyat", "n": 2}));
+    assert_eq!(
+        a.jobs[0].data,
+        json!({"url": "http://127.0.0.1:9/fiyat", "adet": 2, "etiket": "ayna 2"})
+            .as_object()
+            .unwrap()
+            .clone()
+    );
+    assert_eq!(r.rt.state["etiket"], "ayna 2");
+    assert_eq!(r.rt.state["adet"], 2);
+    let a = r.done(&a.jobs[0], json!(42.5));
+    assert_eq!(a.jobs[0].data["fiyat"], 42.5);
+    assert!(!r.rt.state.contains_key("fiyat"), "strict: the step's only");
+}

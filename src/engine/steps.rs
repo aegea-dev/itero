@@ -731,18 +731,7 @@ impl Machine<'_> {
     /// A step's args filled from the state, an object; unless the step is
     /// strict, they join the state too.
     fn args(&mut self, args: &Value, strict: bool) -> Result<Map<String, Value>, String> {
-        let data = match args {
-            Value::Object(a) => a
-                .iter()
-                .map(|(k, v)| Ok((k.clone(), flow::fill(v, &self.rt.state)?)))
-                .collect::<Result<_, String>>()?,
-            whole => match flow::fill(whole, &self.rt.state)? {
-                Value::Object(a) => a,
-                other => {
-                    return Err(format!("args {whole} is not an object: {}", brief(&other)));
-                }
-            },
-        };
+        let data = flow::fill_args(args, &self.rt.state)?;
         if data.contains_key("output") {
             return Err("args: output is given by itero, the step before's result".into());
         }
@@ -1579,15 +1568,6 @@ fn side_output(entries: &[Entry]) -> Value {
         out.insert(k, v);
     }
     Value::Object(out)
-}
-
-/// A value, shortened for a message.
-fn brief(v: &Value) -> String {
-    let t = v.to_string();
-    match t.char_indices().nth(60) {
-        Some((i, _)) => format!("{}...", &t[..i]),
-        None => t,
-    }
 }
 
 /// Whether a message is a waiting step's: it shares a field with what the

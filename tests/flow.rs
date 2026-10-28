@@ -675,3 +675,87 @@ fn a_bare_list_may_name_a_step_twice() {
     let g = group(r##"["#kontrol", "#kontrol"]"##);
     assert_eq!(g.names.len(), 2);
 }
+
+#[test]
+fn args_may_be_a_list_of_direct_items_and_formatted_pairs() {
+    let f = flow::parse(
+        r##"{ "steps": [{ "#sor": { "args": [{ "url": "$adres", "deneme": 3 }, { "title": "etiket", "text": "ayna $n" }] } }] }"##,
+    )
+    .unwrap();
+    let Step::One { args, .. } = &f.steps[0] else {
+        panic!()
+    };
+    let state = obj(json!({"adres": "http://127.0.0.1:9/fiyat", "n": 2, "bar": 42, "ad": "Ayşe"}));
+    assert_eq!(
+        flow::fill_args(args, &state).unwrap(),
+        obj(json!({"url": "http://127.0.0.1:9/fiyat", "deneme": 3, "etiket": "ayna 2"}))
+    );
+    // a direct item assigns the value as it is; a pair formats it as text
+    let direct = json!([{ "foo": "$bar" }, { "baz": "$ad is bar" }]);
+    assert_eq!(
+        flow::fill_args(&direct, &state).unwrap(),
+        obj(json!({"foo": 42, "baz": "Ayşe is bar"}))
+    );
+    let pairs =
+        json!([{ "title": "foo", "text": "$bar" }, { "title": "baz", "text": "$ad is bar" }]);
+    assert_eq!(
+        flow::fill_args(&pairs, &state).unwrap(),
+        obj(json!({"foo": "42", "baz": "Ayşe is bar"}))
+    );
+    // an empty list is no args; an object and a whole name are read as before
+    assert_eq!(flow::fill_args(&json!([]), &state).unwrap(), Map::new());
+    assert_eq!(
+        flow::fill_args(&json!({"title": "Fiyat", "text": "$bar"}), &state).unwrap(),
+        obj(json!({"title": "Fiyat", "text": 42}))
+    );
+    assert_eq!(
+        flow::fill_args(&json!("$output"), &obj(json!({"output": {"a": 1}}))).unwrap(),
+        obj(json!({"a": 1}))
+    );
+}
+
+#[test]
+fn a_list_of_args_says_what_is_wrong() {
+    for (args, says) in [
+        (r#"[{ "url": "a" }, { "url": "b" }]"#, "url is given twice"),
+        (
+            r#"[{ "url": "a" }, { "title": "url", "text": "b" }]"#,
+            "url is given twice",
+        ),
+        (r#"["$output"]"#, "each item of the list is an object"),
+        (r#"[{ "output": 1 }]"#, "output is given by itero"),
+        (
+            r#"[{ "title": "output", "text": "x" }]"#,
+            "output is given by itero",
+        ),
+        (
+            r#"[{ "title": "", "text": "x" }]"#,
+            "the title of a pair names an arg",
+        ),
+        (
+            r#"[{ "title": "n", "text": 5 }]"#,
+            "the text of a pair is text",
+        ),
+        (
+            r#"[{ "title": "n", "text": "$$API" }]"#,
+            "a secret goes as a direct arg",
+        ),
+        (r#"[{ "n": "key: $$API" }]"#, "secret"),
+        (r#"7"#, "args is an object, a list of objects"),
+    ] {
+        let e = err(&format!(
+            r##"{{ "steps": [{{ "#sor": {{ "args": {args} }} }}] }}"##
+        ));
+        assert!(e.contains(says), "{args}: {e}");
+        assert!(e.contains("#sor"), "{args}: {e}");
+    }
+}
+
+#[test]
+fn the_secrets_of_a_list_of_args_are_named() {
+    let f = flow::parse(
+        r##"{ "steps": [{ "#sor": { "args": [{ "key": "$$API_KEY" }, { "title": "n", "text": "x" }] } }] }"##,
+    )
+    .unwrap();
+    assert_eq!(f.secret_names(), vec!["API_KEY".to_string()]);
+}

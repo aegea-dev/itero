@@ -607,23 +607,7 @@ fn step(v: &Value) -> Result<Step, String> {
                 .transpose()?;
             let args = match fields.remove("args") {
                 None => Value::Object(Map::new()),
-                Some(Value::Object(a)) => {
-                    if a.contains_key("output") {
-                        return Err(format!(
-                            "{k}: args: output is given by itero, the step before's result"
-                        ));
-                    }
-                    let a = Value::Object(a);
-                    // a secret inside text: with no state, only that is refused
-                    fill(&a, &Map::new()).map_err(|why| format!("{k}: args: {why}"))?;
-                    a
-                }
-                Some(a) if state_ref(&a).is_some() => a,
-                Some(_) => {
-                    return Err(format!(
-                        "{k}: args is an object, or a \"$name\" that is one, like \"$output\""
-                    ));
-                }
+                Some(a) => read_args(&a).map_err(|why| format!("{k}: {why}"))?,
             };
             let strict = match fields.remove("strict") {
                 None => false,
@@ -648,6 +632,136 @@ fn step(v: &Value) -> Result<Step, String> {
             })
         }
         _ => Err("a step is a name, a list side by side, or { name: { data } }".into()),
+    }
+}
+
+/// A step's args as written, checked: an object, a list of objects, or a
+/// `"$name"` that is one (`"$output"`). An item of a list is direct, each
+/// key an arg given as it is, or a pair `{"title": name, "text": text}`,
+/// the arg `name` formatted as text. A name may be given once; `output` is
+/// itero's.
+fn read_args(a: &Value) -> Result<Value, String> {
+    let given = |name: &str, seen: &mut Vec<String>| -> Result<(), String> {
+        if name == "output" {
+            return Err("args: output is given by itero, the step before's result".into());
+        }
+        if seen.iter().any(|s| s == name) {
+            return Err(format!("args: {name} is given twice"));
+        }
+        seen.push(name.to_string());
+        Ok(())
+    };
+    // a secret inside text: with no state, only that is refused
+    let no_secret = |v: &Value| {
+        fill(v, &Map::new())
+            .map(drop)
+            .map_err(|why| format!("args: {why}"))
+    };
+    match a {
+        Value::Object(o) => {
+            let mut seen = vec![];
+            for (k, v) in o {
+                given(k, &mut seen)?;
+                no_secret(v)?;
+            }
+        }
+        Value::Array(items) => {
+            let mut seen = vec![];
+            for item in items {
+                let Value::Object(o) = item else {
+                    return Err(format!(
+                        "args: each item of the list is an object, like {{\"url\": \"$url1\"}}, not {item}"
+                    ));
+                };
+                match pair(o) {
+                    Some((title, text)) => {
+                        let Some(name) = title.as_str().filter(|n| !n.is_empty()) else {
+                            return Err(format!("args: the title of a pair names an arg: {item}"));
+                        };
+                        let Value::String(_) = text else {
+                            return Err(format!("args: the text of a pair is text: {item}"));
+                        };
+                        if secret_ref(text).is_some() {
+                            return Err(format!(
+                                "args: a secret goes as a direct arg, {{\"{name}\": {text}}}, not formatted as text"
+                            ));
+                        }
+                        given(name, &mut seen)?;
+                        no_secret(text)?;
+                    }
+                    None => {
+                        for (k, v) in o {
+                            given(k, &mut seen)?;
+                            no_secret(v)?;
+                        }
+                    }
+                }
+            }
+        }
+        a if state_ref(a).is_some() => {}
+        _ => {
+            return Err(
+                "args is an object, a list of objects, or a \"$name\" that is one, like \"$output\""
+                    .into(),
+            );
+        }
+    }
+    Ok(a.clone())
+}
+
+/// An item of a list of args that is a pair, `{"title": name, "text": text}`:
+/// its two values.
+fn pair(item: &Map<String, Value>) -> Option<(&Value, &Value)> {
+    if item.len() != 2 {
+        return None;
+    }
+    Some((item.get("title")?, item.get("text")?))
+}
+
+/// A step's args filled from the state, as one object. An object's values
+/// and a list's direct items are filled as [`fill`] does: a whole `"$name"`
+/// keeps its type. A pair's text is always text. A whole `"$name"` is the
+/// state value, which must be an object.
+pub fn fill_args(args: &Value, state: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+    match args {
+        Value::Object(o) => o
+            .iter()
+            .map(|(k, v)| Ok((k.clone(), fill(v, state)?)))
+            .collect(),
+        Value::Array(items) => {
+            let mut out = Map::new();
+            for item in items {
+                let Value::Object(o) = item else {
+                    return Err(format!(
+                        "args: each item of the list is an object, not {item}"
+                    ));
+                };
+                match pair(o) {
+                    Some((Value::String(name), Value::String(text))) => {
+                        out.insert(name.clone(), Value::String(fill_text(text, state)?));
+                    }
+                    _ => {
+                        for (k, v) in o {
+                            out.insert(k.clone(), fill(v, state)?);
+                        }
+                    }
+                }
+            }
+            Ok(out)
+        }
+        whole => match fill(whole, state)? {
+            Value::Object(o) => Ok(o),
+            other => Err(format!("args {whole} is not an object: {}", brief(&other))),
+        },
+    }
+}
+
+/// A value, shortened for a message.
+fn brief(v: &Value) -> String {
+    let t = v.to_string();
+    match t.char_indices().nth(60) {
+        Some((i, _)) => format!("{}...", &t[..i]),
+        None => t,
     }
 }
 
@@ -886,17 +1000,33 @@ impl Flow {
     pub fn secret_names(&self) -> Vec<String> {
         let mut out = vec![];
         for s in self.all_steps() {
-            if let Step::One {
-                args: Value::Object(args),
-                ..
-            } = s
-            {
-                out.extend(args.values().filter_map(secret_ref).map(str::to_string));
+            if let Step::One { args, .. } = s {
+                out.extend(
+                    direct_values(args)
+                        .filter_map(secret_ref)
+                        .map(str::to_string),
+                );
             }
         }
         out.sort();
         out.dedup();
         out
+    }
+}
+
+/// The values of args given as they are: an object's, and a list's direct
+/// items' (a pair's text is formatted, never a secret).
+fn direct_values(args: &Value) -> Box<dyn Iterator<Item = &Value> + '_> {
+    match args {
+        Value::Object(o) => Box::new(o.values()),
+        Value::Array(items) => Box::new(
+            items
+                .iter()
+                .filter_map(Value::as_object)
+                .filter(|o| pair(o).is_none())
+                .flat_map(|o| o.values()),
+        ),
+        _ => Box::new(std::iter::empty()),
     }
 }
 
