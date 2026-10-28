@@ -851,3 +851,47 @@ fn the_uses_secrets_and_conditions_of_a_group_s_steps_are_read() {
     assert_eq!(f.secret_names(), vec!["AYNA_KEY".to_string()]);
     assert_eq!(f.defined_names(), vec!["YEDEK".to_string()]);
 }
+
+#[test]
+fn a_step_s_on_holds_conditions_only() {
+    for (on, what) in [
+        (r#"{ "event": "deploy.finished" }"#, "event"),
+        (r#"{ "schedule": "0 9 * * *" }"#, "schedule"),
+        (r#"{ "path": "~/Gelen" }"#, "path"),
+    ] {
+        for steps in [
+            format!(r##"[{{ "#süre": {{ "on": [{on}] }} }}]"##),
+            format!(r##"[{{ "any": [{{ "#süre": {{ "on": [{on}] }} }}, "#b"] }}]"##),
+        ] {
+            let e = err(&format!(r##"{{ "steps": {steps} }}"##));
+            assert!(
+                e.contains("a step's on holds conditions")
+                    && e.contains(what)
+                    && e.contains("#süre"),
+                "{steps}: {e}"
+            );
+        }
+    }
+    // conditions stay
+    flow::parse(
+        r##"{ "steps": [{ "#a": { "on": [{ "$ödendi": true }, { "has": "$cevap" }] } }] }"##,
+    )
+    .unwrap();
+}
+
+#[test]
+fn the_names_of_the_args_given_to_an_action_are_read() {
+    let f = flow::parse(
+        r##"{ "steps": [
+              { "#notify": { "args": { "title": "Fiyat", "metin": "$output" } } },
+              { "any": [{ "#notify": { "args": [{ "text": "$x" }, { "title": "ses", "text": "çan" }] } }, "#b"] },
+              { "#notify": { "args": "$output" } },
+              { "#başka": { "args": { "adres": "x" } } }
+            ] }"##,
+    )
+    .unwrap();
+    assert_eq!(
+        f.arg_names("notify"),
+        names(&["metin", "ses", "text", "title"])
+    );
+}

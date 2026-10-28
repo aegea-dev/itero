@@ -787,6 +787,18 @@ fn written(m: &Map<String, Value>) -> Result<Written, String> {
     };
     let mut fields = fields.clone();
     let when = fields.remove("on").map(|w| on(&w)).transpose()?;
+    if let Some(w) = &when {
+        let starts = [
+            (!w.events.is_empty(), "an event"),
+            (!w.schedules.is_empty(), "a schedule"),
+            (!w.paths.is_empty(), "a path"),
+        ];
+        if let Some((_, what)) = starts.iter().find(|(given, _)| *given) {
+            return Err(format!(
+                "{k}: a step's on holds conditions ({{\"$name\": value}}, {{\"has\": ...}}), not {what}: an event, a schedule or a path starts a workflow"
+            ));
+        }
+    }
     let undo = fields
         .remove("undo")
         .map(|u| match u.as_str() {
@@ -1102,6 +1114,27 @@ impl Flow {
         out
     }
 
+    /// The names of the args its steps give the action `action` (without
+    /// `#`), in a list or side by side, each once, sorted.
+    pub fn arg_names(&self, action: &str) -> Vec<String> {
+        let is = |n: &Name| matches!(n, Name::Action { name, .. } if name == action);
+        let mut out = vec![];
+        for s in self.all_steps() {
+            match s {
+                Step::One { name, args, .. } if is(name) => out.extend(arg_names_of(args)),
+                Step::Side(g) => {
+                    for m in g.members.iter().filter(|m| is(&m.name)) {
+                        out.extend(arg_names_of(&m.args));
+                    }
+                }
+                Step::One { .. } => {}
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// The `$$` names in its steps' data: the secrets its actions get.
     pub fn secret_names(&self) -> Vec<String> {
         let mut out = vec![];
@@ -1117,6 +1150,23 @@ impl Flow {
         out.sort();
         out.dedup();
         out
+    }
+}
+
+/// The names of args as written: an object's keys, a list's direct items'
+/// keys and its pairs' titles; a whole `"$name"` names none.
+fn arg_names_of(args: &Value) -> Vec<String> {
+    match args {
+        Value::Object(o) => o.keys().cloned().collect(),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(Value::as_object)
+            .flat_map(|o| match pair(o) {
+                Some((title, _)) => title.as_str().map(str::to_string).into_iter().collect(),
+                None => o.keys().cloned().collect::<Vec<_>>(),
+            })
+            .collect(),
+        _ => vec![],
     }
 }
 

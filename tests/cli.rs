@@ -1016,3 +1016,27 @@ fn check_refuses_a_secret_inside_text() {
         "{said}"
     );
 }
+
+#[test]
+fn check_warns_of_an_arg_notify_does_not_take() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/fiyat.json",
+        r##"{"on": [{"event": "fiyat.soruldu"}], "steps": [{"#notify": {"args": [{"title": "Fiyat", "text": "$output"}]}}]}"##,
+    );
+    let o = itero(d.path(), &["check"]);
+    assert!(o.status.success(), "{}", err(&o));
+    let e = err(&o);
+    assert!(
+        e.contains("warning: fiyat: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Fiyat"),
+        "{e}"
+    );
+    // the args it takes give no warning
+    file(
+        d.path(),
+        "workflows/fiyat.json",
+        r##"{"on": [{"event": "fiyat.soruldu"}], "steps": [{"#notify": {"args": {"title": "Fiyat", "text": "$output"}}}]}"##,
+    );
+    assert!(!err(&itero(d.path(), &["check"])).contains("#notify takes"));
+}

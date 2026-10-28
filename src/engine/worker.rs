@@ -383,6 +383,10 @@ fn plain_why(exit: i32, all: &str) -> String {
 
 /// The built-in `#notify`, when the workspace has no action of that name.
 pub const NOTIFY: &str = "notify";
+/// The args `#notify` reads.
+pub const NOTIFY_ARGS: [&str; 8] = [
+    "title", "text", "subtitle", "sound", "url", "buttons", "wait", "data",
+];
 
 /// The built-in `#forget`: forgets ended runs and their messages past
 /// `limits.keep`, or all ended ones while `.itero/` is past its space.
