@@ -220,9 +220,13 @@ pub struct StepInput {
     /// The run's pinned workflows by name, as JSON: its own and those it
     /// uses as steps.
     pub flows: BTreeMap<String, Value>,
-    /// The args files of the actions they use.
+    /// The args of the actions they use, from the manifest.
     #[serde(default)]
     pub args: BTreeMap<String, Value>,
+    /// The repeat of the actions they use, from the manifest: a step of
+    /// one runs once per item.
+    #[serde(default)]
+    pub repeat: BTreeMap<String, Value>,
     /// The `$$` names that are defined.
     #[serde(default)]
     pub defined: Vec<String>,
@@ -688,7 +692,7 @@ impl Machine<'_> {
                     output: None,
                 };
                 let mine = self.rt.item.as_ref().is_some_and(|it| it.action == *name);
-                if let Some(Value::Array(items)) = self.i.args.get(name)
+                if let Some(Value::Array(items)) = self.i.repeat.get(name)
                     && !mine
                 {
                     if side || self.split.is_some() {

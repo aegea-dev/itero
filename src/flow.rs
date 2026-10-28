@@ -636,7 +636,7 @@ fn step(v: &Value) -> Result<Step, String> {
 /// key an arg given as it is, or a pair `{"title": name, "text": text}`,
 /// the arg `name` formatted as text. A name may be given once; `output` is
 /// itero's.
-fn read_args(a: &Value) -> Result<Value, String> {
+pub(crate) fn read_args(a: &Value) -> Result<Value, String> {
     let given = |name: &str, seen: &mut Vec<String>| -> Result<(), String> {
         if name == "output" {
             return Err("args: output is given by itero, the step before's result".into());

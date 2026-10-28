@@ -11,6 +11,7 @@ struct Run {
     root: String,
     flows: BTreeMap<String, Value>,
     args: BTreeMap<String, Value>,
+    repeat: BTreeMap<String, Value>,
     defined: Vec<String>,
     rt: Runtime,
     now: String,
@@ -26,6 +27,7 @@ impl Run {
                 .map(|(n, f)| (n.to_string(), f.clone()))
                 .collect(),
             args: BTreeMap::new(),
+            repeat: BTreeMap::new(),
             defined: vec![],
             rt: Runtime::default(),
             now: NOW.into(),
@@ -40,6 +42,7 @@ impl Run {
             workflow: self.root.clone(),
             flows: self.flows.clone(),
             args: self.args.clone(),
+            repeat: self.repeat.clone(),
             defined: self.defined.clone(),
             runtime: self.rt.clone(),
             event: Event {
@@ -601,9 +604,11 @@ fn success_false_runs_failure_otherwise_success() {
 }
 
 #[test]
-fn a_list_of_args_runs_the_rest_once_per_item() {
+fn repeat_runs_the_rest_once_per_item() {
     let mut r = Run::new(&[("posta", json!({"steps": ["#imap-check", "#notify"]}))]);
-    r.args.insert(
+    r.args
+        .insert("imap-check".into(), json!({"host": "imap.örnek.test"}));
+    r.repeat.insert(
         "imap-check".into(),
         json!([{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]),
     );
@@ -614,6 +619,7 @@ fn a_list_of_args_runs_the_rest_once_per_item() {
     for (child, user) in a.split.iter().zip(["ayşe@örnek.test", "can@örnek.test"]) {
         let mut c = Run::new(&[("posta", json!({"steps": ["#imap-check", "#notify"]}))]);
         c.args = r.args.clone();
+        c.repeat = r.repeat.clone();
         c.rt = child.clone();
         let a = c.start(Value::Null);
         assert_eq!(names(&a), vec!["imap-check"]);
@@ -1458,4 +1464,17 @@ fn a_step_of_a_group_whose_args_cannot_be_read_breaks_in_it() {
     let a = r.done(&a.jobs[0], json!({"b": 1}));
     assert_eq!(names(&a), vec!["sonra"]);
     assert_eq!(r.rt.state["output"]["failed"], json!(["#a"]));
+}
+
+#[test]
+fn an_action_s_list_of_args_is_one_set_of_values_not_a_repeat() {
+    let mut r = Run::new(&[("posta", json!({"steps": ["#imap-check", "#notify"]}))]);
+    r.args.insert(
+        "imap-check".into(),
+        json!([{"host": "imap.örnek.test"}, {"user": "ayşe@örnek.test"}]),
+    );
+    let a = r.start(json!({}));
+    assert!(a.split.is_empty());
+    assert_eq!(names(&a), vec!["imap-check"]);
+    assert_eq!(a.jobs[0].item, None);
 }

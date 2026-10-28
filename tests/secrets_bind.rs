@@ -86,3 +86,33 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
         );
     }
 }
+
+#[test]
+fn an_action_gets_its_args_merged_and_its_repeat_item_on_top() {
+    use itero::engine::steps::StepJob;
+    let state = json!({"bölge": "tr"}).as_object().unwrap().clone();
+    let job = |item: Option<serde_json::Value>| StepJob {
+        path: vec![0],
+        action: "imap-check".into(),
+        version: None,
+        data: serde_json::Map::new(),
+        item,
+        waiting_since: None,
+        output: None,
+    };
+    let args = json!([{"host": "imap.örnek.test", "user": "kimse"}, {"title": "etiket", "text": "$bölge posta"}]);
+    let env = itero::engine::daemon::bind(
+        &state,
+        Some(&args),
+        &job(Some(json!({"user": "ayşe@örnek.test"}))),
+    )
+    .unwrap();
+    assert_eq!(env["host"], "imap.örnek.test");
+    assert_eq!(
+        env["user"], "ayşe@örnek.test",
+        "the item on top of the args"
+    );
+    assert_eq!(env["etiket"], "tr posta");
+    let env = itero::engine::daemon::bind(&state, Some(&args), &job(None)).unwrap();
+    assert_eq!(env["user"], "kimse");
+}

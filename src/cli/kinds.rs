@@ -215,22 +215,53 @@ impl Kind {
 
 /// An action's or a connector's args, as `itero.config.json` has them.
 pub fn args_get(ws: &Workspace, kind: Kind, name: &str, json: bool) -> Result<()> {
+    entry_get(ws, kind, name, "args", json)
+}
+
+/// One key of an action's or a connector's entry (`args`, `repeat`), as
+/// `itero.config.json` has it.
+pub fn entry_get(ws: &Workspace, kind: Kind, name: &str, key: &str, json: bool) -> Result<()> {
     let name = name.trim_start_matches('#');
     kind.known(ws, name)?;
-    let args = ws
+    let v = ws
         .entries(kind.key())?
         .get(name)
-        .and_then(|e| e.get("args"))
+        .and_then(|e| e.get(key))
         .cloned()
         .unwrap_or(Value::Null);
-    show(json, &args, |a| match a {
-        Value::Null => eprintln!("{name} has no args in {}", crate::workspace::MANIFEST),
+    show(json, &v, |a| match a {
+        Value::Null => eprintln!("{name} has no {key} in {}", crate::workspace::MANIFEST),
         a => println!("{}", serde_json::to_string_pretty(a).unwrap_or_default()),
     })
 }
 
-/// Sets an action's args (an object, or a list of objects: its step runs
-/// once per item) or a connector's (an object: a connector runs once).
+/// Sets an action's repeat: a list of one or more objects, its step run
+/// once per item.
+pub fn repeat_set(
+    ws: &Workspace,
+    name: &str,
+    data: Option<String>,
+    file: Option<std::path::PathBuf>,
+) -> Result<()> {
+    let name = name.trim_start_matches('#');
+    Kind::Action.known(ws, name)?;
+    let wrong = || {
+        anyhow::anyhow!(
+            "repeat is a list of one or more objects, as JSON: one run of the step for each"
+        )
+    };
+    let v: Value = serde_json::from_str(&given(data, file)?).map_err(|_| wrong())?;
+    match &v {
+        Value::Array(items) if !items.is_empty() && items.iter().all(Value::is_object) => {}
+        _ => return Err(wrong()),
+    }
+    let f = ws.write_entry(Kind::Action.key(), name, "repeat", v)?;
+    println!("{}", f.display());
+    Ok(())
+}
+
+/// Sets an action's args (an object, or a list of objects read in order,
+/// as a step's) or a connector's (an object: a connector runs once).
 pub fn args_set(
     ws: &Workspace,
     kind: Kind,
@@ -246,7 +277,9 @@ pub fn args_set(
     })?;
     match (kind, &v) {
         (_, Value::Object(_)) => {}
-        (Kind::Action, Value::Array(items)) if items.iter().all(Value::is_object) => {}
+        (Kind::Action, Value::Array(items)) if items.iter().all(Value::is_object) => {
+            crate::flow::read_args(&v).map_err(|why| anyhow::anyhow!("{why}"))?;
+        }
         (Kind::Action, _) => bail!("args are an object, or a list of objects, as JSON"),
         (Kind::Connector, _) => {
             bail!("a connector's args are an object, as JSON: a connector runs once")
