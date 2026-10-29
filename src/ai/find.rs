@@ -146,9 +146,12 @@ fn modified(p: &Path) -> (u64, u64) {
 
 /// The entry for a file whose header itero-ai read.
 fn entry(f: &Found, v: &Value, modified: u64) -> Entry {
-    let quant = match v["quant"].as_str() {
-        Some(q) if q != "unknown" => q.to_string(),
-        _ => f.quant_hint.clone().unwrap_or_else(|| "unknown".into()),
+    // the file's name says it, as Hugging Face and llama.cpp's -hf name it;
+    // its header only when the name does not
+    let quant = match (&f.quant_hint, v["quant"].as_str()) {
+        (Some(q), _) => q.clone(),
+        (None, Some(q)) => q.to_string(),
+        (None, None) => "unknown".into(),
     };
     Entry {
         name: format!("{}:{quant}", f.repo),
@@ -173,12 +176,13 @@ fn entry(f: &Found, v: &Value, modified: u64) -> Entry {
 /// The index, built again from what is on disk: an unchanged file keeps
 /// its entry, a new or changed one is inspected with `inspect`, a file
 /// gone takes its entry with it, and the marks (`downloaded`, `removed`)
-/// are carried over by name. Gives the new index and how many files were
-/// inspected.
+/// are carried over by name. A file `inspect` refuses (`None`: not a GGUF
+/// file, one cut short) is left out. Gives the new index and how many
+/// files were inspected.
 pub fn rebuild(
     old: &Index,
     found: &[Found],
-    inspect: &mut dyn FnMut(&Path) -> Result<Value, String>,
+    inspect: &mut dyn FnMut(&Path) -> Result<Option<Value>, String>,
 ) -> Result<(Index, usize), String> {
     let mut inspected = 0;
     let mut new: Vec<Entry> = vec![];
@@ -195,7 +199,9 @@ pub fn rebuild(
             },
             None => {
                 inspected += 1;
-                let v = inspect(&f.path)?;
+                let Some(v) = inspect(&f.path)? else {
+                    continue;
+                };
                 if v["architecture"] == "clip" {
                     continue;
                 }
@@ -221,19 +227,28 @@ pub fn rebuild(
 /// it when done: a machine with no model never runs one. itero-ai not
 /// installed: nothing can use a model, and it ends well, saying so.
 pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
-    let fail = |e: String| Failure::Error(format!("#find-models: {e}"));
+    scan(&r.root)
+        .map(Outcome::Done)
+        .map_err(|e| Failure::Error(format!("#find-models: {e}")))
+}
+
+/// Builds the index again from what is on disk and writes it; `root` is
+/// the workspace whose own short-lived itero-ai reads new headers. Gives
+/// how many models there are and how many files were inspected.
+pub fn scan(root: &Path) -> Result<Value, String> {
+    let fail = |e: String| e;
     let index = super::index_path().map_err(|e| fail(format!("{e:#}")))?;
     let old = Index::read(&index).map_err(|e| fail(format!("{e:#}")))?;
     let found = model_files(&roots().map_err(|e| fail(format!("{e:#}")))?);
     let socket = std::env::var_os("ITERO_AI_SOCKET").map(PathBuf::from);
     let mut started = None;
     let mut client = None;
-    let mut inspect = |path: &Path| -> Result<Value, String> {
+    let mut inspect = |path: &Path| -> Result<Option<Value>, String> {
         if client.is_none() {
             let sock = match &socket {
                 Some(s) => s.clone(),
                 None => {
-                    let own = super::socket_for(&r.root).with_extension("find.sock");
+                    let own = super::socket_for(root).with_extension("find.sock");
                     let s = super::ensure_at(own, Duration::from_secs(60), |_| ())
                         .map_err(|e| format!("{e:#}"))?;
                     let sock = s.socket.clone();
@@ -253,15 +268,16 @@ pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
             .json(&json!({ "path": path }))
             .send()
             .map_err(|e| format!("itero-ai did not answer: {e}"))?;
-        let ok = resp.status().is_success();
+        let status = resp.status().as_u16();
         let v: Value = resp.json().map_err(|e| e.to_string())?;
-        if ok {
-            Ok(v)
-        } else {
-            Err(v["error"]["message"]
+        match status {
+            200 => Ok(Some(v)),
+            // a file that is no model, or gone since: left out
+            400 | 404 => Ok(None),
+            _ => Err(v["error"]["message"]
                 .as_str()
                 .unwrap_or("itero-ai refused")
-                .to_string())
+                .to_string()),
         }
     };
     let needs_inspecting = found.iter().any(|f| {
@@ -271,10 +287,10 @@ pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
             .any(|e| e.paths.first() == Some(&f.path) && e.modified == secs && e.bytes == bytes)
     });
     if needs_inspecting && socket.is_none() && super::binary().is_err() {
-        return Ok(Outcome::Done(json!({
+        return Ok(json!({
             "models": 0, "inspected": 0,
             "skipped": "itero-ai is not installed: no model can be used",
-        })));
+        }));
     }
     let (ix, inspected) = rebuild(&old, &found, &mut inspect).map_err(fail)?;
     if let Some(mut s) = started
@@ -286,7 +302,5 @@ pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
     if ix != old {
         ix.write(&index).map_err(|e| fail(format!("{e:#}")))?;
     }
-    Ok(Outcome::Done(
-        json!({ "models": ix.models.len(), "inspected": inspected }),
-    ))
+    Ok(json!({ "models": ix.models.len(), "inspected": inspected }))
 }

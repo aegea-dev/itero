@@ -26,6 +26,16 @@ pub fn unix_client(
         .build()
 }
 
+/// A blocking client for a download of gigabytes: it gives up when it
+/// cannot connect within `connect`, never on the whole's time.
+pub fn download_client(connect: Duration) -> reqwest::Result<reqwest::blocking::Client> {
+    ring();
+    reqwest::blocking::Client::builder()
+        .connect_timeout(connect)
+        .timeout(None)
+        .build()
+}
+
 /// Installs ring as the process's TLS provider, the first time.
 fn ring() {
     static RING: std::sync::Once = std::sync::Once::new();

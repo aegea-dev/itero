@@ -1,6 +1,7 @@
 //! itero-ai, the local model's server: where it is, its socket, itero's
 //! own folder of models, and starting it when a step needs it (or using
 //! the one that answers).
+pub mod download;
 pub mod find;
 pub mod keeper;
 pub mod step;

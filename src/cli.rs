@@ -1,4 +1,5 @@
 //! The command line.
+mod ai;
 mod complete;
 mod kinds;
 mod out;
@@ -91,6 +92,11 @@ pub enum Cmd {
         #[command(subcommand)]
         cmd: ConnectorCmd,
     },
+    /// The local models #ai steps use (through itero-ai)
+    Ai {
+        #[command(subcommand)]
+        cmd: AiCmd,
+    },
     /// Print the script that completes itero's commands and names on Tab
     Completion {
         /// bash, zsh or fish
@@ -143,6 +149,47 @@ pub enum Shell {
     Bash,
     Zsh,
     Fish,
+}
+
+#[derive(Subcommand)]
+pub enum AiCmd {
+    /// The models on this machine, and downloading or removing one
+    Models {
+        #[command(subcommand)]
+        cmd: ModelsCmd,
+    },
+    /// One GGUF file: what it is, and whether it runs here
+    Inspect {
+        file: std::path::PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ModelsCmd {
+    /// The models found: LM Studio's, Hugging Face's cache, and itero's own
+    List {
+        #[arg(long)]
+        json: bool,
+        /// The removed ones too
+        #[arg(long)]
+        all: bool,
+    },
+    /// Download one from Hugging Face: <org>/<repo>, with :<QUANT> or without
+    Add {
+        name: String,
+        /// Download without asking
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Take one out of use; its file stays
+    Remove {
+        name: String,
+        /// Delete its file too (only one itero downloaded)
+        #[arg(long)]
+        delete: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -758,6 +805,14 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Completion { shell } => complete::script(shell, command),
+        Cmd::Ai { cmd } => match cmd {
+            AiCmd::Models { cmd } => match cmd {
+                ModelsCmd::List { json, all } => ai::list(json, all)?,
+                ModelsCmd::Add { name, yes } => ai::add(&name, yes)?,
+                ModelsCmd::Remove { name, delete } => ai::remove(&name, delete)?,
+            },
+            AiCmd::Inspect { file, json } => ai::inspect(&file, json)?,
+        },
         Cmd::Secret { name, file } => {
             crate::engine::secrets::ready(&name)?;
             let value = match file {

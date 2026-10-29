@@ -52,3 +52,5 @@ objc2-app-kit = { version = "~0.3.2", default-features = false, features = ["std
 chrono-tz = "~0.10"
 tempfile = "~3.27.0"
 tower = { version = "~0.5.3", features = ["util"] }
+# a download that breaks, in the tests of itero ai models add
+futures-core = "~0.3.31"
