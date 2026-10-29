@@ -5,7 +5,26 @@
 use itero::engine::journal::Journal;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// A daemon this test started, killed when the test ends.
+struct Daemon(Child);
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn until(what: &str, f: impl Fn() -> bool) {
+    let end = Instant::now() + Duration::from_secs(20);
+    while !f() {
+        assert!(Instant::now() < end, "waited 20s for {what}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
 
 struct Machine {
     d: tempfile::TempDir,
@@ -27,16 +46,63 @@ impl Machine {
         w.canonicalize().unwrap()
     }
 
-    fn run(&self, dir: &Path, args: &[&str]) -> (bool, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_itero"))
-            .args(args)
-            .current_dir(dir)
+    /// A workspace whose workflow, on `deneme.geldi`, writes the file
+    /// `çıktı` in it.
+    fn busy_workspace(&self, name: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let w = self.workspace(name);
+        std::fs::write(
+            w.join("itero.config.json"),
+            r#"{"workflow": {"keep": {"off": true}, "models": {"off": true}}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(w.join("workflows")).unwrap();
+        std::fs::create_dir_all(w.join("actions")).unwrap();
+        std::fs::write(
+            w.join("workflows/yaz.json"),
+            r##"{"on": [{"event": "deneme.geldi"}], "steps": ["#yaz"]}"##,
+        )
+        .unwrap();
+        let action = w.join("actions/yaz");
+        std::fs::write(
+            &action,
+            format!("#!/bin/sh\necho tamam > '{}'\n", w.join("çıktı").display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&action, std::fs::Permissions::from_mode(0o755)).unwrap();
+        w
+    }
+
+    fn command(&self, dir: &Path) -> Command {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_itero"));
+        c.current_dir(dir)
             .env("HOME", self.d.path().join("ev"))
             .env("XDG_STATE_HOME", self.d.path().join("durum"))
             .env("XDG_CACHE_HOME", self.d.path().join("önbellek"))
             .env("ITERO_NO_SECRET_STORE", "1")
-            .output()
+            .env("ITERO_NOTIFIER", "/usr/bin/true");
+        c
+    }
+
+    /// `itero daemon --all`, from this machine's own folder.
+    fn daemon_all(&self) -> Daemon {
+        let child = self
+            .command(self.d.path())
+            .args(["daemon", "--all"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
             .unwrap();
+        Daemon(child)
+    }
+
+    fn ws(&self, dir: &Path) -> itero::workspace::Workspace {
+        itero::workspace::find(dir).unwrap()
+    }
+
+    fn run(&self, dir: &Path, args: &[&str]) -> (bool, String) {
+        let out = self.command(dir).args(args).output().unwrap();
         let text = String::from_utf8_lossy(&out.stdout).to_string()
             + &String::from_utf8_lossy(&out.stderr);
         (out.status.success(), text)
@@ -120,4 +186,33 @@ fn a_moved_folder_keeps_its_entry_and_a_gone_one_is_missing() {
     assert_eq!(v.as_array().unwrap().len(), 1);
     assert_eq!(v[0]["folder"], moved.display().to_string());
     assert_eq!(v[0]["state"], "stopped");
+}
+
+#[test]
+fn all_runs_each_listed_workspace_and_follows_the_list() {
+    let m = Machine::new();
+    let (a, b) = (m.busy_workspace("bir"), m.busy_workspace("iki"));
+    m.ok(&a, &["workspace", "add"]);
+    let _d = m.daemon_all();
+    until("a to be run", || {
+        itero::engine::lock::take(&m.ws(&a), "deneme").is_err()
+    });
+    m.ok(&a, &["emit", "deneme.geldi"]);
+    until("a's workflow", || a.join("çıktı").is_file());
+    // added while it runs: started
+    m.ok(&b, &["workspace", "add"]);
+    until("b to be run", || {
+        itero::engine::lock::take(&m.ws(&b), "deneme").is_err()
+    });
+    m.ok(&b, &["emit", "deneme.geldi"]);
+    until("b's workflow", || b.join("çıktı").is_file());
+    // removed while it runs: stopped, its lock free
+    m.ok(&a, &["workspace", "remove"]);
+    until("a to be stopped", || {
+        itero::engine::lock::take(&m.ws(&a), "deneme").is_ok()
+    });
+    // and b runs on
+    std::fs::remove_file(b.join("çıktı")).unwrap();
+    m.ok(&b, &["emit", "deneme.geldi"]);
+    until("b's workflow again", || b.join("çıktı").is_file());
 }

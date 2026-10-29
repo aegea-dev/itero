@@ -25,6 +25,9 @@ pub struct Cli {
 pub enum Cmd {
     /// Run the workspace's workflows: their schedules, events and jobs, as each comes due
     Daemon {
+        /// Every workspace on the machine's list (itero workspace list), not this folder's
+        #[arg(long, conflicts_with = "once")]
+        all: bool,
         /// One pass, then stop: for tests and scripts, so hidden
         #[arg(long, hide = true)]
         once: bool,
@@ -473,9 +476,10 @@ extern "C" fn on_stop(_: libc::c_int) {
     STOP.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// When the daemon is asked to stop (SIGINT, SIGTERM), logs
-/// `daemon.stopped` and ends the process.
-fn stop_on_signal(log: crate::engine::log::Log) {
+/// When the daemon is asked to stop (SIGINT, SIGTERM), stops itero-ai,
+/// calls `last` (each workspace logs `daemon.stopped`) and ends the
+/// process.
+fn stop_on_signal(last: impl FnOnce() + Send + 'static) {
     #[cfg(unix)]
     // SAFETY: the handler only stores to an atomic
     unsafe {
@@ -488,7 +492,7 @@ fn stop_on_signal(log: crate::engine::log::Log) {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         crate::ai::keeper::Keeper::global().stop();
-        log.write("daemon.stopped", serde_json::json!({}));
+        last();
         std::process::exit(0);
     });
 }
@@ -548,10 +552,28 @@ fn dispatch(cli: Cli) -> Result<()> {
         ignore_sigpipe();
     }
     match cli.cmd {
+        Cmd::Daemon { all: true, .. } => {
+            let machine = std::sync::Arc::new(crate::engine::machine::Machine::new(
+                std::env::current_exe()?,
+                report,
+            ));
+            {
+                let machine = machine.clone();
+                stop_on_signal(move || {
+                    machine.each(|r| r.log.write("daemon.stopped", serde_json::json!({})))
+                });
+            }
+            eprintln!(
+                "itero: running the workspaces on the machine's list ({}), each as it comes due (Ctrl-C stops)",
+                crate::machine::list_path()?.display()
+            );
+            machine.follow()?;
+        }
         Cmd::Daemon {
             once,
             now,
             no_serve,
+            ..
         } => {
             use crate::engine::daemon;
             let ws = workspace()?;
@@ -585,7 +607,8 @@ fn dispatch(cli: Cli) -> Result<()> {
                     .log
                     .write("port.changed", serde_json::json!({ "why": note }));
             }
-            stop_on_signal(running.log.clone());
+            let log = running.log.clone();
+            stop_on_signal(move || log.write("daemon.stopped", serde_json::json!({})));
             eprintln!(
                 "itero: running the workflows in {}, each as it comes due (Ctrl-C stops); log: .itero/itero.log",
                 ws.root.display()

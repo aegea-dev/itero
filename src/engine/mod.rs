@@ -8,6 +8,7 @@ pub mod http;
 pub mod journal;
 pub mod lock;
 pub mod log;
+pub mod machine;
 pub mod progress;
 pub mod running;
 pub mod schedule;
