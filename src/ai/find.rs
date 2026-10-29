@@ -65,18 +65,25 @@ fn gguf_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// The quantization a file's name says: its last part like `Q4_K_M`,
-/// `IQ4_XS`, `F16`, `BF16` or `F32`.
+/// `IQ4_XS`, `F16`, `BF16` or `F32`, with Unsloth's `UD-` (Dynamic)
+/// before it kept, as llama.cpp's `-hf` names it: `UD-Q4_K_XL`.
 pub fn quant_of(file: &str) -> Option<String> {
     let stem = file.strip_suffix(".gguf").unwrap_or(file);
-    stem.split(['-', '.'])
+    let parts: Vec<String> = stem
+        .split(['-', '.'])
         .map(str::to_ascii_uppercase)
-        .rfind(|t| {
-            let digit_after = |p: &str| {
-                t.strip_prefix(p)
-                    .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))
-            };
-            digit_after("Q") || digit_after("IQ") || ["F16", "BF16", "F32"].contains(&t.as_str())
-        })
+        .collect();
+    let i = parts.iter().rposition(|t| {
+        let digit_after = |p: &str| {
+            t.strip_prefix(p)
+                .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))
+        };
+        digit_after("Q") || digit_after("IQ") || ["F16", "BF16", "F32"].contains(&t.as_str())
+    })?;
+    Some(match i.checked_sub(1).map(|j| parts[j].as_str()) {
+        Some("UD") => format!("UD-{}", parts[i]),
+        _ => parts[i].clone(),
+    })
 }
 
 /// A part of a model in parts other than its first: `-00002-of-00003`.
@@ -144,15 +151,19 @@ fn modified(p: &Path) -> (u64, u64) {
     (secs, m.map_or(0, |m| m.len()))
 }
 
-/// The entry for a file whose header itero-ai read.
-fn entry(f: &Found, v: &Value, modified: u64) -> Entry {
-    // the file's name says it, as Hugging Face and llama.cpp's -hf name it;
-    // its header only when the name does not
-    let quant = match (&f.quant_hint, v["quant"].as_str()) {
+/// A file's quantization: its name says it, as Hugging Face and
+/// llama.cpp's -hf name it; its header only when the name does not.
+fn quant(f: &Found, header: Option<&str>) -> String {
+    match (&f.quant_hint, header) {
         (Some(q), _) => q.clone(),
         (None, Some(q)) => q.to_string(),
         (None, None) => "unknown".into(),
-    };
+    }
+}
+
+/// The entry for a file whose header itero-ai read.
+fn entry(f: &Found, v: &Value, modified: u64) -> Entry {
+    let quant = quant(f, v["quant"].as_str());
     Entry {
         name: format!("{}:{quant}", f.repo),
         repo: f.repo.clone(),
@@ -193,10 +204,16 @@ pub fn rebuild(
             .iter()
             .find(|e| e.paths.first() == Some(&f.path) && e.modified == secs && e.bytes == bytes);
         let mut e = match known {
-            Some(e) => Entry {
-                paths: vec![f.path.clone()],
-                ..e.clone()
-            },
+            // named again: an index from an older itero may name it otherwise
+            Some(e) => {
+                let quant = quant(f, Some(&e.quant));
+                Entry {
+                    name: format!("{}:{quant}", e.repo),
+                    quant,
+                    paths: vec![f.path.clone()],
+                    ..e.clone()
+                }
+            }
             None => {
                 inspected += 1;
                 let Some(v) = inspect(&f.path)? else {

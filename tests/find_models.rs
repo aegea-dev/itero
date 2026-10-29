@@ -2,7 +2,7 @@
 //! are. Its own test binary: it sets HOME, XDG_CACHE_HOME, HF_HUB_CACHE
 //! and ITERO_AI_BIN for the process.
 #![cfg(unix)]
-use itero::ai::find::{Root, model_files};
+use itero::ai::find::{Root, model_files, rebuild};
 use itero::engine::worker::{self, Outcome, StepRun};
 use serde_json::Map;
 use std::path::{Path, PathBuf};
@@ -53,12 +53,59 @@ fn files_are_found_and_named_by_where_they_are() {
     assert_eq!(
         names,
         vec![
-            ("unsloth/Qwen3.5-4B-GGUF".into(), Some("Q3_K_XL".into())),
             ("unsloth/Qwen3.5-4B-GGUF".into(), Some("Q4_K_M".into())),
             ("unsloth/Qwen3.5-4B-GGUF".into(), Some("Q4_K_M".into())),
+            // Unsloth's Dynamic files keep their prefix, as llama.cpp's -hf names them
+            ("unsloth/Qwen3.5-4B-GGUF".into(), Some("UD-Q3_K_XL".into())),
             ("örnek/Büyük-GGUF".into(), Some("Q8_0".into())),
         ]
     );
+}
+
+#[test]
+fn an_unchanged_file_takes_the_name_its_file_name_says() {
+    // an index from before Unsloth's UD- prefix was kept: the file is not
+    // read again, but its name is put right
+    let d = tempfile::tempdir().unwrap();
+    let lm = d.path().join("lmstudio");
+    let path = lm.join("unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-UD-Q4_K_XL.gguf");
+    touch(&path);
+    let found = model_files(&[Root::LmStudio(lm)]);
+    let m = std::fs::metadata(&path).unwrap();
+    let secs = m
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let old = itero_ai_index::Index {
+        models: vec![itero_ai_index::Entry {
+            name: "unsloth/Qwen3.5-4B-GGUF:Q4_K_XL".into(),
+            repo: "unsloth/Qwen3.5-4B-GGUF".into(),
+            quant: "Q4_K_XL".into(),
+            paths: vec![path.clone()],
+            maker: "unsloth".into(),
+            params: Some("4B".into()),
+            architecture: "qwen35".into(),
+            context: Some(262_144),
+            bytes: m.len(),
+            licence: "apache-2.0".into(),
+            chat: true,
+            runs: true,
+            thinking: true,
+            modified: secs,
+            downloaded: None,
+            removed: Some("2026-10-29T10:00:00Z".into()),
+        }],
+    };
+    let (ix, inspected) = rebuild(&old, &found, &mut |_| panic!("read again")).unwrap();
+    assert_eq!(inspected, 0);
+    let e = &ix.models[0];
+    assert_eq!(
+        (e.name.as_str(), e.quant.as_str()),
+        ("unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL", "UD-Q4_K_XL")
+    );
+    assert!(e.removed.is_some());
 }
 
 #[test]
