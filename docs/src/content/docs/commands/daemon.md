@@ -56,5 +56,7 @@ does goes to `.itero/itero.log`, one JSON line each
 
 One daemon per workspace: whichever runs it holds a lock on its
 `.itero/daemon.lock`, and a second one is refused, naming the first. To
-have it running from login on, without a terminal:
-[`itero service install`](/commands/service/).
+have your workspaces running from login on, without a terminal:
+`itero workspace add` in each, then
+[`itero service install`](/commands/service/), which runs
+`itero daemon --all`.

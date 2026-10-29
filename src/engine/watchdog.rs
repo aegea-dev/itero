@@ -106,13 +106,46 @@ pub fn pause(previous: Duration, ran: Duration) -> Duration {
     (previous * 2).clamp(Duration::from_secs(1), Duration::from_secs(60))
 }
 
+/// The daemon a watchdog keeps running.
+pub enum Target {
+    /// `itero daemon` in a workspace: its port is read at each check, as
+    /// the OS may give it another one at a start.
+    Workspace(Box<crate::workspace::Workspace>),
+    /// `itero daemon --all`: every workspace on the machine's list, on
+    /// `port` or the one the daemon kept. Its /health has no pass of its
+    /// own, so a stuck workspace never restarts it: the daemon tells it.
+    Machine { port: Option<u16> },
+}
+
+impl Target {
+    /// The daemon's command line, after the itero binary.
+    pub fn args(&self) -> Vec<String> {
+        match self {
+            Target::Workspace(_) => vec!["daemon".into()],
+            Target::Machine { port } => {
+                let mut a = vec!["daemon".to_string(), "--all".into()];
+                if let Some(p) = port {
+                    a.extend(["--port".into(), p.to_string()]);
+                }
+                a
+            }
+        }
+    }
+
+    /// Where the daemon answers now.
+    pub fn port(&self) -> Option<u16> {
+        match self {
+            Target::Workspace(ws) => ws.daemon_port(),
+            Target::Machine { port } => port.or_else(super::http::machine_port),
+        }
+    }
+}
+
 /// What the watchdog runs.
 pub struct Options {
     /// This itero binary.
     pub exe: PathBuf,
-    /// The workspace: its daemon's port is read at each check, as the OS
-    /// may give it another one at a start.
-    pub ws: crate::workspace::Workspace,
+    pub target: Target,
     pub rules: Rules,
     /// Where its own lines and the daemon's stderr go; stderr when none.
     pub log: Option<PathBuf>,
@@ -168,7 +201,7 @@ pub fn run(o: &Options) -> Result<()> {
             None => Stdio::inherit(),
         };
         let mut child = Command::new(&o.exe)
-            .arg("daemon")
+            .args(o.target.args())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(stderr)
@@ -180,7 +213,7 @@ pub fn run(o: &Options) -> Result<()> {
         let why = loop {
             let found = match child.wait_timeout(o.rules.check_every)? {
                 Some(status) => Probe::Exited(status.to_string()),
-                None => probe(&client, o.ws.daemon_port()),
+                None => probe(&client, o.target.port()),
             };
             if let Verdict::Restart(why) = decide(&mut w, &found, Utc::now(), &o.rules) {
                 break why;

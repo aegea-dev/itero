@@ -387,11 +387,95 @@ pub fn which(ws: &Workspace, name: &str, json: bool) -> Result<()> {
     })
 }
 
-/// The service's state, and the daemon's health.
-pub fn service_status(ws: &Workspace, json: bool) -> Result<()> {
-    let port = ws.daemon_port();
+/// `itero service install`: the machine's service, `itero watchdog
+/// --all`, installed and started.
+pub fn service_install(port: Option<u16>, yes: bool) -> Result<()> {
+    use crate::engine::service;
+    let exe = std::env::current_exe()?;
+    let state = crate::machine::state_dir()?;
+    std::fs::create_dir_all(&state)?;
+    let home = std::path::PathBuf::from(
+        std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("HOME is not set"))?,
+    );
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|c| !c.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    move_old_services(&service::old_services(&home, &config), yes)?;
+    let path = std::env::var("PATH").ok();
+    service::install(service::machine_ctx(&exe, &home, &state, port, path))?;
+    println!(
+        "installed: {} runs every workspace on this machine's list (itero workspace list); it starts at login",
+        service::MACHINE
+    );
+    match port {
+        Some(p) => println!("API: http://127.0.0.1:{p}/"),
+        None => println!("API: on the port it keeps, as itero service status says"),
+    }
+    println!("log: {}", state.join("daemon.log").display());
+    println!("it keeps this shell's PATH; install again after changing it");
+    Ok(())
+}
+
+/// The services from before, one per workspace: removed, and their
+/// workspaces added to the machine's list, after asking.
+fn move_old_services(old: &[crate::engine::service::Old], yes: bool) -> Result<()> {
+    use crate::engine::service;
+    if old.is_empty() {
+        return Ok(());
+    }
+    let found = |o: &service::Old| {
+        crate::workspace::find(&o.folder)
+            .ok()
+            .filter(|ws| ws.root == o.folder)
+    };
+    println!("itero's services from before, one per workspace:");
+    for o in old {
+        match found(o) {
+            Some(_) => println!("  {}: onto the machine's list", o.folder.display()),
+            None => println!(
+                "  {}: no workspace there now, removed only",
+                o.folder.display()
+            ),
+        }
+    }
+    if !super::out::confirm(
+        "remove them, and add their workspaces to the machine's list?",
+        yes,
+        "itero service install --yes moves them over (or itero service uninstall in each, with an older itero)",
+    )? {
+        anyhow::bail!("nothing changed");
+    }
+    for o in old {
+        let label = o
+            .label
+            .parse()
+            .map_err(|e| anyhow::anyhow!("{}: {e}", o.label))?;
+        service::uninstall(&label)?;
+        println!("removed {}", o.label);
+        let Some(ws) = found(o) else { continue };
+        // its daemon ends with its service: once its lock is free, the
+        // machine's daemon can take the workspace
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while crate::engine::lock::take(&ws, "itero service install").is_err() {
+            if std::time::Instant::now() > end {
+                anyhow::bail!(
+                    "{}: its daemon is still running ten seconds after its service was removed",
+                    ws.root.display()
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        super::workspace::add_to_list(&ws)?;
+    }
+    Ok(())
+}
+
+/// The machine's service's state, and its daemon's health.
+pub fn service_status(json: bool) -> Result<()> {
+    let port = crate::engine::http::machine_port();
     let v = json!({
-        "service": crate::engine::service::status(&ws.root)?.to_string(),
+        "service": crate::engine::service::status(&crate::engine::service::machine_label())?,
         "port": port,
         "daemon": port.and_then(super::daemon_health),
     });
@@ -405,15 +489,17 @@ pub fn service_status(ws: &Workspace, json: bool) -> Result<()> {
             }
             return;
         }
-        println!(
-            "daemon: pid {}, {} passes, last {}{}",
-            h["pid"],
-            h["passes"],
-            h["last_pass"].as_str().unwrap_or("none yet"),
-            h["last_error"]
-                .as_str()
-                .map(|e| format!(", last error: {e}"))
-                .unwrap_or_default()
-        );
+        println!("daemon: pid {}, port {}", h["pid"], v["port"]);
+        for (name, w) in h["workspaces"].as_object().into_iter().flatten() {
+            println!(
+                "  {name}: {} passes, last {}{}",
+                w["passes"],
+                w["last_pass"].as_str().unwrap_or("none yet"),
+                w["last_error"]
+                    .as_str()
+                    .map(|e| format!(", last error: {e}"))
+                    .unwrap_or_default()
+            );
+        }
     })
 }

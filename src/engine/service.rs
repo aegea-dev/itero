@@ -1,7 +1,9 @@
 //! The daemon as an OS service: a per-user launchd agent (macOS) or systemd
-//! user unit (Linux) that runs `itero watchdog` in the workspace, starts at
-//! login, and is restarted by the OS if the watchdog itself ends. One
-//! service per workspace, through `service-manager`.
+//! user unit (Linux) that runs `itero watchdog --all`, starts at login, and
+//! is restarted by the OS if the watchdog itself ends. One service for the
+//! machine, running every workspace on its list, through
+//! `service-manager`. Before, each workspace had a service of its own
+//! (`label`, `install_ctx`): those are found and moved over.
 use anyhow::{Result, anyhow};
 use service_manager::{
     RestartPolicy, ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx,
@@ -21,6 +23,44 @@ pub fn label(root: &Path) -> ServiceLabel {
     format!("dev.aegea.itero.daemon-{hash}")
         .parse()
         .expect("a valid label")
+}
+
+/// The machine's service's label.
+pub const MACHINE: &str = "dev.aegea.itero.daemon";
+
+pub fn machine_label() -> ServiceLabel {
+    MACHINE.parse().expect("a valid label")
+}
+
+/// The machine's service: `itero watchdog --all` from the home folder,
+/// its log in itero's state folder, with `path` (the installing shell's
+/// `PATH`: a service starts with a bare one, which would not find mail, uv
+/// or bun).
+pub fn machine_ctx(
+    exe: &Path,
+    home: &Path,
+    state: &Path,
+    port: Option<u16>,
+    path: Option<String>,
+) -> ServiceInstallCtx {
+    let mut args: Vec<OsString> = vec!["watchdog".into(), "--all".into()];
+    if let Some(p) = port {
+        args.extend(["--port".into(), p.to_string().into()]);
+    }
+    args.extend(["--log".into(), state.join("daemon.log").into_os_string()]);
+    ServiceInstallCtx {
+        label: machine_label(),
+        program: exe.to_path_buf(),
+        args,
+        contents: None,
+        username: None,
+        working_directory: Some(home.to_path_buf()),
+        environment: path.map(|p| vec![("PATH".to_string(), p)]),
+        autostart: true,
+        restart_policy: RestartPolicy::Always {
+            delay_secs: Some(5),
+        },
+    }
 }
 
 /// The workspace's log file, inside `.itero/` (local, never synced).
@@ -93,25 +133,44 @@ fn uninstall_with(m: &dyn ServiceManager, label: &ServiceLabel) -> Result<()> {
     .map_err(|e| anyhow!("cannot uninstall the service: {e}"))
 }
 
-/// Stops and removes the workspace's service; false when there was none.
-pub fn uninstall(root: &Path) -> Result<bool> {
+/// Stops and removes the service `label`; false when there was none.
+pub fn uninstall(label: &ServiceLabel) -> Result<bool> {
     let m = manager()?;
-    let label = label(root);
     if let Ok(ServiceStatus::NotInstalled) = m.status(ServiceStatusCtx {
         label: label.clone(),
     }) {
         return Ok(false);
     }
-    uninstall_with(&*m, &label)?;
+    uninstall_with(&*m, label)?;
     Ok(true)
 }
 
-/// The service's state, in words.
-pub fn status(root: &Path) -> Result<String> {
+/// Starts the installed service `label`.
+pub fn start(label: &ServiceLabel) -> Result<()> {
+    manager()?
+        .start(ServiceStartCtx {
+            label: label.clone(),
+        })
+        .map_err(|e| anyhow!("cannot start the service: {e}"))
+}
+
+/// Stops the service `label`; it stays installed, and starts at login.
+pub fn stop(label: &ServiceLabel) -> Result<()> {
+    manager()?
+        .stop(ServiceStopCtx {
+            label: label.clone(),
+        })
+        .map_err(|e| anyhow!("cannot stop the service: {e}"))
+}
+
+/// The service `label`'s state, in words.
+pub fn status(label: &ServiceLabel) -> Result<String> {
     let m = manager()?;
     Ok(
         match m
-            .status(ServiceStatusCtx { label: label(root) })
+            .status(ServiceStatusCtx {
+                label: label.clone(),
+            })
             .map_err(|e| anyhow!("cannot ask the service manager: {e}"))?
         {
             ServiceStatus::NotInstalled => "not installed".into(),
@@ -121,5 +180,80 @@ pub fn status(root: &Path) -> Result<String> {
                 None => "stopped".into(),
             },
         },
+    )
+}
+
+/// A service from before one per machine: one workspace's, by its label.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Old {
+    pub label: String,
+    /// The workspace it ran in.
+    pub folder: PathBuf,
+}
+
+/// The services, one per workspace, that itero installed before one per
+/// machine: launchd agents in `home`'s `Library/LaunchAgents`, systemd
+/// user units in `config`'s `systemd/user`, each with the folder it ran in.
+pub fn old_services(home: &Path, config: &Path) -> Vec<Old> {
+    let mut out = vec![];
+    let prefix = format!("{MACHINE}-");
+    for (dir, ext, unit) in [
+        (home.join("Library/LaunchAgents"), "plist", false),
+        (config.join("systemd/user"), "service", true),
+    ] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().is_none_or(|x| x != ext) {
+                continue;
+            }
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            // systemd names the unit after the label's organization and
+            // application: aegea-itero.daemon-<hash>
+            let hash = if unit {
+                stem.strip_prefix("aegea-itero.daemon-")
+            } else {
+                stem.strip_prefix(prefix.as_str())
+            };
+            let Some(hash) = hash.filter(|h| !h.is_empty()) else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            let folder = if unit {
+                text.lines()
+                    .find_map(|l| l.strip_prefix("WorkingDirectory="))
+                    .map(str::to_string)
+            } else {
+                plist_string(&text, "WorkingDirectory")
+            };
+            if let Some(folder) = folder {
+                out.push(Old {
+                    label: format!("{prefix}{hash}"),
+                    folder: folder.trim().into(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The string a plist gives `key`, its XML entities read.
+fn plist_string(text: &str, key: &str) -> Option<String> {
+    let after = &text[text.find(&format!("<key>{key}</key>"))?..];
+    let start = after.find("<string>")? + "<string>".len();
+    let end = after[start..].find("</string>")? + start;
+    Some(
+        after[start..end]
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&"),
     )
 }

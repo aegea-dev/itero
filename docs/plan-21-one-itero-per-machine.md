@@ -161,8 +161,10 @@ each). Installing itero once should serve every workspace.
 3. The machine-wide `itero service` and moving the old services over;
    the service docs.
 
-Each is released as it merges into a minor version (the service
-changes break `itero service install`'s meaning).
+The three are released together, after the third, as one minor
+version (decided 2026-10-29): released alone, the first two would give
+`itero daemon --all` with nothing to start it at login. The service
+changes break `itero service install`'s meaning.
 
 ## Names confirmed with the spec
 

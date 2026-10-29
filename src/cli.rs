@@ -114,7 +114,7 @@ pub enum Cmd {
         /// bash, zsh or fish
         shell: Shell,
     },
-    /// Start this workspace's daemon at login, kept up by a watchdog
+    /// Start the machine's daemon at login, kept up by a watchdog
     Service {
         #[command(subcommand)]
         cmd: ServiceCmd,
@@ -152,6 +152,12 @@ pub enum Cmd {
         /// Where its lines and the daemon's stderr go
         #[arg(long)]
         log: Option<std::path::PathBuf>,
+        /// Keep `itero daemon --all` running: every workspace on the machine's list
+        #[arg(long)]
+        all: bool,
+        /// With --all: the machine's port
+        #[arg(long, requires = "all")]
+        port: Option<u16>,
     },
 }
 
@@ -404,8 +410,15 @@ pub enum WorkspaceCmd {
 
 #[derive(Subcommand)]
 pub enum ServiceCmd {
-    /// Run the daemon as a service (per user, at login), kept up by a watchdog
-    Install,
+    /// Run the machine's daemon (every workspace on its list) as a service, at login
+    Install {
+        /// The machine's port (else the one kept, else one the OS gives)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Move the old per-workspace services over without asking
+        #[arg(long)]
+        yes: bool,
+    },
     /// Stop and remove the service
     Uninstall,
     /// The service's state and the daemon's health
@@ -413,6 +426,12 @@ pub enum ServiceCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Start the installed service
+    Start,
+    /// Stop the service; it starts again at login
+    Stop,
+    /// Stop and start the service: after an upgrade, every workspace on the new itero
+    Restart,
 }
 
 /// Lists a command's subcommands, and theirs, by name in help: one display
@@ -900,36 +919,34 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
         Cmd::Service { cmd } => {
             use crate::engine::service;
-            let ws = workspace()?;
+            let label = service::machine_label();
             match cmd {
-                ServiceCmd::Install => {
-                    let exe = std::env::current_exe()?;
-                    let log = service::log_file(&ws.root);
-                    if let Some(dir) = log.parent() {
-                        std::fs::create_dir_all(dir)?;
-                    }
-                    let path = std::env::var("PATH").ok();
-                    service::install(service::install_ctx(&ws.root, &exe, path))?;
-                    println!(
-                        "installed: {} runs itero in {}; it starts at login",
-                        service::label(&ws.root).to_qualified_name(),
-                        ws.root.display()
-                    );
-                    match ws.port {
-                        Some(p) => println!("API: http://127.0.0.1:{p}/"),
-                        None => println!("API: on the port the OS gives it, as itero info says"),
-                    }
-                    println!("log: {}", log.display());
-                    println!("it keeps this shell's PATH; install again after changing it");
-                }
+                ServiceCmd::Install { port, yes } => top::service_install(port, yes)?,
                 ServiceCmd::Uninstall => {
-                    if service::uninstall(&ws.root)? {
-                        println!("stopped and removed");
+                    if service::uninstall(&label)? {
+                        println!(
+                            "stopped and removed: the workspaces run only while an itero daemon runs"
+                        );
                     } else {
-                        println!("no service for {}", ws.root.display());
+                        println!("no service for this machine");
                     }
                 }
-                ServiceCmd::Status { json } => top::service_status(&ws, json)?,
+                ServiceCmd::Status { json } => top::service_status(json)?,
+                ServiceCmd::Start => {
+                    service::start(&label)?;
+                    println!("started");
+                }
+                ServiceCmd::Stop => {
+                    service::stop(&label)?;
+                    println!(
+                        "stopped; it starts again at login (itero service start starts it now)"
+                    );
+                }
+                ServiceCmd::Restart => {
+                    service::stop(&label)?;
+                    service::start(&label)?;
+                    println!("restarted: every workspace runs on this itero");
+                }
             }
         }
         Cmd::Watchdog {
@@ -938,17 +955,23 @@ fn dispatch(cli: Cli) -> Result<()> {
             misses,
             stale_after,
             log,
+            all,
+            port,
         } => {
-            use crate::engine::watchdog::{Options, Rules, run};
+            use crate::engine::watchdog::{Options, Rules, Target, run};
             if interval.is_some() {
                 bail!(
                     "--interval is gone: the daemon now waits for what is due. Run `itero service install` again in this workspace to update the service"
                 );
             }
-            let ws = workspace()?;
+            let target = if all {
+                Target::Machine { port }
+            } else {
+                Target::Workspace(Box::new(workspace()?))
+            };
             run(&Options {
                 exe: std::env::current_exe()?,
-                ws: ws.clone(),
+                target,
                 rules: Rules {
                     check_every: std::time::Duration::from_secs(check_every),
                     misses,

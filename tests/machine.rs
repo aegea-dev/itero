@@ -199,7 +199,7 @@ fn add_lists_a_workspace_by_its_journal_name_and_remove_takes_it_off() {
     let out = m.ok(&ev, &["workspace", "add"]);
     let name = m.journal_name(&ev);
     assert!(out.contains(&name), "{out}");
-    assert!(out.contains("itero daemon --all"), "{out}");
+    assert!(out.contains("itero service install"), "{out}");
     let v = m.json(&ev, &["workspace", "list", "--json"]);
     assert_eq!(v[0]["name"], name.as_str());
     assert_eq!(v[0]["folder"], ev.display().to_string());

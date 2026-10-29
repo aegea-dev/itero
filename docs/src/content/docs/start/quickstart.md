@@ -54,8 +54,9 @@ itero wf runs          # the run, done, with its name
 itero wf runs <name>   # the run step by step
 ```
 
-`.itero/itero.log` has a line for each step. Ctrl-C stops the daemon;
-`itero service install` runs it from login on.
+`.itero/itero.log` has a line for each step. Ctrl-C stops the daemon. To
+run it from login on: `itero workspace add`, then `itero service install`
+([Start at login](/guides/service/)).
 
 ## Next
 

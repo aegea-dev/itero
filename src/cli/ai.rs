@@ -104,7 +104,6 @@ pub fn inspect(file: &Path, json: bool) -> Result<()> {
 /// `itero ai models add <org>/<repo>[:<QUANT>]`: downloads it from Hugging
 /// Face into itero's folder, and puts it in the index.
 pub fn add(name: &str, yes_given: bool) -> Result<()> {
-    use std::io::IsTerminal;
     let token = crate::engine::secrets::get("HF_TOKEN");
     let into = crate::ai::downloads_dir()?;
     let ix = itero_ai_index::Index::read(&crate::ai::index_path()?)?;
@@ -151,16 +150,12 @@ pub fn add(name: &str, yes_given: bool) -> Result<()> {
             size(free)
         );
     }
-    if !yes_given {
-        if !std::io::stdin().is_terminal() {
-            bail!("run it with --yes to download {}", size(total));
-        }
-        eprint!("download {}? [y/N] ", size(total));
-        let mut a = String::new();
-        std::io::stdin().read_line(&mut a)?;
-        if !a.trim().eq_ignore_ascii_case("y") {
-            bail!("not downloaded");
-        }
+    if !super::out::confirm(
+        &format!("download {}?", size(total)),
+        yes_given,
+        &format!("run it with --yes to download {}", size(total)),
+    )? {
+        bail!("not downloaded");
     }
     let files = crate::ai::download::fetch(&p, token.as_deref(), &into, &|done, total| {
         eprint!("\r[{} / {}]", size(done), size(total));
