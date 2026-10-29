@@ -62,7 +62,8 @@ or its archive, `itero-ai-<version>-<target>.tar.gz`, from the
    (about 2.7 GB; a model you already have in LM Studio or Hugging
    Face's cache is found without downloading: `itero ai models list`).
 
-2. A workspace with a workflow that asks it, `workflows/sky.json`:
+2. A workspace with a workflow that asks it, and shows the answer as a
+   notification, `workflows/sky.json`:
 
    ```sh
    mkdir ask && cd ask
@@ -75,22 +76,35 @@ or its archive, `itero-ai-<version>-<target>.tar.gz`, from the
      "on": [{ "event": "sky.asked" }],
      "steps": [
        { "#ai": { "args": { "model": "unsloth/Qwen3.5-4B-GGUF",
-                            "text": "In one sentence: why is the sky blue?" } } }
+                            "text": "In one short sentence, under 15 words: why is the sky blue?" } } },
+       { "#notify": { "args": { "title": "Why is the sky blue?", "text": "$output" } } }
      ]
    }
    ```
 
-3. Run it: the daemon in one terminal, the event in another.
+   `$output` is the model's answer. A notification shows about two
+   lines; "under 15 words" keeps the answer to them (asked only for one
+   sentence, Qwen3.5-4B answers in about 190 characters, cut in half).
+
+3. Run it. With the [machine's daemon](/guides/machine/) running
+   (`itero service install`), hand it the workspace:
 
    ```sh
-   itero daemon
+   itero workspace add
    ```
+
+   Without it, run a daemon in one terminal (`itero daemon`) and send
+   the event from another. Either way:
 
    ```sh
    itero emit sky.asked
-   itero wf runs           # the run, with its name
-   itero wf runs <name>    # the answer, as the step's output
    ```
+
+   The answer comes as a notification: "Sunlight scatters off air
+   molecules, making the sky appear blue." No notification? `itero wf
+   runs` shows the run and how it ended, and `itero wf runs <name>` each
+   step's output and error. On macOS, notifications must be allowed for
+   Itero (System Settings, Notifications).
 
 The first answer takes a second or two more: itero-ai starts, and the
 model is read into memory.
