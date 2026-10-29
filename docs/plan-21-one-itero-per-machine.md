@@ -164,9 +164,9 @@ each). Installing itero once should serve every workspace.
 Each is released as it merges into a minor version (the service
 changes break `itero service install`'s meaning).
 
-## To confirm
+## Names confirmed with the spec
 
-Names that came with writing this down, not in the brainstorm:
+Names that came with writing this down, approved with it:
 
 - the states `running`, `stuck`, `failed`, `stopped`, `missing`;
 - the events `itero.workspace.stuck` and `itero.workspace.failed`;
