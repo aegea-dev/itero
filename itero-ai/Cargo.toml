@@ -1,0 +1,16 @@
+[package]
+name = "itero-ai"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Runs a local model for itero, behind the OpenAI Chat Completions API on a Unix socket"
+publish = false
+
+[dependencies]
+itero-ai-index = { path = "../itero-ai-index" }
+serde = { version = "~1.0.229", features = ["derive"] }
+serde_json = "~1.0.151"
+anyhow = "~1.0.104"
+
+[dev-dependencies]
+tempfile = "~3.27.0"

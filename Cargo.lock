@@ -1363,6 +1363,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "itero-ai"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "itero-ai-index",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "itero-ai-index"
 version = "0.0.0"
 dependencies = [

@@ -30,7 +30,7 @@ test: ## Run the full test suite
 # skips a file not yet wired in. Handing every source file to rustfmt closes
 # that blind spot.
 RUSTFMT := rustup run $(TOOLCHAIN) rustfmt --edition 2024
-RUST_SOURCES = find src tests itero-ai-index -name '*.rs'
+RUST_SOURCES = find src tests itero-ai itero-ai-index -name '*.rs'
 
 .PHONY: fmt
 fmt: ## Format all Rust code
