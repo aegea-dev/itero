@@ -146,9 +146,10 @@ fn default_actions() -> Vec<String> {
 
 /// The workflows itero carries, run as if they were in `workflows/`; a
 /// file of the same name there is used instead.
-pub const BUILT_IN: [(&str, &str); 2] = [
+pub const BUILT_IN: [(&str, &str); 3] = [
     ("keep", include_str!("builtin/keep.json")),
     ("logs", include_str!("builtin/logs.json")),
+    ("models", include_str!("builtin/models.json")),
 ];
 
 #[derive(Debug, Clone)]

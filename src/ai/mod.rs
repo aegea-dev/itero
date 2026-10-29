@@ -1,6 +1,7 @@
 //! itero-ai, the local model's server: where it is, its socket, itero's
 //! own folder of models, and starting it when a step needs it (or using
 //! the one that answers).
+pub mod find;
 pub mod keeper;
 pub mod step;
 
@@ -133,15 +134,23 @@ pub fn ensure(
     idle: Duration,
     on_line: impl Fn(Value) + Send + 'static,
 ) -> Result<Started> {
-    let said = Arc::new(Mutex::new(String::new()));
     if let Some(s) = std::env::var_os("ITERO_AI_SOCKET") {
         return Ok(Started {
             socket: s.into(),
             child: None,
-            said,
+            said: Arc::new(Mutex::new(String::new())),
         });
     }
-    let socket = socket_for(root);
+    ensure_at(socket_for(root), idle, on_line)
+}
+
+/// `ensure` on a given socket.
+pub fn ensure_at(
+    socket: PathBuf,
+    idle: Duration,
+    on_line: impl Fn(Value) + Send + 'static,
+) -> Result<Started> {
+    let said = Arc::new(Mutex::new(String::new()));
     if answers(&socket) {
         return Ok(Started {
             socket,

@@ -1,0 +1,6 @@
+{
+  "meta": { "internal": true, "description": "Finds the models on this machine" },
+  "on": [{ "event": "itero.daemon.started" }, { "event": "itero.ai.model.missing" },
+         { "schedule": "0 * * * *" }],
+  "steps": ["#find-models"]
+}
