@@ -56,12 +56,21 @@ fn started_once_used_again_and_after_a_bad_end_started_after_a_pause() {
     assert_eq!(kinds(&ws), vec!["itero.ai.started"]);
     assert_eq!(k.health().unwrap().state, "running");
 
-    // ended badly (killed): it is not started again before its pause
+    // ended badly (killed): it is not started again before its pause. The
+    // keeper's own state turns first, and is asked at once: waiting for the
+    // event in the journal could outlast the one-second pause on a slow
+    // machine
     k.stop();
-    wait_for(&ws, "itero.ai.failed");
+    for _ in 0..1000 {
+        if k.health().unwrap().state == "failed" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
     assert_eq!(k.health().unwrap().state, "failed");
     let e = k.socket(&ws).unwrap_err();
     assert!(e.contains("starts again in"), "{e}");
+    wait_for(&ws, "itero.ai.failed");
     std::thread::sleep(Duration::from_millis(1100));
     assert_eq!(k.socket(&ws).unwrap(), sock);
     assert_eq!(k.health().unwrap().state, "running");
