@@ -204,6 +204,8 @@ fn add_lists_a_workspace_by_its_journal_name_and_remove_takes_it_off() {
     assert_eq!(v[0]["name"], name.as_str());
     assert_eq!(v[0]["folder"], ev.display().to_string());
     assert_eq!(v[0]["state"], "stopped");
+    // `ws` is short for `workspace`, as `wf` is for `workflow`
+    assert_eq!(m.json(&ev, &["ws", "list", "--json"]), v);
     let table = m.ok(&ev, &["workspace", "list"]);
     assert!(
         table.contains(&name) && table.contains("stopped"),
