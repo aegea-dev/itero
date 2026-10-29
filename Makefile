@@ -24,13 +24,13 @@ build-dev: ## Build the debug binary (target/debug/itero)
 # --no-fail-fast: one failing test binary must not hide the rest.
 .PHONY: test
 test: ## Run the full test suite
-	$(CARGO) test --no-fail-fast
+	$(CARGO) test --workspace --no-fail-fast
 
 # rustfmt only visits files reachable through `mod`, so `cargo fmt` silently
 # skips a file not yet wired in. Handing every source file to rustfmt closes
 # that blind spot.
 RUSTFMT := rustup run $(TOOLCHAIN) rustfmt --edition 2024
-RUST_SOURCES = find src tests -name '*.rs'
+RUST_SOURCES = find src tests itero-ai-index -name '*.rs'
 
 .PHONY: fmt
 fmt: ## Format all Rust code
@@ -42,15 +42,15 @@ fmt-check: ## Check formatting without modifying files
 
 .PHONY: lint
 lint: ## Run clippy (lists warnings, does not fail on them)
-	$(CARGO) clippy --all-targets
+	$(CARGO) clippy --workspace --all-targets
 
 .PHONY: lint-check
 lint-check: ## Run clippy: any warning fails the build
-	$(CARGO) clippy --all-targets -- -D warnings
+	$(CARGO) clippy --workspace --all-targets -- -D warnings
 
 .PHONY: check
 check: ## Type-check every target (the binary, tests), without building them
-	$(CARGO) check --all-targets
+	$(CARGO) check --workspace --all-targets
 
 # Cargo.lock against the RustSec advisory database. Needs cargo-audit
 # (`cargo install cargo-audit --locked`); deliberate exceptions, each with its

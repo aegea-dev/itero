@@ -6,6 +6,12 @@ license = "Apache-2.0"
 description = "Runs workflows again and again: schedules, events, steps, workers"
 repository = "https://github.com/aegea-dev/itero"
 
+# itero-ai, the local model's server, is its own crate: only it builds
+# llama.cpp, so itero's own build never does.
+[workspace]
+members = [".", "itero-ai-index"]
+resolver = "3"
+
 [dependencies]
 clap = { version = "~4.6.6", features = ["derive"] }
 serde = { version = "~1.0.229", features = ["derive"] }
