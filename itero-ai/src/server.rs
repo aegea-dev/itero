@@ -51,6 +51,18 @@ pub fn config_from(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<Confi
 enum Job {
     Complete(Prompt, tmpsc::UnboundedSender<Result<Step, EngineError>>),
     Inspect(PathBuf, tmpsc::UnboundedSender<Result<Value, EngineError>>),
+    /// Serving ended: the engine is dropped, freeing the model.
+    Stop,
+}
+
+/// Set when it is to stop: it ends serving as when idle.
+static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ends serving as when idle, from any thread (the process that started
+/// it is gone). The model is freed before the process exits: llama.cpp's
+/// Metal code aborts an exit with a model still loaded.
+pub fn stop() {
+    STOP.store(true, Ordering::SeqCst);
 }
 
 enum Step {
@@ -111,8 +123,10 @@ fn engine_thread(mut engine: Box<dyn Engine>, jobs: mpsc::Receiver<Job>, s: Shar
             Job::Inspect(path, tx) => {
                 let _ = tx.send(engine.inspect(&path));
             }
+            Job::Stop => break,
         }
     }
+    drop(engine);
 }
 
 fn status(e: &EngineError) -> u16 {
@@ -342,7 +356,8 @@ pub async fn serve(cfg: Config, engine: Box<dyn Engine>) -> anyhow::Result<()> {
         loaded: Arc::new(Mutex::new(None)),
     };
     let s = shared.clone();
-    std::thread::spawn(move || engine_thread(engine, rx, s));
+    let stop_engine = shared.jobs.clone();
+    let engine_ended = std::thread::spawn(move || engine_thread(engine, rx, s));
     let app = Router::new()
         .route("/v1/chat/completions", post(chat))
         .route("/v1/models", get(models))
@@ -355,7 +370,9 @@ pub async fn serve(cfg: Config, engine: Box<dyn Engine>) -> anyhow::Result<()> {
         loop {
             tokio::time::sleep(Duration::from_millis(250)).await;
             let since = now().saturating_sub(shared.last.load(Ordering::SeqCst));
-            if shared.waiting.load(Ordering::SeqCst) == 0 && since >= idle {
+            if STOP.load(Ordering::SeqCst)
+                || (shared.waiting.load(Ordering::SeqCst) == 0 && since >= idle)
+            {
                 break;
             }
         }
@@ -364,5 +381,8 @@ pub async fn serve(cfg: Config, engine: Box<dyn Engine>) -> anyhow::Result<()> {
         .with_graceful_shutdown(quiet)
         .await;
     let _ = std::fs::remove_file(&cfg.socket);
+    // the model is freed before the process exits
+    let _ = stop_engine.send(Job::Stop);
+    let _ = engine_ended.join();
     served.map_err(|e| anyhow::anyhow!("serving: {e}"))
 }

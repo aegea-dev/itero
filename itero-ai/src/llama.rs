@@ -26,10 +26,11 @@ struct Loaded {
     model: LlamaModel,
 }
 
+/// Fields drop in their order: the model before llama.cpp's backend.
 pub struct LlamaEngine {
-    backend: LlamaBackend,
-    index: PathBuf,
     loaded: Option<Loaded>,
+    index: PathBuf,
+    backend: LlamaBackend,
 }
 
 impl LlamaEngine {
