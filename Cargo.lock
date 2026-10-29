@@ -1440,6 +1440,7 @@ dependencies = [
  "minijinja",
  "minijinja-contrib",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tempfile",

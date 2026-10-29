@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 fn client(sock: &Path) -> reqwest::blocking::Client {
+    // Err only when one is installed already, which is all this needs
+    let _ = rustls::crypto::ring::default_provider().install_default();
     reqwest::blocking::Client::builder()
         .unix_socket(sock)
         .build()
