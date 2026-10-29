@@ -14,7 +14,9 @@ use std::sync::mpsc::Sender;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-/// When a connector is started again, and when it is given up on.
+/// When a connector (or itero-ai) is started again, and when it is given
+/// up on.
+#[derive(Debug, Clone)]
 pub struct Policy {
     /// The first wait before starting it again; it doubles each time.
     pub first_pause: Duration,

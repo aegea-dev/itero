@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 fn itero_ai() -> PathBuf {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/itero-ai");
+    // built beside itero by `cargo test --workspace`, wherever the target is
+    let p = Path::new(env!("CARGO_BIN_EXE_itero")).with_file_name("itero-ai");
     assert!(
         p.is_file(),
         "{} is not built: cargo build -p itero-ai (make test builds it)",

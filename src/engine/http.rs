@@ -102,6 +102,7 @@ async fn health(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
         "last_pass": h.last_pass,
         "last_error": h.last_error,
         "connectors": h.connectors,
+        "ai": crate::ai::keeper::Keeper::global().health(),
     })))
 }
 

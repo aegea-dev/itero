@@ -421,6 +421,7 @@ fn stop_on_signal(log: crate::engine::log::Log) {
         while !STOP.load(std::sync::atomic::Ordering::SeqCst) {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+        crate::ai::keeper::Keeper::global().stop();
         log.write("daemon.stopped", serde_json::json!({}));
         std::process::exit(0);
     });

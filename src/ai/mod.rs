@@ -1,6 +1,9 @@
 //! itero-ai, the local model's server: where it is, its socket, itero's
 //! own folder of models, and starting it when a step needs it (or using
 //! the one that answers).
+pub mod keeper;
+pub mod step;
+
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use std::io::{BufRead, BufReader};
