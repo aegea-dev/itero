@@ -3,4 +3,5 @@
 //! environment; it has no commands of its own.
 pub mod api;
 pub mod engine;
+pub mod server;
 pub mod think;
