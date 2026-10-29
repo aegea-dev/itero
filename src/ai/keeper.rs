@@ -32,6 +32,9 @@ struct State {
 pub struct Keeper {
     state: Mutex<State>,
     policy: Policy,
+    /// Run by the machine's daemon: one itero-ai for every workspace, its
+    /// events told to all of them.
+    machine: std::sync::atomic::AtomicBool,
 }
 
 /// How itero-ai is doing, for the daemon's `/health`.
@@ -50,7 +53,19 @@ impl Keeper {
         K.get_or_init(|| Keeper {
             state: Mutex::new(State::default()),
             policy: Policy::default(),
+            machine: Default::default(),
         })
+    }
+
+    /// For the machine's daemon (`itero daemon --all`): one itero-ai on one
+    /// socket for every workspace, and what happens to it told to each.
+    pub fn for_machine(&self) {
+        self.machine
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn is_machine(&self) -> bool {
+        self.machine.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -88,10 +103,15 @@ impl Keeper {
             ));
         }
         let told = ws.clone();
-        let started = super::ensure(&ws.root, IDLE, move |line| {
+        let socket = if self.is_machine() {
+            super::machine_socket()
+        } else {
+            super::socket_for(&ws.root)
+        };
+        let started = super::ensure_on(socket, IDLE, move |line| {
             if line["event"] == "model.loaded" {
                 Keeper::global().lock().model = line["model"].as_str().map(String::from);
-                publish(
+                Keeper::global().tell(
                     &told,
                     events::AI_MODEL_LOADED,
                     json!({ "model": line["model"], "seconds": line["seconds"] }),
@@ -109,7 +129,7 @@ impl Keeper {
         s.state = Some("running");
         s.model = None;
         drop(s);
-        publish(
+        self.tell(
             ws,
             events::AI_STARTED,
             json!({ "socket": socket.display().to_string() }),
@@ -130,7 +150,7 @@ impl Keeper {
                 Ok(st) if st.success() => {
                     s.state = Some("stopped");
                     drop(s);
-                    publish(&ws, events::AI_STOPPED, json!({ "after": IDLE.as_secs() }));
+                    me.tell(&ws, events::AI_STOPPED, json!({ "after": IDLE.as_secs() }));
                 }
                 other => {
                     let exit = match &other {
@@ -146,7 +166,7 @@ impl Keeper {
                     };
                     s.failures.push(Instant::now());
                     drop(s);
-                    publish(&ws, events::AI_FAILED, json!({ "exit": exit, "why": why }));
+                    me.tell(&ws, events::AI_FAILED, json!({ "exit": exit, "why": why }));
                 }
             }
         });
@@ -171,6 +191,18 @@ impl Keeper {
             unsafe {
                 libc::kill(pid as libc::pid_t, libc::SIGTERM);
             }
+        }
+    }
+}
+
+impl Keeper {
+    /// Tells what happened to itero-ai: to the workspace `ws`, or on the
+    /// machine's daemon to every workspace on the list.
+    fn tell(&self, ws: &Workspace, kind: &str, data: Value) {
+        if self.is_machine() {
+            crate::engine::machine::tell_all(kind, data);
+        } else {
+            publish(ws, kind, data);
         }
     }
 }

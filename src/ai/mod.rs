@@ -48,6 +48,11 @@ pub fn socket_for(root: &Path) -> PathBuf {
     run_dir().join(format!("{name}.sock"))
 }
 
+/// The socket of the machine's daemon's one itero-ai.
+pub fn machine_socket() -> PathBuf {
+    run_dir().join("itero.sock")
+}
+
 /// The user's own folder for sockets: `$XDG_RUNTIME_DIR/itero-ai` on
 /// Linux, else `/tmp/itero-ai-<uid>` (macOS's `$TMPDIR` is too long).
 fn run_dir() -> PathBuf {
@@ -135,6 +140,15 @@ pub fn ensure(
     idle: Duration,
     on_line: impl Fn(Value) + Send + 'static,
 ) -> Result<Started> {
+    ensure_on(socket_for(root), idle, on_line)
+}
+
+/// `ensure`, on `socket` unless `ITERO_AI_SOCKET` names another.
+pub fn ensure_on(
+    socket: PathBuf,
+    idle: Duration,
+    on_line: impl Fn(Value) + Send + 'static,
+) -> Result<Started> {
     if let Some(s) = std::env::var_os("ITERO_AI_SOCKET") {
         return Ok(Started {
             socket: s.into(),
@@ -142,7 +156,7 @@ pub fn ensure(
             said: Arc::new(Mutex::new(String::new())),
         });
     }
-    ensure_at(socket_for(root), idle, on_line)
+    ensure_at(socket, idle, on_line)
 }
 
 /// `ensure` on a given socket.

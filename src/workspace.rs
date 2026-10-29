@@ -166,6 +166,9 @@ pub struct Workspace {
     /// `description` and the person's own keys.
     pub meta: Map<String, Value>,
     pub limits: Limits,
+    /// On the machine's list: run by `itero daemon --all`, whose one scan
+    /// for models stands for the built-in `models` workflow.
+    pub machine: bool,
 }
 
 /// A listed folder: `~/` is the home folder, a relative path is under the
@@ -244,7 +247,15 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
         limits: limits
             .read()
             .with_context(|| format!("{}", path.display()))?,
+        machine: on_the_list(root),
     })
+}
+
+/// Whether the machine's list holds the workspace at `root`.
+fn on_the_list(root: &Path) -> bool {
+    crate::machine::list_path()
+        .and_then(|p| crate::machine::List::read(&p))
+        .is_ok_and(|l| l.workspaces.iter().any(|e| e.folder == root))
 }
 
 /// The files in `dir` and its subfolders that `keep` picks, sorted; a
@@ -427,6 +438,10 @@ impl Workspace {
             out.insert(name, v);
         }
         for (name, text) in BUILT_IN {
+            // the machine's daemon scans for models once, for every workspace
+            if self.machine && name == "models" {
+                continue;
+            }
             if !out.contains_key(name) {
                 out.insert(name.to_string(), serde_json::from_str(text)?);
             }

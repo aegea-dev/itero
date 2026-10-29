@@ -19,7 +19,13 @@ pub struct Idle {
     pub why: String,
 }
 
+/// The file in itero's state folder a worker touches when a step names a
+/// model the machine's list of models has not: the daemon scans again.
+pub const MODELS_WANTED: &str = "models.wanted";
+
 pub struct Machine {
+    /// Asks for a scan for models (`start_scans`).
+    scans: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     exe: PathBuf,
     report: Report,
     /// The workspaces running, by journal id.
@@ -33,6 +39,7 @@ pub struct Machine {
 impl Machine {
     pub fn new(exe: PathBuf, report: Report) -> Machine {
         Machine {
+            scans: Mutex::new(None),
             exe,
             report,
             running: Mutex::new(BTreeMap::new()),
@@ -199,6 +206,49 @@ impl Machine {
         Value::Object(out)
     }
 
+    /// The machine's one scan for models, in place of each workspace's
+    /// `models` workflow: now, at the top of every hour on an alarm of its
+    /// own, and when a step names a model not on the list (`scan_now`).
+    pub fn start_scans(&self) -> Result<()> {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let alarm = super::alarm::Alarm::start(tx.clone(), |e| {
+            eprintln!("itero: the alarm for scanning models stopped: {e}");
+        })?;
+        std::thread::spawn(move || {
+            while rx.recv().is_ok() {
+                // asked several times meanwhile: one scan
+                while rx.try_recv().is_ok() {}
+                match crate::ai::find::scan_on(
+                    crate::ai::machine_socket().with_extension("find.sock"),
+                ) {
+                    Ok(v) => eprintln!("itero: models: {v}"),
+                    Err(e) => eprintln!("itero: looking for models: {e}"),
+                }
+                let now = chrono::Utc::now();
+                let hour = chrono::Duration::hours(1);
+                let next = chrono::DurationRound::duration_trunc(now, hour).map(|h| h + hour);
+                if let Err(e) = alarm.set(next.ok()) {
+                    eprintln!("itero: setting the next scan for models: {e}");
+                }
+            }
+        });
+        let _ = tx.send(());
+        *self.scans.lock().unwrap_or_else(PoisonError::into_inner) = Some(tx);
+        Ok(())
+    }
+
+    /// Asks for a scan for models now.
+    pub fn scan_now(&self) {
+        if let Some(tx) = self
+            .scans
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            let _ = tx.send(());
+        }
+    }
+
     /// Calls `f` with each running workspace.
     pub fn each(&self, mut f: impl FnMut(&Running)) {
         for r in self
@@ -212,12 +262,14 @@ impl Machine {
     }
 
     /// Syncs at once, then each time the list changes, for good. Its
-    /// folder is watched: the list is written by a rename over it.
+    /// folder is watched (the list is written by a rename over it), and
+    /// `MODELS_WANTED` by its own path: a folder's change names the
+    /// folder, not the file.
     pub fn follow(&self) -> Result<()> {
         use crate::watch::Debouncer;
         let dir = crate::machine::state_dir()?;
         std::fs::create_dir_all(&dir)?;
-        let mut backend = crate::watch::open(&dir)?;
+        let mut backend = crate::watch::open_many(&[dir.clone(), dir.join(MODELS_WANTED)])?;
         let mut d = Debouncer::new(Duration::from_millis(200), Duration::from_secs(2));
         self.sync()?;
         loop {
@@ -226,7 +278,14 @@ impl Machine {
                 .map(|at| at.saturating_duration_since(Instant::now()));
             let changes = backend.wait(timeout)?;
             d.add(changes, Instant::now());
-            if !d.take(Instant::now()).is_empty()
+            let (wanted, other): (Vec<_>, Vec<_>) = d
+                .take(Instant::now())
+                .into_iter()
+                .partition(|c| c.path.file_name().is_some_and(|n| n == MODELS_WANTED));
+            if !wanted.is_empty() {
+                self.scan_now();
+            }
+            if !other.is_empty()
                 && let Err(e) = self.sync()
             {
                 eprintln!("itero: reading the machine's list: {e:#}");

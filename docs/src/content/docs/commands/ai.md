@@ -24,7 +24,7 @@ A model is named by where it comes from, `<org>/<repo>:<QUANT>`, as
 Hugging Face names it: that name goes in a step's `model`. `--all` shows
 the removed ones too. The list is kept in `~/.cache/itero/models.json`;
 the daemon's `models` workflow looks again when it starts and every
-hour.
+hour (the machine's daemon looks once for all its workspaces).
 
 ## `models add`
 

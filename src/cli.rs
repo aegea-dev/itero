@@ -609,6 +609,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             } else {
                 Some(crate::engine::http::listen_machine(port)?)
             };
+            crate::ai::keeper::Keeper::global().for_machine();
             let machine = std::sync::Arc::new(crate::engine::machine::Machine::new(
                 std::env::current_exe()?,
                 report,
@@ -623,6 +624,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 "itero: running the workspaces on the machine's list ({}), each as it comes due (Ctrl-C stops)",
                 crate::machine::list_path()?.display()
             );
+            machine.start_scans()?;
             match listener {
                 None => machine.follow()?,
                 Some(listener) => {

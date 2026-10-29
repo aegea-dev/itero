@@ -8,7 +8,10 @@ description: "How itero-ai starts, idles and fails; its events, its environment,
 - **Started on demand.** The daemon starts itero-ai when an `#ai` step
   needs it, never before: a workspace with no `#ai` step never runs it.
 - **Kept while asked.** One itero-ai serves the workspace's steps, one
-  answer at a time, with one model in memory.
+  answer at a time, with one model in memory. On the machine's daemon
+  ([One itero per machine](/guides/machine/)), one itero-ai serves every
+  workspace it runs, and its events go to each of them;
+  `itero.ai.model.missing` goes only to the workspace whose step asked.
 - **Gone when idle.** After five minutes with nothing asked, it frees the
   model's memory and exits. The next `#ai` step starts it again, in a
   second or two.
