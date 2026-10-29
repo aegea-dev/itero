@@ -188,7 +188,7 @@ pub fn old_services(home: &Path, config: &Path) -> Vec<Old> {
                     .find_map(|l| l.strip_prefix("WorkingDirectory="))
                     .map(str::to_string)
             } else {
-                plist_string(&text, "WorkingDirectory")
+                crate::plist::string(&text, "WorkingDirectory")
             };
             if let Some(folder) = folder {
                 out.push(Old {
@@ -199,19 +199,4 @@ pub fn old_services(home: &Path, config: &Path) -> Vec<Old> {
         }
     }
     out
-}
-
-/// The string a plist gives `key`, its XML entities read.
-fn plist_string(text: &str, key: &str) -> Option<String> {
-    let after = &text[text.find(&format!("<key>{key}</key>"))?..];
-    let start = after.find("<string>")? + "<string>".len();
-    let end = after[start..].find("</string>")? + start;
-    Some(
-        after[start..end]
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&amp;", "&"),
-    )
 }

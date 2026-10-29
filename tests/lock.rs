@@ -72,3 +72,22 @@ fn a_foreground_daemon_refuses_a_workspace_already_run() {
         "{said}"
     );
 }
+
+#[test]
+fn any_file_can_be_locked_and_names_its_holder() {
+    use itero::engine::lock::{Refused, take_file};
+    let d = tempfile::tempdir().unwrap();
+    let f = d.path().join("durum/kilit");
+    let first = take_file(&f, "birinci, pid 7").unwrap();
+    match take_file(&f, "ikinci") {
+        Err(Refused::Held(by)) => assert_eq!(by, "birinci, pid 7"),
+        Err(Refused::Failed(why)) => panic!("{why}"),
+        Ok(_) => panic!("taken twice"),
+    }
+    drop(first);
+    let t = Instant::now();
+    while take_file(&f, "ikinci").is_err() {
+        assert!(t.elapsed() < Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
