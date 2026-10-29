@@ -97,6 +97,28 @@ impl Machine {
         Daemon(child)
     }
 
+    /// `itero daemon --all --port <port>`.
+    fn daemon_all_on(&self, port: u16) -> Daemon {
+        let child = self
+            .command(self.d.path())
+            .args(["daemon", "--all", "--port", &port.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        Daemon(child)
+    }
+
+    /// The machine daemon's port, once it serves.
+    fn port(&self) -> u16 {
+        let f = self.d.path().join("durum/itero/port");
+        until("the machine's port", || {
+            std::fs::read_to_string(&f).is_ok_and(|p| p.trim().parse::<u16>().is_ok())
+        });
+        std::fs::read_to_string(&f).unwrap().trim().parse().unwrap()
+    }
+
     fn ws(&self, dir: &Path) -> itero::workspace::Workspace {
         itero::workspace::find(dir).unwrap()
     }
@@ -215,4 +237,131 @@ fn all_runs_each_listed_workspace_and_follows_the_list() {
     std::fs::remove_file(b.join("çıktı")).unwrap();
     m.ok(&b, &["emit", "deneme.geldi"]);
     until("b's workflow again", || b.join("çıktı").is_file());
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn http() -> reqwest::blocking::Client {
+    itero::net::client(Duration::from_secs(5)).unwrap()
+}
+
+/// A GET's status and body; status 0 while nothing answers yet.
+fn get(port: u16, path: &str) -> (u16, Value) {
+    match http().get(format!("http://127.0.0.1:{port}{path}")).send() {
+        Ok(r) => (r.status().as_u16(), r.json().unwrap_or(Value::Null)),
+        Err(_) => (0, Value::Null),
+    }
+}
+
+#[test]
+fn one_api_for_the_machine_each_workspace_under_its_name() {
+    let m = Machine::new();
+    let (a, b) = (m.busy_workspace("bir"), m.busy_workspace("iki"));
+    m.ok(&a, &["workspace", "add"]);
+    m.ok(&b, &["workspace", "add"]);
+    let (na, nb) = (m.journal_name(&a), m.journal_name(&b));
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    assert_eq!(m.port(), port);
+    until("both running", || {
+        let (_, v) = get(port, "/workspaces");
+        v.as_array()
+            .is_some_and(|l| l.len() == 2 && l.iter().all(|w| w["state"] == "running"))
+    });
+    // an event posted to one workspace runs there only
+    let r = http()
+        .post(format!("http://127.0.0.1:{port}/w/{na}/events"))
+        .json(&serde_json::json!({ "type": "deneme.geldi" }))
+        .send()
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 202);
+    until("a's workflow", || a.join("çıktı").is_file());
+    assert!(!b.join("çıktı").exists());
+    let (code, runs) = get(port, &format!("/w/{na}/runs"));
+    assert_eq!(code, 200, "{runs}");
+    assert_eq!(runs.as_array().map(Vec::len), Some(1), "{runs}");
+    let (code, h) = get(port, &format!("/w/{nb}/health"));
+    assert_eq!(
+        (code, &h["workspace"]["name"]),
+        (200, &Value::from(nb.as_str()))
+    );
+    let (code, h) = get(port, "/health");
+    assert_eq!(code, 200);
+    assert_eq!(
+        h["workspaces"][&na]["passes"].as_u64().map(|p| p >= 1),
+        Some(true),
+        "{h}"
+    );
+    let (code, e) = get(port, "/w/yok/runs");
+    assert_eq!(code, 404);
+    assert!(
+        e["error"]
+            .as_str()
+            .unwrap()
+            .contains("itero workspace list"),
+        "{e}"
+    );
+    // only this machine's own address
+    let r = http()
+        .get(format!("http://127.0.0.1:{port}/workspaces"))
+        .header("Host", "kotu.example")
+        .send()
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403);
+    // the list asks the daemon
+    let v = m.json(&a, &["workspace", "list", "--json"]);
+    assert!(
+        v.as_array()
+            .unwrap()
+            .iter()
+            .all(|w| w["state"] == "running"),
+        "{v}"
+    );
+}
+
+#[test]
+fn a_workspace_run_in_the_foreground_is_left_to_it() {
+    let m = Machine::new();
+    let (a, b) = (m.busy_workspace("bir"), m.busy_workspace("iki"));
+    m.ok(&a, &["workspace", "add"]);
+    m.ok(&b, &["workspace", "add"]);
+    let mut own = m.command(&a);
+    own.arg("daemon")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let fg = Daemon(own.spawn().unwrap());
+    until("a's own daemon", || a.join(".itero/port").is_file());
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    let na = m.journal_name(&a);
+    until("a stopped, b running", || {
+        let (_, v) = get(port, "/workspaces");
+        let state = |n: &str| {
+            v.as_array()
+                .and_then(|l| l.iter().find(|w| w["name"] == n).cloned())
+                .map(|w| w["state"].clone())
+        };
+        state(&na) == Some("stopped".into()) && state(&m.journal_name(&b)) == Some("running".into())
+    });
+    let (_, v) = get(port, "/workspaces");
+    let wa = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["name"] == na.as_str())
+        .unwrap();
+    assert!(
+        wa["why"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("pid {}", fg.0.id())),
+        "{wa}"
+    );
 }

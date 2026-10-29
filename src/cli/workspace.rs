@@ -84,17 +84,35 @@ fn state(e: &Entry) -> (Value, Value) {
     }
 }
 
+/// The machine daemon's own view of its workspaces, when one answers.
+fn daemon_states() -> Option<Vec<Value>> {
+    let port = crate::engine::http::machine_port()?;
+    crate::net::client(std::time::Duration::from_secs(2))
+        .ok()?
+        .get(format!("http://127.0.0.1:{port}/workspaces"))
+        .send()
+        .ok()?
+        .json()
+        .ok()
+}
+
 /// `itero workspace list`: each listed workspace's name, folder, state
-/// and last run.
+/// (the daemon's, when one runs) and last run.
 pub fn list(json_out: bool) -> Result<()> {
     let list = List::read(&list_path()?)?;
+    let running = daemon_states().unwrap_or_default();
     let rows: Vec<Value> = list
         .workspaces
         .iter()
         .map(|e| {
-            let (state, last) = state(e);
+            let (mut state, last) = state(e);
+            let mut why = Value::Null;
+            if let Some(d) = running.iter().find(|d| d["name"] == e.name.as_str()) {
+                state = d["state"].clone();
+                why = d["why"].clone();
+            }
             json!({ "name": e.name, "folder": e.folder.display().to_string(),
-                    "state": state, "last_run": last })
+                    "state": state, "why": why, "last_run": last })
         })
         .collect();
     let v = Value::Array(rows);

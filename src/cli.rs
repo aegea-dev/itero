@@ -28,6 +28,9 @@ pub enum Cmd {
         /// Every workspace on the machine's list (itero workspace list), not this folder's
         #[arg(long, conflicts_with = "once")]
         all: bool,
+        /// With --all: the machine's port (else the one kept, else one the OS gives)
+        #[arg(long, requires = "all")]
+        port: Option<u16>,
         /// One pass, then stop: for tests and scripts, so hidden
         #[arg(long, hide = true)]
         once: bool,
@@ -552,7 +555,18 @@ fn dispatch(cli: Cli) -> Result<()> {
         ignore_sigpipe();
     }
     match cli.cmd {
-        Cmd::Daemon { all: true, .. } => {
+        Cmd::Daemon {
+            all: true,
+            port,
+            no_serve,
+            ..
+        } => {
+            // its port first: a daemon that cannot listen starts nothing
+            let listener = if no_serve {
+                None
+            } else {
+                Some(crate::engine::http::listen_machine(port)?)
+            };
             let machine = std::sync::Arc::new(crate::engine::machine::Machine::new(
                 std::env::current_exe()?,
                 report,
@@ -567,7 +581,26 @@ fn dispatch(cli: Cli) -> Result<()> {
                 "itero: running the workspaces on the machine's list ({}), each as it comes due (Ctrl-C stops)",
                 crate::machine::list_path()?.display()
             );
-            machine.follow()?;
+            match listener {
+                None => machine.follow()?,
+                Some(listener) => {
+                    {
+                        let machine = machine.clone();
+                        std::thread::spawn(move || {
+                            if let Err(e) = machine.follow() {
+                                eprintln!("itero: following the machine's list stopped: {e:#}");
+                                std::process::exit(1);
+                            }
+                        });
+                    }
+                    let port = listener.local_addr()?.port();
+                    eprintln!("itero: serving on http://127.0.0.1:{port}/");
+                    crate::engine::http::serve(
+                        crate::engine::http::machine_router(machine, port),
+                        listener,
+                    )?;
+                }
+            }
         }
         Cmd::Daemon {
             once,

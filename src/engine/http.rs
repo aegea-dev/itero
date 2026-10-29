@@ -56,7 +56,11 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16) -> Router {
 /// Refuses a request whose Host is not this server's own address: a web
 /// page that rebinds a name to 127.0.0.1 still sends its own name.
 async fn local_only(State(s): State<Shared>, req: Request, next: Next) -> Response {
-    let port = s.port;
+    local_only_on(State(s.port), req, next).await
+}
+
+/// `local_only`, for a server on `port`.
+async fn local_only_on(State(port): State<u16>, req: Request, next: Next) -> Response {
     let host = req
         .headers()
         .get(header::HOST)
@@ -339,4 +343,104 @@ pub fn serve(router: Router, listener: std::net::TcpListener) -> anyhow::Result<
         axum::serve(listener, router).await?;
         Ok(())
     })
+}
+
+/// What the machine's routes share.
+#[derive(Clone)]
+struct MachineShared {
+    machine: Arc<super::machine::Machine>,
+    port: u16,
+}
+
+/// The machine's routes, for `itero daemon --all` on `port`: its health,
+/// its workspaces, and each running workspace's own routes under
+/// `/w/<name>/`.
+pub fn machine_router(machine: Arc<super::machine::Machine>, port: u16) -> Router {
+    let s = MachineShared { machine, port };
+    Router::new()
+        .route("/health", get(machine_health))
+        .route("/workspaces", get(workspaces))
+        .route("/w/{name}", axum::routing::any(in_workspace))
+        .route("/w/{name}/{*rest}", axum::routing::any(in_workspace))
+        .layer(middleware::from_fn_with_state(port, local_only_on))
+        .with_state(s)
+}
+
+async fn machine_health(State(s): State<MachineShared>) -> Json<Value> {
+    let d = super::daemon::Daemon::current();
+    Json(json!({
+        "ok": true,
+        "pid": d.pid,
+        "daemon": d,
+        "workspaces": s.machine.health(),
+        "ai": crate::ai::keeper::Keeper::global().health(),
+    }))
+}
+
+async fn workspaces(State(s): State<MachineShared>) -> Json<Value> {
+    Json(Value::Array(s.machine.states()))
+}
+
+/// A request to `/w/<name>/<rest>`, answered by that workspace's routes
+/// as `/<rest>`.
+async fn in_workspace(
+    State(s): State<MachineShared>,
+    Path(params): Path<std::collections::HashMap<String, String>>,
+    mut req: Request,
+) -> Response {
+    use tower::ServiceExt;
+    let name = params.get("name").cloned().unwrap_or_default();
+    let Some((ws, engine)) = s.machine.find(&name) else {
+        return fail(
+            StatusCode::NOT_FOUND,
+            format!("no workspace {name} running here: itero workspace list"),
+        )
+        .into_response();
+    };
+    let rest = params.get("rest").cloned().unwrap_or_default();
+    let path = match req.uri().query() {
+        Some(q) => format!("/{rest}?{q}"),
+        None => format!("/{rest}"),
+    };
+    match path.parse() {
+        Ok(uri) => *req.uri_mut() = uri,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
+    match router(ws, engine, s.port).oneshot(req).await {
+        Ok(r) => r,
+        Err(e) => match e {},
+    }
+}
+
+/// The machine's port: `port` when given, else the one kept from the last
+/// start, else (none kept, or taken) one the OS gives; the one bound is
+/// kept in itero's state folder.
+pub fn listen_machine(port: Option<u16>) -> anyhow::Result<std::net::TcpListener> {
+    let bind = |p: u16| std::net::TcpListener::bind(("127.0.0.1", p));
+    let file = crate::machine::state_dir()?.join("port");
+    let listener = match port {
+        Some(p) => bind(p).map_err(|e| {
+            anyhow::anyhow!("cannot listen on 127.0.0.1:{p}: {e} (another itero daemon?)")
+        })?,
+        None => {
+            let kept = std::fs::read_to_string(&file)
+                .ok()
+                .and_then(|p| p.trim().parse::<u16>().ok());
+            match kept.map(bind) {
+                Some(Ok(l)) => l,
+                _ => bind(0).map_err(|e| anyhow::anyhow!("cannot listen on 127.0.0.1: {e}"))?,
+            }
+        }
+    };
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&file, listener.local_addr()?.port().to_string())?;
+    Ok(listener)
+}
+
+/// The machine daemon's port, when one answers there.
+pub fn machine_port() -> Option<u16> {
+    let file = crate::machine::state_dir().ok()?.join("port");
+    std::fs::read_to_string(file).ok()?.trim().parse().ok()
 }

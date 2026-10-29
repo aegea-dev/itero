@@ -168,6 +168,37 @@ impl Machine {
         out
     }
 
+    /// A running workspace by its name: what its routes need.
+    pub fn find(
+        &self,
+        name: &str,
+    ) -> Option<(
+        crate::workspace::Workspace,
+        std::sync::Arc<super::http::Engine>,
+    )> {
+        self.running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .find(|r| r.name == name)
+            .map(|r| (r.ws.clone(), r.engine.clone()))
+    }
+
+    /// Each running workspace's health, by name.
+    pub fn health(&self) -> Value {
+        let mut out = serde_json::Map::new();
+        self.each(|r| {
+            let h = super::running::health(r);
+            out.insert(
+                r.name.clone(),
+                json!({ "passes": h.passes, "last_pass": h.last_pass,
+                        "last_error": h.last_error, "busy_since": h.busy_since,
+                        "connectors": h.connectors }),
+            );
+        });
+        Value::Object(out)
+    }
+
     /// Calls `f` with each running workspace.
     pub fn each(&self, mut f: impl FnMut(&Running)) {
         for r in self
