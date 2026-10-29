@@ -3,7 +3,7 @@ title: ai
 description: The local models #ai steps use, and one model file's header.
 ---
 
-`itero ai` looks after the models [`#ai`](/guides/ai/) steps use.
+`itero ai` looks after the models [`#ai`](/ai/workflows/) steps use; see [itero-ai](/ai/).
 
 ```sh
 itero ai models list [--all] [--json]

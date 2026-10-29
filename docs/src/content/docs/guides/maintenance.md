@@ -23,7 +23,7 @@ notification comes through Itero.app):
 | `itero.space.full` | `.itero/` is past its `space` limit | `used`, `limit` |
 | `itero.log.full` | the log is past its `log` limit | `path`, `size`, `limit` |
 | `itero.notification.clicked` | a notification from `#notify` was clicked, on macOS ([`#notify`](/guides/actions/#built-in)) | `notification`, `answer`, `workflow`, `data` |
-| `itero.ai.started` | itero-ai, the local model's server, started for an `#ai` step ([A local model in a step](/guides/ai/)) | `socket` |
+| `itero.ai.started` | itero-ai, the local model's server, started for an `#ai` step ([Running itero-ai](/ai/running/)) | `socket` |
 | `itero.ai.stopped` | it exited after its idle time | `after` |
 | `itero.ai.failed` | it ended any other way | `exit`, `why` |
 | `itero.ai.model.loaded` | it loaded a model | `model`, `seconds` |

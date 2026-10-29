@@ -21,6 +21,8 @@ export default defineConfig({
 		'/commands/config/': '/commands/workflow/',
 		'/commands/args/': '/commands/action/',
 		'/guides/messages/': '/guides/connectors/',
+		// the #ai guide became the itero-ai group (2026-10-29)
+		'/guides/ai/': '/ai/workflows/',
 	},
 	integrations: [
 		starlight({
@@ -79,10 +81,21 @@ export default defineConfig({
 						{ label: 'Actions ■', slug: 'guides/actions' },
 						{ label: 'Connectors ▲', slug: 'guides/connectors' },
 						{ label: 'Args and secrets', slug: 'guides/secrets' },
-						{ label: 'A local model in a step', slug: 'guides/ai' },
 						{ label: 'The log, IDs and names', slug: 'guides/log' },
 						{ label: "The daemon's own workflows", slug: 'guides/maintenance' },
 						{ label: 'Start at login', slug: 'guides/service' },
+					],
+				},
+				{
+					label: 'itero-ai',
+					items: [
+						{ label: 'Overview', slug: 'ai' },
+						{ label: 'Models', slug: 'ai/models' },
+						{ label: 'Qwen3.5-4B', slug: 'ai/qwen3.5-4b' },
+						{ label: '#ai in a workflow', slug: 'ai/workflows' },
+						{ label: 'The API', slug: 'ai/api' },
+						{ label: 'Running and troubleshooting', slug: 'ai/running' },
+						{ label: 'Testing', slug: 'ai/testing' },
 					],
 				},
 				{
