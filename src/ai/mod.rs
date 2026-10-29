@@ -48,9 +48,14 @@ pub fn socket_for(root: &Path) -> PathBuf {
     run_dir().join(format!("{name}.sock"))
 }
 
-/// The socket of the machine's daemon's one itero-ai.
+/// The socket of the machine's daemon's one itero-ai: its state folder's
+/// own, so two machine daemons (a test's beside the user's) never share
+/// one itero-ai.
 pub fn machine_socket() -> PathBuf {
-    run_dir().join("itero.sock")
+    match crate::machine::state_dir() {
+        Ok(dir) => socket_for(&dir),
+        Err(_) => run_dir().join("itero.sock"),
+    }
 }
 
 /// The user's own folder for sockets: `$XDG_RUNTIME_DIR/itero-ai` on

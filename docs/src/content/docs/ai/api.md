@@ -15,8 +15,8 @@ the socket in a folder only you can read.
 
 The daemon starts itero-ai on a socket of its own, and tells where in
 the `itero.ai.started` event's `socket` field: one socket for each
-workspace's own daemon, one for the machine's daemon
-(`itero.sock`, beside the others). To run one
+workspace's own daemon, one for the machine's daemon, named after
+its state folder. To run one
 yourself, on a socket of your own, see
 [Running and troubleshooting](/ai/running/).
 
