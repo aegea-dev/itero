@@ -229,6 +229,32 @@ fn a_wrong_sha_is_deleted_and_a_choice_is_named() {
 }
 
 #[test]
+fn an_unsloth_dynamic_file_keeps_its_prefix() {
+    let m = Machine::new();
+    let (url, _) = hub("apache-2.0", vec!["Q4_K_M", "UD-Q4_K_XL"], false, None);
+    let (ok, out) = m.itero(
+        &url,
+        &[
+            "ai",
+            "models",
+            "add",
+            "örnek/Küçük-GGUF:UD-Q4_K_XL",
+            "--yes",
+        ],
+    );
+    assert!(
+        ok && out.contains("örnek/Küçük-GGUF:UD-Q4_K_XL: added"),
+        "{out}"
+    );
+    assert!(
+        m.downloaded()
+            .with_file_name("Küçük-UD-Q4_K_XL.gguf")
+            .exists()
+    );
+    assert!(!m.downloaded().exists());
+}
+
+#[test]
 fn a_licence_is_warned_of_and_no_terminal_needs_yes() {
     let m = Machine::new();
     let (url, _) = hub("other", vec!["Q4_K_M"], false, None);
