@@ -2,28 +2,15 @@
 //! user unit (Linux) that runs `itero watchdog --all`, starts at login, and
 //! is restarted by the OS if the watchdog itself ends. One service for the
 //! machine, running every workspace on its list, through
-//! `service-manager`. Before, each workspace had a service of its own
-//! (`label`, `install_ctx`): those are found and moved over.
+//! `service-manager`. Before, each workspace had a service of its own:
+//! `install` removes those.
 use anyhow::{Result, anyhow};
 use service_manager::{
     RestartPolicy, ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx,
     ServiceStatus, ServiceStatusCtx, ServiceStopCtx, ServiceUninstallCtx,
 };
-use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-
-/// The service's label: one per workspace, from its path.
-pub fn label(root: &Path) -> ServiceLabel {
-    let hash: String = Sha256::digest(root.to_string_lossy().as_bytes())
-        .iter()
-        .take(6)
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    format!("dev.aegea.itero.daemon-{hash}")
-        .parse()
-        .expect("a valid label")
-}
 
 /// The machine's service's label.
 pub const MACHINE: &str = "dev.aegea.itero.daemon";
@@ -55,36 +42,6 @@ pub fn machine_ctx(
         contents: None,
         username: None,
         working_directory: Some(home.to_path_buf()),
-        environment: path.map(|p| vec![("PATH".to_string(), p)]),
-        autostart: true,
-        restart_policy: RestartPolicy::Always {
-            delay_secs: Some(5),
-        },
-    }
-}
-
-/// The workspace's log file, inside `.itero/` (local, never synced).
-pub fn log_file(root: &Path) -> PathBuf {
-    root.join(".itero").join("daemon.log")
-}
-
-/// What the service runs: `itero watchdog` in `root` (which reads its port
-/// from itero.config.json), with `path` (the installing shell's `PATH`: a service
-/// starts with a bare one, which would not find mail, uv or bun).
-pub fn install_ctx(root: &Path, exe: &Path, path: Option<String>) -> ServiceInstallCtx {
-    ServiceInstallCtx {
-        label: label(root),
-        program: exe.to_path_buf(),
-        args: [
-            "watchdog".into(),
-            "--log".into(),
-            log_file(root).into_os_string(),
-        ]
-        .into_iter()
-        .collect::<Vec<OsString>>(),
-        contents: None,
-        username: None,
-        working_directory: Some(root.to_path_buf()),
         environment: path.map(|p| vec![("PATH".to_string(), p)]),
         autostart: true,
         restart_policy: RestartPolicy::Always {
@@ -183,7 +140,8 @@ pub fn status(label: &ServiceLabel) -> Result<String> {
     )
 }
 
-/// A service from before one per machine: one workspace's, by its label.
+/// A service from before one per machine: one workspace's, by its label
+/// (`dev.aegea.itero.daemon-<hash>`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Old {
     pub label: String,

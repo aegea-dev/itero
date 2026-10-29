@@ -12,19 +12,6 @@ use serde_json::{Value, json};
 /// journal. A folder already listed by its journal id (it moved) is
 /// updated.
 pub fn add(ws: &Workspace) -> Result<()> {
-    add_to_list(ws)?;
-    if daemon_states().is_some() {
-        println!("the machine's daemon starts it now");
-    } else {
-        println!(
-            "no daemon runs the list now: itero service install starts one at login (or itero daemon --all, in a terminal)"
-        );
-    }
-    Ok(())
-}
-
-/// `add`'s work, saying what it did, without what runs it next.
-pub fn add_to_list(ws: &Workspace) -> Result<()> {
     let path = list_path()?;
     let mut list = List::read(&path)?;
     let j = Journal::open(ws)?;
@@ -43,6 +30,13 @@ pub fn add_to_list(ws: &Workspace) -> Result<()> {
     });
     list.write(&path)?;
     println!("added {name} ({})", ws.root.display());
+    if daemon_states().is_some() {
+        println!("the machine's daemon starts it now");
+    } else {
+        println!(
+            "no daemon runs the list now: itero service install starts one at login (or itero daemon --all, in a terminal)"
+        );
+    }
     Ok(())
 }
 

@@ -137,9 +137,6 @@ pub enum Cmd {
     /// answering or a pass hangs (what the service runs)
     #[command(hide = true)]
     Watchdog {
-        /// Gone: a service installed before 0.10.0 still passes it
-        #[arg(long, hide = true)]
-        interval: Option<String>,
         /// Seconds between checks of the daemon's /health
         #[arg(long, default_value_t = 10)]
         check_every: u64,
@@ -415,9 +412,6 @@ pub enum ServiceCmd {
         /// The machine's port (else the one kept, else one the OS gives)
         #[arg(long)]
         port: Option<u16>,
-        /// Move the old per-workspace services over without asking
-        #[arg(long)]
-        yes: bool,
     },
     /// Stop and remove the service
     Uninstall,
@@ -921,7 +915,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             use crate::engine::service;
             let label = service::machine_label();
             match cmd {
-                ServiceCmd::Install { port, yes } => top::service_install(port, yes)?,
+                ServiceCmd::Install { port } => top::service_install(port)?,
                 ServiceCmd::Uninstall => {
                     if service::uninstall(&label)? {
                         println!(
@@ -950,7 +944,6 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Watchdog {
-            interval,
             check_every,
             misses,
             stale_after,
@@ -959,11 +952,6 @@ fn dispatch(cli: Cli) -> Result<()> {
             port,
         } => {
             use crate::engine::watchdog::{Options, Rules, Target, run};
-            if interval.is_some() {
-                bail!(
-                    "--interval is gone: the daemon now waits for what is due. Run `itero service install` again in this workspace to update the service"
-                );
-            }
             let target = if all {
                 Target::Machine { port }
             } else {

@@ -10,7 +10,7 @@ when you log in, and is restarted if it stops. Its commands work from
 any folder.
 
 ```sh
-itero service install [--port <port>] [--yes]
+itero service install [--port <port>]
 itero service status [--json]
 itero service start | stop | restart
 itero service uninstall
@@ -35,23 +35,14 @@ it keeps this shell's PATH; install again after changing it
 
 ## The services from before
 
-An itero before one per machine installed a service per workspace
-(`dev.aegea.itero.daemon-<hash>`). `install` finds them, says which
-workspaces they ran, and asks; on a yes it removes each one and adds its
-workspace to the machine's list, then installs the machine's service.
-`--yes` does it without asking, and is needed where there is no terminal
-to ask on.
+An itero before 0.18.0 installed a service per workspace
+(`dev.aegea.itero.daemon-<hash>`). `install` removes them and says which
+workspace each ran; add those workspaces to the list with
+[`itero workspace add`](/commands/workspace/) to run them again.
 
 ```
 $ itero service install
-itero's services from before, one per workspace:
-  /Users/me/home: onto the machine's list
-  /Users/me/mail: onto the machine's list
-remove them, and add their workspaces to the machine's list? [y/N] y
-removed dev.aegea.itero.daemon-3f2a9c41d07e
-added quiet-river (/Users/me/home)
-removed dev.aegea.itero.daemon-77a42351f78b
-added misty-lake (/Users/me/mail)
+removed dev.aegea.itero.daemon-3f2a9c41d07e, which ran /Users/me/home alone: itero workspace add there puts it on the list
 installed: dev.aegea.itero.daemon runs every workspace on this machine's list (itero workspace list); it starts at login
 ```
 
