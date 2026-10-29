@@ -569,6 +569,10 @@ fn dispatch(cli: Cli) -> Result<()> {
                 return Ok(());
             }
             use crate::engine::http::{self, Engine};
+            // one daemon per journal: held for this daemon's life
+            let me = daemon::Daemon::current();
+            let _lock = crate::engine::lock::take(&ws, &format!("{}, pid {}", me.name, me.pid))
+                .map_err(|e| anyhow!(e))?;
             // its port first: a daemon that cannot listen starts nothing
             let listening = if no_serve {
                 None
