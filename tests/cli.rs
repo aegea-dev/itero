@@ -1093,3 +1093,43 @@ fn repeat_is_set_and_shown_for_an_action() {
         );
     }
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn info_says_whether_itero_may_notify() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
+    let fake = |name: &str, body: &str| {
+        let p = d.path().join(name);
+        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    };
+    let info = |notifier: &std::path::Path, json: bool| {
+        let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_itero"));
+        c.arg("info").current_dir(d.path());
+        if json {
+            c.arg("--json");
+        }
+        let o = c
+            .env("ITERO_NOTIFIER", notifier)
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).to_string()
+    };
+    let allowed = fake("izinli", r#"[ "$1" = --status ] && echo allowed"#);
+    assert!(info(&allowed, false).contains("notifications: allowed"));
+    let v: serde_json::Value = serde_json::from_str(&info(&allowed, true)).unwrap();
+    assert_eq!(v["notifications"]["state"], "allowed", "{v}");
+    // a notifier that does not answer: unknown, and info does not wait for it
+    let slow = fake("yavaş", "sleep 30");
+    let t = std::time::Instant::now();
+    assert!(info(&slow, false).contains("notifications: unknown"));
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(6),
+        "{:?}",
+        t.elapsed()
+    );
+}

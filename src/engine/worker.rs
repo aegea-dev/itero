@@ -1,10 +1,11 @@
 //! The worker: runs one step and reports how it went. It is dumb: the
 //! action's file with its values, or the built-in `#notify`; nothing else.
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
+use wait_timeout::ChildExt;
 
 /// Why a step gave no answer.
 #[derive(Debug, Clone, PartialEq)]
@@ -396,6 +397,53 @@ fn show(n: &Note) -> Result<(), String> {
         "no way to show a notification here (tried {}): install libnotify's notify-send",
         tried.join(", ")
     ))
+}
+
+/// Whether notifications can be shown here, for `itero info`: on macOS,
+/// macOS's setting for Itero (asked of its notifier, three seconds at
+/// most) and the copy notifying; elsewhere, the desktop's notifier.
+pub fn notifications() -> Value {
+    if !cfg!(target_os = "macos") {
+        let found = ["notify-send", "gdbus", "kdialog"].into_iter().find(|p| {
+            std::env::var_os("PATH")
+                .is_some_and(|path| std::env::split_paths(&path).any(|d| d.join(p).is_file()))
+        });
+        return match found {
+            Some(p) => json!({ "state": "available", "notifier": p }),
+            None => json!({ "state": "none", "why": "no notify-send, gdbus or kdialog on PATH" }),
+        };
+    }
+    let Some(program) = notifier() else {
+        return json!({ "state": "none", "why": "no Itero.app found" });
+    };
+    let app = app_of(&program);
+    let version = app.as_deref().and_then(super::notifier_app::version);
+    let asked = Command::new(&program)
+        .arg("--status")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())
+        .and_then(|mut c| match c.wait_timeout(Duration::from_secs(3)) {
+            Ok(Some(_)) => c.wait_with_output().map_err(|e| e.to_string()),
+            Ok(None) => {
+                let _ = c.kill();
+                let _ = c.wait();
+                Err("no answer in three seconds".into())
+            }
+            Err(e) => Err(e.to_string()),
+        });
+    let mut v = match asked {
+        Ok(o) if o.status.success() => {
+            json!({ "state": String::from_utf8_lossy(&o.stdout).trim() })
+        }
+        Ok(o) => json!({ "state": "unknown", "why": String::from_utf8_lossy(&o.stderr).trim() }),
+        Err(why) => json!({ "state": "unknown", "why": why }),
+    };
+    v["app"] = json!(app.map(|a| a.display().to_string()));
+    v["version"] = json!(version);
+    v
 }
 
 /// The Itero.app a notifier program is inside, on macOS.

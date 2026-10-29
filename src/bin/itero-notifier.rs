@@ -3,6 +3,9 @@
 //! Notifications) only when it comes from an app, so this runs inside
 //! Itero.app (`make notifier`); `itero worker` starts it for notify@1.
 //!
+//! `itero-notifier --status` prints macOS's setting for Itero's
+//! notifications (allowed, off, not asked, provisional), showing nothing.
+//!
 //! Usage: `itero-notifier <title> <text> [--<name> <value>]...`, a name of
 //! `Note::fields`: subtitle, sound, url, buttons (a JSON list of labels),
 //! wait, and what a click is told with (notification, workspace, itero,
@@ -26,6 +29,16 @@ fn usage() -> ! {
 fn main() {
     use itero::engine::worker::{Click, Note};
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args == ["--status"] {
+        match mac::status() {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("itero-notifier: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let [title, text, rest @ ..] = args.as_slice() else {
         if args.is_empty() {
             mac::clicked();
@@ -179,6 +192,26 @@ mod mac {
         all.push(this);
         center.setNotificationCategories(&NSSet::from_retained_slice(&all));
         Some(id)
+    }
+
+    /// macOS's setting for these notifications, in words; nothing shown.
+    pub fn status() -> Result<&'static str, String> {
+        use objc2_user_notifications::{UNAuthorizationStatus, UNNotificationSettings};
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        let (tx, rx) = mpsc::channel::<UNAuthorizationStatus>();
+        let answered = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
+            // SAFETY: macOS hands the block settings that live through it
+            let _ = tx.send(unsafe { settings.as_ref() }.authorizationStatus());
+        });
+        center.getNotificationSettingsWithCompletionHandler(&answered);
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(UNAuthorizationStatus::Authorized) => Ok("allowed"),
+            Ok(UNAuthorizationStatus::Denied) => Ok("off"),
+            Ok(UNAuthorizationStatus::NotDetermined) => Ok("not asked"),
+            Ok(UNAuthorizationStatus::Provisional) => Ok("provisional"),
+            Ok(_) => Ok("allowed for a while"),
+            Err(_) => Err("no answer from macOS's notification settings".into()),
+        }
     }
 
     pub fn show(n: &Note) -> Result<(), String> {
