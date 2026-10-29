@@ -387,11 +387,36 @@ pub fn which(ws: &Workspace, name: &str, json: bool) -> Result<()> {
     })
 }
 
-/// The service's state, and the daemon's health.
-pub fn service_status(ws: &Workspace, json: bool) -> Result<()> {
-    let port = ws.daemon_port();
+/// `itero service install`: the machine's service, `itero watchdog
+/// --all`, installed and started.
+pub fn service_install(port: Option<u16>, _yes: bool) -> Result<()> {
+    use crate::engine::service;
+    let exe = std::env::current_exe()?;
+    let state = crate::machine::state_dir()?;
+    std::fs::create_dir_all(&state)?;
+    let home = std::path::PathBuf::from(
+        std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("HOME is not set"))?,
+    );
+    let path = std::env::var("PATH").ok();
+    service::install(service::machine_ctx(&exe, &home, &state, port, path))?;
+    println!(
+        "installed: {} runs every workspace on this machine's list (itero workspace list); it starts at login",
+        service::MACHINE
+    );
+    match port {
+        Some(p) => println!("API: http://127.0.0.1:{p}/"),
+        None => println!("API: on the port it keeps, as itero service status says"),
+    }
+    println!("log: {}", state.join("daemon.log").display());
+    println!("it keeps this shell's PATH; install again after changing it");
+    Ok(())
+}
+
+/// The machine's service's state, and its daemon's health.
+pub fn service_status(json: bool) -> Result<()> {
+    let port = crate::engine::http::machine_port();
     let v = json!({
-        "service": crate::engine::service::status(&ws.root)?.to_string(),
+        "service": crate::engine::service::status(&crate::engine::service::machine_label())?,
         "port": port,
         "daemon": port.and_then(super::daemon_health),
     });
@@ -405,15 +430,17 @@ pub fn service_status(ws: &Workspace, json: bool) -> Result<()> {
             }
             return;
         }
-        println!(
-            "daemon: pid {}, {} passes, last {}{}",
-            h["pid"],
-            h["passes"],
-            h["last_pass"].as_str().unwrap_or("none yet"),
-            h["last_error"]
-                .as_str()
-                .map(|e| format!(", last error: {e}"))
-                .unwrap_or_default()
-        );
+        println!("daemon: pid {}, port {}", h["pid"], v["port"]);
+        for (name, w) in h["workspaces"].as_object().into_iter().flatten() {
+            println!(
+                "  {name}: {} passes, last {}{}",
+                w["passes"],
+                w["last_pass"].as_str().unwrap_or("none yet"),
+                w["last_error"]
+                    .as_str()
+                    .map(|e| format!(", last error: {e}"))
+                    .unwrap_or_default()
+            );
+        }
     })
 }

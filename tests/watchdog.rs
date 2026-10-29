@@ -189,3 +189,77 @@ fn a_watchdog_restarts_a_daemon_that_dies() {
     let second = wait("a new daemon", &|| pid(&client).filter(|p| *p != first));
     assert_ne!(first, second);
 }
+
+#[test]
+fn the_machines_watchdog_runs_the_daemon_over_every_workspace() {
+    use itero::engine::watchdog::Target;
+    let t = Target::Machine { port: Some(7600) };
+    assert_eq!(t.args(), ["daemon", "--all", "--port", "7600"]);
+    assert_eq!(t.port(), Some(7600));
+    let t = Target::Machine { port: None };
+    assert_eq!(t.args(), ["daemon", "--all"]);
+}
+
+#[test]
+fn a_watchdog_over_every_workspace_restarts_its_daemon() {
+    use std::os::unix::process::CommandExt;
+    let d = tempfile::tempdir().unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let log = d.path().join("watchdog.log");
+    let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_itero"));
+    c.args([
+        "watchdog",
+        "--all",
+        "--port",
+        &port.to_string(),
+        "--check-every",
+        "1",
+        "--log",
+        log.to_str().unwrap(),
+    ])
+    .current_dir(d.path())
+    .env("HOME", d.path().join("ev"))
+    .env("XDG_STATE_HOME", d.path().join("durum"))
+    .env("XDG_CACHE_HOME", d.path().join("önbellek"))
+    .env("ITERO_NO_SECRET_STORE", "1")
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null())
+    .process_group(0);
+    let _watchdog = Group(c.spawn().unwrap());
+    let client = itero::net::client(std::time::Duration::from_secs(5)).unwrap();
+    let pid = || -> Option<u64> {
+        let v: serde_json::Value = client
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .send()
+            .ok()?
+            .json()
+            .ok()?;
+        // the machine's daemon: its workspaces, no pass of its own
+        v.get("workspaces")?;
+        v["pid"].as_u64()
+    };
+    let wait = |what: &str, f: &dyn Fn() -> Option<u64>| -> u64 {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if let Some(v) = f() {
+                return v;
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "timed out waiting for {what}; the watchdog's log:\n{}",
+                std::fs::read_to_string(&log).unwrap_or_default()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    };
+    let first = wait("the daemon", &pid);
+    // SAFETY: sends a signal to the daemon this test's watchdog started
+    let killed = unsafe { libc::kill(first as i32, libc::SIGKILL) };
+    assert_eq!(killed, 0, "{}", std::io::Error::last_os_error());
+    let second = wait("a new daemon", &|| pid().filter(|p| *p != first));
+    assert_ne!(first, second);
+}
