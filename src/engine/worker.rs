@@ -59,17 +59,56 @@ pub fn stop_with_parent() {
 }
 
 /// `Itero.app`'s notifier on macOS: `ITERO_NOTIFIER` (the app or its
-/// program), else beside the itero binary, else in a Homebrew formula's
-/// libexec, else in ~/Applications or /Applications.
+/// program) when set; else the stable copy (`notifier_app`), brought up
+/// to date from the Itero.app itero ships with; that shipped copy itself
+/// when the stable one cannot be made, said on stderr.
 fn notifier() -> Option<PathBuf> {
-    let program = |app: PathBuf| app.join("Contents/MacOS/itero-notifier");
-    if let Some(p) = std::env::var_os("ITERO_NOTIFIER").map(PathBuf::from) {
-        return Some(if p.extension().is_some_and(|x| x == "app") {
-            program(p)
+    use super::notifier_app::{program, stable, up_to_date};
+    let given = std::env::var_os("ITERO_NOTIFIER").map(|p| {
+        let p = PathBuf::from(p);
+        if p.extension().is_some_and(|x| x == "app") {
+            program(&p)
         } else {
             p
-        });
+        }
+    });
+    if given.is_some() {
+        return given;
     }
+    let shipped = shipped_app();
+    let made = match (
+        &shipped,
+        std::env::var_os("HOME"),
+        crate::machine::state_dir(),
+    ) {
+        (Some(app), Some(home), Ok(state)) => Some(up_to_date(
+            app,
+            &stable(Path::new(&home)),
+            &state.join("notifier.lock"),
+        )),
+        _ => None,
+    };
+    if let Some(Err(why)) = &made {
+        eprintln!("itero: notifying from the shipped Itero.app: {why}");
+    }
+    choose(None, shipped, made)
+}
+
+/// Which notifier to run: the one given, else the stable copy's, else the
+/// shipped one's.
+fn choose(
+    given: Option<PathBuf>,
+    shipped: Option<PathBuf>,
+    made: Option<Result<PathBuf, String>>,
+) -> Option<PathBuf> {
+    given
+        .or(made.and_then(Result::ok))
+        .or(shipped.map(|app| super::notifier_app::program(&app)))
+}
+
+/// The Itero.app itero ships with: beside the itero binary, else in a
+/// Homebrew formula's libexec, else in ~/Applications or /Applications.
+fn shipped_app() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok();
     let beside = exe
         .as_ref()
@@ -88,8 +127,7 @@ fn notifier() -> Option<PathBuf> {
     ]
     .into_iter()
     .flatten()
-    .map(program)
-    .find(|p| p.is_file())
+    .find(|app| super::notifier_app::program(app).is_file())
 }
 
 /// Whether a notification's url can be opened on a click: http or https,
@@ -647,4 +685,30 @@ fn answer(stdout: &[u8]) -> Value {
     let text = String::from_utf8_lossy(stdout);
     let text = text.trim();
     serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string()))
+}
+
+#[cfg(test)]
+mod notifier_tests {
+    use super::choose;
+    use std::path::PathBuf;
+
+    #[test]
+    fn the_given_notifier_wins_then_the_stable_copy_then_the_shipped_one() {
+        let p = |s: &str| PathBuf::from(s);
+        let shipped = || Some(p("/Cellar/21/Itero.app"));
+        let stable = || Some(Ok(p("/destek/Itero.app/Contents/MacOS/itero-notifier")));
+        assert_eq!(
+            choose(Some(p("/deneme/bildirici")), shipped(), stable()),
+            Some(p("/deneme/bildirici"))
+        );
+        assert_eq!(
+            choose(None, shipped(), stable()),
+            Some(p("/destek/Itero.app/Contents/MacOS/itero-notifier"))
+        );
+        assert_eq!(
+            choose(None, shipped(), Some(Err("disk dolu".into()))),
+            Some(p("/Cellar/21/Itero.app/Contents/MacOS/itero-notifier"))
+        );
+        assert_eq!(choose(None, None, None), None);
+    }
 }
