@@ -4,6 +4,7 @@
 use crate::api::{self, ApiError};
 use crate::engine::{Engine, EngineError, Finish, Piece, Prompt};
 use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
@@ -139,6 +140,11 @@ fn engine_error(e: &EngineError) -> Response {
 
 const STOPPED: &str = "the engine stopped";
 
+/// A body that is not JSON (or not said to be), in OpenAI's error shape.
+fn refused(e: &JsonRejection) -> Response {
+    error(e.status().as_u16(), e.body_text(), Some("body"))
+}
+
 /// Counts a request as waiting while it lives.
 struct Waiting(Shared);
 
@@ -157,8 +163,12 @@ impl Drop for Waiting {
     }
 }
 
-async fn chat(State(s): State<Shared>, Json(raw): Json<Value>) -> Response {
+async fn chat(State(s): State<Shared>, body: Result<Json<Value>, JsonRejection>) -> Response {
     let waiting = Waiting::new(&s);
+    let raw = match body {
+        Ok(Json(v)) => v,
+        Err(e) => return refused(&e),
+    };
     let (prompt, stream) = match api::validate(raw) {
         Ok(v) => v,
         Err(e) => return error(e.status, e.message, e.param.as_deref()),
@@ -284,8 +294,12 @@ async fn health(State(s): State<Shared>) -> Json<Value> {
     }))
 }
 
-async fn inspect(State(s): State<Shared>, Json(v): Json<Value>) -> Response {
+async fn inspect(State(s): State<Shared>, body: Result<Json<Value>, JsonRejection>) -> Response {
     let _waiting = Waiting::new(&s);
+    let v = match body {
+        Ok(Json(v)) => v,
+        Err(e) => return refused(&e),
+    };
     let Some(path) = v.get("path").and_then(Value::as_str) else {
         return error(
             400,

@@ -4,5 +4,6 @@
 pub mod api;
 pub mod engine;
 pub mod inspect;
+pub mod llama;
 pub mod server;
 pub mod think;

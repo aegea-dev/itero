@@ -112,6 +112,14 @@ fn errors_in_openai_shape() {
     let v: Value = res.json().unwrap();
     assert_eq!(v["error"]["param"], "tools");
     assert_eq!(v["error"]["type"], "invalid_request_error");
+    let res = client(&r.sock)
+        .post("http://itero-ai/v1/chat/completions")
+        .body("düz metin")
+        .send()
+        .unwrap();
+    assert_eq!(res.status(), 415);
+    let v: Value = res.json().unwrap();
+    assert_eq!(v["error"]["param"], "body");
     for stream in [false, true] {
         let res = ask(
             &r.sock,
