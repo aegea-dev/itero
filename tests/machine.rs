@@ -546,9 +546,11 @@ fn one_itero_ai_for_every_workspace_of_the_daemon() {
     assert_eq!(kinds(&a, "itero.ai.started"), 1);
     assert_eq!(kinds(&b, "itero.ai.started"), 1);
     assert_eq!(kinds(&a, "itero.ai.model.missing"), 1);
-    // one socket for the machine, not one per workspace
+    // one socket for the machine, not one per workspace, and this
+    // machine's state folder's own: not another daemon's
     assert!(!socket.contains(&na), "{socket}");
-    assert_eq!(Path::new(&socket).file_name().unwrap(), "itero.sock");
+    let state = m.d.path().join("durum/itero");
+    assert_eq!(Path::new(&socket), itero::ai::socket_for(&state));
 }
 
 #[test]
