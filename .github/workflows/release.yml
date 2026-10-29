@@ -85,6 +85,12 @@ jobs:
         shell: bash
         run: make dist TAG="$GITHUB_REF_NAME" TARGET=${{ matrix.target }}
 
+      # itero-ai, the local model's server, in its own archive: it builds
+      # llama.cpp from source (cmake is on every runner)
+      - name: Build itero-ai's archive and its checksum
+        shell: bash
+        run: make dist-ai TAG="$GITHUB_REF_NAME" TARGET=${{ matrix.target }}
+
       - name: Upload them to the draft release
         shell: bash
         env:
@@ -106,12 +112,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: gh release edit "$GITHUB_REF_NAME" --draft=false
 
-  # Writes the version and the published checksums into the tap's formula
-  # (packaging/homebrew/itero.rb is its source). Needs TAP_TOKEN, a token
+  # Writes the version and the published checksums into the tap's formulas
+  # (packaging/homebrew/itero.rb and itero-ai.rb are their sources). Needs TAP_TOKEN, a token
   # with contents:write on the tap: GITHUB_TOKEN cannot push there. Fails
   # loudly without it, since a stale tap serves an old version silently.
   tap:
-    name: bump the homebrew formula
+    name: bump the homebrew formulas
     needs: publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -120,7 +126,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Write and push the formula
+      - name: Write and push the formulas
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -134,31 +140,33 @@ jobs:
           tag="$GITHUB_REF_NAME"
           version="${tag#v}"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir /tmp/sums
-          sha() { awk '{print $1}' "/tmp/sums/itero-$tag-$1.sha256"; }
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/aegea-dev/homebrew-tap.git" /tmp/tap
           mkdir -p /tmp/tap/Formula
-          # the file's order: macOS arm, macOS intel, Linux intel, Linux arm
-          python3 - "$version" "$(sha aarch64-apple-darwin)" "$(sha x86_64-apple-darwin)" \
-            "$(sha x86_64-unknown-linux-gnu)" "$(sha aarch64-unknown-linux-gnu)" <<'PY'
+          for name in itero itero-ai; do
+            sha() { awk '{print $1}' "/tmp/sums/$name-$tag-$1.sha256"; }
+            # the file's order: macOS arm, macOS intel, Linux intel, Linux arm
+            python3 - "$name" "$version" "$(sha aarch64-apple-darwin)" "$(sha x86_64-apple-darwin)" \
+              "$(sha x86_64-unknown-linux-gnu)" "$(sha aarch64-unknown-linux-gnu)" <<'PY'
           import re, sys, pathlib
-          version, *shas = sys.argv[1:6]
-          s = pathlib.Path("packaging/homebrew/itero.rb").read_text()
+          name, version, *shas = sys.argv[1:7]
+          s = pathlib.Path(f"packaging/homebrew/{name}.rb").read_text()
           s = re.sub(r'version "[^"]+"', f'version "{version}"', s, count=1)
           out, i = [], 0
           for line in s.split("\n"):
               if re.match(r'\s*sha256 "', line) and i < len(shas):
                   line = re.sub(r'"[^"]+"', f'"{shas[i]}"', line); i += 1
               out.append(line)
-          assert i == 4, f"expected 4 sha256 lines, wrote {i}"
-          pathlib.Path("/tmp/tap/Formula/itero.rb").write_text("\n".join(out))
+          assert i == 4, f"{name}: expected 4 sha256 lines, wrote {i}"
+          pathlib.Path(f"/tmp/tap/Formula/{name}.rb").write_text("\n".join(out))
           PY
+          done
           cd /tmp/tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/itero.rb
+          git add Formula/itero.rb Formula/itero-ai.rb
           if git diff --cached --quiet; then
             echo "formula already current"
           else
-            git commit -m "itero $version"
+            git commit -m "itero and itero-ai $version"
             git push
           fi
