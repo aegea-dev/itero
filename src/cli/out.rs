@@ -76,3 +76,19 @@ pub fn given(data: Option<String>, file: Option<std::path::PathBuf>) -> Result<S
 pub fn plain_name(name: &str) -> bool {
     !(name.is_empty() || name.contains(['/', '\\', '#', '@', '$']) || name.starts_with('.'))
 }
+
+/// Asks `question` on the terminal, unless `yes` was given; whether to go
+/// on. With no terminal and no `yes`, an error saying `no_terminal`.
+pub fn confirm(question: &str, yes: bool, no_terminal: &str) -> Result<bool> {
+    use std::io::IsTerminal;
+    if yes {
+        return Ok(true);
+    }
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!("{no_terminal}");
+    }
+    eprint!("{question} [y/N] ");
+    let mut a = String::new();
+    std::io::stdin().read_line(&mut a)?;
+    Ok(a.trim().eq_ignore_ascii_case("y"))
+}

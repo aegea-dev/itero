@@ -182,3 +182,78 @@ pub fn status(label: &ServiceLabel) -> Result<String> {
         },
     )
 }
+
+/// A service from before one per machine: one workspace's, by its label.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Old {
+    pub label: String,
+    /// The workspace it ran in.
+    pub folder: PathBuf,
+}
+
+/// The services, one per workspace, that itero installed before one per
+/// machine: launchd agents in `home`'s `Library/LaunchAgents`, systemd
+/// user units in `config`'s `systemd/user`, each with the folder it ran in.
+pub fn old_services(home: &Path, config: &Path) -> Vec<Old> {
+    let mut out = vec![];
+    let prefix = format!("{MACHINE}-");
+    for (dir, ext, unit) in [
+        (home.join("Library/LaunchAgents"), "plist", false),
+        (config.join("systemd/user"), "service", true),
+    ] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().is_none_or(|x| x != ext) {
+                continue;
+            }
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            // systemd names the unit after the label's organization and
+            // application: aegea-itero.daemon-<hash>
+            let hash = if unit {
+                stem.strip_prefix("aegea-itero.daemon-")
+            } else {
+                stem.strip_prefix(prefix.as_str())
+            };
+            let Some(hash) = hash.filter(|h| !h.is_empty()) else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            let folder = if unit {
+                text.lines()
+                    .find_map(|l| l.strip_prefix("WorkingDirectory="))
+                    .map(str::to_string)
+            } else {
+                plist_string(&text, "WorkingDirectory")
+            };
+            if let Some(folder) = folder {
+                out.push(Old {
+                    label: format!("{prefix}{hash}"),
+                    folder: folder.trim().into(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The string a plist gives `key`, its XML entities read.
+fn plist_string(text: &str, key: &str) -> Option<String> {
+    let after = &text[text.find(&format!("<key>{key}</key>"))?..];
+    let start = after.find("<string>")? + "<string>".len();
+    let end = after[start..].find("</string>")? + start;
+    Some(
+        after[start..end]
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&"),
+    )
+}

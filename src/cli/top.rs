@@ -389,7 +389,7 @@ pub fn which(ws: &Workspace, name: &str, json: bool) -> Result<()> {
 
 /// `itero service install`: the machine's service, `itero watchdog
 /// --all`, installed and started.
-pub fn service_install(port: Option<u16>, _yes: bool) -> Result<()> {
+pub fn service_install(port: Option<u16>, yes: bool) -> Result<()> {
     use crate::engine::service;
     let exe = std::env::current_exe()?;
     let state = crate::machine::state_dir()?;
@@ -397,6 +397,11 @@ pub fn service_install(port: Option<u16>, _yes: bool) -> Result<()> {
     let home = std::path::PathBuf::from(
         std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("HOME is not set"))?,
     );
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|c| !c.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    move_old_services(&service::old_services(&home, &config), yes)?;
     let path = std::env::var("PATH").ok();
     service::install(service::machine_ctx(&exe, &home, &state, port, path))?;
     println!(
@@ -409,6 +414,60 @@ pub fn service_install(port: Option<u16>, _yes: bool) -> Result<()> {
     }
     println!("log: {}", state.join("daemon.log").display());
     println!("it keeps this shell's PATH; install again after changing it");
+    Ok(())
+}
+
+/// The services from before, one per workspace: removed, and their
+/// workspaces added to the machine's list, after asking.
+fn move_old_services(old: &[crate::engine::service::Old], yes: bool) -> Result<()> {
+    use crate::engine::service;
+    if old.is_empty() {
+        return Ok(());
+    }
+    let found = |o: &service::Old| {
+        crate::workspace::find(&o.folder)
+            .ok()
+            .filter(|ws| ws.root == o.folder)
+    };
+    println!("itero's services from before, one per workspace:");
+    for o in old {
+        match found(o) {
+            Some(_) => println!("  {}: onto the machine's list", o.folder.display()),
+            None => println!(
+                "  {}: no workspace there now, removed only",
+                o.folder.display()
+            ),
+        }
+    }
+    if !super::out::confirm(
+        "remove them, and add their workspaces to the machine's list?",
+        yes,
+        "itero service install --yes moves them over (or itero service uninstall in each, with an older itero)",
+    )? {
+        anyhow::bail!("nothing changed");
+    }
+    for o in old {
+        let label = o
+            .label
+            .parse()
+            .map_err(|e| anyhow::anyhow!("{}: {e}", o.label))?;
+        service::uninstall(&label)?;
+        println!("removed {}", o.label);
+        let Some(ws) = found(o) else { continue };
+        // its daemon ends with its service: once its lock is free, the
+        // machine's daemon can take the workspace
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while crate::engine::lock::take(&ws, "itero service install").is_err() {
+            if std::time::Instant::now() > end {
+                anyhow::bail!(
+                    "{}: its daemon is still running ten seconds after its service was removed",
+                    ws.root.display()
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        super::workspace::add_to_list(&ws)?;
+    }
     Ok(())
 }
 

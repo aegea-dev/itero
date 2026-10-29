@@ -82,3 +82,60 @@ fn the_machines_service_runs_the_watchdog_over_every_workspace() {
     // the old services, one per workspace, have labels of their own
     assert_ne!(label(home).to_qualified_name(), MACHINE);
 }
+
+#[test]
+fn the_old_services_one_per_workspace_are_found_with_their_folders() {
+    use itero::engine::service::{Old, old_services};
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("ev");
+    let agents = home.join("Library/LaunchAgents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let plist = |folder: &str| {
+        format!(
+            "<?xml version=\"1.0\"?>\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>x</string>\n\t<key>WorkingDirectory</key>\n\t<string>{folder}</string>\n</dict>\n</plist>\n"
+        )
+    };
+    std::fs::write(
+        agents.join("dev.aegea.itero.daemon-6abd1c2f821a.plist"),
+        plist("/Users/biri/iş &amp; ev"),
+    )
+    .unwrap();
+    std::fs::write(
+        agents.join("dev.aegea.itero.daemon-77a42351f78b.plist"),
+        plist("/Users/biri/yok"),
+    )
+    .unwrap();
+    // the machine's own, and another app's: not old ones
+    std::fs::write(
+        agents.join("dev.aegea.itero.daemon.plist"),
+        plist("/Users/biri"),
+    )
+    .unwrap();
+    std::fs::write(agents.join("com.başka.uygulama.plist"), plist("/x")).unwrap();
+    let units = d.path().join("ayar/systemd/user");
+    std::fs::create_dir_all(&units).unwrap();
+    std::fs::write(
+        units.join("aegea-itero.daemon-0123456789ab.service"),
+        "[Unit]\nDescription=itero\n\n[Service]\nWorkingDirectory=/home/biri/çalışma\nExecStart=/usr/bin/itero watchdog\n",
+    )
+    .unwrap();
+    let mut got = old_services(&home, &d.path().join("ayar"));
+    got.sort_by(|a, b| a.label.cmp(&b.label));
+    assert_eq!(
+        got,
+        vec![
+            Old {
+                label: "dev.aegea.itero.daemon-0123456789ab".into(),
+                folder: "/home/biri/çalışma".into(),
+            },
+            Old {
+                label: "dev.aegea.itero.daemon-6abd1c2f821a".into(),
+                folder: "/Users/biri/iş & ev".into(),
+            },
+            Old {
+                label: "dev.aegea.itero.daemon-77a42351f78b".into(),
+                folder: "/Users/biri/yok".into(),
+            },
+        ]
+    );
+}
