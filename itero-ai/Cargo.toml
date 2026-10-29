@@ -1,0 +1,34 @@
+[package]
+name = "itero-ai"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Runs a local model for itero, behind the OpenAI Chat Completions API on a Unix socket"
+publish = false
+
+[dependencies]
+itero-ai-index = { path = "../itero-ai-index" }
+serde = { version = "~1.0.229", features = ["derive"] }
+serde_json = "~1.0.151"
+anyhow = "~1.0.104"
+axum = "~0.8.9"
+tokio = { version = "~1.53.1", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
+tokio-stream = "~0.1.19"
+libc = "~0.2.190"
+minijinja = { version = "~2.24.0", features = ["loop_controls", "builtins", "json"] }
+minijinja-contrib = { version = "~2.24.0", features = ["pycompat"] }
+
+# llama.cpp, built from its source: Metal on macOS, the CPU elsewhere.
+# Default features off: no OpenMP to link.
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-2 = { version = "~0.1.160", default-features = false, features = ["common", "metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+llama-cpp-2 = { version = "~0.1.160", default-features = false, features = ["common"] }
+
+[dev-dependencies]
+reqwest = { version = "~0.13.5", default-features = false, features = ["blocking", "json"] }
+# built with the workspace, reqwest has itero's rustls-no-provider: the
+# tests' client installs ring first, as itero's net::client does
+rustls = { version = "~0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+tempfile = "~3.27.0"

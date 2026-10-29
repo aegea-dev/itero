@@ -1,0 +1,15 @@
+[package]
+name = "itero-ai-index"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "The models a machine has, as itero writes them and itero-ai reads them"
+publish = false
+
+[dependencies]
+serde = { version = "~1.0.229", features = ["derive"] }
+serde_json = "~1.0.151"
+anyhow = "~1.0.104"
+
+[dev-dependencies]
+tempfile = "~3.27.0"
