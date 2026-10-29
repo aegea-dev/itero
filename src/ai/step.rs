@@ -59,7 +59,8 @@ fn fields(text: &str) -> Result<Vec<(String, String)>, String> {
         .map(|(name, t)| match t.as_str() {
             Some(t) if FIELD_TYPES.contains(&t) => Ok((name, t.to_string())),
             _ => Err(fail(format!(
-                "fields take text, number, integer, boolean or date, not {t} (for {name})"
+                "fields take text, number, integer, boolean or date, not {} (for {name})",
+                t.as_str().map_or_else(|| t.to_string(), String::from)
             ))),
         })
         .collect()
@@ -183,6 +184,45 @@ pub fn request(env: &BTreeMap<String, String>) -> Result<Value, String> {
         r["max_tokens"] = v;
     }
     Ok(r)
+}
+
+/// What `itero check` can say of an `#ai` step's args before a run: the
+/// same rules as a run's, on the values written in the workflow; a
+/// `"$name"` is known only in a run, and is left aside. Gives the model's
+/// name when it is written out.
+pub fn check(args: &Value) -> Result<Option<String>, String> {
+    let items: Vec<&Map<String, Value>> = match args {
+        Value::Object(o) => vec![o],
+        Value::Array(a) => a.iter().filter_map(Value::as_object).collect(),
+        // "$output" and the like: known only in a run
+        _ => return Ok(None),
+    };
+    let mut env = BTreeMap::new();
+    for o in items {
+        for (k, v) in o {
+            let text = match v {
+                Value::String(s)
+                    if s.starts_with('$') && !["model", "text", "system"].contains(&k.as_str()) =>
+                {
+                    continue;
+                }
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            env.insert(k.clone(), text);
+        }
+    }
+    request(&env)?;
+    Ok(env.get("model").filter(|m| !m.starts_with('$')).cloned())
+}
+
+/// A warning when this machine has no such model (another machine may).
+pub fn model_warning(model: &str) -> Option<String> {
+    let ix = itero_ai_index::Index::read(&super::index_path().ok()?).ok()?;
+    match itero_ai_index::resolve(&ix, model) {
+        Ok(_) => None,
+        Err(e) => Some(format!("#ai: {e} (itero ai models list shows them)")),
+    }
 }
 
 /// The answer as `$output`: the text, the label, or the fields' object.
