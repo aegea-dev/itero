@@ -80,8 +80,37 @@ impl Machine {
             .env("XDG_STATE_HOME", self.d.path().join("durum"))
             .env("XDG_CACHE_HOME", self.d.path().join("önbellek"))
             .env("ITERO_NO_SECRET_STORE", "1")
-            .env("ITERO_NOTIFIER", "/usr/bin/true");
+            .env("ITERO_NOTIFIER", "/usr/bin/true")
+            .env(
+                "ITERO_AI_BIN",
+                Path::new(env!("CARGO_BIN_EXE_itero")).with_file_name("itero-ai"),
+            )
+            .env_remove("ITERO_AI_SOCKET");
         c
+    }
+
+    /// A workspace whose workflow, on `soru.geldi`, asks a model this
+    /// machine does not have.
+    fn ai_workspace(&self, name: &str) -> PathBuf {
+        let w = self.busy_workspace(name);
+        std::fs::write(
+            w.join("workflows/sor.json"),
+            r##"{"on": [{"event": "soru.geldi"}],
+                 "steps": [{"#ai": {"args": {"model": "yok/Yok-GGUF", "text": "merhaba"}}}]}"##,
+        )
+        .unwrap();
+        w
+    }
+
+    /// The `itero.ai.*` events in a workspace's journal, with their data.
+    fn ai_events(&self, dir: &Path) -> Vec<(String, Value)> {
+        self.journal(dir)
+            .events(None)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.event.kind.starts_with("itero.ai."))
+            .map(|r| (r.event.kind, r.event.data))
+            .collect()
     }
 
     /// `itero daemon --all`, from this machine's own folder.
@@ -459,4 +488,52 @@ fn info_in_a_listed_workspace_names_the_machines_daemon() {
     // `itero emit --wait` waits on the same daemon
     let out = m.ok(&a, &["emit", "deneme.geldi", "--wait"]);
     assert!(a.join("çıktı").is_file(), "{out}");
+}
+
+#[test]
+fn one_itero_ai_for_every_workspace_of_the_daemon() {
+    let bin = Path::new(env!("CARGO_BIN_EXE_itero")).with_file_name("itero-ai");
+    assert!(
+        bin.is_file(),
+        "{} is not built: cargo build -p itero-ai",
+        bin.display()
+    );
+    let m = Machine::new();
+    let (a, b) = (m.ai_workspace("bir"), m.ai_workspace("iki"));
+    m.ok(&a, &["workspace", "add"]);
+    m.ok(&b, &["workspace", "add"]);
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    let na = m.journal_name(&a);
+    until("both running", || {
+        let (_, v) = get(port, "/workspaces");
+        v.as_array()
+            .is_some_and(|l| l.len() == 2 && l.iter().all(|w| w["state"] == "running"))
+    });
+    let kinds = |dir: &Path, kind: &str| m.ai_events(dir).iter().filter(|(k, _)| k == kind).count();
+    m.ok(&a, &["emit", "soru.geldi"]);
+    until("a's step to ask", || {
+        kinds(&a, "itero.ai.model.missing") == 1
+    });
+    // itero-ai started once, told to both; the missing model only to a
+    assert_eq!(kinds(&a, "itero.ai.started"), 1);
+    until("b to hear", || kinds(&b, "itero.ai.started") == 1);
+    assert_eq!(kinds(&b, "itero.ai.model.missing"), 0);
+    let (_, started) = m
+        .ai_events(&a)
+        .into_iter()
+        .find(|(k, _)| k == "itero.ai.started")
+        .unwrap();
+    let socket = started["socket"].as_str().unwrap().to_string();
+    // b's step asks the same itero-ai: started no second time
+    m.ok(&b, &["emit", "soru.geldi"]);
+    until("b's step to ask", || {
+        kinds(&b, "itero.ai.model.missing") == 1
+    });
+    assert_eq!(kinds(&a, "itero.ai.started"), 1);
+    assert_eq!(kinds(&b, "itero.ai.started"), 1);
+    assert_eq!(kinds(&a, "itero.ai.model.missing"), 1);
+    // one socket for the machine, not one per workspace
+    assert!(!socket.contains(&na), "{socket}");
+    assert_eq!(Path::new(&socket).file_name().unwrap(), "itero.sock");
 }
