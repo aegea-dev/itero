@@ -86,19 +86,25 @@ or its archive, `itero-ai-<version>-<target>.tar.gz`, from the
    lines; "under 15 words" keeps the answer to them (asked only for one
    sentence, Qwen3.5-4B answers in about 190 characters, cut in half).
 
-3. Run it: the daemon in one terminal, the event in another.
+3. Run it. With the [machine's daemon](/guides/machine/) running
+   (`itero service install`), hand it the workspace:
 
    ```sh
-   itero daemon
+   itero workspace add
    ```
+
+   Without it, run a daemon in one terminal (`itero daemon`) and send
+   the event from another. Either way:
 
    ```sh
    itero emit sky.asked
    ```
 
    The answer comes as a notification: "Sunlight scatters off air
-   molecules, making the sky appear blue." `itero wf runs` shows the run,
-   and `itero wf runs <name>` each step's output.
+   molecules, making the sky appear blue." No notification? `itero wf
+   runs` shows the run and how it ended, and `itero wf runs <name>` each
+   step's output and error. On macOS, notifications must be allowed for
+   Itero (System Settings, Notifications).
 
 The first answer takes a second or two more: itero-ai starts, and the
 model is read into memory.
