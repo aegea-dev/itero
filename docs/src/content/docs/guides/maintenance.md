@@ -28,6 +28,8 @@ notification comes through Itero.app):
 | `itero.ai.failed` | it ended any other way | `exit`, `why` |
 | `itero.ai.model.loaded` | it loaded a model | `model`, `seconds` |
 | `itero.ai.model.missing` | an `#ai` step named a model this machine does not have | `model`, `workflow` |
+| `itero.workspace.stuck` | on the machine's daemon, a workspace's pass runs past its limit; told to every listed workspace ([One itero per machine](/guides/machine/)) | `workspace`, `since` |
+| `itero.workspace.failed` | on the machine's daemon, a workspace's loop kept failing and was given up on; told to every listed workspace | `workspace`, `why` |
 
 A workflow on one is written like any other:
 

@@ -106,3 +106,24 @@ there is not.
 ```
 
 `path` is from the workspace, and `null` for a built-in workflow.
+
+## One itero per machine
+
+`itero daemon --all` ([One itero per machine](/guides/machine/)) serves
+every workspace on the machine's list on one port, with the same `Host`
+check:
+
+| Route | Does |
+|---|---|
+| `GET /health` | the daemon, each running workspace's passes and connectors by name, itero-ai |
+| `GET /workspaces` | each listed workspace: `name`, `folder`, `state`, `why` |
+| `/w/<name>/...` | that workspace's routes above: `POST /w/<name>/events`, `GET /w/<name>/runs` |
+
+```json
+[{ "name": "quiet-river", "folder": "/Users/me/projects/home", "state": "running", "why": null },
+ { "name": "misty-lake", "folder": "/Users/me/projects/mail", "state": "stopped",
+   "why": "/Users/me/projects/mail: this workspace is run by brave-otter, pid 4211 already" }]
+```
+
+A name that is not running there is 404, saying to look at
+`itero workspace list`.
