@@ -67,8 +67,13 @@ Whichever daemon runs a workspace holds a lock on its
 `itero daemon` in a folder on the list while `--all` runs it, or the
 other way around (`--all` then shows it as `stopped`, with why).
 
-`itero service` still installs a daemon for one workspace: a workspace
-it runs is `stopped` on the list.
+A workspace `stopped` because another daemon held it is started when the
+list changes or the machine's daemon starts again
+(`itero service restart`).
+
+[`itero service install`](/commands/service/) runs the machine's daemon
+from login on, and moves the services from before, one per workspace,
+over to the list.
 
 ## One API
 
