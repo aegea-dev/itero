@@ -365,3 +365,71 @@ fn a_workspace_run_in_the_foreground_is_left_to_it() {
         "{wa}"
     );
 }
+
+#[test]
+fn a_stuck_workspace_is_told_and_the_others_run_on() {
+    use std::os::unix::fs::PermissionsExt;
+    let m = Machine::new();
+    let (a, b) = (m.busy_workspace("bir"), m.busy_workspace("iki"));
+    // a's step takes four seconds: past ITERO_STUCK_AFTER
+    std::fs::write(
+        a.join("actions/yaz"),
+        format!(
+            "#!/bin/sh\nsleep 4\necho tamam > '{}'\n",
+            a.join("çıktı").display()
+        ),
+    )
+    .unwrap();
+    // b hears of it, with the stuck one's name
+    std::fs::write(
+        b.join("workflows/duyar.json"),
+        r##"{"on": [{"event": "itero.workspace.stuck"}], "steps": ["#not"]}"##,
+    )
+    .unwrap();
+    let not = b.join("actions/not");
+    std::fs::write(
+        &not,
+        format!(
+            "#!/bin/sh\necho \"$workspace\" > '{}'\n",
+            b.join("takıldı").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&not, std::fs::Permissions::from_mode(0o755)).unwrap();
+    m.ok(&a, &["workspace", "add"]);
+    m.ok(&b, &["workspace", "add"]);
+    let na = m.journal_name(&a);
+    let port = free_port();
+    let child = m
+        .command(m.d.path())
+        .args(["daemon", "--all", "--port", &port.to_string()])
+        .env("ITERO_STUCK_AFTER", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _d = Daemon(child);
+    let state = |n: &str| {
+        let (_, v) = get(port, "/workspaces");
+        v.as_array()
+            .and_then(|l| l.iter().find(|w| w["name"] == n).cloned())
+            .map(|w| w["state"].clone())
+    };
+    until("both running", || {
+        state(&na) == Some("running".into()) && state(&m.journal_name(&b)) == Some("running".into())
+    });
+    m.ok(&a, &["emit", "deneme.geldi"]);
+    until("a stuck", || state(&na) == Some("stuck".into()));
+    until("b to hear", || b.join("takıldı").is_file());
+    assert_eq!(
+        std::fs::read_to_string(b.join("takıldı")).unwrap().trim(),
+        na
+    );
+    // b runs on meanwhile
+    m.ok(&b, &["emit", "deneme.geldi"]);
+    until("b's workflow", || b.join("çıktı").is_file());
+    // a's step ends: running again
+    until("a's workflow", || a.join("çıktı").is_file());
+    until("a running again", || state(&na) == Some("running".into()));
+}

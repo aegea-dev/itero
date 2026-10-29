@@ -136,7 +136,7 @@ impl Machine {
                 }
             }
         };
-        Running::start(ws, &self.exe, held, self.report).map_err(|err| Idle {
+        Running::start(ws, &self.exe, held, self.report, true).map_err(|err| Idle {
             state: "failed",
             why: format!("{err:#}"),
         })
@@ -151,7 +151,7 @@ impl Machine {
             .values()
             .map(|r| {
                 json!({ "name": r.name, "folder": r.ws.root.display().to_string(),
-                        "state": "running", "why": null })
+                        "state": r.state(), "why": null })
             })
             .collect();
         out.extend(
@@ -231,6 +231,32 @@ impl Machine {
             {
                 eprintln!("itero: reading the machine's list: {e:#}");
             }
+        }
+    }
+}
+
+/// Tells every workspace on the machine's list one of the daemon's own
+/// events, and wakes each one's loop: what happens to one workspace (stuck,
+/// failed) is something the others may act on.
+pub fn tell_all(kind: &str, data: Value) {
+    let now = super::daemon::stamp(chrono::Utc::now());
+    let Ok(list) = list_path().and_then(|p| List::read(&p)) else {
+        return;
+    };
+    for e in &list.workspaces {
+        let Some(ws) = crate::workspace::find(&e.folder)
+            .ok()
+            .filter(|ws| ws.root == e.folder && ws.journal().is_file())
+        else {
+            continue;
+        };
+        let told = Journal::open(&ws)
+            .and_then(|j| j.publish(&super::events::own(kind, data.clone(), &now)));
+        match told {
+            Ok(()) => {
+                let _ = super::events::nudge(&ws, &now);
+            }
+            Err(err) => eprintln!("itero: telling {} {kind}: {err:#}", e.name),
         }
     }
 }

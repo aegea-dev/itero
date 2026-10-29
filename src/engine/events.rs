@@ -56,6 +56,13 @@ pub const AI_MODEL_LOADED: &str = "itero.ai.model.loaded";
 /// `{"model", "workflow"}`. The `models` workflow looks for models on it.
 pub const AI_MODEL_MISSING: &str = "itero.ai.model.missing";
 
+/// A workspace of the machine's daemon has a pass running past its limit:
+/// `{"workspace", "since"}`. Told to every workspace the daemon runs.
+pub const WORKSPACE_STUCK: &str = "itero.workspace.stuck";
+/// A workspace's loop kept failing and was given up on:
+/// `{"workspace", "why"}`. Told to every workspace the daemon runs.
+pub const WORKSPACE_FAILED: &str = "itero.workspace.failed";
+
 /// Saves a click on a notification for the workspace; its data must name
 /// the notification. Returns the message's id.
 pub fn notification_clicked(ws: &Workspace, data: Value, now: &str) -> anyhow::Result<String> {

@@ -155,8 +155,9 @@ const AFTER_FAILURE: chrono::Duration = chrono::Duration::minutes(1);
 /// from a connector, a watched path or an edit, the alarm), until its
 /// senders are gone or `stop` is set. After a pass the alarm is set to the next due time,
 /// or to none; between passes the daemon waits, with no timeout. Each pass
-/// is recorded in `health`, and `report` hears of it; a pass that fails
-/// never stops the next.
+/// is recorded in `health`, `beat` hears of its start and end, and
+/// `report` of its outcome; a pass that fails never stops the next.
+#[allow(clippy::too_many_arguments)]
 pub fn run_loop(
     ws: &Workspace,
     exe: &Path,
@@ -164,13 +165,16 @@ pub fn run_loop(
     woken: &Receiver<()>,
     health: &Mutex<Health>,
     stop: &super::stop::Stop,
+    beat: &dyn Fn(bool),
     report: impl Fn(&Result<Pass>),
 ) {
     let lock = || health.lock().unwrap_or_else(PoisonError::into_inner);
     loop {
         let now = Utc::now();
         lock().busy_since = Some(stamp(now));
+        beat(true);
         let pass = run_once(ws, now, exe);
+        beat(false);
         {
             let mut h = lock();
             h.passes += 1;

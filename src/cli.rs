@@ -634,7 +634,8 @@ fn dispatch(cli: Cli) -> Result<()> {
             } else {
                 Some(http::listen(&ws)?)
             };
-            let running = crate::engine::running::Running::start(ws.clone(), &exe, lock, report)?;
+            let running =
+                crate::engine::running::Running::start(ws.clone(), &exe, lock, report, false)?;
             if let Some((_, Some(note))) = &listening {
                 running
                     .log

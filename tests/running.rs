@@ -38,7 +38,7 @@ fn a_workspace_started_then_stopped_leaves_nothing_running() {
     let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
 
     let held = lock::take(&ws, "deneme").unwrap();
-    let r = Running::start(ws.clone(), exe, held, |_, _| {}).unwrap();
+    let r = Running::start(ws.clone(), exe, held, |_, _| {}, false).unwrap();
     until("the connector to run", || r.connector_pids().len() == 1);
     until("the first pass", || {
         r.engine.health.lock().unwrap().passes >= 1

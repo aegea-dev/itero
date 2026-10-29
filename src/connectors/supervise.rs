@@ -42,6 +42,31 @@ impl Default for Policy {
     }
 }
 
+impl Policy {
+    /// After an end at `now`, of a run that lasted `ran`: the pause before
+    /// starting again (`pause` the last one), or none when it is given up
+    /// on. `ends` keeps the ends within the window, this one included.
+    pub fn after_end(
+        &self,
+        ends: &mut Vec<Instant>,
+        now: Instant,
+        ran: Duration,
+        pause: Duration,
+    ) -> Option<Duration> {
+        ends.retain(|t| now.saturating_duration_since(*t) < self.window);
+        ends.push(now);
+        // started again ends - 1 times
+        if ends.len() > self.give_up_after {
+            return None;
+        }
+        Some(if ran >= self.calm_after {
+            self.first_pause
+        } else {
+            (pause * 2).clamp(self.first_pause, self.max_pause)
+        })
+    }
+}
+
 /// A connector of the workspace: the type of the messages it sends (its file
 /// name), and its file.
 pub struct Connector<'a> {
@@ -171,10 +196,9 @@ pub fn run(
         if stop.is_set() {
             return;
         }
-        ends.retain(|t| t.elapsed() < policy.window);
-        ends.push(Instant::now());
+        let next = policy.after_end(&mut ends, Instant::now(), ran, pause);
         let restarts = ends.len() - 1;
-        if restarts >= policy.give_up_after {
+        let Some(next) = next else {
             let why = format!(
                 "started again {restarts} times in {}s, last {ended}",
                 policy.window.as_secs()
@@ -200,12 +224,8 @@ pub fn run(
                 h.last_exit = Some(ended);
             });
             return;
-        }
-        pause = if ran >= policy.calm_after {
-            policy.first_pause
-        } else {
-            (pause * 2).clamp(policy.first_pause, policy.max_pause)
         };
+        pause = next;
         set(health, s.kind, |h| {
             h.state = "waiting".into();
             h.restarts = restarts;
