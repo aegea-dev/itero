@@ -62,7 +62,8 @@ or its archive, `itero-ai-<version>-<target>.tar.gz`, from the
    (about 2.7 GB; a model you already have in LM Studio or Hugging
    Face's cache is found without downloading: `itero ai models list`).
 
-2. A workspace with a workflow that asks it, `workflows/sky.json`:
+2. A workspace with a workflow that asks it, and shows the answer as a
+   notification, `workflows/sky.json`:
 
    ```sh
    mkdir ask && cd ask
@@ -75,10 +76,15 @@ or its archive, `itero-ai-<version>-<target>.tar.gz`, from the
      "on": [{ "event": "sky.asked" }],
      "steps": [
        { "#ai": { "args": { "model": "unsloth/Qwen3.5-4B-GGUF",
-                            "text": "In one sentence: why is the sky blue?" } } }
+                            "text": "In one short sentence, under 15 words: why is the sky blue?" } } },
+       { "#notify": { "args": { "title": "Why is the sky blue?", "text": "$output" } } }
      ]
    }
    ```
+
+   `$output` is the model's answer. A notification shows about two
+   lines; "under 15 words" keeps the answer to them (asked only for one
+   sentence, Qwen3.5-4B answers in about 190 characters, cut in half).
 
 3. Run it: the daemon in one terminal, the event in another.
 
@@ -88,9 +94,11 @@ or its archive, `itero-ai-<version>-<target>.tar.gz`, from the
 
    ```sh
    itero emit sky.asked
-   itero wf runs           # the run, with its name
-   itero wf runs <name>    # the answer, as the step's output
    ```
+
+   The answer comes as a notification: "Sunlight scatters off air
+   molecules, making the sky appear blue." `itero wf runs` shows the run,
+   and `itero wf runs <name>` each step's output.
 
 The first answer takes a second or two more: itero-ai starts, and the
 model is read into memory.
