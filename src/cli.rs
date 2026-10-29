@@ -5,6 +5,7 @@ mod kinds;
 mod out;
 mod top;
 mod workflow;
+mod workspace;
 
 use anyhow::{Result, anyhow, bail};
 use clap::{Parser, Subcommand};
@@ -91,6 +92,11 @@ pub enum Cmd {
     Connector {
         #[command(subcommand)]
         cmd: ConnectorCmd,
+    },
+    /// The machine's workspaces, which one daemon runs
+    Workspace {
+        #[command(subcommand)]
+        cmd: WorkspaceCmd,
     },
     /// The local models #ai steps use (through itero-ai)
     Ai {
@@ -374,6 +380,19 @@ pub enum ConnectorArgsCmd {
         /// Read them from this file
         #[arg(long)]
         file: Option<std::path::PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WorkspaceCmd {
+    /// Add this workspace to the machine's list: the machine's daemon runs it
+    Add,
+    /// Take a workspace off the list (this one, or one by name); its folder stays
+    Remove { name: Option<String> },
+    /// The machine's workspaces: name, folder, state and last run
+    List {
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -805,6 +824,11 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Completion { shell } => complete::script(shell, command),
+        Cmd::Workspace { cmd } => match cmd {
+            WorkspaceCmd::Add => workspace::add(&workspace()?)?,
+            WorkspaceCmd::Remove { name } => workspace::remove(name.as_deref())?,
+            WorkspaceCmd::List { json } => workspace::list(json)?,
+        },
         Cmd::Ai { cmd } => match cmd {
             AiCmd::Models { cmd } => match cmd {
                 ModelsCmd::List { json, all } => ai::list(json, all)?,
