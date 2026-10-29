@@ -139,6 +139,19 @@ impl Machine {
         Daemon(child)
     }
 
+    /// `itero daemon --all --port <port>`, its stderr kept in a file.
+    fn daemon_all_said(&self, port: u16, said: &Path) -> Daemon {
+        let child = self
+            .command(self.d.path())
+            .args(["daemon", "--all", "--port", &port.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(std::fs::File::create(said).unwrap())
+            .spawn()
+            .unwrap();
+        Daemon(child)
+    }
+
     /// The machine daemon's port, once it serves.
     fn port(&self) -> u16 {
         let f = self.d.path().join("durum/itero/port");
@@ -536,4 +549,63 @@ fn one_itero_ai_for_every_workspace_of_the_daemon() {
     // one socket for the machine, not one per workspace
     assert!(!socket.contains(&na), "{socket}");
     assert_eq!(Path::new(&socket).file_name().unwrap(), "itero.sock");
+}
+
+#[test]
+fn a_listed_workspace_has_no_models_workflow_of_its_own() {
+    let m = Machine::new();
+    let (a, b) = (m.workspace("bir"), m.workspace("iki"));
+    m.ok(&a, &["workspace", "add"]);
+    let names = |dir: &Path| {
+        m.json(dir, &["wf", "list", "--json"])["workflows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w["name"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        !names(&a).contains(&"models".to_string()),
+        "{:?}",
+        names(&a)
+    );
+    assert!(names(&b).contains(&"models".to_string()), "{:?}", names(&b));
+}
+
+#[test]
+fn the_daemon_scans_for_models_once_and_when_a_step_asks() {
+    let bin = Path::new(env!("CARGO_BIN_EXE_itero")).with_file_name("itero-ai");
+    assert!(
+        bin.is_file(),
+        "{} is not built: cargo build -p itero-ai",
+        bin.display()
+    );
+    let m = Machine::new();
+    // a model in LM Studio's folder: a real GGUF file, its vocabulary only
+    let lm = m.d.path().join("ev/.lmstudio/models/örnek/Sözlük-GGUF");
+    std::fs::create_dir_all(&lm).unwrap();
+    let vocab = Path::new(env!("CARGO_MANIFEST_DIR")).join("itero-ai/tests/data/vocab.gguf");
+    std::fs::copy(&vocab, lm.join("Sözlük-F16.gguf")).unwrap();
+    let (a, b) = (m.ai_workspace("bir"), m.ai_workspace("iki"));
+    m.ok(&a, &["workspace", "add"]);
+    m.ok(&b, &["workspace", "add"]);
+    let said = m.d.path().join("daemon.err");
+    let scans = || {
+        std::fs::read_to_string(&said)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.contains("itero: models:"))
+            .count()
+    };
+    let _d = m.daemon_all_said(free_port(), &said);
+    until("the scan at its start", || scans() == 1);
+    let index = m.d.path().join("önbellek/itero/models.json");
+    let ix: Value = serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
+    assert_eq!(ix["models"][0]["repo"], "örnek/Sözlük-GGUF", "{ix}");
+    // two workspaces, one scan
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(scans(), 1);
+    // a step asks for a model the list has not: one more
+    m.ok(&a, &["emit", "soru.geldi"]);
+    until("the scan it asked for", || scans() == 2);
 }

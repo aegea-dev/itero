@@ -253,6 +253,11 @@ pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
 /// the workspace whose own short-lived itero-ai reads new headers. Gives
 /// how many models there are and how many files were inspected.
 pub fn scan(root: &Path) -> Result<Value, String> {
+    scan_on(super::socket_for(root).with_extension("find.sock"))
+}
+
+/// `scan`, its short-lived itero-ai on `own`.
+pub fn scan_on(own: PathBuf) -> Result<Value, String> {
     let fail = |e: String| e;
     let index = super::index_path().map_err(|e| fail(format!("{e:#}")))?;
     let old = Index::read(&index).map_err(|e| fail(format!("{e:#}")))?;
@@ -265,8 +270,7 @@ pub fn scan(root: &Path) -> Result<Value, String> {
             let sock = match &socket {
                 Some(s) => s.clone(),
                 None => {
-                    let own = super::socket_for(root).with_extension("find.sock");
-                    let s = super::ensure_at(own, Duration::from_secs(60), |_| ())
+                    let s = super::ensure_at(own.clone(), Duration::from_secs(60), |_| ())
                         .map_err(|e| format!("{e:#}"))?;
                     let sock = s.socket.clone();
                     started = Some(s);

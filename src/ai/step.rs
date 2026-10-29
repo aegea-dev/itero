@@ -305,9 +305,18 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
 }
 
 /// Tells the workspace a model is missing: the `models` workflow looks
-/// for models on it.
+/// for models on it, or, for a workspace on the machine's list, the
+/// machine's daemon (it watches the file this touches).
 fn missing(r: &StepRun, model: &str) {
     if let Ok(ws) = crate::workspace::find(&r.root) {
+        if ws.machine
+            && let Ok(dir) = crate::machine::state_dir()
+        {
+            let _ = std::fs::write(
+                dir.join(crate::engine::machine::MODELS_WANTED),
+                crate::engine::daemon::stamp(chrono::Utc::now()),
+            );
+        }
         super::keeper::publish(
             &ws,
             crate::engine::events::AI_MODEL_MISSING,
