@@ -117,5 +117,5 @@ have.
 With `ITERO_AI_SOCKET` set in the daemon's environment, `#ai` steps ask
 whatever answers on that socket, and no itero-ai is started: a small
 server of your test's, giving fixed answers in OpenAI's shape (Bun serves
-on a Unix socket: `Bun.serve({ unix: path, fetch })`). See the `ai-mail`
-example.
+on a Unix socket: `Bun.serve({ unix: path, fetch })`), in a process of
+its own when the test waits on itero. See the `ai-mail` example.
