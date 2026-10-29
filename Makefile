@@ -133,6 +133,25 @@ dist: ## Build the release archive and checksum (TAG=vX.Y.Z, TARGET=triple)
 	cd $(DIST) && (shasum -a 256 $(NAME).tar.gz 2>/dev/null || sha256sum $(NAME).tar.gz) > $(NAME).sha256
 	rm -rf $(DIST)/stage
 
+# itero-ai's own archive, beside itero's: users with no model never
+# download llama.cpp. Its THIRD-PARTY-LICENSES also carries the notices of
+# the C and C++ code built into it from source, which cargo-about does not
+# see (packaging/licenses/itero-ai-c.txt).
+AI_NAME = itero-ai-$(TAG)-$(TARGET)
+.PHONY: dist-ai
+dist-ai: ## Build itero-ai's release archive and checksum (TAG=vX.Y.Z, TARGET=triple)
+	$(CARGO) build --release --target $(TARGET) -p itero-ai
+	rm -rf $(DIST)/stage-ai && mkdir -p $(DIST)/stage-ai
+	cp $(OUT)/itero-ai $(DIST)/stage-ai/itero-ai
+	$(CARGO) about generate --locked --fail --target $(TARGET) -m itero-ai/Cargo.toml \
+	  -c packaging/licenses/about.toml packaging/licenses/about.hbs \
+	  -o $(DIST)/stage-ai/THIRD-PARTY-LICENSES
+	printf '\n\n' >> $(DIST)/stage-ai/THIRD-PARTY-LICENSES
+	cat packaging/licenses/itero-ai-c.txt >> $(DIST)/stage-ai/THIRD-PARTY-LICENSES
+	tar czf $(DIST)/$(AI_NAME).tar.gz -C $(DIST)/stage-ai .
+	cd $(DIST) && (shasum -a 256 $(AI_NAME).tar.gz 2>/dev/null || sha256sum $(AI_NAME).tar.gz) > $(AI_NAME).sha256
+	rm -rf $(DIST)/stage-ai
+
 .PHONY: test-install
 test-install: ## Install from a local release through the install script, in temp folders
 	sh scripts/test-install.sh
