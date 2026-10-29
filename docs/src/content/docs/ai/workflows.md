@@ -1,34 +1,12 @@
 ---
-title: A local model in a step
-description: The built-in #ai asks a model on your own machine, through itero-ai, for a text, one of a list, or typed fields.
+title: "#ai in a workflow"
+description: The built-in #ai asks a model on your own machine for a text, one of a list, or typed fields.
 ---
 
 The built-in action `#ai` asks a language model in a step: to sum up a
 mail, to sort it, to pull the amount and the date out of an invoice. The
-model runs on your own machine, through **itero-ai**, a program of its
-own beside itero. Nothing leaves the machine.
-
-## Installing
-
-itero ships no model, and itero-ai only when you want it:
-
-```sh
-brew install aegea-dev/tap/itero-ai
-```
-
-or its archive from the [release page](https://github.com/aegea-dev/itero/releases).
-Without it, `#ai` steps fail saying so, and nothing else changes.
-
-Then a model: any GGUF file. itero finds the ones you have already, in
-LM Studio's folder and Hugging Face's cache, or downloads one:
-
-```sh
-itero ai models add unsloth/Qwen3.5-4B-GGUF
-itero ai models list
-```
-
-itero advises **Qwen3.5-4B** (Apache-2.0): about 2.7 GB as `Q4_K_M`,
-fast enough on a laptop. See [`itero ai`](/commands/ai/).
+model runs on your own machine, through [itero-ai](/ai/). Nothing leaves
+the machine.
 
 ## `#ai` ■
 
@@ -62,11 +40,17 @@ A condition reads them as any step's result:
                "args": { "title": "Urgent", "text": "$output.body" } } }
 ```
 
-### Its args
+For `choose` and `fields`, the model is held to the form in two ways:
+a grammar lets it write nothing else, and a sentence added to `text`
+tells it the form (`Answer as a JSON string: "urgent", "later" or
+"spam".`). A small model held by the grammar alone, without being told,
+answers poorly.
+
+## Its args
 
 | Arg | Is |
 |---|---|
-| `model` | the model: `<org>/<repo>`, with `:<quantization>` or without (`itero ai models list` shows them); needed |
+| `model` | the model: `<org>/<repo>`, with `:<quantization>` or without ([Models](/ai/models/)); needed |
 | `text` | what is asked; needed |
 | `system` | the system message: who the model is to be |
 | `choose` | a list of labels: the answer is one of them |
@@ -78,44 +62,19 @@ A condition reads them as any step's result:
 model is the repo's only file, else its `Q4_K_M`, else an error naming
 the ones there.
 
-What suits a model is written in the workflow: each model's makers say
-which sampling it likes. Qwen3.5-4B's, without thinking:
-
-```json
-"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0, "presence_penalty": 1.5
-```
-
+What suits a model goes in the workflow: each model's makers say which
+sampling it likes. [Qwen3.5-4B](/ai/qwen3.5-4b/) lists its own, by mode.
 Sampling not given is llama.cpp's own: `temperature` 0.8, `top_k` 40,
 `top_p` 0.95, `min_p` 0.05. An answer has 16,384 tokens of context, its
 prompt included.
 
-### While it answers
+## While it answers
 
 A running `#ai` step's progress is its token count (`[48 tokens]`), so a
 long answer is not stopped as quiet; the action's `limits` apply as to
 any action. `itero check` checks its args before any run, and warns of a
 model this machine does not have.
 
-## itero-ai
-
-The daemon starts itero-ai when an `#ai` step needs it, and keeps it
-while steps ask. After five minutes with nothing asked it exits, and the
-model's memory is free again; the next step starts it again, which takes
-a second or two. One that ends badly is started again after a pause
-that doubles each time.
-
-It is OpenAI's Chat Completions API on a Unix socket only you can read,
-not a port: other tools can talk to it as to OpenAI, with `curl
---unix-socket`. What it does is told as events
-([The daemon's own workflows](/guides/maintenance/)): `itero.ai.started`,
-`itero.ai.stopped`, `itero.ai.failed`, `itero.ai.model.loaded`, and
-`itero.ai.model.missing` when a step names a model the machine does not
-have.
-
-## Testing without a model
-
-With `ITERO_AI_SOCKET` set in the daemon's environment, `#ai` steps ask
-whatever answers on that socket, and no itero-ai is started: a small
-server of your test's, giving fixed answers in OpenAI's shape (Bun serves
-on a Unix socket: `Bun.serve({ unix: path, fetch })`), in a process of
-its own when the test waits on itero. See the `ai-mail` example.
+A step naming a model the machine does not have fails, and the daemon
+looks for models again at once: run it again a minute later. See
+[Running and troubleshooting](/ai/running/).
