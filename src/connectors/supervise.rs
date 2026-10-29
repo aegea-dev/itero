@@ -5,6 +5,7 @@
 use crate::engine::daemon::{ConnectorHealth, Health, stamp};
 use crate::engine::journal::{self, Envelope, Journal};
 use crate::engine::log::Log;
+use crate::engine::stop::Stop;
 use crate::workspace::Workspace;
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, BufReader};
@@ -88,6 +89,7 @@ fn once(
     s: &Connector,
     wake: &Sender<()>,
     log: &Log,
+    stop: &Stop,
 ) -> anyhow::Result<String> {
     let j = Journal::open(ws)?;
     let env = crate::engine::daemon::connector_env(ws, s.kind).map_err(anyhow::Error::msg)?;
@@ -99,6 +101,8 @@ fn once(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()?;
+    let pid = child.id();
+    stop.hold(pid);
     // stdin stays open while it runs: its closing tells the connector that
     // the daemon has gone
     let stdin = child.stdin.take();
@@ -125,10 +129,14 @@ fn once(
         }
     }
     drop(stdin);
-    Ok(child.wait()?.to_string())
+    let status = child.wait();
+    stop.release(pid);
+    Ok(status?.to_string())
 }
 
-/// Runs a connector until it is given up on.
+/// Runs a connector until it is given up on, or `stop` is set (its
+/// process is then asked to end).
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     ws: &Workspace,
     exe: &Path,
@@ -137,17 +145,21 @@ pub fn run(
     wake: &Sender<()>,
     health: &Mutex<Health>,
     log: &Log,
+    stop: &Stop,
 ) {
     let mut ends: Vec<Instant> = vec![];
     let mut pause = Duration::ZERO;
     loop {
+        if stop.is_set() {
+            return;
+        }
         let began = Instant::now();
         set(health, s.kind, |h| {
             h.state = "running".into();
             h.restarts = ends.len();
         });
         log.write("connector.started", json!({ "connector": s.kind }));
-        let ended = match once(ws, exe, s, wake, log) {
+        let ended = match once(ws, exe, s, wake, log, stop) {
             Ok(status) => status,
             Err(e) => format!("error: {e:#}"),
         };
@@ -156,6 +168,9 @@ pub fn run(
             "connector.ended",
             json!({ "connector": s.kind, "why": ended, "seconds": ran.as_secs() }),
         );
+        if stop.is_set() {
+            return;
+        }
         ends.retain(|t| t.elapsed() < policy.window);
         ends.push(Instant::now());
         let restarts = ends.len() - 1;
@@ -196,6 +211,8 @@ pub fn run(
             h.restarts = restarts;
             h.last_exit = Some(ended);
         });
-        std::thread::sleep(pause);
+        if stop.sleep(pause) {
+            return;
+        }
     }
 }

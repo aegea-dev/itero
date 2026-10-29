@@ -38,7 +38,16 @@ fn run_it(ws: &itero::workspace::Workspace) -> String {
         kind: &kind,
         file: &file,
     };
-    supervise::run(ws, exe, &connector, &policy, &wake, &health, &log);
+    supervise::run(
+        ws,
+        exe,
+        &connector,
+        &policy,
+        &wake,
+        &health,
+        &log,
+        &Default::default(),
+    );
     let h = health.into_inner().unwrap();
     h.connectors["posta.geldi"].last_exit.clone().unwrap()
 }

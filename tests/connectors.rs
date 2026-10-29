@@ -85,7 +85,16 @@ fn run_it(ws: &itero::workspace::Workspace) -> Health {
         kind: &kind,
         file: &file,
     };
-    supervise::run(ws, exe, &connector, &quick(), &wake, &health, &log(ws));
+    supervise::run(
+        ws,
+        exe,
+        &connector,
+        &quick(),
+        &wake,
+        &health,
+        &log(ws),
+        &Default::default(),
+    );
     health.into_inner().unwrap()
 }
 
@@ -136,7 +145,16 @@ fn a_connector_that_cannot_start_is_given_up_on_with_why() {
         kind: &kind,
         file: &file,
     };
-    supervise::run(&ws, exe, &connector, &quick(), &wake, &health, &log(&ws));
+    supervise::run(
+        &ws,
+        exe,
+        &connector,
+        &quick(),
+        &wake,
+        &health,
+        &log(&ws),
+        &Default::default(),
+    );
     let h = health.into_inner().unwrap();
     let s = &h.connectors["deneme.başladı"];
     assert_eq!(s.state, "gave up");

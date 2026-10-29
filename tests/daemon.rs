@@ -1611,7 +1611,9 @@ fn watching(ws: &Ws) -> std::sync::mpsc::Receiver<()> {
     let w = ws.ws.clone();
     let id = Journal::open(&w).unwrap().workspace().unwrap().id;
     let log = itero::engine::log::Log::new(&w, &id);
-    std::thread::spawn(move || itero::engine::daemon::watch_paths(&w, &wake, &log));
+    std::thread::spawn(move || {
+        itero::engine::daemon::watch_paths(&w, &wake, &log, &Default::default())
+    });
     // its first look
     std::thread::sleep(std::time::Duration::from_millis(300));
     woken

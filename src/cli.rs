@@ -568,10 +568,10 @@ fn dispatch(cli: Cli) -> Result<()> {
                 pass?;
                 return Ok(());
             }
-            use crate::engine::http::{self, Engine};
+            use crate::engine::http;
             // one daemon per journal: held for this daemon's life
             let me = daemon::Daemon::current();
-            let _lock = crate::engine::lock::take(&ws, &format!("{}, pid {}", me.name, me.pid))
+            let lock = crate::engine::lock::take(&ws, &format!("{}, pid {}", me.name, me.pid))
                 .map_err(|e| anyhow!(e))?;
             // its port first: a daemon that cannot listen starts nothing
             let listening = if no_serve {
@@ -579,101 +579,25 @@ fn dispatch(cli: Cli) -> Result<()> {
             } else {
                 Some(http::listen(&ws)?)
             };
-            let workspace = crate::engine::journal::Journal::open(&ws)?.workspace()?;
-            let log = crate::engine::log::Log::new(&ws, &workspace.id);
+            let running = crate::engine::running::Running::start(ws.clone(), &exe, lock, report)?;
             if let Some((_, Some(note))) = &listening {
-                log.write("port.changed", serde_json::json!({ "why": note }));
+                running
+                    .log
+                    .write("port.changed", serde_json::json!({ "why": note }));
             }
-            let me = daemon::Daemon::current();
-            log.write(
-                "daemon.started",
-                serde_json::json!({
-                    "workspace_name": workspace.name,
-                    "workspace_created": workspace.created,
-                    "workspace_itero": workspace.itero,
-                    "path": ws.root.display().to_string(),
-                    "meta": ws.meta,
-                    "daemon_name": me.name,
-                    "started": me.started,
-                    "pid": me.pid,
-                    "host": me.host,
-                    "itero": me.itero,
-                }),
-            );
-            // a $$NAME both a secret and a variable: said once, at the start
-            for name in crate::engine::secrets::shadowed(&ws)? {
-                let why = crate::engine::secrets::shadow_warning(&name);
-                eprintln!("itero: warning: {why}");
-                log.write("warning", serde_json::json!({ "why": why }));
-            }
-            stop_on_signal(log.clone());
-            crate::engine::journal::Journal::open(&ws)?.publish(&crate::engine::events::own(
-                "itero.daemon.started",
-                serde_json::json!({ "daemon": me.id, "name": me.name, "itero": me.itero }),
-                &me.started,
-            ))?;
+            stop_on_signal(running.log.clone());
             eprintln!(
                 "itero: running the workflows in {}, each as it comes due (Ctrl-C stops); log: .itero/itero.log",
                 ws.root.display()
             );
-            let (wake, woken) = std::sync::mpsc::channel();
-            let engine = std::sync::Arc::new(Engine {
-                health: std::sync::Mutex::new(daemon::Health::starting(&daemon::stamp(
-                    chrono::Utc::now(),
-                ))),
-                wake,
-            });
-            // a bad connector file stops the daemon here, naming the file
-            for (kind, file) in ws.connector_files()? {
-                let (ws, exe, engine, log) = (ws.clone(), exe.clone(), engine.clone(), log.clone());
-                let wake = engine.wake.clone();
-                std::thread::spawn(move || {
-                    let connector = crate::connectors::supervise::Connector {
-                        kind: &kind,
-                        file: &file,
-                    };
-                    let policy = crate::connectors::supervise::Policy::default();
-                    crate::connectors::supervise::run(
-                        &ws,
-                        &exe,
-                        &connector,
-                        &policy,
-                        &wake,
-                        &engine.health,
-                        &log,
-                    );
-                });
-            }
-            {
-                // one thread watches every path the workflows name
-                let (ws, wake, log) = (ws.clone(), engine.wake.clone(), log.clone());
-                std::thread::spawn(move || daemon::watch_paths(&ws, &wake, &log));
-            }
-            // the next due time, kept by the kernel; it wakes the loop as
-            // everything else does
-            let alarm = {
-                let log = log.clone();
-                crate::engine::alarm::Alarm::start(engine.wake.clone(), move |e| {
-                    log.write(
-                        "error",
-                        serde_json::json!({ "why": format!("the alarm stopped: {e}") }),
-                    );
-                })?
-            };
-            let looping = {
-                let (ws, engine) = (ws.clone(), engine.clone());
-                std::thread::spawn(move || {
-                    daemon::run_loop(&ws, &exe, &alarm, &woken, &engine.health, |p| {
-                        report(p, Some(&log))
-                    })
-                })
-            };
+            let engine = running.engine.clone();
             match listening {
                 None => {
-                    // the loop's sender lives in `engine`: the loop runs for good
-                    looping
-                        .join()
-                        .map_err(|_| anyhow!("the daemon's loop stopped unexpectedly"))?;
+                    // runs until the process is stopped
+                    let _running = running;
+                    loop {
+                        std::thread::park();
+                    }
                 }
                 Some((listener, _)) => {
                     let port = listener.local_addr()?.port();
