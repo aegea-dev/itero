@@ -18,7 +18,7 @@ command's options, and every command that prints something takes `--json`.
 | [`which`](/commands/which/) | where a workflow, action or connector of a name is |
 | [`info`](/commands/info/) | the workspace and its daemon: IDs, names, limits |
 | [`secret`](/commands/secret/) | keeps a secret in the OS secret store |
-| [`workspace`](/commands/workspace/) | the machine's workspaces, which `itero daemon --all` runs |
+| [`workspace`](/commands/workspace/) (`ws`) | the machine's workspaces, which `itero daemon --all` runs |
 | [`service`](/commands/service/) | runs the daemon from login on |
 | [`watch`](/commands/watch/) | for connectors: a line per change to a file or folder |
 | [`completion`](/commands/completion/) | Tab completion for your shell |

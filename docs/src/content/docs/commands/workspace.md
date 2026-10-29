@@ -3,7 +3,8 @@ title: workspace
 description: The machine's list of workspaces, which one daemon runs.
 ---
 
-`itero workspace` keeps the machine's list of workspaces, which one
+`itero workspace` (`itero ws` for short) keeps the machine's list of
+workspaces, which one
 [`itero daemon --all`](/commands/daemon/) runs. See
 [One itero per machine](/guides/machine/).
 

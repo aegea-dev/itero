@@ -100,6 +100,7 @@ pub enum Cmd {
         cmd: ConnectorCmd,
     },
     /// The machine's workspaces, which one daemon runs
+    #[command(visible_alias = "ws")]
     Workspace {
         #[command(subcommand)]
         cmd: WorkspaceCmd,
