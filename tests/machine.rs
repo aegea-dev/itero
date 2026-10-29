@@ -433,3 +433,30 @@ fn a_stuck_workspace_is_told_and_the_others_run_on() {
     until("a's workflow", || a.join("çıktı").is_file());
     until("a running again", || state(&na) == Some("running".into()));
 }
+
+#[test]
+fn info_in_a_listed_workspace_names_the_machines_daemon() {
+    let m = Machine::new();
+    let a = m.busy_workspace("bir");
+    m.ok(&a, &["workspace", "add"]);
+    let na = m.journal_name(&a);
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    until("a running", || {
+        get(port, &format!("/w/{na}/health")).0 == 200
+    });
+    let v = m.json(&a, &["info", "--json"]);
+    let d = &v["daemon"];
+    assert_eq!(d["running"], true, "{v}");
+    assert_eq!(d["run_by"], "machine", "{v}");
+    let api = format!("http://127.0.0.1:{port}/w/{na}/");
+    assert_eq!(d["api"], api.as_str(), "{v}");
+    let text = m.ok(&a, &["info"]);
+    assert!(
+        text.contains(&api) && text.contains("the machine's daemon"),
+        "{text}"
+    );
+    // `itero emit --wait` waits on the same daemon
+    let out = m.ok(&a, &["emit", "deneme.geldi", "--wait"]);
+    assert!(a.join("çıktı").is_file(), "{out}");
+}

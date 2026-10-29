@@ -526,24 +526,66 @@ fn nudge(ws: &crate::workspace::Workspace, now: &str) {
 
 /// The workspace's daemon's `/health`, when one answers on `port`.
 fn daemon_health(port: u16) -> Option<serde_json::Value> {
+    health_at(&format!("http://127.0.0.1:{port}/"))
+}
+
+/// The `/health` a daemon's API at `api` (ending in `/`) gives.
+fn health_at(api: &str) -> Option<serde_json::Value> {
     crate::net::client(std::time::Duration::from_secs(3))
         .ok()?
-        .get(format!("http://127.0.0.1:{port}/health"))
+        .get(format!("{api}health"))
         .send()
         .and_then(|r| r.json())
         .ok()
 }
 
-/// Whether this workspace's own daemon answers on its port.
+/// The daemon running a workspace, and where its API is.
+struct Answering {
+    /// The API's address, ending in `/`.
+    api: String,
+    port: u16,
+    /// Run by the machine's daemon, not the workspace's own.
+    machine: bool,
+    /// Its `/health`.
+    health: serde_json::Value,
+}
+
+/// The daemon that runs this workspace, when one answers for its journal:
+/// the machine's, under `/w/<name>/`, else the workspace's own on its port.
+fn daemon_for(
+    ws: &crate::workspace::Workspace,
+    j: &crate::engine::journal::Journal,
+) -> Result<Option<Answering>> {
+    let me = j.workspace()?;
+    let mine = |h: &serde_json::Value| h["workspace"]["id"] == me.id.as_str();
+    if let Some(port) = crate::engine::http::machine_port() {
+        let api = format!("http://127.0.0.1:{port}/w/{}/", me.name);
+        if let Some(health) = health_at(&api).filter(mine) {
+            return Ok(Some(Answering {
+                api,
+                port,
+                machine: true,
+                health,
+            }));
+        }
+    }
+    Ok(ws.daemon_port().and_then(|port| {
+        let api = format!("http://127.0.0.1:{port}/");
+        health_at(&api).filter(mine).map(|health| Answering {
+            api,
+            port,
+            machine: false,
+            health,
+        })
+    }))
+}
+
+/// Whether a daemon runs this workspace.
 fn daemon_running(
     ws: &crate::workspace::Workspace,
     j: &crate::engine::journal::Journal,
 ) -> Result<bool> {
-    let me = j.workspace()?;
-    Ok(ws
-        .daemon_port()
-        .and_then(daemon_health)
-        .is_some_and(|h| h["workspace"]["id"] == me.id.as_str()))
+    Ok(daemon_for(ws, j)?.is_some())
 }
 
 fn dispatch(cli: Cli) -> Result<()> {
@@ -686,7 +728,9 @@ fn dispatch(cli: Cli) -> Result<()> {
                 })?;
                 // with no daemon nothing would answer: say so, sending nothing
                 if !daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)? {
-                    bail!("no daemon is running: start itero daemon, then send it again");
+                    bail!(
+                        "no daemon is running: start itero daemon (or itero workspace add, with the machine's daemon), then send it again"
+                    );
                 }
                 let id = events::emit(&ws, &kind, data, &now)?;
                 nudge(&ws, &now);

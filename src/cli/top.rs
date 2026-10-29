@@ -259,8 +259,17 @@ pub fn info(ws: &Workspace, json: bool) -> Result<()> {
         .collect();
     let l = &ws.limits;
     let port = ws.daemon_port();
-    let daemon = match (port, port.and_then(super::daemon_health)) {
-        (Some(p), Some(h)) if h["workspace"]["id"] != w.id.as_str() => json!({
+    let answering = super::daemon_for(ws, &Journal::open(ws)?)?;
+    let daemon = match (answering, port, port.and_then(super::daemon_health)) {
+        (Some(a), _, _) => {
+            let mut d = a.health["daemon"].clone();
+            d["running"] = json!(true);
+            d["port"] = json!(a.port);
+            d["api"] = json!(a.api);
+            d["run_by"] = json!(if a.machine { "machine" } else { "workspace" });
+            d
+        }
+        (None, Some(p), Some(h)) => json!({
             "running": false,
             "port": p,
             "why": format!(
@@ -268,16 +277,10 @@ pub fn info(ws: &Workspace, json: bool) -> Result<()> {
                 h["workspace"]["path"].as_str().unwrap_or("unknown")
             ),
         }),
-        (Some(p), Some(h)) => {
-            let mut d = h["daemon"].clone();
-            d["running"] = json!(true);
-            d["port"] = json!(p);
-            d
-        }
-        (Some(p), None) => {
+        (None, Some(p), None) => {
             json!({ "running": false, "port": p, "why": format!("no answer on port {p}") })
         }
-        (None, _) => json!({
+        (None, None, _) => json!({
             "running": false,
             "port": null,
             "why": "no port yet: the OS gives one at its start",
@@ -325,7 +328,11 @@ pub fn info(ws: &Workspace, json: bool) -> Result<()> {
             for k in ["id", "name", "started", "pid", "host", "itero"] {
                 println!("  {k} {}", text(&d[k]));
             }
+            if d["run_by"] == "machine" {
+                println!("  run by the machine's daemon (itero workspace list)");
+            }
             println!("  port {}", d["port"]);
+            println!("  api {}", text(&d["api"]));
         } else {
             println!("daemon: not running ({})", text(&d["why"]));
         }
