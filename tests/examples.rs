@@ -92,7 +92,11 @@ fn run_action(ws: &Path, name: &str, env: &[(&str, &str)], stdin: &str) -> Strin
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    c.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+    // an action may end without reading its stdin (check-sites does): a
+    // broken pipe then is no failure, as it is none in itero's worker
+    if let Err(e) = c.stdin.take().unwrap().write_all(stdin.as_bytes()) {
+        assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "#{name}: {e}");
+    }
     let o = c.wait_with_output().unwrap();
     assert!(o.status.success(), "#{name}: {o:?}");
     String::from_utf8(o.stdout).unwrap().trim().to_string()
