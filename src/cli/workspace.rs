@@ -30,7 +30,11 @@ pub fn add(ws: &Workspace) -> Result<()> {
     });
     list.write(&path)?;
     println!("added {name} ({})", ws.root.display());
-    println!("the machine's daemon runs it; itero service install starts that daemon at login");
+    if daemon_states().is_some() {
+        println!("the machine's daemon starts it now");
+    } else {
+        println!("itero daemon --all runs it, with every workspace on the list");
+    }
     Ok(())
 }
 
