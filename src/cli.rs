@@ -5,6 +5,7 @@ mod kinds;
 mod out;
 mod top;
 mod workflow;
+mod workspace;
 
 use anyhow::{Result, anyhow, bail};
 use clap::{Parser, Subcommand};
@@ -24,6 +25,12 @@ pub struct Cli {
 pub enum Cmd {
     /// Run the workspace's workflows: their schedules, events and jobs, as each comes due
     Daemon {
+        /// Every workspace on the machine's list (itero workspace list), not this folder's
+        #[arg(long, conflicts_with = "once")]
+        all: bool,
+        /// With --all: the machine's port (else the one kept, else one the OS gives)
+        #[arg(long, requires = "all")]
+        port: Option<u16>,
         /// One pass, then stop: for tests and scripts, so hidden
         #[arg(long, hide = true)]
         once: bool,
@@ -91,6 +98,11 @@ pub enum Cmd {
     Connector {
         #[command(subcommand)]
         cmd: ConnectorCmd,
+    },
+    /// The machine's workspaces, which one daemon runs
+    Workspace {
+        #[command(subcommand)]
+        cmd: WorkspaceCmd,
     },
     /// The local models #ai steps use (through itero-ai)
     Ai {
@@ -378,6 +390,19 @@ pub enum ConnectorArgsCmd {
 }
 
 #[derive(Subcommand)]
+pub enum WorkspaceCmd {
+    /// Add this workspace to the machine's list: the machine's daemon runs it
+    Add,
+    /// Take a workspace off the list (this one, or one by name); its folder stays
+    Remove { name: Option<String> },
+    /// The machine's workspaces: name, folder, state and last run
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum ServiceCmd {
     /// Run the daemon as a service (per user, at login), kept up by a watchdog
     Install,
@@ -454,9 +479,10 @@ extern "C" fn on_stop(_: libc::c_int) {
     STOP.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// When the daemon is asked to stop (SIGINT, SIGTERM), logs
-/// `daemon.stopped` and ends the process.
-fn stop_on_signal(log: crate::engine::log::Log) {
+/// When the daemon is asked to stop (SIGINT, SIGTERM), stops itero-ai,
+/// calls `last` (each workspace logs `daemon.stopped`) and ends the
+/// process.
+fn stop_on_signal(last: impl FnOnce() + Send + 'static) {
     #[cfg(unix)]
     // SAFETY: the handler only stores to an atomic
     unsafe {
@@ -469,7 +495,7 @@ fn stop_on_signal(log: crate::engine::log::Log) {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         crate::ai::keeper::Keeper::global().stop();
-        log.write("daemon.stopped", serde_json::json!({}));
+        last();
         std::process::exit(0);
     });
 }
@@ -500,24 +526,66 @@ fn nudge(ws: &crate::workspace::Workspace, now: &str) {
 
 /// The workspace's daemon's `/health`, when one answers on `port`.
 fn daemon_health(port: u16) -> Option<serde_json::Value> {
+    health_at(&format!("http://127.0.0.1:{port}/"))
+}
+
+/// The `/health` a daemon's API at `api` (ending in `/`) gives.
+fn health_at(api: &str) -> Option<serde_json::Value> {
     crate::net::client(std::time::Duration::from_secs(3))
         .ok()?
-        .get(format!("http://127.0.0.1:{port}/health"))
+        .get(format!("{api}health"))
         .send()
         .and_then(|r| r.json())
         .ok()
 }
 
-/// Whether this workspace's own daemon answers on its port.
+/// The daemon running a workspace, and where its API is.
+struct Answering {
+    /// The API's address, ending in `/`.
+    api: String,
+    port: u16,
+    /// Run by the machine's daemon, not the workspace's own.
+    machine: bool,
+    /// Its `/health`.
+    health: serde_json::Value,
+}
+
+/// The daemon that runs this workspace, when one answers for its journal:
+/// the machine's, under `/w/<name>/`, else the workspace's own on its port.
+fn daemon_for(
+    ws: &crate::workspace::Workspace,
+    j: &crate::engine::journal::Journal,
+) -> Result<Option<Answering>> {
+    let me = j.workspace()?;
+    let mine = |h: &serde_json::Value| h["workspace"]["id"] == me.id.as_str();
+    if let Some(port) = crate::engine::http::machine_port() {
+        let api = format!("http://127.0.0.1:{port}/w/{}/", me.name);
+        if let Some(health) = health_at(&api).filter(mine) {
+            return Ok(Some(Answering {
+                api,
+                port,
+                machine: true,
+                health,
+            }));
+        }
+    }
+    Ok(ws.daemon_port().and_then(|port| {
+        let api = format!("http://127.0.0.1:{port}/");
+        health_at(&api).filter(mine).map(|health| Answering {
+            api,
+            port,
+            machine: false,
+            health,
+        })
+    }))
+}
+
+/// Whether a daemon runs this workspace.
 fn daemon_running(
     ws: &crate::workspace::Workspace,
     j: &crate::engine::journal::Journal,
 ) -> Result<bool> {
-    let me = j.workspace()?;
-    Ok(ws
-        .daemon_port()
-        .and_then(daemon_health)
-        .is_some_and(|h| h["workspace"]["id"] == me.id.as_str()))
+    Ok(daemon_for(ws, j)?.is_some())
 }
 
 fn dispatch(cli: Cli) -> Result<()> {
@@ -530,9 +598,57 @@ fn dispatch(cli: Cli) -> Result<()> {
     }
     match cli.cmd {
         Cmd::Daemon {
+            all: true,
+            port,
+            no_serve,
+            ..
+        } => {
+            // its port first: a daemon that cannot listen starts nothing
+            let listener = if no_serve {
+                None
+            } else {
+                Some(crate::engine::http::listen_machine(port)?)
+            };
+            let machine = std::sync::Arc::new(crate::engine::machine::Machine::new(
+                std::env::current_exe()?,
+                report,
+            ));
+            {
+                let machine = machine.clone();
+                stop_on_signal(move || {
+                    machine.each(|r| r.log.write("daemon.stopped", serde_json::json!({})))
+                });
+            }
+            eprintln!(
+                "itero: running the workspaces on the machine's list ({}), each as it comes due (Ctrl-C stops)",
+                crate::machine::list_path()?.display()
+            );
+            match listener {
+                None => machine.follow()?,
+                Some(listener) => {
+                    {
+                        let machine = machine.clone();
+                        std::thread::spawn(move || {
+                            if let Err(e) = machine.follow() {
+                                eprintln!("itero: following the machine's list stopped: {e:#}");
+                                std::process::exit(1);
+                            }
+                        });
+                    }
+                    let port = listener.local_addr()?.port();
+                    eprintln!("itero: serving on http://127.0.0.1:{port}/");
+                    crate::engine::http::serve(
+                        crate::engine::http::machine_router(machine, port),
+                        listener,
+                    )?;
+                }
+            }
+        }
+        Cmd::Daemon {
             once,
             now,
             no_serve,
+            ..
         } => {
             use crate::engine::daemon;
             let ws = workspace()?;
@@ -549,108 +665,38 @@ fn dispatch(cli: Cli) -> Result<()> {
                 pass?;
                 return Ok(());
             }
-            use crate::engine::http::{self, Engine};
+            use crate::engine::http;
+            // one daemon per journal: held for this daemon's life
+            let me = daemon::Daemon::current();
+            let lock = crate::engine::lock::take(&ws, &format!("{}, pid {}", me.name, me.pid))
+                .map_err(|e| anyhow!(e))?;
             // its port first: a daemon that cannot listen starts nothing
             let listening = if no_serve {
                 None
             } else {
                 Some(http::listen(&ws)?)
             };
-            let workspace = crate::engine::journal::Journal::open(&ws)?.workspace()?;
-            let log = crate::engine::log::Log::new(&ws, &workspace.id);
+            let running =
+                crate::engine::running::Running::start(ws.clone(), &exe, lock, report, false)?;
             if let Some((_, Some(note))) = &listening {
-                log.write("port.changed", serde_json::json!({ "why": note }));
+                running
+                    .log
+                    .write("port.changed", serde_json::json!({ "why": note }));
             }
-            let me = daemon::Daemon::current();
-            log.write(
-                "daemon.started",
-                serde_json::json!({
-                    "workspace_name": workspace.name,
-                    "workspace_created": workspace.created,
-                    "workspace_itero": workspace.itero,
-                    "path": ws.root.display().to_string(),
-                    "meta": ws.meta,
-                    "daemon_name": me.name,
-                    "started": me.started,
-                    "pid": me.pid,
-                    "host": me.host,
-                    "itero": me.itero,
-                }),
-            );
-            // a $$NAME both a secret and a variable: said once, at the start
-            for name in crate::engine::secrets::shadowed(&ws)? {
-                let why = crate::engine::secrets::shadow_warning(&name);
-                eprintln!("itero: warning: {why}");
-                log.write("warning", serde_json::json!({ "why": why }));
-            }
-            stop_on_signal(log.clone());
-            crate::engine::journal::Journal::open(&ws)?.publish(&crate::engine::events::own(
-                "itero.daemon.started",
-                serde_json::json!({ "daemon": me.id, "name": me.name, "itero": me.itero }),
-                &me.started,
-            ))?;
+            let log = running.log.clone();
+            stop_on_signal(move || log.write("daemon.stopped", serde_json::json!({})));
             eprintln!(
                 "itero: running the workflows in {}, each as it comes due (Ctrl-C stops); log: .itero/itero.log",
                 ws.root.display()
             );
-            let (wake, woken) = std::sync::mpsc::channel();
-            let engine = std::sync::Arc::new(Engine {
-                health: std::sync::Mutex::new(daemon::Health::starting(&daemon::stamp(
-                    chrono::Utc::now(),
-                ))),
-                wake,
-            });
-            // a bad connector file stops the daemon here, naming the file
-            for (kind, file) in ws.connector_files()? {
-                let (ws, exe, engine, log) = (ws.clone(), exe.clone(), engine.clone(), log.clone());
-                let wake = engine.wake.clone();
-                std::thread::spawn(move || {
-                    let connector = crate::connectors::supervise::Connector {
-                        kind: &kind,
-                        file: &file,
-                    };
-                    let policy = crate::connectors::supervise::Policy::default();
-                    crate::connectors::supervise::run(
-                        &ws,
-                        &exe,
-                        &connector,
-                        &policy,
-                        &wake,
-                        &engine.health,
-                        &log,
-                    );
-                });
-            }
-            {
-                // one thread watches every path the workflows name
-                let (ws, wake, log) = (ws.clone(), engine.wake.clone(), log.clone());
-                std::thread::spawn(move || daemon::watch_paths(&ws, &wake, &log));
-            }
-            // the next due time, kept by the kernel; it wakes the loop as
-            // everything else does
-            let alarm = {
-                let log = log.clone();
-                crate::engine::alarm::Alarm::start(engine.wake.clone(), move |e| {
-                    log.write(
-                        "error",
-                        serde_json::json!({ "why": format!("the alarm stopped: {e}") }),
-                    );
-                })?
-            };
-            let looping = {
-                let (ws, engine) = (ws.clone(), engine.clone());
-                std::thread::spawn(move || {
-                    daemon::run_loop(&ws, &exe, &alarm, &woken, &engine.health, |p| {
-                        report(p, Some(&log))
-                    })
-                })
-            };
+            let engine = running.engine.clone();
             match listening {
                 None => {
-                    // the loop's sender lives in `engine`: the loop runs for good
-                    looping
-                        .join()
-                        .map_err(|_| anyhow!("the daemon's loop stopped unexpectedly"))?;
+                    // runs until the process is stopped
+                    let _running = running;
+                    loop {
+                        std::thread::park();
+                    }
                 }
                 Some((listener, _)) => {
                     let port = listener.local_addr()?.port();
@@ -682,7 +728,9 @@ fn dispatch(cli: Cli) -> Result<()> {
                 })?;
                 // with no daemon nothing would answer: say so, sending nothing
                 if !daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)? {
-                    bail!("no daemon is running: start itero daemon, then send it again");
+                    bail!(
+                        "no daemon is running: start itero daemon (or itero workspace add, with the machine's daemon), then send it again"
+                    );
                 }
                 let id = events::emit(&ws, &kind, data, &now)?;
                 nudge(&ws, &now);
@@ -805,6 +853,11 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Completion { shell } => complete::script(shell, command),
+        Cmd::Workspace { cmd } => match cmd {
+            WorkspaceCmd::Add => workspace::add(&workspace()?)?,
+            WorkspaceCmd::Remove { name } => workspace::remove(name.as_deref())?,
+            WorkspaceCmd::List { json } => workspace::list(json)?,
+        },
         Cmd::Ai { cmd } => match cmd {
             AiCmd::Models { cmd } => match cmd {
                 ModelsCmd::List { json, all } => ai::list(json, all)?,

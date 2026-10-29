@@ -562,6 +562,17 @@ impl Journal {
         Ok(serde_json::from_str(&t)?)
     }
 
+    /// Gives the workspace another name; its id stays.
+    pub fn rename_workspace(&self, name: &str) -> Result<()> {
+        let mut me = self.workspace()?;
+        me.name = name.to_string();
+        self.db.execute(
+            "UPDATE meta SET value = ?1 WHERE key = 'workspace'",
+            params![json(&me)?],
+        )?;
+        Ok(())
+    }
+
     /// A workflow's identity by its name, made the first time it is seen.
     pub fn workflow_id(&self, name: &str, at: &str) -> Result<Identity> {
         see_workflow(&self.db, name, at)?;

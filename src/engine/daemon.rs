@@ -153,23 +153,28 @@ const AFTER_FAILURE: chrono::Duration = chrono::Duration::minutes(1);
 
 /// Runs a pass each time something arrives on `woken` (a message, a line
 /// from a connector, a watched path or an edit, the alarm), until its
-/// senders are gone. After a pass the alarm is set to the next due time,
+/// senders are gone or `stop` is set. After a pass the alarm is set to the next due time,
 /// or to none; between passes the daemon waits, with no timeout. Each pass
-/// is recorded in `health`, and `report` hears of it; a pass that fails
-/// never stops the next.
+/// is recorded in `health`, `beat` hears of its start and end, and
+/// `report` of its outcome; a pass that fails never stops the next.
+#[allow(clippy::too_many_arguments)]
 pub fn run_loop(
     ws: &Workspace,
     exe: &Path,
     alarm: &super::alarm::Alarm,
     woken: &Receiver<()>,
     health: &Mutex<Health>,
+    stop: &super::stop::Stop,
+    beat: &dyn Fn(bool),
     report: impl Fn(&Result<Pass>),
 ) {
     let lock = || health.lock().unwrap_or_else(PoisonError::into_inner);
     loop {
         let now = Utc::now();
         lock().busy_since = Some(stamp(now));
+        beat(true);
         let pass = run_once(ws, now, exe);
+        beat(false);
         {
             let mut h = lock();
             h.passes += 1;
@@ -192,7 +197,7 @@ pub fn run_loop(
         if let Err(e) = alarm.set(next) {
             report(&Err(anyhow!("cannot set the alarm for the next pass: {e}")));
         }
-        if woken.recv().is_err() {
+        if woken.recv().is_err() || stop.is_set() {
             return;
         }
         // several wake-ups while a pass ran need only one more pass
@@ -314,7 +319,12 @@ fn wanted_paths(ws: &Workspace) -> (Vec<PathBuf>, Vec<String>) {
 /// other processes once they saved a message, wakes the daemon too. It
 /// waits in the kernel, with no timeout while nothing is pending. Runs for
 /// good.
-pub fn watch_paths(ws: &Workspace, wake: &std::sync::mpsc::Sender<()>, log: &Log) {
+pub fn watch_paths(
+    ws: &Workspace,
+    wake: &std::sync::mpsc::Sender<()>,
+    log: &Log,
+    stop: &super::stop::Stop,
+) {
     use crate::watch::{Debouncer, Kind};
     use std::time::{Duration, Instant};
     let mut backend = match crate::watch::open_many(&[]) {
@@ -378,7 +388,12 @@ pub fn watch_paths(ws: &Workspace, wake: &std::sync::mpsc::Sender<()>, log: &Log
         let timeout = d
             .due()
             .map(|at| at.saturating_duration_since(Instant::now()));
-        match backend.wait(timeout) {
+        let waited = backend.wait(timeout);
+        // a stop touches the wake file, so the wait ends
+        if stop.is_set() {
+            return;
+        }
+        match waited {
             Ok(changes) => d.add(changes, Instant::now()),
             Err(e) => {
                 log.write("error", json!({ "why": format!("watching files: {e}") }));

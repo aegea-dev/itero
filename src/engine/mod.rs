@@ -6,12 +6,16 @@ pub mod daemon;
 pub mod events;
 pub mod http;
 pub mod journal;
+pub mod lock;
 pub mod log;
+pub mod machine;
 pub mod progress;
+pub mod running;
 pub mod schedule;
 pub mod secrets;
 pub mod service;
 pub mod steps;
+pub mod stop;
 pub mod watchdog;
 pub mod worker;
 

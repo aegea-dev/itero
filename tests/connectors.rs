@@ -85,7 +85,16 @@ fn run_it(ws: &itero::workspace::Workspace) -> Health {
         kind: &kind,
         file: &file,
     };
-    supervise::run(ws, exe, &connector, &quick(), &wake, &health, &log(ws));
+    supervise::run(
+        ws,
+        exe,
+        &connector,
+        &quick(),
+        &wake,
+        &health,
+        &log(ws),
+        &Default::default(),
+    );
     health.into_inner().unwrap()
 }
 
@@ -136,7 +145,16 @@ fn a_connector_that_cannot_start_is_given_up_on_with_why() {
         kind: &kind,
         file: &file,
     };
-    supervise::run(&ws, exe, &connector, &quick(), &wake, &health, &log(&ws));
+    supervise::run(
+        &ws,
+        exe,
+        &connector,
+        &quick(),
+        &wake,
+        &health,
+        &log(&ws),
+        &Default::default(),
+    );
     let h = health.into_inner().unwrap();
     let s = &h.connectors["deneme.başladı"];
     assert_eq!(s.state, "gave up");
@@ -155,4 +173,40 @@ fn a_connector_that_cannot_start_is_given_up_on_with_why() {
     let gave_up = own.last().unwrap();
     assert_eq!(gave_up.event.kind, "itero.connector.gave-up");
     assert_eq!(gave_up.event.data["connector"], "deneme.başladı");
+}
+
+#[test]
+fn after_an_end_the_pause_doubles_resets_when_calm_and_gives_up() {
+    let p = Policy {
+        first_pause: Duration::from_secs(1),
+        max_pause: Duration::from_secs(4),
+        calm_after: Duration::from_secs(300),
+        give_up_after: 3,
+        window: Duration::from_secs(600),
+    };
+    let now = Instant::now();
+    let mut ends = vec![];
+    let quick = Duration::from_secs(1);
+    let mut pause = Duration::ZERO;
+    let mut pauses = vec![];
+    for _ in 0..3 {
+        pause = p.after_end(&mut ends, now, quick, pause).unwrap();
+        pauses.push(pause.as_secs());
+    }
+    assert_eq!(pauses, vec![1, 2, 4]);
+    // the fourth end within the window: given up
+    assert_eq!(p.after_end(&mut ends, now, quick, pause), None);
+    // a calm run sets the pause back; ends past the window are forgotten
+    let later = now + Duration::from_secs(700);
+    let mut ends = vec![now, now];
+    assert_eq!(
+        p.after_end(
+            &mut ends,
+            later,
+            Duration::from_secs(400),
+            Duration::from_secs(4)
+        ),
+        Some(Duration::from_secs(1))
+    );
+    assert_eq!(ends.len(), 1);
 }

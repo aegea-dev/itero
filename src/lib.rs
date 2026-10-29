@@ -3,6 +3,7 @@ pub mod cli;
 pub mod connectors;
 pub mod engine;
 pub mod flow;
+pub mod machine;
 pub mod names;
 pub mod needs;
 pub mod net;

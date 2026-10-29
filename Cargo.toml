@@ -34,6 +34,8 @@ croner = "~4.0.1"
 service-manager = "~0.11.0"
 axum = "~0.8.9"
 tokio = { version = "~1.53.1", features = ["rt-multi-thread", "net", "macros", "sync"] }
+# axum's own: a request to /w/<name>/ handed to that workspace's routes
+tower = { version = "~0.5.3", features = ["util"] }
 clap_complete = { version = "~4.6.11", features = ["unstable-dynamic"] }
 itero-ai-index = { path = "itero-ai-index" }
 
@@ -51,6 +53,5 @@ objc2-app-kit = { version = "~0.3.2", default-features = false, features = ["std
 [dev-dependencies]
 chrono-tz = "~0.10"
 tempfile = "~3.27.0"
-tower = { version = "~0.5.3", features = ["util"] }
 # a download that breaks, in the tests of itero ai models add
 futures-core = "~0.3.31"

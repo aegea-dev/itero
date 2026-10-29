@@ -5,6 +5,7 @@
 use crate::engine::daemon::{ConnectorHealth, Health, stamp};
 use crate::engine::journal::{self, Envelope, Journal};
 use crate::engine::log::Log;
+use crate::engine::stop::Stop;
 use crate::workspace::Workspace;
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, BufReader};
@@ -38,6 +39,31 @@ impl Default for Policy {
             give_up_after: 10,
             window: Duration::from_secs(600),
         }
+    }
+}
+
+impl Policy {
+    /// After an end at `now`, of a run that lasted `ran`: the pause before
+    /// starting again (`pause` the last one), or none when it is given up
+    /// on. `ends` keeps the ends within the window, this one included.
+    pub fn after_end(
+        &self,
+        ends: &mut Vec<Instant>,
+        now: Instant,
+        ran: Duration,
+        pause: Duration,
+    ) -> Option<Duration> {
+        ends.retain(|t| now.saturating_duration_since(*t) < self.window);
+        ends.push(now);
+        // started again ends - 1 times
+        if ends.len() > self.give_up_after {
+            return None;
+        }
+        Some(if ran >= self.calm_after {
+            self.first_pause
+        } else {
+            (pause * 2).clamp(self.first_pause, self.max_pause)
+        })
     }
 }
 
@@ -88,6 +114,7 @@ fn once(
     s: &Connector,
     wake: &Sender<()>,
     log: &Log,
+    stop: &Stop,
 ) -> anyhow::Result<String> {
     let j = Journal::open(ws)?;
     let env = crate::engine::daemon::connector_env(ws, s.kind).map_err(anyhow::Error::msg)?;
@@ -99,6 +126,8 @@ fn once(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()?;
+    let pid = child.id();
+    stop.hold(pid);
     // stdin stays open while it runs: its closing tells the connector that
     // the daemon has gone
     let stdin = child.stdin.take();
@@ -125,10 +154,14 @@ fn once(
         }
     }
     drop(stdin);
-    Ok(child.wait()?.to_string())
+    let status = child.wait();
+    stop.release(pid);
+    Ok(status?.to_string())
 }
 
-/// Runs a connector until it is given up on.
+/// Runs a connector until it is given up on, or `stop` is set (its
+/// process is then asked to end).
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     ws: &Workspace,
     exe: &Path,
@@ -137,17 +170,21 @@ pub fn run(
     wake: &Sender<()>,
     health: &Mutex<Health>,
     log: &Log,
+    stop: &Stop,
 ) {
     let mut ends: Vec<Instant> = vec![];
     let mut pause = Duration::ZERO;
     loop {
+        if stop.is_set() {
+            return;
+        }
         let began = Instant::now();
         set(health, s.kind, |h| {
             h.state = "running".into();
             h.restarts = ends.len();
         });
         log.write("connector.started", json!({ "connector": s.kind }));
-        let ended = match once(ws, exe, s, wake, log) {
+        let ended = match once(ws, exe, s, wake, log, stop) {
             Ok(status) => status,
             Err(e) => format!("error: {e:#}"),
         };
@@ -156,10 +193,12 @@ pub fn run(
             "connector.ended",
             json!({ "connector": s.kind, "why": ended, "seconds": ran.as_secs() }),
         );
-        ends.retain(|t| t.elapsed() < policy.window);
-        ends.push(Instant::now());
+        if stop.is_set() {
+            return;
+        }
+        let next = policy.after_end(&mut ends, Instant::now(), ran, pause);
         let restarts = ends.len() - 1;
-        if restarts >= policy.give_up_after {
+        let Some(next) = next else {
             let why = format!(
                 "started again {restarts} times in {}s, last {ended}",
                 policy.window.as_secs()
@@ -185,17 +224,15 @@ pub fn run(
                 h.last_exit = Some(ended);
             });
             return;
-        }
-        pause = if ran >= policy.calm_after {
-            policy.first_pause
-        } else {
-            (pause * 2).clamp(policy.first_pause, policy.max_pause)
         };
+        pause = next;
         set(health, s.kind, |h| {
             h.state = "waiting".into();
             h.restarts = restarts;
             h.last_exit = Some(ended);
         });
-        std::thread::sleep(pause);
+        if stop.sleep(pause) {
+            return;
+        }
     }
 }

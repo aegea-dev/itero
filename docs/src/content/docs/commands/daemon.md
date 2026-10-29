@@ -9,7 +9,11 @@ schedules come due and steps run; leave it running in a terminal, or use
 
 ```sh
 itero daemon [--no-serve]
+itero daemon --all [--port <port>] [--no-serve]
 ```
+
+`--all` runs every workspace on the machine's list instead of this
+folder's, on one port: see [One itero per machine](/guides/machine/).
 
 It starts the workspace's [connectors](/guides/connectors/), watches the
 [paths](/guides/connectors/#watching-files) its workflows name, takes
@@ -35,6 +39,8 @@ while a slow step still runs. Between passes it waits and uses no CPU.
 
 | Option | Does |
 |---|---|
+| `--all` | every workspace on the machine's list ([`itero workspace`](/commands/workspace/)) |
+| `--port <port>` | with `--all`: the machine's port (else the one kept, else one the OS gives) |
 | `--no-serve` | the passes only, no HTTP API |
 
 ```
@@ -48,5 +54,7 @@ In a terminal it prints a line for each pass that did something. What it
 does goes to `.itero/itero.log`, one JSON line each
 ([The log](/guides/log/)).
 
-One daemon per workspace. To have it running from login on, without a
-terminal: [`itero service install`](/commands/service/).
+One daemon per workspace: whichever runs it holds a lock on its
+`.itero/daemon.lock`, and a second one is refused, naming the first. To
+have it running from login on, without a terminal:
+[`itero service install`](/commands/service/).
