@@ -22,9 +22,12 @@ itero-ai is a program of its own, beside itero. You never start it:
   memory; the next `#ai` step starts it again;
 - when the daemon ends, it ends too.
 
-Each workspace has its own. It listens on a Unix socket only you can
-read, not on a network port, and speaks OpenAI's Chat Completions API,
-so [other tools](/ai/api/) can ask it too.
+A daemon in a workspace's folder has its own. The machine's daemon
+([One itero per machine](/guides/machine/)) has one for every workspace
+it runs, so a model is in memory once, however many workspaces use it.
+It listens on a Unix socket only you can read, not on a network port,
+and speaks OpenAI's Chat Completions API, so [other tools](/ai/api/) can
+ask it too.
 
 Without itero-ai, or without a model, nothing else in itero changes:
 only `#ai` steps fail, saying why.

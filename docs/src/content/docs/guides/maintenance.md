@@ -71,7 +71,7 @@ itero carries three internal workflows and runs them as if they were in
 |---|---|---|
 | `keep` | every hour, and `itero.space.full` | `#forget`: forgets ended runs and their events past `keep`; all ended ones while space is short |
 | `logs` | `itero.log.full` | `#roll-log`: `itero.log` becomes `itero.log.1`, `.1` becomes `.2`, keeping `logs` of them |
-| `models` | the daemon's start, `itero.ai.model.missing`, and every hour | `#find-models`: the models in LM Studio's folder, Hugging Face's cache and `~/.cache/itero/models`, into the list `#ai` steps pick from ([`itero ai`](/commands/ai/)); it reads only new or changed files, and does nothing without itero-ai |
+| `models` | the daemon's start, `itero.ai.model.missing`, and every hour | `#find-models`: the models in LM Studio's folder, Hugging Face's cache and `~/.cache/itero/models`, into the list `#ai` steps pick from ([`itero ai`](/commands/ai/)); it reads only new or changed files, and does nothing without itero-ai. A workspace on the machine's list has none: the machine's daemon looks once for all ([One itero per machine](/guides/machine/)) |
 
 `#forget`, `#roll-log` and `#find-models` are built-in actions, like
 `#notify`.

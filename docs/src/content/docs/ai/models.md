@@ -94,5 +94,9 @@ hour; it reads only new or changed files. See
 { "workflow": { "models": { "off": true } } }
 ```
 
+A workspace on the machine's list has no `models` workflow: the
+machine's daemon looks once for all of them, at the same times
+([One itero per machine](/guides/machine/)).
+
 A step that names a model the list does not have yet fails, and the
-`models` workflow looks again at once: run it again a minute later.
+daemon looks again at once: run it again a minute later.

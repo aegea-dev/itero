@@ -37,6 +37,14 @@ stopped, and the others run on. Each workspace has its own threads; its
 steps and connectors run as processes of their own, as with
 `itero daemon` in a folder.
 
+The daemon also keeps what the workspaces share:
+
+- **one [itero-ai](/ai/)**, so a model is in memory once; its events go
+  to every workspace, `itero.ai.model.missing` to the one that asked;
+- **one look for models**, at its start, every hour, and when a step
+  names a model the list has not, in place of each workspace's `models`
+  workflow.
+
 `itero workspace list` shows each one:
 
 | State | Means |
