@@ -9,7 +9,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// The built-in keep runs hourly: off, so that nothing is due.
-const KEEP_OFF: &str = r#"{"workflow": {"keep": {"off": true}}}"#;
+const KEEP_OFF: &str = r#"{"workflow": {"keep": {"off": true}, "models": {"off": true}}}"#;
 
 struct Daemon(Child);
 

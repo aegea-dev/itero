@@ -1,0 +1,14 @@
+{
+  "on": [{ "event": "mail.received" }],
+  "steps": [
+    { "#ai": { "args": {
+        "model": "unsloth/Qwen3.5-4B-GGUF",
+        "system": "You sort the mail of a small team that runs an online shop.",
+        "text": "From $from, subject: $subject\n\n$body",
+        "choose": ["urgent", "later", "spam"],
+        "temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0, "presence_penalty": 1.5
+    } } },
+    { "#notify": { "on": [{ "$output": "urgent" }],
+                   "args": { "title": "Urgent: $subject", "text": "from $from" } } }
+  ]
+}

@@ -147,17 +147,36 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
         .iter()
         .map(|n| crate::engine::secrets::shadow_warning(n))
         .collect();
-    // an arg #notify does not read: likely a mix-up, not an error (it still
-    // joins the state)
-    let taken = crate::engine::worker::NOTIFY_ARGS;
+    // an arg a built-in does not read: likely a mix-up, not an error (it
+    // still joins the state)
+    let built_ins: [(&str, &[&str]); 2] = [
+        (
+            crate::engine::worker::NOTIFY,
+            &crate::engine::worker::NOTIFY_ARGS,
+        ),
+        (crate::engine::worker::AI, &crate::ai::step::ARGS),
+    ];
     for (name, f) in &flows {
-        for a in f.arg_names(crate::engine::worker::NOTIFY) {
-            if !taken.contains(&a.as_str()) {
-                let (last, rest) = taken.split_last().expect("NOTIFY_ARGS is not empty");
-                warnings.push(format!(
-                    "{name}: #notify takes {} and {last}, not {a}",
-                    rest.join(", ")
-                ));
+        for (action, taken) in built_ins {
+            for a in f.arg_names(action) {
+                if !taken.contains(&a.as_str()) {
+                    let (last, rest) = taken.split_last().expect("a built-in takes args");
+                    warnings.push(format!(
+                        "{name}: #{action} takes {} and {last}, not {a}",
+                        rest.join(", ")
+                    ));
+                }
+            }
+        }
+        for args in f.args_of(crate::engine::worker::AI) {
+            match crate::ai::step::check(args) {
+                Ok(Some(model)) => {
+                    if let Some(w) = crate::ai::step::model_warning(&model) {
+                        warnings.push(format!("{name}: {w}"));
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => bail!("{name}: {e}"),
             }
         }
     }

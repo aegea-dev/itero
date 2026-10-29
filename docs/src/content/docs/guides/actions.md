@@ -129,9 +129,11 @@ How long a notification stays is yours to set, in System Settings,
 Notifications, itero: Banners go away by themselves, Alerts stay until
 dismissed.
 
-`#forget` forgets ended runs and their events past `keep`, and
-`#roll-log` rolls the log; the built-in workflows use them
-([The daemon's own workflows](/guides/maintenance/)).
+`#forget` forgets ended runs and their events past `keep`, `#roll-log`
+rolls the log, and `#find-models` finds the models on the machine; the
+built-in workflows use them
+([The daemon's own workflows](/guides/maintenance/)). `#ai` asks a
+local model ([A local model in a step](/guides/ai/)).
 
 A workspace action of the same name is used instead of a built-in one.
 

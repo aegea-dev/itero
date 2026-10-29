@@ -1498,11 +1498,17 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
     let args = ws.args(&job.action).map_err(|e| format!("{e:#}"))?;
     let (quiet, most) = ws.step_limits(&job.action).map_err(|e| format!("{e:#}"))?;
     let state = given(&run.runtime.state, &job)?;
+    let mut env = bind(&state, args.as_ref(), &job)?;
+    // the built-in #ai talks to the itero-ai the daemon keeps
+    if file == Path::new(worker::AI) {
+        let socket = crate::ai::keeper::Keeper::global().socket(ws)?;
+        env.insert("ITERO_AI_SOCKET".into(), socket.display().to_string());
+    }
     Ok(StepRun {
         file,
         root: ws.root.clone(),
         workflow: workflow.into(),
-        env: bind(&state, args.as_ref(), &job)?,
+        env,
         state,
         memory: ws.root.join(".itero").join("memory").join(workflow),
         waiting_since: job.waiting_since.clone(),

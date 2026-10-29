@@ -1120,21 +1120,30 @@ impl Flow {
     /// The names of the args its steps give the action `action` (without
     /// `#`), in a list or side by side, each once, sorted.
     pub fn arg_names(&self, action: &str) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .args_of(action)
+            .into_iter()
+            .flat_map(arg_names_of)
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// The args of each step of `action`, as written: an object, a list,
+    /// or a `"$name"`.
+    pub fn args_of(&self, action: &str) -> Vec<&Value> {
         let is = |n: &Name| matches!(n, Name::Action { name, .. } if name == action);
         let mut out = vec![];
         for s in self.all_steps() {
             match s {
-                Step::One { name, args, .. } if is(name) => out.extend(arg_names_of(args)),
+                Step::One { name, args, .. } if is(name) => out.push(args),
                 Step::Side(g) => {
-                    for m in g.members.iter().filter(|m| is(&m.name)) {
-                        out.extend(arg_names_of(&m.args));
-                    }
+                    out.extend(g.members.iter().filter(|m| is(&m.name)).map(|m| &m.args))
                 }
                 Step::One { .. } => {}
             }
         }
-        out.sort();
-        out.dedup();
         out
     }
 

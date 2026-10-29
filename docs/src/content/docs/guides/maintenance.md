@@ -23,6 +23,11 @@ notification comes through Itero.app):
 | `itero.space.full` | `.itero/` is past its `space` limit | `used`, `limit` |
 | `itero.log.full` | the log is past its `log` limit | `path`, `size`, `limit` |
 | `itero.notification.clicked` | a notification from `#notify` was clicked, on macOS ([`#notify`](/guides/actions/#built-in)) | `notification`, `answer`, `workflow`, `data` |
+| `itero.ai.started` | itero-ai, the local model's server, started for an `#ai` step ([A local model in a step](/guides/ai/)) | `socket` |
+| `itero.ai.stopped` | it exited after its idle time | `after` |
+| `itero.ai.failed` | it ended any other way | `exit`, `why` |
+| `itero.ai.model.loaded` | it loaded a model | `model`, `seconds` |
+| `itero.ai.model.missing` | an `#ai` step named a model this machine does not have | `model`, `workflow` |
 
 A workflow on one is written like any other:
 
@@ -55,17 +60,19 @@ rather than doing its work. Nothing in its name says so. Being internal:
 - its runs do not count against `runs`, nor it against `workflows`;
 - its lines in the log carry `"internal": true`.
 
-## Built in: `keep` and `logs`
+## Built in: `keep`, `logs` and `models`
 
-itero carries two internal workflows and runs them as if they were in
+itero carries three internal workflows and runs them as if they were in
 `workflows/`:
 
 | Workflow | On | Does |
 |---|---|---|
 | `keep` | every hour, and `itero.space.full` | `#forget`: forgets ended runs and their events past `keep`; all ended ones while space is short |
 | `logs` | `itero.log.full` | `#roll-log`: `itero.log` becomes `itero.log.1`, `.1` becomes `.2`, keeping `logs` of them |
+| `models` | the daemon's start, `itero.ai.model.missing`, and every hour | `#find-models`: the models in LM Studio's folder, Hugging Face's cache and `~/.cache/itero/models`, into the list `#ai` steps pick from ([`itero ai`](/commands/ai/)); it reads only new or changed files, and does nothing without itero-ai |
 
-`#forget` and `#roll-log` are built-in actions, like `#notify`.
+`#forget`, `#roll-log` and `#find-models` are built-in actions, like
+`#notify`.
 
 - **Changing one:** a file of its name in `workflows/` is used instead,
   such as `workflows/logs.json` rolling the log and then sending the

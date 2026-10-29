@@ -1266,7 +1266,7 @@ fn internal_runs_are_outside_the_runs_limit_and_say_so_in_the_log() {
 
 #[test]
 fn keep_forgets_ended_runs_every_hour() {
-    let w = Ws::new();
+    let w = Ws::with(r#"{"workflow": {"models": {"off": true}}}"#);
     w.action("yaz", "true");
     w.flow(
         "eski",
@@ -1462,7 +1462,7 @@ fn at(s: &str) -> DateTime<Utc> {
 
 /// The built-in keep runs hourly in local time: off, so that times here are
 /// the same in every time zone.
-const KEEP_OFF: &str = r#"{"workflow": {"keep": {"off": true}}}"#;
+const KEEP_OFF: &str = r#"{"workflow": {"keep": {"off": true}, "models": {"off": true}}}"#;
 
 #[test]
 fn with_nothing_due_there_is_no_next_time() {
@@ -1571,7 +1571,7 @@ fn an_idle_workspace_is_next_due_at_keeps_hourly_slot() {
 #[test]
 fn a_workflow_that_is_off_or_over_has_no_next_time() {
     let ws = Ws::with(
-        r#"{"workflow": {"keep": {"off": true}, "kapalı": {"off": true},
+        r#"{"workflow": {"keep": {"off": true}, "models": {"off": true}, "kapalı": {"off": true},
             "bitti": {"until": "2026-10-21T09:00:00Z"}}}"#,
     );
     for name in ["kapalı", "bitti"] {
@@ -1588,7 +1588,8 @@ fn a_workflow_that_is_off_or_over_has_no_next_time() {
 #[test]
 fn a_workflow_from_a_later_date_is_next_due_at_its_first_slot_from_then() {
     let ws = Ws::with(
-        r#"{"workflow": {"keep": {"off": true}, "sonra": {"from": "2026-10-21T12:30:30Z"}}}"#,
+        r#"{"workflow": {"keep": {"off": true}, "models": {"off": true},
+            "sonra": {"from": "2026-10-21T12:30:30Z"}}}"#,
     );
     ws.flow(
         "sonra",

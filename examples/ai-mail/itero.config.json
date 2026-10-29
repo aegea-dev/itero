@@ -1,0 +1,4 @@
+{
+  "name": "ai-mail",
+  "description": "Sorts each mail with a local model, urgent, later or spam, and tells you of the urgent ones"
+}

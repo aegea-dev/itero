@@ -44,6 +44,18 @@ pub const PATH_CHANGED: &str = "itero.path.changed";
 /// notification-clicked`. Itero's own, so nothing from outside fakes one.
 pub const NOTIFICATION_CLICKED: &str = "itero.notification.clicked";
 
+/// itero-ai, the local model's server, answers on its socket: `{"socket"}`.
+pub const AI_STARTED: &str = "itero.ai.started";
+/// It exited idle: `{"after"}`, its idle seconds.
+pub const AI_STOPPED: &str = "itero.ai.stopped";
+/// It ended any other way: `{"exit", "why"}`, its last line on stderr.
+pub const AI_FAILED: &str = "itero.ai.failed";
+/// It loaded a model: `{"model", "seconds"}`.
+pub const AI_MODEL_LOADED: &str = "itero.ai.model.loaded";
+/// An `#ai` step named a model the machine's index has not:
+/// `{"model", "workflow"}`. The `models` workflow looks for models on it.
+pub const AI_MODEL_MISSING: &str = "itero.ai.model.missing";
+
 /// Saves a click on a notification for the workspace; its data must name
 /// the notification. Returns the message's id.
 pub fn notification_clicked(ws: &Workspace, data: Value, now: &str) -> anyhow::Result<String> {

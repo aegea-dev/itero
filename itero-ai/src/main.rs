@@ -17,7 +17,7 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_secs(2));
             // SAFETY: as above
             if unsafe { libc::getppid() } != parent {
-                std::process::exit(0);
+                itero_ai::server::stop();
             }
         }
     });

@@ -396,8 +396,15 @@ pub const FORGET: &str = "forget";
 /// becomes `.2`, and so on, keeping `limits.logs` of them.
 pub const ROLL_LOG: &str = "roll-log";
 
+/// The built-in `#ai`: asks the local model (`crate::ai::step`).
+pub const AI: &str = "ai";
+
+/// The built-in `#find-models`: the models already on the machine, into
+/// the index itero-ai reads (`crate::ai::find`).
+pub const FIND_MODELS: &str = "find-models";
+
 /// The actions itero carries, used when the workspace has none of the name.
-pub const BUILT_IN: [&str; 3] = [NOTIFY, FORGET, ROLL_LOG];
+pub const BUILT_IN: [&str; 5] = [NOTIFY, FORGET, ROLL_LOG, AI, FIND_MODELS];
 
 fn forget(r: &StepRun) -> Result<Outcome, Failure> {
     let failed = |e: anyhow::Error| Failure::Error(format!("#forget: {e:#}"));
@@ -447,7 +454,7 @@ fn roll_log(r: &StepRun) -> Result<Outcome, Failure> {
 /// What `itero worker` reads for one step (`docs/design-simple.md`).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StepRun {
-    /// The action's file, or `NOTIFY` for the built-in.
+    /// The action's file, or a built-in's name (`NOTIFY`, `AI`, ...).
     pub file: PathBuf,
     /// The workspace: where the action runs.
     pub root: PathBuf,
@@ -511,6 +518,12 @@ pub fn run_step_telling(
     }
     if r.file == Path::new(NOTIFY) {
         return notify(r);
+    }
+    if r.file == Path::new(AI) {
+        return crate::ai::step::run(r, told);
+    }
+    if r.file == Path::new(FIND_MODELS) {
+        return crate::ai::find::run(r);
     }
     if let Some(dir) = r.memory.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
