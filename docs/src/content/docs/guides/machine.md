@@ -72,8 +72,7 @@ list changes or the machine's daemon starts again
 (`itero service restart`).
 
 [`itero service install`](/commands/service/) runs the machine's daemon
-from login on, and moves the services from before, one per workspace,
-over to the list.
+from login on, and removes the services from before, one per workspace.
 
 ## One API
 
