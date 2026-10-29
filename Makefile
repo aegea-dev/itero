@@ -152,6 +152,15 @@ dist-ai: ## Build itero-ai's release archive and checksum (TAG=vX.Y.Z, TARGET=tr
 	cd $(DIST) && (shasum -a 256 $(AI_NAME).tar.gz 2>/dev/null || sha256sum $(AI_NAME).tar.gz) > $(AI_NAME).sha256
 	rm -rf $(DIST)/stage-ai
 
+# itero-ai with its advised model, Qwen3.5-4B, at temperature 0: local only
+# (not in CI, which has no model), on LM Studio's copy unless
+# ITERO_AI_TEST_MODEL names another Qwen3.5-4B file.
+ITERO_AI_TEST_MODEL ?= $(HOME)/.lmstudio/models/unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf
+.PHONY: test-ai
+test-ai: ## Run itero-ai's tests with Qwen3.5-4B, at temperature 0 (local only)
+	@test -f "$(ITERO_AI_TEST_MODEL)" || { echo "no Qwen3.5-4B at $(ITERO_AI_TEST_MODEL): itero ai models add unsloth/Qwen3.5-4B-GGUF, or set ITERO_AI_TEST_MODEL"; exit 1; }
+	ITERO_AI_TEST_MODEL="$(ITERO_AI_TEST_MODEL)" $(CARGO) test --release -p itero-ai --test real_model
+
 .PHONY: test-install
 test-install: ## Install from a local release through the install script, in temp folders
 	sh scripts/test-install.sh
