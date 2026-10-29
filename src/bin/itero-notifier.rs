@@ -202,7 +202,7 @@ mod mac {
         match rx.recv_timeout(PROMPT) {
             Ok(Ok(true)) => {}
             Ok(Ok(false)) => {
-                return Err("notifications are off for itero: turn them on in System Settings, Notifications, itero".into());
+                return Err("notifications are off for Itero: turn them on in System Settings, Notifications, Itero".into());
             }
             Ok(Err(why)) => return Err(format!("cannot ask to notify: {why}")),
             Err(_) => return Err("no answer to the notifications prompt".into()),

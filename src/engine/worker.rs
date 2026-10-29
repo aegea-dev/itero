@@ -377,11 +377,18 @@ fn show(n: &Note) -> Result<(), String> {
             Err(e) => return Err(format!("cannot run {}: {e}", program.display())),
         };
         if !out.status.success() {
-            return Err(format!(
+            let why = format!(
                 "{}: {}",
                 program.display(),
                 String::from_utf8_lossy(&out.stderr).trim()
-            ));
+            );
+            // macOS refused Itero.app outright: its record follows a copy
+            // that is gone. Launched through LaunchServices, the record
+            // moves to this one (and a first run asks)
+            if let Some(app) = app_of(&program) {
+                return after(Err(why), || through_launch_services(&app, &args));
+            }
+            return Err(why);
         }
         return Ok(());
     }
@@ -389,6 +396,64 @@ fn show(n: &Note) -> Result<(), String> {
         "no way to show a notification here (tried {}): install libnotify's notify-send",
         tried.join(", ")
     ))
+}
+
+/// The Itero.app a notifier program is inside, on macOS.
+fn app_of(program: &Path) -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") || !program.ends_with("Contents/MacOS/itero-notifier") {
+        return None;
+    }
+    program.ancestors().nth(3).map(Path::to_path_buf)
+}
+
+/// Whether the notifier's error says macOS refused it outright.
+fn refused(why: &str) -> bool {
+    why.contains("Notifications are not allowed")
+}
+
+/// After the notifier's `first` try: a refusal is healed once (`heal`);
+/// refused again, notifications are off for Itero.
+fn after(
+    first: Result<(), String>,
+    heal: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    match first {
+        Err(why) if refused(&why) => match heal() {
+            Err(again) if refused(&again) => Err(
+                "notifications are off for Itero: turn them on in System Settings, Notifications, Itero"
+                    .into(),
+            ),
+            other => other,
+        },
+        other => other,
+    }
+}
+
+/// Shows the notification by launching `app` through LaunchServices (a new
+/// instance, in the background, waited for), its output in files: what
+/// moves macOS's record of Itero to this copy.
+fn through_launch_services(app: &Path, args: &[String]) -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!("itero-notify-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let (out, err) = (dir.join("out"), dir.join("err"));
+    let status = Command::new("open")
+        .args(["-n", "-g", "-W", "--stdout"])
+        .arg(&out)
+        .arg("--stderr")
+        .arg(&err)
+        .arg(app)
+        .arg("--args")
+        .args(args)
+        .stdin(Stdio::null())
+        .status();
+    let said = std::fs::read_to_string(&err).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    match status {
+        Err(e) => Err(format!("cannot run open: {e}")),
+        Ok(s) if !s.success() => Err(format!("open {}: {s}", app.display())),
+        Ok(_) if !said.trim().is_empty() => Err(format!("{}: {}", app.display(), said.trim())),
+        Ok(_) => Ok(()),
+    }
 }
 
 /// Why a program failed: what it needs that is not there, when its stderr
@@ -691,6 +756,40 @@ fn answer(stdout: &[u8]) -> Value {
 mod notifier_tests {
     use super::choose;
     use std::path::PathBuf;
+
+    #[test]
+    fn a_refusal_is_healed_once_then_says_to_turn_notifications_on() {
+        use super::{after, refused};
+        let no = "/x/Itero.app/Contents/MacOS/itero-notifier: itero-notifier: cannot ask to notify: Notifications are not allowed for this application";
+        assert!(refused(no));
+        assert!(!refused(
+            "itero-notifier: a url to open is http or https: ftp://x"
+        ));
+        let heals = std::cell::Cell::new(0);
+        let heal = |r: Result<(), String>| {
+            heals.set(heals.get() + 1);
+            r
+        };
+        // shown at once: no healing
+        assert_eq!(after(Ok(()), || heal(Ok(()))), Ok(()));
+        assert_eq!(heals.get(), 0);
+        // refused, healed through LaunchServices
+        assert_eq!(after(Err(no.into()), || heal(Ok(()))), Ok(()));
+        assert_eq!(heals.get(), 1);
+        // refused twice: notifications are off
+        let off = after(Err(no.into()), || heal(Err(no.into()))).unwrap_err();
+        assert!(
+            off.contains("System Settings, Notifications, Itero"),
+            "{off}"
+        );
+        assert_eq!(heals.get(), 2);
+        // another error: said as it is, no healing
+        assert_eq!(
+            after(Err("disk dolu".into()), || heal(Ok(()))),
+            Err("disk dolu".into())
+        );
+        assert_eq!(heals.get(), 2);
+    }
 
     #[test]
     fn the_given_notifier_wins_then_the_stable_copy_then_the_shipped_one() {
