@@ -21,6 +21,21 @@ Private/local context may exist outside this repository, but it must not be quot
 - Do not read or expose local secrets unless explicitly asked.
 - Do not delete anything without approval.
 
+## Where Things Are
+
+- `src/flow.rs`: workflow files, steps, conditions, and how values are read and filled.
+- `src/workspace.rs`: the workspace and its manifest, `itero.config.json`.
+- `src/engine/`: the daemon (`daemon.rs`), how a run moves (`steps.rs`), running an action (`worker.rs`), the journal, events, schedules, secrets, the HTTP API, the log.
+- `src/cli.rs` and `src/cli/`: the commands.
+- `src/watch/`: watched paths (inotify on Linux; kqueue and FSEvents on macOS).
+- `src/connectors/`: starting and watching connectors.
+- `src/ai/`: the built-in `#ai` step and model finding; `itero-ai/` runs a local model, `itero-ai-index/` lists the models a machine has.
+- `src/builtin/`: the daemon's own workflows; `src/bin/itero-notifier.rs`: Itero.app's notifier.
+- `tests/`: integration tests, one file per area.
+- `examples/`: workspaces you can run; some have their own tests in `test/`, and `tests/examples.rs` checks them all.
+- `docs/`: the docs site (Astro); its pages are in `docs/src/content/docs/`.
+- `packaging/`: Homebrew, macOS app, licence notices; `scripts/`: what the Linux, Docker, install and formula tests run.
+
 ## Build And Test
 
 - Build the debug binary: make build-dev
@@ -40,6 +55,15 @@ Private/local context may exist outside this repository, but it must not be quot
 - Build docs: make docs-build
 - An example's own tests: `bun test` in `examples/<name>`, with `ITERO_BIN` set to an absolute path to `target/debug/itero`
 - Every target: make help
+
+Environment variables for tests:
+
+- `ITERO_NO_SECRET_STORE=1`: no OS secret store; `$$NAME` comes from `.env` and the environment.
+- `ITERO_NOTIFIER=/usr/bin/true`: notifications go nowhere.
+- `ITERO_NOTIFY_LOG=<file>`: each notification is a line in that file instead (title, text, then `name=value`, tab separated).
+- `ITERO_TEST_DIE_AT=<point>`, with `ITERO_TEST_DIE_ONCE` or `ITERO_TEST_DIE_WHILE` (a file's path): kills the process at that point, for the kill tests.
+- `ITERO_STUCK_AFTER=<seconds>`: how long a pass may run before the watchdog calls its workspace stuck.
+- `ITERO_AI_BIN`: which itero-ai to start.
 
 CI (`test.yml`) runs fmt-check, check, lint-check and test on both
 ubuntu-latest and macos-latest, and test-docker on ubuntu-latest. A Mac
