@@ -397,6 +397,37 @@ agrees with what the step printed ([What an event does](/guides/connectors/#what
 That event is then the step's `$output`, and it runs again. `timeout` is
 how long a run may wait, like `"2h"`; unless given, a day.
 
+What the step prints is what an event is matched on. The fields of the
+event that started the run are in the state from the first step on, as
+`$order`, and in the state on the action's stdin, so the step can print
+the one to match as it came:
+
+```json
+{ "on": [{ "event": "order.placed" }],
+  "steps": ["#wait-payment",
+            { "#notify": { "args": { "title": "Paid", "text": "Order $order: $output.amount" } } }] }
+```
+
+`actions/wait-payment`:
+
+```sh
+#!/bin/sh
+# waits for the payment.received event of this run's order
+if printf '%s' "$output" | jq -e '.amount' >/dev/null 2>&1; then
+  echo "$output"; exit 0   # it came: its data is $output
+fi
+jq -c '{order}'            # the field to match, from the state on stdin
+exit 75
+```
+
+`order.placed` with `{"order": 1042}` starts a run that waits;
+`payment.received` with `{"order": 1042, "amount": 25}` reaches it, and
+it tells "Order 1042: 25". A value from elsewhere, such as an earlier
+step's result, is given to the waiting step through its args
+(`{ "#wait-payment": { "args": { "order": "$output.id" } } }`) and
+arrives as text, `$order`: an event agrees only with the same JSON value,
+so `"1042"` is not `1042`.
+
 ## The result of steps side by side
 
 Steps side by side start from the same state, and give one `$output`: the
