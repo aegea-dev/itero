@@ -1,14 +1,13 @@
 #!/bin/sh
 # A guard between the plan and the apply: the run stops before anything
-# changes when the plan destroys something, or adds more than $max_add
-# resources (10 unless given). The plan is #tf-plan's result, $output, in
-# the run's state on stdin.
+# changes when $plan (#tf-plan's result) destroys something, or adds more
+# than $max_add resources (10 unless given).
 set -eu
-state=$(cat)
+plan=$(jq -c '.args.plan')
 max=${max_add:-10}
-if ! printf '%s' "$state" | jq -e --argjson max "$max" \
-  '.output.destroy == 0 and .output.add <= $max' >/dev/null; then
-  echo "the plan is refused: $(printf '%s' "$state" | jq -c .output), at most $max to add and none to destroy" >&2
+if ! printf '%s' "$plan" | jq -e --argjson max "$max" \
+  '.destroy == 0 and .add <= $max' >/dev/null; then
+  echo "the plan is refused: $plan, at most $max to add and none to destroy" >&2
   exit 1
 fi
 echo '{"plan_checked": true}'

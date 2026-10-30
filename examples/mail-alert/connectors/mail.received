@@ -32,8 +32,7 @@ check() {
   fi
   [ -n "$new" ] || return 0
   printf '%s\n' "$new" | while IFS="$(printf '\t')" read -r id from subj; do
-    printf '{"title": "Mail", "text": "%s: %s", "from": "%s", "subject": "%s"}\n' \
-      "$(esc "$from")" "$(esc "$subj")" "$(esc "$from")" "$(esc "$subj")"
+    printf '{"from": "%s", "subject": "%s"}\n' "$(esc "$from")" "$(esc "$subj")"
   done
   tail -n 1 "$all" | cut -f 1 > "$seen"
 }

@@ -1,7 +1,8 @@
 #!/bin/sh
-# New mail in an IMAP mailbox since the last check: {"title", "text"}, or
-# nothing. The first check only notes where the mailbox is. The password
-# goes to curl on stdin, never on its command line.
+# New mail in an IMAP mailbox since the last check: {"new": <how many>,
+# "subject": <the newest one's>}, or nothing. The first check only notes
+# where the mailbox is. The password goes to curl on stdin, never on its
+# command line.
 scheme=imap; [ "$tls" = true ] && scheme=imaps
 url="$scheme://$host:$port/${mailbox:-INBOX}"
 esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
@@ -27,4 +28,4 @@ new=$(printf '%s\n' $uids | awk -v last="$last" '$1 > last')
 n=$(printf '%s\n' $new | wc -l | tr -d ' ')
 newest=$(printf '%s\n' $new | sort -n | tail -n 1)
 subject=$(ask "$url;UID=$newest;SECTION=HEADER.FIELDS%20(SUBJECT)" | tr -d '\r' | sed -n 's/^Subject: //p' | head -n 1)
-printf '{"title": "Mail", "text": "%s new: %s"}\n' "$n" "$(esc "$(decode "$subject")")"
+printf '{"new": %s, "subject": "%s"}\n' "$n" "$(esc "$(decode "$subject")")"

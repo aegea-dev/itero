@@ -1,1 +1,1 @@
-{ "on": [{ "path": "inbox" }], "steps": ["#make-thumbnails"] }
+{ "on": [{ "path": "inbox" }], "steps": [{ "#make-thumbnails": { "args": { "folder": "$event.path" } } }] }

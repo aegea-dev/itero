@@ -1,1 +1,4 @@
-{ "on": [{ "event": "mail.received" }], "steps": ["#notify"] }
+{
+  "on": [{ "event": "mail.received" }],
+  "steps": [{ "#notify": { "args": { "title": "Mail", "text": "$event.from: $event.subject" } } }]
+}

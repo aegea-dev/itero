@@ -1,8 +1,8 @@
 #!/bin/sh
-# A 256-pixel thumbnail of each photo in $path (the folder) that has none
+# A 256-pixel thumbnail of each photo in $folder that has none
 # yet: sips on macOS, ImageMagick's magick elsewhere.
 mkdir -p thumbnails
-for f in "$path"/*.jpg "$path"/*.jpeg "$path"/*.png; do
+for f in "$folder"/*.jpg "$folder"/*.jpeg "$folder"/*.png; do
   [ -f "$f" ] || continue
   t="thumbnails/$(basename "$f")"
   [ -f "$t" ] && continue

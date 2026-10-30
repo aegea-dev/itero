@@ -13,6 +13,5 @@ folder, then from another terminal:
   itero emit --wait cluster.removed '{"name": "demo"}'
 
 A step that fails rolls back: #cluster-create's undo deletes the cluster,
-and a notification says what broke (and what is left, when the delete
-breaks too). Your own ~/.kube/config is left alone; each cluster's
+and a notification says what broke (`$output.why` in the `error` list). Your own ~/.kube/config is left alone; each cluster's
 kubeconfig, OpenTofu state and plan stay in .itero/clusters/<name>/.
