@@ -81,7 +81,8 @@ Types starting with `itero.`, `action.`, `timer.`, `run.`, `workflow.` or
   ([`limits`](/reference/itero-config/#limits)), it waits its turn.
 - **It reaches the steps waiting for data** (a step exited 75) that it
   matches: it shares at least one field with what the waiting step
-  printed and agrees with it on every one they share. `{"payment_ref":
+  printed and agrees with it on every one they share, as the same JSON
+  value (`"1042"` and `1042` differ). `{"payment_ref":
   "pay-1", "paid": true}` matches the step that printed `{"payment_ref":
   "pay-1"}`, and every waiting step it matches gets it. Its data is that
   step's `$output`, and the step runs again.
@@ -116,12 +117,48 @@ path costs a file descriptor and no CPU until something changes.
 - Each change starts a run with `{"path": "...", "kind": "changed"}`
   (`created`, `removed`); a burst of changes is one, once the path has
   been quiet for half a second.
+- `path` is the watched path itself, as `on` names it, expanded
+  (`/Users/you/Pictures/inbox`): for a folder, never the file in it that
+  changed.
 - A path that is not there yet is watched for until it comes, and so are
   its folders.
 - `~/` is your home folder, `$$NAME` an environment variable (never a
   secret: the path is in the run's data and the log), and a relative path
   is in the workspace.
 - Editing a workflow moves its watch at once.
+
+### A watched folder
+
+A folder's event says that something in it changed, not what:
+
+| In the folder | macOS | Linux |
+|---|---|---|
+| a file comes or goes | `changed` | `changed` |
+| a file's contents change | no event | `changed` |
+
+To act on what is new, a step lists the folder and remembers what it has
+seen in `$ITERO_MEMORY`, a file kept between runs. `actions/new-files`
+prints the files not seen before, as a JSON list:
+
+```sh
+#!/bin/sh
+# the files in $path not seen before, as a JSON list; remembers them all
+now=$(mktemp)
+ls -1 "$path" | sort > "$now"
+touch "$ITERO_MEMORY"
+comm -13 "$ITERO_MEMORY" "$now" | jq -R . | jq -sc .
+mv "$now" "$ITERO_MEMORY"
+```
+
+```json
+{ "on": [{ "path": "~/Inbox" }],
+  "steps": ["#new-files",
+            { "#notify": { "args": { "title": "New in Inbox", "text": "$output" } } }] }
+```
+
+A file dropped into `~/Inbox` is told once: `["invoice.pdf"]`.
+
+### A connector that watches
 
 `itero watch <path>` prints `{"path", "kind"}` each time a file or folder
 changes, calm for half a second: for a connector that wants the same
