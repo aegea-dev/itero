@@ -25,6 +25,21 @@ Scratch copies of Itero.app, run on the owner's Mac:
    `LSRegisterURL`) does not fix it. Launching a copy through
    LaunchServices (`open`) does: the record moves to that copy.
 
+### A second run (2026-10-29), building the plan
+
+5. Three upgrades in a row (a fake Homebrew, each version's folder
+   deleted after the next): the stable copy was brought up to date in
+   place each time and every notification showed, with the record on an
+   existing copy.
+6. The record's copy deleted, a copy under `/private/tmp` was refused
+   even when launched through LaunchServices; the same test with the
+   stable copy in `~/Library/Application Support/itero` worked: a
+   background launch (`open -g -n`) moved the record to it, and from then
+   every copy notified directly.
+7. `open -W` cannot wait on a notifier that ends at once ("Unable to
+   block on application"): the healing launch has the notifier write its
+   result to a file instead.
+
 ## Goals
 
 - **Upgrades never break notifications**, however often, by Homebrew or

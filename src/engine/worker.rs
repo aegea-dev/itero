@@ -478,29 +478,52 @@ fn after(
 }
 
 /// Shows the notification by launching `app` through LaunchServices (a new
-/// instance, in the background, waited for), its output in files: what
-/// moves macOS's record of Itero to this copy.
+/// instance, in the background): what moves macOS's record of Itero to
+/// this copy. The notifier writes how it went to a result file, waited
+/// for (`open -W` cannot wait on a notifier that ends at once).
 fn through_launch_services(app: &Path, args: &[String]) -> Result<(), String> {
     let dir = std::env::temp_dir().join(format!("itero-notify-{}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let (out, err) = (dir.join("out"), dir.join("err"));
+    let result = dir.join("result");
     let status = Command::new("open")
-        .args(["-n", "-g", "-W", "--stdout"])
-        .arg(&out)
-        .arg("--stderr")
-        .arg(&err)
+        .args(["-n", "-g"])
         .arg(app)
         .arg("--args")
         .args(args)
+        .arg("--result")
+        .arg(&result)
         .stdin(Stdio::null())
         .status();
-    let said = std::fs::read_to_string(&err).unwrap_or_default();
-    let _ = std::fs::remove_dir_all(&dir);
-    match status {
+    let shown = match status {
         Err(e) => Err(format!("cannot run open: {e}")),
         Ok(s) if !s.success() => Err(format!("open {}: {s}", app.display())),
-        Ok(_) if !said.trim().is_empty() => Err(format!("{}: {}", app.display(), said.trim())),
-        Ok(_) => Ok(()),
+        // time for the permission prompt a first run shows
+        Ok(_) => wait_for_result(&result, Duration::from_secs(150)),
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    shown
+}
+
+/// Waits for the notifier's result file (`ok`, or its error), watching its
+/// folder, `limit` at most.
+fn wait_for_result(result: &Path, limit: Duration) -> Result<(), String> {
+    let read = || {
+        std::fs::read_to_string(result)
+            .ok()
+            .map(|t| t.trim().to_string())
+    };
+    let folder = result.parent().unwrap_or(Path::new("."));
+    let mut watching = crate::watch::open(folder).map_err(|e| e.to_string())?;
+    let end = std::time::Instant::now() + limit;
+    loop {
+        if let Some(t) = read() {
+            return if t == "ok" { Ok(()) } else { Err(t) };
+        }
+        let left = end.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Err(format!("no answer from Itero.app in {}s", limit.as_secs()));
+        }
+        watching.wait(Some(left)).map_err(|e| e.to_string())?;
     }
 }
 
@@ -837,6 +860,33 @@ mod notifier_tests {
             Err("disk dolu".into())
         );
         assert_eq!(heals.get(), 2);
+    }
+
+    #[test]
+    fn the_result_written_later_is_waited_for_and_read() {
+        use super::wait_for_result;
+        use std::time::Duration;
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("sonuç");
+        let g = f.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            std::fs::write(&g, "ok").unwrap();
+        });
+        assert_eq!(wait_for_result(&f, Duration::from_secs(5)), Ok(()));
+        t.join().unwrap();
+        // an error the notifier wrote is the result
+        std::fs::write(&f, "Notifications are not allowed for this application").unwrap();
+        assert!(
+            wait_for_result(&f, Duration::from_secs(5))
+                .unwrap_err()
+                .contains("not allowed")
+        );
+        // none in time
+        let none = d.path().join("yok");
+        let started = std::time::Instant::now();
+        assert!(wait_for_result(&none, Duration::from_millis(400)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     #[test]

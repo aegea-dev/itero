@@ -6,6 +6,10 @@
 //! `itero-notifier --status` prints macOS's setting for Itero's
 //! notifications (allowed, off, not asked, provisional), showing nothing.
 //!
+//! `--result <file>` (any notification) writes `ok`, or the error, to that
+//! file as it ends: for a launch through LaunchServices, whose output and
+//! exit status the launcher does not get.
+//!
 //! Usage: `itero-notifier <title> <text> [--<name> <value>]...`, a name of
 //! `Note::fields`: subtitle, sound, url, buttons (a JSON list of labels),
 //! wait, and what a click is told with (notification, workspace, itero,
@@ -52,6 +56,7 @@ fn main() {
         ..Note::default()
     };
     let (mut id, mut workspace, mut itero, mut workflow, mut data) = (None, None, None, None, None);
+    let mut result: Option<String> = None;
     for pair in rest.chunks(2) {
         let [name, v] = pair else { usage() };
         let v = Some(v.clone());
@@ -69,6 +74,7 @@ fn main() {
             "--itero" => itero = v,
             "--workflow" => workflow = v,
             "--data" => data = v,
+            "--result" => result = v,
             _ => usage(),
         }
     }
@@ -81,7 +87,19 @@ fn main() {
             data,
         });
     }
-    if let Err(e) = mac::show(&n) {
+    let shown = mac::show(&n);
+    if let Some(path) = result {
+        // whole or not at all: written beside, then renamed
+        let tmp = format!("{path}.tmp");
+        let said = match &shown {
+            Ok(()) => "ok".to_string(),
+            Err(e) => e.clone(),
+        };
+        if std::fs::write(&tmp, said).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+    if let Err(e) = shown {
         eprintln!("itero-notifier: {e}");
         std::process::exit(1);
     }
