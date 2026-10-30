@@ -30,7 +30,7 @@ chmod +x actions/check-site
 cat > workflows/beacon.json <<'EOF'
 { "on": [{ "schedule": "* * * * *" }],
   "steps": [{ "#check-site": { "args": { "url": "http://localhost:3000" } } }],
-  "error": [{ "#notify": { "args": { "title": "beacon", "text": "$why" } } }] }
+  "error": [{ "#notify": { "args": { "title": "beacon", "text": "$output.why" } } }] }
 EOF
 
 itero daemon
@@ -133,14 +133,17 @@ a name stays its file name, and `itero which <name>` says where it is.
 
 - **A workflow** starts on a message (`{"event": "order.placed"}`), a
   schedule (`{"schedule": "0 9 * * *"}`) or a watched file
-  (`{"path": "inbox"}`), under conditions (`{"$paid": true}`,
-  `{"has": ["$order", "$$API"]}`). Its steps are actions (`#name`),
+  (`{"path": "inbox"}`), under conditions (`{"$event.paid": true}`,
+  `{"has": ["$event.order", "$$API"]}`). Its steps are actions (`#name`),
   workflows, lists that run side by side, and steps with their `args` and
-  their own `on`. `success`, `failure` and `error` run at the end.
-- **An action** reads its values as environment variables (from the step's
-  args, its own, then the run's state; `$$NAME` for a secret) and the state
-  on stdin, prints its result (the next step's `$output`, passed on as args
-  to keep), and exits 0 (done), 75 (not yet: wait for a matching message)
+  their own `on`. A step reads a value by where it comes from: `$event`
+  (what started the run), `$output` (the step before), `$steps.<name>`
+  (any earlier step), `$config` (the manifest), `$$NAME` (a secret, a value
+  in `.env`, or an environment variable). `success`, `failure` and `error`
+  run at the end.
+- **An action** gets only its step's args, as environment variables and
+  as `{"args": ...}` on stdin, prints its result (the next step's
+  `$output`), and exits 0 (done), 75 (not yet: wait for a matching message)
   or anything else (an error). A program or a package it
   needs and lacks is named: in the run's error when a step fails, and by
   `itero check` before anything runs.
