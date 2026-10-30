@@ -871,7 +871,10 @@ mod notifier_tests {
         let g = f.clone();
         let t = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(300));
-            std::fs::write(&g, "ok").unwrap();
+            // as the notifier writes it: whole, renamed into place
+            let tmp = g.with_extension("tmp");
+            std::fs::write(&tmp, "ok").unwrap();
+            std::fs::rename(&tmp, &g).unwrap();
         });
         assert_eq!(wait_for_result(&f, Duration::from_secs(5)), Ok(()));
         t.join().unwrap();
