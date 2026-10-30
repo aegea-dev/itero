@@ -1,11 +1,10 @@
 {
-  "on": [{ "event": "website.summarize" }, { "has": "$url" }],
+  "on": [{ "event": "website.summarize" }, { "has": "$event.url" }],
   "steps": [
-    "#fetch",
-    "#to-markdown",
+    { "#fetch": { "args": { "url": "$event.url" } } },
+    { "#to-markdown": { "args": { "page": "$output" } } },
     { "#ask-ai": { "args": { "prompt": "Summarize this page in 5 bullets.",
-                             "key": "$$LM_STUDIO_TOKEN", "page": "$output" },
-                   "strict": true } }
+                             "key": "$$LM_STUDIO_TOKEN", "page": "$output" } } }
   ],
-  "success": [{ "#print": { "args": { "text": "$output" } } }]
+  "success": [{ "#print": { "args": { "url": "$event.url", "text": "$output" } } }]
 }

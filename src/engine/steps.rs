@@ -39,26 +39,47 @@ pub struct Runtime {
     /// first when a step breaks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub undo: Vec<Undo>,
+    /// Why the run broke, at which step, and the undos that broke: the
+    /// error list's first `$output`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_step: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub undo_failed: Vec<String>,
 }
 
-/// What takes a finished step back, as written, and that step's
-/// `$output`, which it is given.
+/// A workflow used as a step: its `$event` (the args its caller gave) and
+/// its own `$steps`, while it runs.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Scope {
+    pub event: Value,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub steps: Map<String, Value>,
+}
+
+/// What takes a finished step back, as written, with its args, and that
+/// step's result: the undo's `$output` when it runs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(from = "UndoForm")]
 pub struct Undo {
     pub step: String,
+    #[serde(default, skip_serializing_if = "is_empty_object")]
+    pub args: Value,
     #[serde(default)]
     pub output: Value,
 }
 
 /// An undo as a journal holds it: a name alone, as runs before `$output`
-/// kept it, or with its step's output.
+/// kept it, or whole.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum UndoForm {
     Name(String),
     Full {
         step: String,
+        #[serde(default)]
+        args: Value,
         #[serde(default)]
         output: Value,
     },
@@ -69,11 +90,16 @@ impl From<UndoForm> for Undo {
         match f {
             UndoForm::Name(step) => Undo {
                 step,
+                args: Value::Null,
                 output: Value::Null,
             },
-            UndoForm::Full { step, output } => Undo { step, output },
+            UndoForm::Full { step, args, output } => Undo { step, args, output },
         }
     }
+}
+
+fn is_empty_object(v: &Value) -> bool {
+    v.as_object().is_some_and(Map::is_empty) || v.is_null()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -129,6 +155,9 @@ pub enum At {
         step: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         inner: Option<Box<At>>,
+        /// A workflow used as a step: its own `$event` and `$steps`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<Box<Scope>>,
     },
     /// An action: its job is out, or waits for data.
     Action {
@@ -143,10 +172,12 @@ pub enum At {
         waiting: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         waiting_since: Option<String>,
-        /// Its own `$output` when it runs again: what it printed waiting,
-        /// or the message taken for it.
+        /// What it printed when it waited: what a message is matched on.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output: Option<Value>,
+        /// The message taken for it, its `$event` when it runs again.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        event: Option<Value>,
     },
     /// A list run side by side, and how the next step waits for it.
     Side {
@@ -220,9 +251,6 @@ pub struct StepInput {
     /// The run's pinned workflows by name, as JSON: its own and those it
     /// uses as steps.
     pub flows: BTreeMap<String, Value>,
-    /// The args of the actions they use, from the manifest.
-    #[serde(default)]
-    pub args: BTreeMap<String, Value>,
     /// The repeat of the actions they use, from the manifest: a step of
     /// one runs once per item.
     #[serde(default)]
@@ -230,6 +258,9 @@ pub struct StepInput {
     /// The `$$` names that are defined.
     #[serde(default)]
     pub defined: Vec<String>,
+    /// The manifest, `$config`: read as it is now, never kept in the run.
+    #[serde(default)]
+    pub config: Map<String, Value>,
     pub runtime: Runtime,
     pub event: Event,
 }
@@ -277,10 +308,19 @@ pub struct StepJob {
     /// Since when it has been waiting, when it runs again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_since: Option<String>,
-    /// Its own `$output` when it runs again: what it printed waiting, or
-    /// the message that came for it.
+    /// The message that came for it, when it runs again after waiting: its
+    /// `$event`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output: Option<Value>,
+    pub event: Option<Value>,
+}
+
+/// A run's first state: the event that started it (`$event`) and the
+/// manifest (`$config`).
+pub fn first_state(event: Value, config: Map<String, Value>) -> Map<String, Value> {
+    let mut s = Map::new();
+    s.insert("event".into(), event);
+    s.insert("config".into(), Value::Object(config));
+    s
 }
 
 /// Where a run is, or how it ended, in a word: `running`, `waiting`,
@@ -333,6 +373,7 @@ pub fn decide(input: &StepInput) -> Result<StepAnswer, String> {
         log: vec![],
         notes: vec![],
         stopped: vec![],
+        scopes: vec![],
     };
     if m.rt.ended.is_some() {
         m.log
@@ -379,9 +420,53 @@ struct Machine<'a> {
     log: Vec<String>,
     notes: Vec<Value>,
     stopped: Vec<Vec<usize>>,
+    /// The scopes of the workflows used as steps being worked on now,
+    /// innermost last.
+    scopes: Vec<Scope>,
 }
 
 impl Machine<'_> {
+    /// The state as a step here reads it: inside a workflow used as a
+    /// step, its own `$event` and `$steps`.
+    fn view(&self) -> Map<String, Value> {
+        let mut v = self.rt.state.clone();
+        v.insert("config".into(), Value::Object(self.i.config.clone()));
+        if let Some(s) = self.scopes.last() {
+            v.insert("event".into(), s.event.clone());
+            v.insert("steps".into(), Value::Object(s.steps.clone()));
+        }
+        v
+    }
+
+    /// The step just done is kept by `key`, `$steps.<key>`: its `$output`.
+    fn record(&mut self, key: &str) {
+        let out = self.rt.state.get("output").cloned().unwrap_or(Value::Null);
+        if let Some(s) = self.scopes.last_mut() {
+            s.steps.insert(key.into(), out);
+            return;
+        }
+        let steps = self
+            .rt
+            .state
+            .entry("steps")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Value::Object(m) = steps {
+            m.insert(key.into(), out);
+        }
+    }
+
+    /// The error list starts with why the run ended as its `$output`.
+    fn ended_output(&mut self) {
+        self.rt.state.insert(
+            "output".into(),
+            json!({
+                "why": self.rt.why,
+                "failed_step": self.rt.failed_step,
+                "undo_failed": self.rt.undo_failed,
+            }),
+        );
+    }
+
     fn handle(&mut self) -> Result<(), String> {
         self.event()?;
         while let Some((why, step)) = self.broke.take() {
@@ -395,7 +480,9 @@ impl Machine<'_> {
         let d = &self.i.event.data;
         match self.i.event.kind.as_str() {
             "run.started" if self.rt.at.is_none() => {
-                self.rt.state = d.as_object().cloned().unwrap_or_default();
+                // its `$event`: the message's data
+                self.rt.state = Map::new();
+                self.rt.state.insert("event".into(), d.clone());
                 self.rt.phase = Phase::Steps;
                 self.begin()
             }
@@ -437,9 +524,8 @@ impl Machine<'_> {
     fn list_done(&mut self) -> Result<(), String> {
         match self.rt.phase {
             Phase::Steps => {
-                let no = Some(&Value::Bool(false));
-                let failed = self.rt.state.get("success") == no
-                    || flow::lookup(&self.rt.state, "output.success") == no;
+                let failed =
+                    flow::lookup(&self.rt.state, "output.success") == Some(&Value::Bool(false));
                 self.rt.phase = if failed {
                     Phase::Failure
                 } else {
@@ -462,6 +548,7 @@ impl Machine<'_> {
             }
             Phase::Undo => {
                 self.rt.phase = Phase::Error;
+                self.ended_output();
                 self.begin()
             }
         }
@@ -473,12 +560,7 @@ impl Machine<'_> {
     }
 
     fn why(&self) -> String {
-        self.rt
-            .state
-            .get("why")
-            .and_then(Value::as_str)
-            .unwrap_or("it failed")
-            .to_string()
+        self.rt.why.clone().unwrap_or_else(|| "it failed".into())
     }
 
     /// A step whose `on` does not hold: it is passed by.
@@ -493,11 +575,12 @@ impl Machine<'_> {
     /// Something broke at `step`: the undos, then the error list; or, in
     /// an end list, the end.
     fn fail(&mut self, why: &str, step: &str) -> Result<(), String> {
-        self.rt.state.insert("why".into(), why.into());
-        self.rt.state.insert("failed_step".into(), step.into());
+        self.rt.why = Some(why.into());
+        self.rt.failed_step = Some(step.into());
         self.log.push(format!("{step}: {why}"));
         if self.rt.phase == Phase::Steps {
             self.rt.phase = if self.rt.undo.is_empty() {
+                self.ended_output();
                 Phase::Error
             } else {
                 Phase::Undo
@@ -516,15 +599,7 @@ impl Machine<'_> {
     fn undo_failed(&mut self, path: &[usize], step: &str, why: &str) -> Result<(), String> {
         self.notes
             .push(json!({"event": "undo.failed", "step": step, "why": why}));
-        let line = Value::String(format!("{step}: {why}"));
-        match self.rt.state.get_mut("undo_failed") {
-            Some(Value::Array(lines)) => lines.push(line),
-            _ => {
-                self.rt
-                    .state
-                    .insert("undo_failed".into(), Value::Array(vec![line]));
-            }
-        }
+        self.rt.undo_failed.push(format!("{step}: {why}"));
         self.log.push(format!("undo {step}: {why}"));
         self.finished(path, &Value::String(String::new()))
     }
@@ -547,10 +622,15 @@ impl Machine<'_> {
                 .map(|u| {
                     Ok(Step::One {
                         name: flow::name(&u.step)?,
-                        args: Value::Object(Map::new()),
+                        args: if u.args.is_null() {
+                            Value::Object(Map::new())
+                        } else {
+                            u.args.clone()
+                        },
                         on: None,
                         undo: None,
-                        strict: false,
+                        undo_args: Value::Object(Map::new()),
+                        as_name: None,
                     })
                 })
                 .collect::<Result<_, String>>()?,
@@ -559,7 +639,7 @@ impl Machine<'_> {
 
     fn holds(&self, on: &On) -> bool {
         let defined = |n: &str| self.i.defined.iter().any(|d| d == n);
-        flow::holds(on, &self.rt.state, &defined)
+        flow::holds(on, &self.view(), &defined)
     }
 
     /// Starts `workflow`'s list from step `from`, skipping the steps whose
@@ -589,6 +669,7 @@ impl Machine<'_> {
                     workflow: workflow.into(),
                     step: idx,
                     inner: Some(Box::new(n)),
+                    scope: None,
                 }));
             }
         }
@@ -597,20 +678,14 @@ impl Machine<'_> {
 
     fn start_step(&mut self, step: &Step, path: &mut Vec<usize>) -> Result<Option<At>, String> {
         match step {
-            Step::One {
-                name,
-                args,
-                on,
-                strict,
-                ..
-            } => {
+            Step::One { name, args, on, .. } => {
                 if let Some(on) = on
                     && !self.holds(on)
                 {
                     self.skipped(&label(name));
                     return Ok(None);
                 }
-                let data = match self.args(args, *strict) {
+                let data = match self.args(args) {
                     Ok(data) => data,
                     Err(why) => {
                         // it cannot start: the run breaks here
@@ -628,7 +703,7 @@ impl Machine<'_> {
                         self.skipped(&m.label);
                         None
                     } else {
-                        match self.args(&m.args, m.strict) {
+                        match self.args(&m.args) {
                             Ok(data) => self.start_name(&m.name, &data, path, true)?,
                             Err(why) => {
                                 // it cannot start: that step of the group breaks
@@ -690,6 +765,7 @@ impl Machine<'_> {
                     waiting: false,
                     waiting_since: None,
                     output: None,
+                    event: None,
                 };
                 let mine = self.rt.item.as_ref().is_some_and(|it| it.action == *name);
                 if let Some(Value::Array(items)) = self.i.repeat.get(name)
@@ -711,11 +787,20 @@ impl Machine<'_> {
                 let Some(f) = self.flows.get(w) else {
                     return Err(format!("no workflow {w}"));
                 };
-                if !self.holds(&f.on.clone()) {
+                let on = f.on.clone();
+                // its `$event` is the args its caller gives it
+                self.scopes.push(Scope {
+                    event: Value::Object(data.clone()),
+                    steps: Map::new(),
+                });
+                let started = if self.holds(&on) {
+                    self.start_list(w, false, 0, path)
+                } else {
                     self.skipped(w);
-                    return Ok(None);
-                }
-                self.start_list(w, false, 0, path)
+                    Ok(None)
+                };
+                let scope = self.scopes.pop().map(Box::new);
+                Ok(started?.map(|n| with_scope(n, scope)))
             }
         }
     }
@@ -744,19 +829,10 @@ impl Machine<'_> {
         matches!(leaf, At::Action { started: true, .. }).then_some(leaf)
     }
 
-    /// A step's args filled from the state, an object; unless the step is
-    /// strict, they join the state too.
-    fn args(&mut self, args: &Value, strict: bool) -> Result<Map<String, Value>, String> {
-        let data = flow::fill_args(args, &self.rt.state)?;
-        if data.contains_key("output") {
-            return Err("args: output is given by itero, the step before's result".into());
-        }
-        if !strict {
-            for (k, v) in &data {
-                self.rt.state.insert(k.clone(), v.clone());
-            }
-        }
-        Ok(data)
+    /// A step's args filled from the state, an object: its action's, and
+    /// nothing else's.
+    fn args(&mut self, args: &Value) -> Result<Map<String, Value>, String> {
+        flow::fill_args(args, &self.view())
     }
 
     fn finished(&mut self, path: &[usize], out: &Value) -> Result<(), String> {
@@ -809,43 +885,23 @@ impl Machine<'_> {
                 workflow,
                 step,
                 inner,
+                scope,
             } => {
-                let mut p = prefix.clone();
-                p.push(step);
-                let next = match inner {
-                    Some(i) => self.advance(*i, &path[1..], p, depth + 1, leaf)?,
-                    None => Adv::Done,
-                };
-                match next {
-                    Adv::Going(n) => Ok(Adv::Going(At::Flow {
-                        workflow,
-                        step,
-                        inner: Some(Box::new(n)),
-                    })),
-                    broke @ Adv::Broke { .. } => Ok(broke),
-                    Adv::Done => {
-                        // the step finished: what takes it back, if the run
-                        // breaks later
-                        if self.rt.phase == Phase::Steps
-                            && let Some(Step::One { undo: Some(u), .. }) =
-                                self.flows[&workflow].steps.get(step)
-                        {
-                            self.rt.undo.push(Undo {
-                                step: written(u),
-                                output: self.rt.state.get("output").cloned().unwrap_or_default(),
-                            });
-                        }
-                        let mut p = prefix;
-                        let next = self.start_list(&workflow, depth == 0, step + 1, &mut p)?;
-                        if let Some((why, step)) = self.broke.take() {
-                            return Ok(Adv::Broke { step, why });
-                        }
-                        Ok(match next {
-                            Some(n) => Adv::Going(n),
-                            None => Adv::Done,
-                        })
-                    }
+                // a workflow used as a step works in its own scope
+                let scoped = scope.is_some();
+                if let Some(s) = scope {
+                    self.scopes.push(*s);
                 }
+                let next = self.advance_flow(workflow, step, inner, path, prefix, depth, leaf);
+                let scope = if scoped {
+                    self.scopes.pop().map(Box::new)
+                } else {
+                    None
+                };
+                Ok(match next? {
+                    Adv::Going(n) => Adv::Going(with_scope(n, scope)),
+                    other => other,
+                })
             }
             At::Side {
                 wait,
@@ -905,6 +961,7 @@ impl Machine<'_> {
                             entries[j].outcome = Some(Outcome::Done);
                             entries[j].output = self.rt.state.get("output").cloned();
                             entries[j].order = next_order(&entries);
+                            self.record(&flow::step_key(&entries[j].name));
                         }
                         Adv::Broke { step, why } => {
                             entries[j].outcome = Some(Outcome::Broke { step, why });
@@ -913,6 +970,72 @@ impl Machine<'_> {
                     }
                 }
                 Ok(self.settle(wait, fail, entries, &prefix))
+            }
+        }
+    }
+
+    /// A workflow's node at step `step` after the leaf under it ended: its
+    /// step goes on, or it finished (kept by its name, `$steps.<name>`, and
+    /// the next step starts), or it broke.
+    #[allow(clippy::too_many_arguments)]
+    fn advance_flow(
+        &mut self,
+        workflow: String,
+        step: usize,
+        inner: Option<Box<At>>,
+        path: &[usize],
+        prefix: Vec<usize>,
+        depth: usize,
+        leaf: &Leaf,
+    ) -> Result<Adv, String> {
+        let mut p = prefix.clone();
+        p.push(step);
+        let next = match inner {
+            Some(i) => self.advance(*i, &path[1..], p, depth + 1, leaf)?,
+            None => Adv::Done,
+        };
+        match next {
+            Adv::Going(n) => Ok(Adv::Going(At::Flow {
+                workflow,
+                step,
+                inner: Some(Box::new(n)),
+                scope: None,
+            })),
+            broke @ Adv::Broke { .. } => Ok(broke),
+            Adv::Done => {
+                // the step finished: what takes it back, if the run breaks
+                // later
+                if self.rt.phase == Phase::Steps
+                    && let Some(Step::One {
+                        undo: Some(u),
+                        undo_args,
+                        ..
+                    }) = self.flows[&workflow].steps.get(step)
+                {
+                    self.rt.undo.push(Undo {
+                        step: written(u),
+                        args: undo_args.clone(),
+                        output: self.rt.state.get("output").cloned().unwrap_or_default(),
+                    });
+                }
+                // and its result, kept by its name (a group's steps were
+                // kept as each finished)
+                if self.rt.phase != Phase::Undo
+                    && let Some(Step::One { name, as_name, .. }) =
+                        self.list(&workflow, depth == 0)?.get(step).cloned()
+                {
+                    let key = as_name.unwrap_or_else(|| flow::step_key(&name.label()));
+                    self.record(&key);
+                }
+                let mut p = prefix;
+                let next = self.start_list(&workflow, depth == 0, step + 1, &mut p)?;
+                if let Some((why, step)) = self.broke.take() {
+                    return Ok(Adv::Broke { step, why });
+                }
+                Ok(match next {
+                    Some(n) => Adv::Going(n),
+                    None => Adv::Done,
+                })
             }
         }
     }
@@ -1041,7 +1164,13 @@ impl Machine<'_> {
         };
         *waiting = true;
         waiting_since.get_or_insert(now);
-        *output = Some(out.clone());
+        // printing nothing when it runs again keeps what it is matched on
+        let nothing = matches!(out, Value::Null)
+            || out.as_str() == Some("")
+            || out.as_object().is_some_and(Map::is_empty);
+        if !nothing || output.is_none() {
+            *output = Some(out.clone());
+        }
         Ok(())
     }
 
@@ -1127,6 +1256,7 @@ impl Machine<'_> {
                 if let At::Action {
                     waiting: true,
                     output,
+                    event,
                     ..
                 } = leaf
                     && output
@@ -1134,7 +1264,7 @@ impl Machine<'_> {
                         .and_then(Value::as_object)
                         .is_some_and(|o| ours(o, &data))
                 {
-                    *output = Some(Value::Object(data.clone()));
+                    *event = Some(Value::Object(data.clone()));
                     jobs.extend(job(leaf, p, item.as_ref()));
                 }
             });
@@ -1234,7 +1364,10 @@ enum Leaf {
     Waits,
 }
 
-/// A node of the position after a leaf ended.
+/// A node of the position after a leaf ended. It is moved once per step,
+/// returned up the tree: boxing it would cost an allocation each time for
+/// no gain.
+#[allow(clippy::large_enum_variant)]
 enum Adv {
     Going(At),
     Done,
@@ -1362,7 +1495,7 @@ fn group_output(wait: &Wait, fail: &Option<Fail>, entries: &[Entry]) -> Value {
         unreachable!("side_output is an object");
     };
     if let Some(w) = winner {
-        fields.insert("winner".into(), w.name.clone().into());
+        fields.insert("winner".into(), flow::step_key(&w.name).into());
     }
     // which steps broke, when one did; always for settled and fail never
     if matches!(wait, Wait::Settled)
@@ -1373,8 +1506,8 @@ fn group_output(wait: &Wait, fail: &Option<Fail>, entries: &[Entry]) -> Value {
         let mut why = Map::new();
         for e in entries {
             if let Some(Outcome::Broke { why: w, .. }) = &e.outcome {
-                failed.push(Value::String(e.name.clone()));
-                why.insert(e.name.clone(), w.clone().into());
+                failed.push(Value::String(flow::step_key(&e.name)));
+                why.insert(flow::step_key(&e.name), w.clone().into());
             }
         }
         fields.insert("failed".into(), Value::Array(failed));
@@ -1401,6 +1534,25 @@ fn written(n: &Name) -> String {
 }
 
 /// A leaf's job, handing it out.
+/// A workflow's node with its scope: a workflow used as a step keeps its
+/// `$event` and `$steps` in it.
+fn with_scope(n: At, scope: Option<Box<Scope>>) -> At {
+    match n {
+        At::Flow {
+            workflow,
+            step,
+            inner,
+            ..
+        } => At::Flow {
+            workflow,
+            step,
+            inner,
+            scope,
+        },
+        other => other,
+    }
+}
+
 fn job(leaf: &mut At, path: &[usize], item: Option<&Item>) -> Option<StepJob> {
     let At::Action {
         name,
@@ -1409,7 +1561,8 @@ fn job(leaf: &mut At, path: &[usize], item: Option<&Item>) -> Option<StepJob> {
         started,
         waiting,
         waiting_since,
-        output,
+        event,
+        ..
     } = leaf
     else {
         return None;
@@ -1425,7 +1578,7 @@ fn job(leaf: &mut At, path: &[usize], item: Option<&Item>) -> Option<StepJob> {
             .filter(|it| it.action == *name)
             .map(|it| it.value.clone()),
         waiting_since: waiting_since.clone(),
-        output: output.clone(),
+        event: event.clone(),
     })
 }
 
@@ -1473,6 +1626,7 @@ fn prune(
             workflow,
             step,
             inner,
+            scope,
         } => {
             path.push(step);
             let inner = inner.and_then(|i| prune(*i, path, drop, gone));
@@ -1481,6 +1635,7 @@ fn prune(
                 workflow,
                 step,
                 inner: Some(Box::new(i)),
+                scope,
             })
         }
         At::Side {
@@ -1562,13 +1717,13 @@ fn side_output(entries: &[Entry]) -> Value {
                 for (k, v) in o {
                     by.entry(k.clone())
                         .or_default()
-                        .insert(e.name.clone(), v.clone());
+                        .insert(flow::step_key(&e.name), v.clone());
                 }
             }
             None | Some(Value::Null) => {}
             Some(Value::String(t)) if t.is_empty() => {}
             Some(v) => {
-                out.insert(e.name.clone(), v.clone());
+                out.insert(flow::step_key(&e.name), v.clone());
             }
         }
     }

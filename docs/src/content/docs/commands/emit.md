@@ -54,10 +54,11 @@ $ itero emit --wait website.requested '{"url": "https://example.com"}'
   "runs": [
     { "run": "01a1602a-4401-7c8e-9e0b-1f2b5a3c4d5e", "name": "misty-lake",
       "workflow": "page-summary", "status": "done",
-      "state": { "url": "https://example.com", "text": "- The page is …" } }
+      "state": { "event": { "url": "https://example.com" }, "output": "- The page is …",
+                 "steps": { "fetch": "<!doctype html>…", "ask-ai": "- The page is …" } } }
   ]
 }
-$ itero emit --wait website.requested '{"url": "https://example.com"}' | jq -r '.runs[0].state.text'
+$ itero emit --wait website.requested '{"url": "https://example.com"}' | jq -r '.runs[0].state.output'
 ```
 
 Exit codes:

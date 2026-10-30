@@ -57,12 +57,7 @@ impl Ws {
         std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    /// An action's args, in the manifest; `Null` takes them out.
-    fn args(&self, action: &str, v: Value) {
-        self.entry(action, "args", v);
-    }
-
-    /// An action's entry's key in the manifest: args, repeat.
+    /// An action's entry's key in the manifest: repeat, limits.
     fn entry(&self, action: &str, key: &str, v: Value) {
         let f = self.d.path().join("itero.config.json");
         let mut m: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
@@ -117,34 +112,45 @@ impl Ws {
 /// waiting for its provider, then the order's processing and a mail. Each
 /// result is passed on as the next step's args.
 fn order(ws: &Ws) {
+    let log = json!({"#log-result": {"args": {
+        "success": "$output.success", "failed_step": "$output.failed_step", "why": "$output.why"
+    }}});
     ws.flow(
         "order",
         json!({
             "on": [{ "event": "order.placed" }],
             "steps": [
-                ["#check-payment", "#check-stock"],
+                [
+                    {"#check-payment": {"args": {"order": "$event.order"}}},
+                    {"#check-stock": {"args": {"in_stock": "$event.in_stock"}}}
+                ],
                 {"order-process": {"args": "$output"}},
-                {"#send-mail": {"args": "$output"}}
+                {"#send-mail": {"args": {
+                    "order": "$event.order",
+                    "tracking": "$steps.order-process.tracking",
+                    "success": "$steps.order-process.success"
+                }}}
             ],
-            "success": ["#log-result"],
-            "failure": ["#log-result"],
-            "error": ["#log-result"]
+            "success": [log],
+            "failure": [log],
+            "error": [log]
         }),
     );
+    // its $event: the args its caller gave, the checks' merged result
     ws.flow(
         "order-process",
         json!({
-            "on": [{ "has": ["$paid", "$stock"] }],
+            "on": [{ "has": ["$event.paid", "$event.stock"] }],
             "steps": [
-                {"#ship": {"on": [{"$paid": true, "$stock": true}]}},
-                {"#remind-stock": {"on": [{"$paid": true, "$stock": false}]}}
+                {"#ship": {"on": [{"$event.paid": true, "$event.stock": true}]}},
+                {"#remind-stock": {"on": [{"$event.paid": true, "$event.stock": false}]}}
             ]
         }),
     );
-    // the payment's message, when it came, is its output
+    // the payment's message, when it came, is its $event
     ws.action(
         "check-payment",
-        r#"case "$output" in *'"paid":true'*) echo '{"paid": true}'; exit 0 ;; esac
+        r#"case "$event" in *'"paid":true'*) echo '{"paid": true}'; exit 0 ;; esac
 echo '{"payment_ref": "ödeme-1"}'
 exit 75"#,
     );
@@ -153,7 +159,8 @@ exit 75"#,
     ws.action("remind-stock", r#"echo '{"success": false}'"#);
     ws.action(
         "send-mail",
-        r#"echo "sipariş $order: ${tracking:-kargo yok}" >> gönderilen.log"#,
+        r#"echo "sipariş $order: ${tracking:-kargo yok}" >> gönderilen.log
+echo "{\"success\": ${success:-true}}""#,
     );
     ws.action(
         "log-result",
@@ -221,7 +228,10 @@ fn an_action_that_breaks_runs_the_error_list() {
     let j = Journal::open(&ws.ws).unwrap();
     let errors = j.runs_page(None, Some("error"), &[], 10).unwrap();
     assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].runtime.state["failed_step"], "#check-stock");
+    assert_eq!(
+        errors[0].runtime.failed_step.as_deref(),
+        Some("#check-stock")
+    );
 }
 
 #[test]
@@ -229,12 +239,15 @@ fn a_message_reaches_every_waiting_run_it_matches() {
     let ws = Ws::new();
     ws.flow(
         "bekle",
-        json!({"on": [{ "event": "order.placed" }], "steps": ["#stok-bekle", "#bitir"]}),
+        json!({"on": [{ "event": "order.placed" }], "steps": [
+            {"#stok-bekle": {"args": {"product": "$event.product"}}},
+            {"#bitir": {"args": {"order": "$event.order"}}}
+        ]}),
     );
     // it waits for news of its product, which the news is matched on
     ws.action(
         "stok-bekle",
-        r#"case "$output" in *'"arrived":true'*) exit 0 ;; esac
+        r#"case "$event" in *'"arrived":true'*) exit 0 ;; esac
 echo "{\"product\": \"$product\"}"; exit 75"#,
     );
     ws.action("bitir", r#"echo "$order" >> biten.log"#);
@@ -266,26 +279,23 @@ fn every_workflow_on_a_message_starts_a_run() {
 }
 
 #[test]
-fn a_value_comes_from_the_step_then_args_then_the_state() {
+fn an_action_gets_its_steps_args_and_nothing_of_the_event() {
     let ws = Ws::new();
     ws.action("renk", r#"echo "$renk" >> renkler.log"#);
     ws.flow(
         "adım",
         json!({"on": [{ "event": "renk.sor" }], "steps": [{"#renk": {"args": {"renk": "adımın"}}}]}),
     );
-    ws.emit("renk.sor", json!({"renk": "durumun"}));
+    ws.emit("renk.sor", json!({"renk": "olayın"}));
     ws.pass(NOW);
-    ws.args("renk", json!({"renk": "args'ın"}));
+    // no args: the event's field does not reach it
     ws.flow(
         "adım",
         json!({"on": [{ "event": "renk.sor" }], "steps": ["#renk"]}),
     );
-    ws.emit("renk.sor", json!({"renk": "durumun"}));
+    ws.emit("renk.sor", json!({"renk": "olayın"}));
     ws.pass(NOW);
-    ws.args("renk", Value::Null);
-    ws.emit("renk.sor", json!({"renk": "durumun"}));
-    ws.pass(NOW);
-    assert_eq!(ws.read("renkler.log"), "adımın\nargs'ın\ndurumun\n");
+    assert_eq!(ws.read("renkler.log"), "adımın\n\n");
 }
 
 #[test]
@@ -294,7 +304,7 @@ fn a_state_value_can_be_named_in_a_steps_data() {
     ws.action("selam", r#"echo "$kime" >> selam.log"#);
     ws.flow(
         "selam",
-        json!({"on": [{ "event": "selam.ver" }], "steps": [{"#selam": {"args": {"kime": "$müşteri"}}}]}),
+        json!({"on": [{ "event": "selam.ver" }], "steps": [{"#selam": {"args": {"kime": "$event.müşteri"}}}]}),
     );
     ws.emit("selam.ver", json!({"müşteri": "Ayşe"}));
     ws.pass(NOW);
@@ -314,7 +324,10 @@ fn a_run_that_waits_past_its_timeout_ends_in_error() {
     assert_eq!(ws.statuses(), vec!["waiting"]);
     ws.pass("2026-10-21T10:02:00Z");
     assert_eq!(ws.statuses(), vec!["error"]);
-    assert_eq!(ws.runs()[0].runtime.state["why"], "waited 1m for data");
+    assert_eq!(
+        ws.runs()[0].runtime.why.as_deref(),
+        Some("waited 1m for data")
+    );
 }
 
 #[test]
@@ -324,7 +337,7 @@ fn steps_side_by_side_that_print_plain_values_are_read_by_name() {
         "fotoğraf",
         json!({"on": [{ "event": "photo.added" }],
                "steps": [["#boyut", "#tür"],
-                         { "#yaz": { "args": { "metin": "$output.#boyut bayt, $output.#tür" } } }]}),
+                         { "#yaz": { "args": { "metin": "$steps.boyut bayt, $steps.tür" } } }]}),
     );
     ws.action("boyut", "echo 1064");
     ws.action("tür", "echo image/png");
@@ -405,7 +418,7 @@ fn a_race_ends_with_its_first_step_and_stops_the_slow_ones_process() {
     assert_eq!(ws.statuses(), vec!["done"]);
     assert_eq!(
         ws.runs()[0].runtime.state["output"],
-        json!({"#hızlı": "hızlı", "winner": "#hızlı"})
+        json!({"hızlı": "hızlı", "winner": "hızlı"})
     );
     // the slow one is saved as stopped, not lost: it does not run again
     assert_eq!(pass.lost, 0);
@@ -448,8 +461,8 @@ fn any_waits_for_the_slow_step_when_the_fast_one_breaks() {
     assert_eq!(ws.statuses(), vec!["done"]);
     assert_eq!(
         ws.runs()[0].runtime.state["output"],
-        json!({"#yavaş": "yavaş", "winner": "#yavaş",
-               "failed": ["#kırık"], "why": {"#kırık": "exit 1: bozuldu"}})
+        json!({"yavaş": "yavaş", "winner": "yavaş",
+               "failed": ["kırık"], "why": {"kırık": "exit 1: bozuldu"}})
     );
 }
 
@@ -469,7 +482,7 @@ fn a_waiting_step_that_lost_a_race_is_not_woken_by_a_later_message() {
     ws.action("hızlı", "sleep 1; echo hızlı");
     ws.action(
         "sonra",
-        r#"case "$output" in *geldi*) echo bitti; exit 0 ;; esac
+        r#"case "$event" in *geldi*) echo bitti; exit 0 ;; esac
 echo '{"sipariş": "ş-1"}'; exit 75"#,
     );
     ws.emit("yarış.başladı", json!({}));
@@ -508,7 +521,7 @@ fn a_waiting_step_wins_a_race_when_its_data_comes_while_the_other_runs() {
     );
     ws.action(
         "onay",
-        r#"case "$output" in *onaylandı*) echo onaylandı; exit 0 ;; esac
+        r#"case "$event" in *onaylandı*) echo onaylandı; exit 0 ;; esac
 echo '{"iş": "ş-1"}'; exit 75"#,
     );
     ws.action("derle", "sleep 20 &\necho $! > derle.pid\nwait");
@@ -528,7 +541,7 @@ echo '{"iş": "ş-1"}'; exit 75"#,
     assert_eq!(ws.statuses(), vec!["done"]);
     assert_eq!(
         ws.runs()[0].runtime.state["output"],
-        json!({"#onay": "onaylandı", "winner": "#onay"})
+        json!({"onay": "onaylandı", "winner": "onay"})
     );
     saved_as_stopped(&ws, "derle");
 }
@@ -543,7 +556,8 @@ fn a_list_whose_step_breaks_lets_the_others_run_to_their_end_then_breaks() {
         ws.flow(
             "liste",
             json!({"on": [{ "event": "liste.başladı" }],
-                   "steps": [group, "#sonra"], "error": ["#hata"]}),
+                   "steps": [group, "#sonra"],
+                   "error": [{"#hata": {"args": {"failed_step": "$output.failed_step"}}}]}),
         );
         ws.action("kırık", "echo bozuldu >&2; exit 1");
         ws.action("yavaş", "sleep 1; echo bitti > yavaş.txt");
@@ -556,7 +570,7 @@ fn a_list_whose_step_breaks_lets_the_others_run_to_their_end_then_breaks() {
         assert_eq!(ws.read("yavaş.txt"), "bitti\n", "{group}");
         assert_eq!(ws.read("hata.txt"), "#kırık bitti\n", "{group}");
         assert_eq!(ws.read("sonra.txt"), "", "{group}");
-        assert_eq!(ws.runs()[0].runtime.state["why"], "exit 1: bozuldu");
+        assert_eq!(ws.runs()[0].runtime.why.as_deref(), Some("exit 1: bozuldu"));
         assert_eq!(pass.stopped, 0, "{group}");
         assert!(jobs(&ws).iter().all(|j| j.2.is_none()), "{:?}", jobs(&ws));
     }
@@ -604,7 +618,7 @@ fn a_pass_whose_manager_keeps_being_killed_still_stops_the_steps_that_lose() {
     assert!(ended, "the pass waited for the slow step");
     assert!(gone, "sleep {pid} still ran");
     assert_eq!(ws.statuses(), vec!["done"]);
-    assert_eq!(ws.runs()[0].runtime.state["output"]["winner"], "#hızlı");
+    assert_eq!(ws.runs()[0].runtime.state["output"]["winner"], "hızlı");
     saved_as_stopped(&ws, "yavaş");
 }
 
@@ -650,8 +664,8 @@ fn a_step_quiet_past_its_limit_is_stopped_and_run_again() {
     // under load, a try may be stopped before the action's first line
     assert!(ws.read("denemeler.txt").contains("başladı"));
     assert_eq!(
-        ws.runs()[0].runtime.state["why"],
-        "lost 3 times: quiet for 1s"
+        ws.runs()[0].runtime.why.as_deref(),
+        Some("lost 3 times: quiet for 1s")
     );
 }
 
@@ -671,8 +685,11 @@ fn an_actions_own_quiet_overrides_the_workspaces() {
     ws.pass(NOW);
     assert_eq!(ws.statuses(), vec!["error"]);
     let run = &ws.runs()[0];
-    assert_eq!(run.runtime.state["why"], "lost 3 times: quiet for 1s");
-    assert_eq!(run.runtime.state["failed_step"], "#sessiz");
+    assert_eq!(
+        run.runtime.why.as_deref(),
+        Some("lost 3 times: quiet for 1s")
+    );
+    assert_eq!(run.runtime.failed_step.as_deref(), Some("#sessiz"));
 }
 
 #[test]
@@ -752,8 +769,8 @@ fn a_step_past_its_most_is_stopped_even_while_it_prints() {
     ws.pass(NOW);
     assert_eq!(ws.statuses(), vec!["error"]);
     assert_eq!(
-        ws.runs()[0].runtime.state["why"],
-        "lost 3 times: ran for 1s"
+        ws.runs()[0].runtime.why.as_deref(),
+        Some("lost 3 times: ran for 1s")
     );
 }
 
@@ -801,12 +818,14 @@ fn a_workflow_posts_its_result_from_its_success_and_error_steps() {
     );
     w.flow(
         "iyi",
-        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"],
-                "success": [{ "#gönder": { "args": "$output" } }] }),
+        json!({ "on": [{ "event": "kişi.geldi" }],
+                "steps": [{ "#selamla": { "args": { "kim": "$event.kim" } } }],
+                "success": [{ "#gönder": { "args": { "selam": "$output.selam", "reply_url": "$event.reply_url" } } }] }),
     );
     w.flow(
         "kötü",
-        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#kır"], "error": ["#gönder"] }),
+        json!({ "on": [{ "event": "kişi.geldi" }], "steps": ["#kır"],
+                "error": [{ "#gönder": { "args": { "why": "$output.why", "reply_url": "$event.reply_url" } } }] }),
     );
     let (url, bodies) = endpoint(vec![200]);
     w.emit("kişi.geldi", json!({ "kim": "ayşe", "reply_url": url }));
@@ -847,7 +866,7 @@ fn a_missing_program_is_named_in_the_runs_why() {
             .find(|r| r.workflow == workflow)
             .unwrap();
         assert_eq!(steps::status(&run.runtime), "error");
-        run.runtime.state["why"].as_str().unwrap().to_string()
+        run.runtime.why.clone().unwrap()
     };
     assert!(
         why("bir").starts_with("needs yok-böyle-komut: not found on PATH"),
@@ -876,39 +895,20 @@ fn a_value_too_big_for_the_environment_is_on_stdin_only() {
     );
     w.flow(
         "büyük",
-        json!({ "on": [{ "event": "sayfa.geldi" }], "steps": ["#ölç"] }),
+        json!({ "on": [{ "event": "sayfa.geldi" }],
+                "steps": [{ "#ölç": { "args": { "sayfa": "$event.sayfa" } } }] }),
     );
     // 2 MB: past every system's limit for one environment variable
     w.emit("sayfa.geldi", json!({ "sayfa": "ş".repeat(1_000_000) }));
     w.pass(NOW);
-    let state = &w.runs()[0].runtime.state;
-    assert_eq!(w.statuses(), ["done"], "{:?}", state.get("why"));
+    assert_eq!(w.statuses(), ["done"], "{:?}", w.runs()[0].runtime.why);
     assert_eq!(w.read("ortam.txt"), "yok\n", "not in the environment");
     let stdin: Value = serde_json::from_str(&w.read("girdi.json")).unwrap();
     assert_eq!(
-        stdin["sayfa"].as_str().unwrap().chars().count(),
+        stdin["args"]["sayfa"].as_str().unwrap().chars().count(),
         1_000_000,
         "whole on stdin"
     );
-}
-
-#[test]
-fn a_big_value_only_a_step_gives_is_an_error_naming_it() {
-    let w = Ws::new();
-    w.action("ölç", "true");
-    w.flow(
-        "büyük",
-        json!({ "on": [{ "event": "sayfa.geldi" }],
-                "steps": [{ "#ölç": { "args": { "sayfa": "ş".repeat(1_000_000) }, "strict": true } }] }),
-    );
-    w.emit("sayfa.geldi", json!({}));
-    w.pass(NOW);
-    assert_eq!(w.statuses(), ["error"]);
-    let why = w.runs()[0].runtime.state["why"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert!(why.contains("sayfa") && why.contains("too big"), "{why}");
 }
 
 #[test]
@@ -916,9 +916,11 @@ fn repeat_runs_the_rest_once_per_item_on_top_of_the_args() {
     let ws = Ws::new();
     ws.flow(
         "posta",
-        json!({"on": [{ "event": "posta.bak" }], "steps": ["#kutu", {"#yaz": {"args": "$output"}}]}),
+        json!({"on": [{ "event": "posta.bak" }], "steps": [
+            {"#kutu": {"args": {"host": "imap.örnek.test", "user": "kimse"}}},
+            {"#yaz": {"args": "$output"}}
+        ]}),
     );
-    ws.args("kutu", json!({"host": "imap.örnek.test", "user": "kimse"}));
     ws.entry(
         "kutu",
         "repeat",
@@ -958,58 +960,53 @@ fn a_schedule_starts_a_run_once_per_slot() {
 }
 
 #[test]
-fn a_run_starts_with_its_workflows_settings_then_the_message() {
+fn a_run_reads_its_event_the_env_file_and_the_manifest() {
     let ws = Ws::new();
     ws.flow(
         "gözcü",
-        json!({"on": [{ "event": "saat.geldi" }, { "$bölge": "avrupa" }],
-               "steps": [{ "#bak": { "args": { "liste": "$siteler" } } }]}),
+        json!({"on": [{ "event": "saat.geldi" }, { "$event.bölge": "avrupa" }],
+               "steps": [{ "#bak": { "args": {
+                   "liste": "$$GOZCU_SITELER", "en_az": "$event.en_az", "ad": "$config.name"
+               } } }]}),
     );
-    ws.action("bak", r#"echo "$liste $en_az" >> görülen.txt"#);
-    ws.write(
-        "itero.config.json",
-        r#"{"workflow": {"gözcü": {"settings": {"siteler": ["https://örnek.test"], "en_az": 10, "bölge": "avrupa"}}}}"#,
-    );
-    ws.emit("saat.geldi", json!({"en_az": 5}));
+    ws.action("bak", r#"echo "$liste $en_az $ad" >> görülen.txt"#);
+    ws.write("itero.config.json", r#"{"name": "gözcü-alanı"}"#);
+    ws.write(".env", "GOZCU_SITELER=https://örnek.test\n");
+    ws.emit("saat.geldi", json!({"bölge": "avrupa", "en_az": 5}));
     ws.pass(NOW);
     assert_eq!(ws.statuses(), vec!["done"]);
+    assert_eq!(ws.read("görülen.txt"), "https://örnek.test 5 gözcü-alanı\n");
     let state = &ws.runs()[0].runtime.state;
-    assert_eq!(state["siteler"], json!(["https://örnek.test"]));
-    assert_eq!(state["en_az"], 5, "the message wins over a setting");
-    // a step names a setting as "$siteler"; an action gets one as $en_az
-    assert_eq!(ws.read("görülen.txt"), "[\"https://örnek.test\"] 5\n");
-
-    // a setting the on condition needs, and it does not hold
-    ws.write(
-        "itero.config.json",
-        r#"{"workflow": {"gözcü": {"settings": {"bölge": "asya"}}}}"#,
+    assert_eq!(state["event"]["en_az"], 5);
+    assert!(
+        state.get("config").is_none(),
+        "the manifest is read, not kept"
     );
-    ws.emit("saat.geldi", json!({}));
+
+    // the on condition does not hold
+    ws.emit("saat.geldi", json!({"bölge": "asya"}));
     ws.pass(NOW);
     assert_eq!(ws.runs().len(), 1);
 }
 
 #[test]
-fn a_scheduled_run_gets_its_settings_and_its_entry_can_turn_it_off() {
+fn a_scheduled_run_starts_with_no_event_and_its_entry_can_turn_it_off() {
     let ws = Ws::new();
     ws.flow(
         "saatlik",
-        json!({"on": [{ "schedule": "0 * * * *" }], "steps": ["#say"]}),
+        json!({"on": [{ "schedule": "0 * * * *" }],
+               "steps": [{"#say": {"args": {"ad": "şükrü", "olay": "$event"}}}]}),
     );
-    ws.action("say", r#"echo "$ad" >> sayaç.log"#);
-    ws.write(
-        "itero.config.json",
-        r#"{"workflow": {"saatlik": {"settings": {"ad": "şükrü"}}}}"#,
-    );
+    ws.action("say", r#"echo "$ad $olay" >> sayaç.log"#);
     ws.pass("2026-10-21T14:01:00Z");
     ws.pass("2026-10-21T15:00:10Z");
-    assert_eq!(ws.read("sayaç.log"), "şükrü\n");
+    assert_eq!(ws.read("sayaç.log"), "şükrü {}\n");
     ws.write(
         "itero.config.json",
-        r#"{"workflow": {"saatlik": {"settings": {"ad": "şükrü"}, "off": true}}}"#,
+        r#"{"workflow": {"saatlik": {"off": true}}}"#,
     );
     ws.pass("2026-10-21T16:00:10Z");
-    assert_eq!(ws.read("sayaç.log"), "şükrü\n", "off in its entry");
+    assert_eq!(ws.read("sayaç.log"), "şükrü {}\n", "off in its entry");
 }
 
 #[test]
@@ -1017,9 +1014,9 @@ fn an_action_that_reads_nothing_runs_once() {
     let ws = Ws::new();
     ws.flow(
         "say",
-        json!({"on": [{ "event": "say.bir" }], "steps": ["#say"]}),
+        json!({"on": [{ "event": "say.bir" }], "steps": [{"#say": {"args": {"büyük": "$event.büyük"}}}]}),
     );
-    // it never reads its stdin, and the state is more than a pipe holds:
+    // it never reads its stdin, and its args are more than a pipe holds:
     // the worker's write to it fails, which is no reason to stop
     ws.action("say", "echo x >> sayı.log");
     ws.emit("say.bir", json!({"büyük": "ç".repeat(200_000)}));
@@ -1085,7 +1082,7 @@ fn a_workflow_off_or_outside_its_dates_starts_nothing() {
     for name in ["kapalı", "erken", "geç", "açık"] {
         w.flow(
             name,
-            json!({ "on": [{ "event": "selam.ver" }], "steps": ["#yaz"] }),
+            json!({ "on": [{ "event": "selam.ver" }], "steps": [{"#yaz": {"args": {"kim": "$event.kim"}}}] }),
         );
     }
     w.emit("selam.ver", json!({ "kim": "ayşe" }));
@@ -1100,12 +1097,12 @@ fn past_the_runs_limit_messages_wait_their_turn() {
     let w = Ws::with(r#"{"limits": {"runs": 1}}"#);
     w.action(
         "bekle",
-        r#"case "$output" in *'"tamam":true'*) exit 0 ;; esac
+        r#"case "$event" in *'"tamam":true'*) exit 0 ;; esac
 echo "{\"numara\": $numara}"; exit 75"#,
     );
     w.flow(
         "sıra",
-        json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#bekle"] }),
+        json!({ "on": [{ "event": "iş.geldi" }], "steps": [{"#bekle": {"args": {"numara": "$event.numara"}}}] }),
     );
     w.emit("iş.geldi", json!({ "numara": 1 }));
     w.emit("iş.geldi", json!({ "numara": 2 }));
@@ -1127,7 +1124,9 @@ fn a_run_in_error_sends_itero_run_error_never_to_its_own_workflow() {
     );
     w.flow(
         "uyarı",
-        json!({ "on": [{ "event": "itero.run.error" }], "steps": ["#uyar"] }),
+        json!({ "on": [{ "event": "itero.run.error" }], "steps": [
+            {"#uyar": {"args": {"workflow": "$event.workflow", "why": "$event.why"}}}
+        ] }),
     );
     w.emit("iş.geldi", json!({}));
     w.pass(NOW);
@@ -1164,7 +1163,9 @@ fn a_run_done_sends_itero_run_done_with_its_last_result() {
     );
     w.flow(
         "izle",
-        json!({ "on": [{ "event": "itero.run.done" }], "steps": ["#yaz"] }),
+        json!({ "on": [{ "event": "itero.run.done" }], "steps": [
+            {"#yaz": {"args": {"workflow": "$event.workflow", "output": "$event.output"}}}
+        ] }),
     );
     w.emit("iş.geldi", json!({}));
     w.pass(NOW);
@@ -1192,7 +1193,9 @@ fn a_workflow_can_start_when_one_named_workflow_is_done() {
     }
     w.flow(
         "rapor",
-        json!({ "on": [{ "event": "itero.run.done" }, { "$workflow": "yedek" }], "steps": ["#yaz"] }),
+        json!({ "on": [{ "event": "itero.run.done" }, { "$event.workflow": "yedek" }], "steps": [
+            {"#yaz": {"args": {"workflow": "$event.workflow"}}}
+        ] }),
     );
     w.emit("iş.geldi", json!({}));
     w.pass(NOW);
@@ -1213,7 +1216,9 @@ fn a_run_started_by_a_run_message_sends_no_itero_run_done() {
     for name in ["izle", "gözle"] {
         w.flow(
             name,
-            json!({ "on": [{ "event": "itero.run.done" }], "steps": ["#yaz"] }),
+            json!({ "on": [{ "event": "itero.run.done" }], "steps": [
+                {"#yaz": {"args": {"workflow": "$event.workflow"}}}
+            ] }),
         );
     }
     w.emit("iş.geldi", json!({}));
@@ -1389,7 +1394,7 @@ fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
     w.action("say", "echo \"$path $kind\" >> görülen.txt");
     let on = |paths: Vec<String>| {
         let on: Vec<Value> = paths.into_iter().map(|p| json!({ "path": p })).collect();
-        json!({ "on": on, "steps": ["#say"] })
+        json!({ "on": on, "steps": [{"#say": {"args": {"path": "$event.path", "kind": "$event.kind"}}}] })
     };
     w.flow("posta", on(vec![inbox.display().to_string()]));
     let daemon = Running(

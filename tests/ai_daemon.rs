@@ -25,7 +25,7 @@ fn an_ai_step_runs_in_a_workflow() {
         json!({
             "on": [{ "event": "posta.geldi" }],
             "steps": [{ "#ai": { "args": {
-                "model": "unsloth/Qwen3.5-4B-GGUF", "text": "$konu",
+                "model": "unsloth/Qwen3.5-4B-GGUF", "text": "$event.konu",
                 "choose": ["acil", "sonra", "çöp"] } } }]
         })
         .to_string(),

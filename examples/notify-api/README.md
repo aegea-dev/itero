@@ -14,27 +14,26 @@ curl -s -X POST http://127.0.0.1:8800/events -H 'content-type: application/json'
 }'
 ```
 
-`workflows/app-notify.json` shows it with `#notify`, which takes `title`,
-`text`, `subtitle`, `sound`, `url`, `buttons`, `wait` and `data` from the
-event. With `buttons` (or `"wait": true`) it waits for a click, which is
-its result, `$output`; then its `success` step, `actions/post-answer`,
-is given that click as its args, so it joins the run's state, and posts
-the state to `reply_url`:
+`workflows/app-notify.json` shows it with `#notify`, giving it the
+event's `title`, `text`, `subtitle`, `sound`, `url`, `buttons`, `wait` and
+`data` as its args (`$event.title` and so on; one the app leaves out is
+left out). With `buttons` (or `"wait": true`) it waits for a click, which
+is its result, `$output`; then its `success` step, `actions/post-answer`,
+posts to `reply_url` what the app asked and the answer:
 
 ```json
-{ "title": "Deploy?", "text": "3 changes", "buttons": ["Deploy", "Cancel"],
-  "reply_url": "http://localhost:3000/notified",
-  "notification": "01a1…", "answer": "Deploy", "workflow": "app-notify",
-  "output": { "notification": "01a1…", "answer": "Deploy", "workflow": "app-notify" } }
+{ "asked": { "title": "Deploy?", "text": "3 changes", "buttons": ["Deploy", "Cancel"],
+             "reply_url": "http://localhost:3000/notified" },
+  "answer": "Deploy", "notification": "01a1…" }
 ```
 
 `answer` is the button's label, `open` for a click on the notification
 itself, or `dismissed` when it is closed without one. Anything else the
-app puts in `data` comes back in what is posted, so it knows which request was
-answered. A notification nobody answers ends in error at the workflow's
-`timeout` (an hour), and its `error` step posts that too, with `why`.
-Without `buttons` or `wait`, the run ends as soon as it is shown, and is
-posted then.
+app puts in the event comes back in `asked`, so it knows which request
+was answered. A notification nobody answers ends in error at the
+workflow's `timeout` (an hour), and its `error` step posts that too, with
+`why`. Without `buttons` or `wait`, the run ends as soon as it is shown,
+and is posted then.
 
 Run `itero daemon` in this folder.
 

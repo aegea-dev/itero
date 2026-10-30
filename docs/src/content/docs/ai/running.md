@@ -48,7 +48,7 @@ A notification when it fails:
 {
   "on": [{ "event": "itero.ai.failed" }],
   "steps": [
-    { "#notify": { "args": { "title": "itero-ai failed", "text": "$why" } } }
+    { "#notify": { "args": { "title": "itero-ai failed", "text": "$event.why" } } }
   ]
 }
 ```

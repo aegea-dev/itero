@@ -1,5 +1,5 @@
-//! `itero workflow` (`itero wf`): the workflows, their runs, their settings.
-use super::out::{ago, given, plain_name, show, table, text};
+//! `itero workflow` (`itero wf`): the workflows and their runs.
+use super::out::{ago, show, table, text};
 use crate::engine::journal::{Journal, Recorded, Run, subject};
 use crate::engine::{progress, steps};
 use crate::workspace::Workspace;
@@ -112,7 +112,6 @@ pub struct Filter {
 
 /// A run as a row: what `runs` shows, and why when it broke.
 fn row(r: &Run) -> Value {
-    let st = &r.runtime.state;
     let status = steps::status(&r.runtime);
     let mut v = json!({
         "id": r.id,
@@ -123,8 +122,8 @@ fn row(r: &Run) -> Value {
         "ended": r.ended,
     });
     if status == "error" {
-        v["failed_step"] = st.get("failed_step").cloned().unwrap_or(Value::Null);
-        v["why"] = st.get("why").cloned().unwrap_or(Value::Null);
+        v["failed_step"] = json!(r.runtime.failed_step);
+        v["why"] = json!(r.runtime.why);
     }
     v
 }
@@ -312,48 +311,4 @@ fn story(j: &Journal, r: &Run) -> Result<Value> {
         "steps": steps_,
         "state": Value::Object(r.runtime.state.clone()),
     }))
-}
-
-fn known(ws: &Workspace, workflow: &str) -> Result<()> {
-    if !plain_name(workflow) {
-        bail!("{workflow} is not a workflow's name");
-    }
-    if !ws.flows()?.iter().any(|(n, _)| n == workflow) {
-        bail!("no workflow {workflow}: itero workflow list lists them");
-    }
-    Ok(())
-}
-
-/// A workflow's settings, as `itero.config.json` has them.
-pub fn config_get(ws: &Workspace, workflow: &str, json: bool) -> Result<()> {
-    known(ws, workflow)?;
-    let settings = ws
-        .entries("workflow")?
-        .get(workflow)
-        .and_then(|e| e.get("settings"))
-        .cloned()
-        .unwrap_or(Value::Null);
-    show(json, &settings, |s| match s {
-        Value::Null => eprintln!(
-            "{workflow} has no settings in {}",
-            crate::workspace::MANIFEST
-        ),
-        s => println!("{}", serde_json::to_string_pretty(s).unwrap_or_default()),
-    })
-}
-
-/// Sets a workflow's settings: an object its runs start with.
-pub fn config_set(
-    ws: &Workspace,
-    workflow: &str,
-    data: Option<String>,
-    file: Option<std::path::PathBuf>,
-) -> Result<()> {
-    known(ws, workflow)?;
-    let Ok(settings @ Value::Object(_)) = serde_json::from_str(&given(data, file)?) else {
-        bail!("settings are an object, as JSON: {{\"name\": value}}");
-    };
-    let f = ws.write_entry("workflow", workflow, "settings", settings)?;
-    println!("{}", f.display());
-    Ok(())
 }

@@ -10,7 +10,6 @@ const NOW: &str = "2026-10-21T10:00:00Z";
 struct Run {
     root: String,
     flows: BTreeMap<String, Value>,
-    args: BTreeMap<String, Value>,
     repeat: BTreeMap<String, Value>,
     defined: Vec<String>,
     rt: Runtime,
@@ -26,7 +25,6 @@ impl Run {
                 .iter()
                 .map(|(n, f)| (n.to_string(), f.clone()))
                 .collect(),
-            args: BTreeMap::new(),
             repeat: BTreeMap::new(),
             defined: vec![],
             rt: Runtime::default(),
@@ -41,8 +39,8 @@ impl Run {
             now: self.now.clone(),
             workflow: self.root.clone(),
             flows: self.flows.clone(),
-            args: self.args.clone(),
             repeat: self.repeat.clone(),
+            config: Map::new(),
             defined: self.defined.clone(),
             runtime: self.rt.clone(),
             event: Event {
@@ -56,6 +54,8 @@ impl Run {
         a
     }
 
+    /// Starts the run as the daemon does: the message's data is its
+    /// `$event`.
     fn start(&mut self, data: Value) -> StepAnswer {
         self.send("run.started", data)
     }
@@ -102,23 +102,27 @@ fn a_run_starts_with_the_message_as_its_state() {
     )]);
     let a = r.start(json!({"sipariş": 43, "tutar": 120}));
     assert_eq!(names(&a), vec!["ödeme-kontrol"]);
-    assert_eq!(state(&r), json!({"sipariş": 43, "tutar": 120}));
+    assert_eq!(state(&r), json!({"event": {"sipariş": 43, "tutar": 120}}));
     assert_eq!(r.rt.phase, Phase::Steps);
 }
 
 #[test]
-fn a_step_s_result_is_output_and_nothing_else_joins_the_state() {
+fn a_step_s_result_is_output_and_kept_by_its_name() {
     let mut r = Run::new(&[("a", json!({"steps": ["#bir", "#iki", "#üç"]}))]);
     let a = r.start(json!({"geçici": "x", "kalıcı": 1}));
     let a = r.done(&a.jobs[0], json!({"metin": "çay", "geçici": null}));
     assert_eq!(
         state(&r),
-        json!({"geçici": "x", "kalıcı": 1, "output": {"metin": "çay", "geçici": null}})
+        json!({"event": {"geçici": "x", "kalıcı": 1},
+               "output": {"metin": "çay", "geçici": null},
+               "steps": {"bir": {"metin": "çay", "geçici": null}}})
     );
     assert_eq!(names(&a), vec!["iki"]);
-    // the next step's result takes its place, printing nothing too
+    // the next step's result takes the place of $output, printing nothing too
     let a = r.done(&a.jobs[0], json!(""));
-    assert_eq!(state(&r), json!({"geçici": "x", "kalıcı": 1, "output": ""}));
+    assert_eq!(r.rt.state["output"], "");
+    assert_eq!(r.rt.state["steps"]["iki"], "");
+    assert_eq!(r.rt.state["steps"]["bir"]["metin"], "çay");
     assert_eq!(names(&a), vec!["üç"]);
     let a = r.done(&a.jobs[0], json!(524));
     assert_eq!(r.rt.state["output"], 524);
@@ -127,12 +131,12 @@ fn a_step_s_result_is_output_and_nothing_else_joins_the_state() {
 }
 
 #[test]
-fn a_step_s_args_join_the_state_unless_it_is_strict() {
+fn a_step_s_args_reach_its_action_and_nothing_else() {
     let mut r = Run::new(&[(
         "a",
         json!({"steps": [
             {"#say": {"args": {"klasör": "İndirilenler", "parola": "$$POSTA"}}},
-            {"#bildir": {"args": {"adet": "$output", "nerede": "$klasör"}, "strict": true}},
+            {"#bildir": {"args": {"adet": "$output", "nerede": "$steps.say.yer"}}},
             "#son"
         ]}),
     )]);
@@ -144,23 +148,21 @@ fn a_step_s_args_join_the_state_unless_it_is_strict() {
             .unwrap()
             .clone()
     );
-    // a secret joins as its name, never its value
-    assert_eq!(
-        state(&r),
-        json!({"klasör": "İndirilenler", "parola": "$$POSTA"})
-    );
-    let a = r.done(&a.jobs[0], json!(524));
+    // args join nothing: the state is the event, the results, the manifest
+    assert_eq!(state(&r), json!({"event": {}}));
+    let a = r.done(&a.jobs[0], json!({"yer": "Masaüstü", "sayı": 524}));
     assert_eq!(names(&a), vec!["bildir"]);
     assert_eq!(
         a.jobs[0].data,
-        json!({"adet": 524, "nerede": "İndirilenler"})
+        json!({"adet": {"yer": "Masaüstü", "sayı": 524}, "nerede": "Masaüstü"})
             .as_object()
             .unwrap()
             .clone()
     );
-    assert!(!r.rt.state.contains_key("adet"), "strict: the step's only");
+    assert!(!r.rt.state.contains_key("adet"));
     let a = r.done(&a.jobs[0], json!(""));
     assert_eq!(names(&a), vec!["son"]);
+    assert!(a.jobs[0].data.is_empty(), "#son is given nothing");
 }
 
 #[test]
@@ -176,11 +178,6 @@ fn args_may_be_a_whole_object_or_one_field_of_it() {
     )]);
     let a = r.start(json!({}));
     let a = r.done(&a.jobs[0], json!({"sayı": 3, "klasör": "İndirilenler"}));
-    assert_eq!(
-        state(&r),
-        json!({"sayı": 3, "klasör": "İndirilenler",
-               "output": {"sayı": 3, "klasör": "İndirilenler"}})
-    );
     assert_eq!(a.jobs[0].data["sayı"], 3);
     let a = r.done(&a.jobs[0], json!({"sayı": 4}));
     assert_eq!(
@@ -194,7 +191,7 @@ fn args_may_be_a_whole_object_or_one_field_of_it() {
         panic!("{:?}", r.rt.ended)
     };
     assert!(why.contains("not an object"), "{why}");
-    assert_eq!(r.rt.state["failed_step"], "#son");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#son"));
 }
 
 #[test]
@@ -228,10 +225,16 @@ fn side_by_side_steps_run_together_and_the_next_waits_for_all() {
     assert_eq!(names(&a), vec!["ship"]);
     // their objects merged into one output, a field both print by step name
     assert_eq!(
-        state(&r),
-        json!({"order": 43, "output": {"stock": true, "paid": true,
-               "durum": {"#check-payment": "tamam", "#check-stock": "düşük"}}})
+        r.rt.state["output"],
+        json!({"stock": true, "paid": true,
+               "durum": {"check-payment": "tamam", "check-stock": "düşük"}})
     );
+    // and each one's own result by its name
+    assert_eq!(
+        r.rt.state["steps"]["check-stock"],
+        json!({"stock": true, "durum": "düşük"})
+    );
+    assert_eq!(r.rt.state["steps"]["check-payment"]["paid"], true);
 }
 
 #[test]
@@ -244,7 +247,8 @@ fn a_plain_value_side_by_side_is_kept_under_its_step_s_name() {
     let a = r.done(&jobs[2], json!(""));
     assert_eq!(names(&a), vec!["son"]);
     // printing nothing adds nothing
-    assert_eq!(r.rt.state["output"], json!({"#bir": 3, "renk": "mavi"}));
+    assert_eq!(r.rt.state["output"], json!({"bir": 3, "renk": "mavi"}));
+    assert_eq!(r.rt.state["steps"]["bir"], 3);
 }
 
 #[test]
@@ -275,18 +279,32 @@ fn a_workflow_as_a_step_takes_args_and_gives_its_last_step_s_output() {
     let mut r = Run::new(&[
         (
             "sipariş",
-            json!({"steps": [{"stok": {"args": {"depo": "İzmir"}}}, "#ship"]}),
+            json!({"steps": [{"stok": {"args": {"depo": "İzmir"}}}, {"#ship": {"args": {"n": "$steps.stok"}}}]}),
         ),
-        ("stok", json!({"steps": ["#depo-bak", "#ayır"]})),
+        (
+            "stok",
+            json!({"steps": [
+                {"#depo-bak": {"args": {"depo": "$event.depo"}}},
+                {"#ayır": {"args": {"raf": "$steps.depo-bak"}}}
+            ]}),
+        ),
     ]);
     let a = r.start(json!({"order": 43}));
     assert_eq!(names(&a), vec!["depo-bak"]);
-    assert_eq!(r.rt.state["depo"], "İzmir");
+    // inside it, $event is the args its caller gave
+    assert_eq!(a.jobs[0].data["depo"], "İzmir");
+    assert_eq!(r.rt.state["event"], json!({"order": 43}));
     let a = r.done(&a.jobs[0], json!("A-3"));
     assert_eq!(names(&a), vec!["ayır"]);
+    // its own steps by name, apart from its caller's
+    assert_eq!(a.jobs[0].data["raf"], "A-3");
+    assert!(r.rt.state.get("steps").is_none());
     let a = r.done(&a.jobs[0], json!({"ayrıldı": true}));
     assert_eq!(names(&a), vec!["ship"]);
     assert_eq!(r.rt.state["output"], json!({"ayrıldı": true}));
+    // the caller keeps its result by the workflow's name
+    assert_eq!(a.jobs[0].data["n"], json!({"ayrıldı": true}));
+    assert!(r.rt.state["steps"].get("depo-bak").is_none());
 }
 
 #[test]
@@ -303,9 +321,9 @@ fn a_step_runs_only_when_its_on_holds() {
         ),
         (
             "işle",
-            json!({"on": [{ "has": "$paid" }], "steps": [
-                {"#ship":           {"on": [{"$paid": true,  "$stock": true}]}},
-                {"#remind-payment": {"on": [{"$paid": false, "$stock": true}]}}
+            json!({"on": [{ "has": "$event.paid" }], "steps": [
+                {"#ship":           {"on": [{"$event.paid": true,  "$event.stock": true}]}},
+                {"#remind-payment": {"on": [{"$event.paid": false, "$event.stock": true}]}}
             ]}),
         ),
     ]);
@@ -321,7 +339,7 @@ fn a_step_runs_only_when_its_on_holds() {
         ("sipariş", json!({"steps": ["#check", "işle", "#bitir"]})),
         (
             "işle",
-            json!({"on": [{ "has": "$paid" }], "steps": ["#ship"]}),
+            json!({"on": [{ "has": "$event.paid" }], "steps": ["#ship"]}),
         ),
     ]);
     r.defined = vec!["API".into()];
@@ -360,7 +378,7 @@ fn a_step_that_is_not_ready_waits_for_matching_data() {
     assert_eq!(names(&a), vec!["check-payment"]);
     assert_eq!(a.jobs[0].path, pay.path);
     assert_eq!(
-        a.jobs[0].output,
+        a.jobs[0].event,
         Some(json!({"payment_ref": "ödeme-1", "paid": true}))
     );
     assert!(!r.rt.state.contains_key("paid"));
@@ -395,8 +413,8 @@ fn a_waiting_step_runs_again_every_hour_and_gives_up_after_its_timeout() {
     let a = r.send("timer.fired", json!({"kind": "deadline"}));
     assert_eq!(names(&a), vec!["alert-team"]);
     assert_eq!(r.rt.phase, Phase::Error);
-    assert_eq!(r.rt.state["failed_step"], "#check-payment");
-    assert!(r.rt.state["why"].as_str().unwrap().contains("2h"));
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#check-payment"));
+    assert!(r.rt.why.as_deref().unwrap().contains("2h"));
 }
 
 #[test]
@@ -413,10 +431,14 @@ fn an_error_stops_the_steps_and_runs_the_error_list() {
     let a = r.done(&stock, json!({"stock": true}));
     assert_eq!(names(&a), vec!["log"]);
     assert!(!r.rt.state.contains_key("stock"));
-    assert_eq!(r.rt.state.get("output"), None);
+    // the error list starts with why the run ended as its $output
+    assert_eq!(
+        r.rt.state["output"],
+        json!({"why": "exit 3: bağlantı yok", "failed_step": "#check-payment", "undo_failed": []})
+    );
     let log = a.jobs[0].clone();
-    assert_eq!(r.rt.state["why"], "exit 3: bağlantı yok");
-    assert_eq!(r.rt.state["failed_step"], "#check-payment");
+    assert_eq!(r.rt.why.as_deref(), Some("exit 3: bağlantı yok"));
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#check-payment"));
     let a = r.done(&log, json!({}));
     assert_eq!(names(&a), vec!["alert-team"]);
     let a = r.done(&a.jobs[0], json!({}));
@@ -457,8 +479,8 @@ fn on_error_the_finished_steps_are_undone_newest_first_then_the_error_list() {
     // each undo gets the result of the step it takes back
     assert_eq!(r.rt.state["output"], json!({"sürüm": 2}));
     // the undos are told what broke, as the error list is
-    assert_eq!(r.rt.state["why"], "exit 1: yanıt yok");
-    assert_eq!(r.rt.state["failed_step"], "#dene");
+    assert_eq!(r.rt.why.as_deref(), Some("exit 1: yanıt yok"));
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#dene"));
     let a = r.done(&a.jobs[0], json!({}));
     assert_eq!(names(&a), vec!["küme-sil"]);
     assert_eq!(r.rt.state["output"], json!({"küme": "k-1"}));
@@ -510,7 +532,7 @@ fn an_undo_that_breaks_is_noted_and_the_others_still_run() {
     assert_eq!(names(&a), vec!["bildir"]);
     // the error list is told which undos broke: what they made may be left
     assert_eq!(
-        r.rt.state["undo_failed"],
+        json!(r.rt.undo_failed),
         json!(["#geri-al: exit 2: kilitli"])
     );
     r.done(&a.jobs[0], json!({}));
@@ -521,7 +543,7 @@ fn an_undo_that_breaks_is_noted_and_the_others_still_run() {
             why: "exit 1: yanıt yok".into()
         })
     );
-    assert_eq!(r.rt.state["failed_step"], "#dene");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#dene"));
 }
 
 #[test]
@@ -579,15 +601,6 @@ fn success_false_runs_failure_otherwise_success() {
     r.done(&a.jobs[0], json!({}));
     assert_eq!(r.rt.ended, Some(Ended::Failed));
 
-    // or success passed on as args, into the state
-    let passed = json!({"steps": ["#remind-stock", {"#kaydet": {"args": {"success": "$output"}}}],
-                        "success": ["#teşekkür"], "failure": ["#log"]});
-    let mut r = Run::new(&[("sipariş", passed)]);
-    let a = r.start(json!({"order": 43}));
-    let a = r.done(&a.jobs[0], json!(false));
-    let a = r.done(&a.jobs[0], json!("kaydedildi"));
-    assert_eq!(names(&a), vec!["log"]);
-
     let mut r = Run::new(&[("sipariş", flow)]);
     let a = r.start(json!({"order": 43}));
     let a = r.done(&a.jobs[0], json!({}));
@@ -605,9 +618,9 @@ fn success_false_runs_failure_otherwise_success() {
 
 #[test]
 fn repeat_runs_the_rest_once_per_item() {
-    let mut r = Run::new(&[("posta", json!({"steps": ["#imap-check", "#notify"]}))]);
-    r.args
-        .insert("imap-check".into(), json!({"host": "imap.örnek.test"}));
+    let flow =
+        json!({"steps": [{"#imap-check": {"args": {"host": "imap.örnek.test"}}}, "#notify"]});
+    let mut r = Run::new(&[("posta", flow.clone())]);
     r.repeat.insert(
         "imap-check".into(),
         json!([{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]),
@@ -617,14 +630,14 @@ fn repeat_runs_the_rest_once_per_item() {
     assert_eq!(a.split.len(), 2);
     assert_eq!(r.rt.ended, Some(Ended::Split));
     for (child, user) in a.split.iter().zip(["ayşe@örnek.test", "can@örnek.test"]) {
-        let mut c = Run::new(&[("posta", json!({"steps": ["#imap-check", "#notify"]}))]);
-        c.args = r.args.clone();
+        let mut c = Run::new(&[("posta", flow.clone())]);
         c.repeat = r.repeat.clone();
         c.rt = child.clone();
         let a = c.start(Value::Null);
         assert_eq!(names(&a), vec!["imap-check"]);
         assert_eq!(a.jobs[0].item, Some(json!({"user": user})));
-        assert_eq!(c.rt.state["saat"], 9);
+        assert_eq!(a.jobs[0].data["host"], "imap.örnek.test");
+        assert_eq!(c.rt.state["event"]["saat"], 9);
         let a = c.done(&a.jobs[0], json!({"text": "1 yeni"}));
         assert_eq!(names(&a), vec!["notify"]);
         assert_eq!(a.jobs[0].item, None, "the item is imap-check's");
@@ -655,7 +668,7 @@ fn a_step_that_cannot_start_starts_nothing_after_it() {
     let a = r.done(&a.jobs[0], json!("çay"));
     assert_eq!(names(&a), vec!["bildir"]);
     assert!(!r.rt.state.contains_key("z"), "#üç never started");
-    assert_eq!(r.rt.state["failed_step"], "#iki");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#iki"));
 }
 
 #[test]
@@ -680,7 +693,7 @@ fn a_run_written_before_output_is_read_and_goes_on() {
             data: Map::new(),
             item: None,
             waiting_since: None,
-            output: None,
+            event: None,
         },
         "exit 1",
     );
@@ -688,20 +701,22 @@ fn a_run_written_before_output_is_read_and_goes_on() {
 }
 
 #[test]
-fn a_secret_held_by_a_state_value_breaks_a_step_that_puts_it_in_text() {
+fn a_secret_held_by_an_event_value_breaks_a_step_that_puts_it_in_text() {
     let mut r = Run::new(&[(
         "a",
         json!({"steps": [
-            {"#gir": {"args": {"parola": "$$POSTA"}}},
-            {"#bildir": {"args": {"text": "giriş: $parola"}}}
+            "#gir",
+            {"#bildir": {"args": {"text": "giriş: $event.parola"}}}
         ], "error": ["#uyar"]}),
     )]);
-    let a = r.start(json!({}));
+    let a = r.start(json!({"parola": "$$POSTA"}));
     let a = r.done(&a.jobs[0], json!(""));
     assert_eq!(names(&a), vec!["uyar"]);
-    assert_eq!(r.rt.state["failed_step"], "#bildir");
-    let why = r.rt.state["why"].as_str().unwrap();
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#bildir"));
+    let why = r.rt.why.clone().unwrap();
     assert!(why.contains("a secret is a whole value only"), "{why}");
+    // the error list starts with why
+    assert_eq!(r.rt.state["output"]["failed_step"], "#bildir");
 }
 
 // ---- steps side by side say how to wait ----
@@ -790,9 +805,9 @@ fn all_breaks_when_a_step_broke_once_the_others_ran_to_their_end() {
             assert!(r.done(others[0], json!({"geç": 1})).jobs.is_empty());
             let a = r.failed(others[1], "exit 4: geç");
             assert!(breaks(&a), "{group} {i}");
-            assert_eq!(r.rt.state["failed_step"], AD[i]);
-            assert_eq!(r.rt.state["why"], "exit 3: bağlantı yok");
-            assert_eq!(r.rt.state.get("output"), None, "{group} {i}");
+            assert_eq!(r.rt.failed_step.as_deref(), Some(AD[i]));
+            assert_eq!(r.rt.why.as_deref(), Some("exit 3: bağlantı yok"));
+            assert_eq!(r.rt.state["output"]["failed_step"], AD[i], "{group} {i}");
             assert!(a.stopped.is_empty() && stopped(&a).is_empty(), "{i}");
         }
     }
@@ -822,8 +837,8 @@ fn all_that_breaks_stops_a_waiting_step_and_a_workflow_goes_no_further() {
     // #su ends: its workflow goes no further, and the group breaks
     let a = r.done(&su, json!({"sıcak": true}));
     assert!(breaks(&a), "{:?}", names(&a));
-    assert_eq!(r.rt.state["failed_step"], "#şeker");
-    assert_eq!(r.rt.state.get("output"), None);
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#şeker"));
+    assert_eq!(r.rt.state["output"]["failed_step"], "#şeker");
 }
 
 #[test]
@@ -836,7 +851,7 @@ fn a_step_that_starts_to_wait_in_a_group_that_broke_waits_no_more() {
     assert!(r.message("m1", json!({"sipariş": 7})).jobs.is_empty());
     let a = r.done(&j[2], basar(2));
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#çay");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#çay"));
 }
 
 #[test]
@@ -845,14 +860,20 @@ fn race_ends_with_the_first_step_to_end_and_names_the_winner() {
         let (mut r, j) = grup(json!({"race": AD}));
         let a = r.done(&j[i], basar(i));
         assert!(goes_on(&a), "{i}");
-        assert_eq!(r.rt.state["output"], json!({ ALAN[i]: i, "winner": AD[i] }));
+        assert_eq!(
+            r.rt.state["output"],
+            json!({ ALAN[i]: i, "winner": AD[i].trim_start_matches('#') })
+        );
         let others: Vec<&StepJob> = (0..3).filter(|k| *k != i).map(|k| &j[k]).collect();
         assert_eq!(sorted(&a), paths(&others));
         assert_eq!(stopped(&a).len(), 2);
         // the others' answers come too late
         assert!(r.done(others[0], json!({"geç": 9})).jobs.is_empty());
         assert!(r.failed(others[1], "exit 1").jobs.is_empty());
-        assert_eq!(r.rt.state["output"], json!({ ALAN[i]: i, "winner": AD[i] }));
+        assert_eq!(
+            r.rt.state["output"],
+            json!({ ALAN[i]: i, "winner": AD[i].trim_start_matches('#') })
+        );
     }
 }
 
@@ -861,7 +882,7 @@ fn race_breaks_when_the_first_to_end_broke() {
     let (mut r, j) = grup(json!({"race": AD}));
     let a = r.failed(&j[2], "exit 2: yok");
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#ılık");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#ılık"));
     assert_eq!(stopped(&a), vec!["#çay", "#şeker"]);
 }
 
@@ -873,7 +894,7 @@ fn any_ends_with_the_first_step_to_end_well() {
     assert!(goes_on(&a));
     assert_eq!(
         r.rt.state["output"],
-        json!({"tatlı": 1, "winner": "#şeker", "failed": ["#çay"], "why": {"#çay": "exit 1"}})
+        json!({"tatlı": 1, "winner": "şeker", "failed": ["çay"], "why": {"çay": "exit 1"}})
     );
     assert_eq!(stopped(&a), vec!["#ılık"]);
     assert_eq!(sorted(&a), vec![j[2].path.clone()]);
@@ -881,7 +902,7 @@ fn any_ends_with_the_first_step_to_end_well() {
     let (mut r, j) = grup(json!({"any": AD}));
     let a = r.done(&j[2], json!(7));
     assert!(goes_on(&a));
-    assert_eq!(r.rt.state["output"], json!({"#ılık": 7, "winner": "#ılık"}));
+    assert_eq!(r.rt.state["output"], json!({"ılık": 7, "winner": "ılık"}));
     assert_eq!(stopped(&a), vec!["#çay", "#şeker"]);
 }
 
@@ -892,8 +913,8 @@ fn any_breaks_when_every_step_broke_with_the_first_by_time() {
     assert!(r.failed(&j[0], "exit 1: çay").jobs.is_empty());
     let a = r.failed(&j[1], "exit 3: şeker");
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#ılık");
-    assert_eq!(r.rt.state["why"], "exit 2: ılık");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#ılık"));
+    assert_eq!(r.rt.why.as_deref(), Some("exit 2: ılık"));
     assert!(a.stopped.is_empty(), "none was left running");
 }
 
@@ -920,7 +941,7 @@ fn some_with_a_count_ends_when_that_many_ended_well() {
     assert!(goes_on(&a));
     assert_eq!(
         r.rt.state["output"],
-        json!({"sıcak": 0, "ılık": 2, "failed": ["#şeker"], "why": {"#şeker": "exit 1"}})
+        json!({"sıcak": 0, "ılık": 2, "failed": ["şeker"], "why": {"şeker": "exit 1"}})
     );
     assert!(a.stopped.is_empty());
 }
@@ -931,7 +952,7 @@ fn some_with_a_count_breaks_when_the_count_cannot_be_reached() {
     assert!(r.failed(&j[1], "exit 1: şeker").jobs.is_empty());
     let a = r.failed(&j[0], "exit 2: çay");
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#şeker");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#şeker"));
     assert_eq!(stopped(&a), vec!["#ılık"]);
     // count 3 of 3: one break is enough
     let (mut r, j) = grup(json!({"some": AD, "count": 3}));
@@ -970,7 +991,7 @@ fn some_with_names_ends_when_the_named_steps_ended_well() {
     assert!(r.done(&j[0], basar(0)).jobs.is_empty());
     let a = r.failed(&j[2], "exit 4: ılık");
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#ılık");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#ılık"));
     assert_eq!(stopped(&a), vec!["#şeker"]);
 }
 
@@ -984,8 +1005,8 @@ fn settled_ends_when_every_step_ended_and_never_breaks() {
     assert!(a.stopped.is_empty());
     assert_eq!(
         r.rt.state["output"],
-        json!({"sıcak": 0, "failed": ["#şeker", "#ılık"],
-               "why": {"#şeker": "exit 1: şeker yok", "#ılık": "exit 2: ılık yok"}})
+        json!({"sıcak": 0, "failed": ["şeker", "ılık"],
+               "why": {"şeker": "exit 1: şeker yok", "ılık": "exit 2: ılık yok"}})
     );
     // nothing broke: failed is empty
     let (mut r, j) = grup(json!({"settled": AD}));
@@ -1005,7 +1026,7 @@ fn itero_s_own_keys_win_over_a_step_s_field_of_the_same_name() {
     let (mut r, j) = grup(json!({"race": AD}));
     let a = r.done(&j[0], json!({"winner": "tavşan", "n": 1}));
     assert!(goes_on(&a));
-    assert_eq!(r.rt.state["output"], json!({"winner": "#çay", "n": 1}));
+    assert_eq!(r.rt.state["output"], json!({"winner": "çay", "n": 1}));
     let (mut r, j) = grup(json!({"settled": AD}));
     r.done(&j[0], json!({"failed": 5, "why": "x"}));
     r.done(&j[1], basar(1));
@@ -1025,7 +1046,7 @@ fn fail_never_waits_for_all_and_never_breaks() {
     assert!(goes_on(&a));
     assert_eq!(
         r.rt.state["output"],
-        json!({"tatlı": 1, "ılık": 2, "failed": ["#çay"], "why": {"#çay": "exit 1: çay"}})
+        json!({"tatlı": 1, "ılık": 2, "failed": ["çay"], "why": {"çay": "exit 1: çay"}})
     );
     // a race whose first step broke ends, and stops the others
     let (mut r, j) = grup(json!({"race": AD, "fail": "never"}));
@@ -1034,7 +1055,7 @@ fn fail_never_waits_for_all_and_never_breaks() {
     assert_eq!(stopped(&a), vec!["#çay", "#ılık"]);
     assert_eq!(
         r.rt.state["output"],
-        json!({"failed": ["#şeker"], "why": {"#şeker": "exit 1: şeker"}})
+        json!({"failed": ["şeker"], "why": {"şeker": "exit 1: şeker"}})
     );
 }
 
@@ -1043,7 +1064,7 @@ fn fail_any_breaks_the_group_at_the_first_break() {
     let (mut r, j) = grup(json!({"any": AD, "fail": "any"}));
     let a = r.failed(&j[0], "exit 1: çay");
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#çay");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#çay"));
     assert_eq!(stopped(&a), vec!["#ılık", "#şeker"]);
     // settled waits for its steps all the same: #şeker runs to its end
     let (mut r, j) = grup(json!({"settled": AD, "fail": "any"}));
@@ -1052,7 +1073,7 @@ fn fail_any_breaks_the_group_at_the_first_break() {
     assert!(a.jobs.is_empty() && a.stopped.is_empty());
     let a = r.done(&j[1], basar(1));
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#ılık");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#ılık"));
 }
 
 #[test]
@@ -1064,7 +1085,7 @@ fn fail_all_breaks_only_when_every_step_broke() {
     assert_eq!(r.rt.ended, None);
     let a = r.failed(&j[2], "exit 3: ılık");
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#çay");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#çay"));
     // one ended well: the count cannot be reached, nothing breaks, and the
     // group ends with the last
     let (mut r, j) = grup(json!({"some": AD, "count": 2, "fail": "all"}));
@@ -1074,8 +1095,8 @@ fn fail_all_breaks_only_when_every_step_broke() {
     assert!(goes_on(&a));
     assert_eq!(
         r.rt.state["output"],
-        json!({"ılık": 2, "failed": ["#çay", "#şeker"],
-               "why": {"#çay": "exit 1", "#şeker": "exit 2"}})
+        json!({"ılık": 2, "failed": ["çay", "şeker"],
+               "why": {"çay": "exit 1", "şeker": "exit 2"}})
     );
 }
 
@@ -1090,8 +1111,8 @@ fn fail_with_names_breaks_when_one_of_them_broke() {
     assert!(a.jobs.is_empty() && a.stopped.is_empty());
     let a = r.done(&j[1], basar(1));
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#ılık");
-    assert_eq!(r.rt.state["why"], "exit 2: ılık");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#ılık"));
+    assert_eq!(r.rt.why.as_deref(), Some("exit 2: ılık"));
     // and when it did not break, the group ends with the others
     let (mut r, j) = grup(json!({"all": AD, "fail": "#ılık"}));
     r.failed(&j[0], "exit 1");
@@ -1100,7 +1121,7 @@ fn fail_with_names_breaks_when_one_of_them_broke() {
     assert!(goes_on(&a));
     assert_eq!(
         r.rt.state["output"],
-        json!({"tatlı": 1, "ılık": 2, "failed": ["#çay"], "why": {"#çay": "exit 1"}})
+        json!({"tatlı": 1, "ılık": 2, "failed": ["çay"], "why": {"çay": "exit 1"}})
     );
 }
 
@@ -1121,7 +1142,7 @@ fn a_waiting_step_stopped_by_a_race_waits_no_more() {
     assert!(a.timers.is_empty(), "nothing waits now");
     assert_eq!(
         r.rt.state["output"],
-        json!({"tatlı": true, "winner": "#şeker"})
+        json!({"tatlı": true, "winner": "şeker"})
     );
     // the data it waited for comes, and no step takes it
     assert!(r.message("m1", json!({"sipariş": 7})).jobs.is_empty());
@@ -1153,8 +1174,8 @@ fn a_step_that_waited_too_long_is_a_step_that_broke() {
     let a = r.done(&seker, json!({"tatlı": true}));
     assert!(goes_on(&a));
     let out = &r.rt.state["output"];
-    assert_eq!(out["failed"], json!(["#çay"]));
-    assert!(out["why"]["#çay"].as_str().unwrap().contains("2h"));
+    assert_eq!(out["failed"], json!(["çay"]));
+    assert!(out["why"]["çay"].as_str().unwrap().contains("2h"));
 }
 
 #[test]
@@ -1176,7 +1197,7 @@ fn a_workflow_stopped_by_a_race_stops_all_its_actions() {
     assert_eq!(sorted(&a), vec![jobs[1].path.clone(), jobs[2].path.clone()]);
     assert_eq!(
         r.rt.state["output"],
-        json!({"içildi": true, "winner": "#çay"})
+        json!({"içildi": true, "winner": "çay"})
     );
     // what the workflow's actions print now reaches nothing
     assert!(r.done(&jobs[1], json!({})).jobs.is_empty());
@@ -1192,9 +1213,12 @@ fn atlanan(group: Value) -> (Run, StepAnswer) {
         ),
         (
             "önbellek",
-            json!({"on": [{"has": "$yok"}], "steps": ["#oku"]}),
+            json!({"on": [{"has": "$event.yok"}], "steps": ["#oku"]}),
         ),
-        ("arşiv", json!({"on": [{"has": "$yok"}], "steps": ["#oku"]})),
+        (
+            "arşiv",
+            json!({"on": [{"has": "$event.yok"}], "steps": ["#oku"]}),
+        ),
     ]);
     let a = r.start(json!({}));
     (r, a)
@@ -1211,7 +1235,7 @@ fn a_step_that_does_not_run_is_out_of_its_group() {
         assert!(goes_on(&a), "{key}");
         assert_eq!(
             r.rt.state["output"],
-            json!({"fiyat": 5, "winner": "#canlı"}),
+            json!({"fiyat": 5, "winner": "canlı"}),
             "{key}"
         );
     }
@@ -1235,7 +1259,7 @@ fn a_group_that_ends_while_a_step_broke_says_which_and_why() {
     assert!(goes_on(&a));
     assert_eq!(
         r.rt.state["output"],
-        json!({"failed": ["#şeker"], "why": {"#şeker": "exit 7: bağlantı yok"}})
+        json!({"failed": ["şeker"], "why": {"şeker": "exit 7: bağlantı yok"}})
     );
     // any, its winner after a break
     let (mut r, j) = grup(json!({"any": AD}));
@@ -1243,12 +1267,12 @@ fn a_group_that_ends_while_a_step_broke_says_which_and_why() {
     assert!(goes_on(&r.done(&j[2], basar(2))));
     assert_eq!(
         r.rt.state["output"],
-        json!({"ılık": 2, "winner": "#ılık", "failed": ["#çay"], "why": {"#çay": "exit 1: çay"}})
+        json!({"ılık": 2, "winner": "ılık", "failed": ["çay"], "why": {"çay": "exit 1: çay"}})
     );
     // nothing broke: no failed, but for settled and fail never
     let (mut r, j) = grup(json!({"any": AD}));
     assert!(goes_on(&r.done(&j[0], basar(0))));
-    assert_eq!(r.rt.state["output"], json!({"sıcak": 0, "winner": "#çay"}));
+    assert_eq!(r.rt.state["output"], json!({"sıcak": 0, "winner": "çay"}));
 }
 
 #[test]
@@ -1287,7 +1311,7 @@ fn a_workflow_that_breaks_inside_a_group_is_a_step_of_the_group_that_broke() {
     assert!(a.jobs.is_empty() && a.stopped.is_empty(), "#çay runs on");
     let a = r.done(&cay, basar(0));
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#yaprak");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#yaprak"));
 }
 
 #[test]
@@ -1329,7 +1353,7 @@ fn a_group_in_a_group_decides_for_its_own_steps() {
     assert!(a.jobs.is_empty() && a.stopped.is_empty());
     let a = r.done(&j[0], basar(0));
     assert!(breaks(&a));
-    assert_eq!(r.rt.state["failed_step"], "#şeker");
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#şeker"));
     // and a race around a group still breaking stops what runs in it
     let mut r = Run::new(&[
         (
@@ -1366,7 +1390,7 @@ fn a_group_is_read_from_a_run_written_before_groups_said_how_to_wait() {
         data: Map::new(),
         item: None,
         waiting_since: None,
-        output: None,
+        event: None,
     };
     let a = r.done(&seker, json!({"tatlı": 1}));
     assert!(goes_on(&a));
@@ -1378,12 +1402,12 @@ fn a_group_is_read_from_a_run_written_before_groups_said_how_to_wait() {
 }
 
 #[test]
-fn a_list_of_args_joins_the_state_as_one_object_unless_strict() {
+fn a_list_of_args_is_one_object_for_its_action_only() {
     let mut r = Run::new(&[(
         "a",
         json!({"steps": [
-            {"#sor": {"args": [{"url": "$adres", "adet": "$n"}, {"title": "etiket", "text": "ayna $n"}]}},
-            {"#bildir": {"args": [{"fiyat": "$output"}], "strict": true}},
+            {"#sor": {"args": [{"url": "$event.adres", "adet": "$event.n"}, {"title": "etiket", "text": "ayna $event.n"}]}},
+            {"#bildir": {"args": [{"fiyat": "$output"}]}},
             "#son"
         ]}),
     )]);
@@ -1395,11 +1419,10 @@ fn a_list_of_args_joins_the_state_as_one_object_unless_strict() {
             .unwrap()
             .clone()
     );
-    assert_eq!(r.rt.state["etiket"], "ayna 2");
-    assert_eq!(r.rt.state["adet"], 2);
+    assert!(!r.rt.state.contains_key("etiket") && !r.rt.state.contains_key("adet"));
     let a = r.done(&a.jobs[0], json!(42.5));
     assert_eq!(a.jobs[0].data["fiyat"], 42.5);
-    assert!(!r.rt.state.contains_key("fiyat"), "strict: the step's only");
+    assert!(!r.rt.state.contains_key("fiyat"));
 }
 
 #[test]
@@ -1408,8 +1431,8 @@ fn one_action_twice_in_a_group_runs_with_each_step_s_args_and_is_read_by_its_as(
         "fiyat",
         json!({"steps": [
             {"any": [
-                {"#ayna": {"args": [{"url": "$bir"}], "as": "ayna-1"}},
-                {"#ayna": {"args": [{"url": "$iki"}], "as": "ayna-2"}}
+                {"#ayna": {"args": [{"url": "$event.bir"}], "as": "ayna-1"}},
+                {"#ayna": {"args": [{"url": "$event.iki"}], "as": "ayna-2"}}
             ]},
             "#sonra"
         ]}),
@@ -1426,8 +1449,8 @@ fn one_action_twice_in_a_group_runs_with_each_step_s_args_and_is_read_by_its_as(
     // the copy that broke is named by its as too
     assert_eq!(
         r.rt.state["output"],
-        json!({"#ayna-2": "42.50", "winner": "#ayna-2",
-               "failed": ["#ayna-1"], "why": {"#ayna-1": "exit 7: bağlantı yok"}})
+        json!({"ayna-2": "42.50", "winner": "ayna-2",
+               "failed": ["ayna-1"], "why": {"ayna-1": "exit 7: bağlantı yok"}})
     );
 }
 
@@ -1436,7 +1459,7 @@ fn a_step_of_a_group_whose_on_does_not_hold_is_out_of_it() {
     let mut r = Run::new(&[(
         "a",
         json!({"steps": [
-            {"race": [{"#önbellek": {"on": [{"$taze": true}]}}, "#canlı"]},
+            {"race": [{"#önbellek": {"on": [{"$event.taze": true}]}}, "#canlı"]},
             "#sonra"
         ]}),
     )]);
@@ -1444,10 +1467,7 @@ fn a_step_of_a_group_whose_on_does_not_hold_is_out_of_it() {
     assert_eq!(names(&a), vec!["canlı"]);
     let a = r.done(&a.jobs[0], json!({"fiyat": 5}));
     assert_eq!(names(&a), vec!["sonra"]);
-    assert_eq!(
-        r.rt.state["output"],
-        json!({"fiyat": 5, "winner": "#canlı"})
-    );
+    assert_eq!(r.rt.state["output"], json!({"fiyat": 5, "winner": "canlı"}));
 }
 
 #[test]
@@ -1455,7 +1475,7 @@ fn a_step_of_a_group_whose_args_cannot_be_read_breaks_in_it() {
     let mut r = Run::new(&[(
         "a",
         json!({"steps": [
-            {"all": [{"#a": {"args": "$yok"}}, "#b"], "fail": "never"},
+            {"all": [{"#a": {"args": "$event.yok"}}, "#b"], "fail": "never"},
             "#sonra"
         ]}),
     )]);
@@ -1463,18 +1483,24 @@ fn a_step_of_a_group_whose_args_cannot_be_read_breaks_in_it() {
     assert_eq!(names(&a), vec!["b"]);
     let a = r.done(&a.jobs[0], json!({"b": 1}));
     assert_eq!(names(&a), vec!["sonra"]);
-    assert_eq!(r.rt.state["output"]["failed"], json!(["#a"]));
+    assert_eq!(r.rt.state["output"]["failed"], json!(["a"]));
 }
 
 #[test]
 fn an_action_s_list_of_args_is_one_set_of_values_not_a_repeat() {
-    let mut r = Run::new(&[("posta", json!({"steps": ["#imap-check", "#notify"]}))]);
-    r.args.insert(
-        "imap-check".into(),
-        json!([{"host": "imap.örnek.test"}, {"user": "ayşe@örnek.test"}]),
-    );
+    let mut r = Run::new(&[(
+        "posta",
+        json!({"steps": [
+            {"#imap-check": {"args": [{"host": "imap.örnek.test"}, {"user": "ayşe@örnek.test"}]}},
+            "#notify"
+        ]}),
+    )]);
     let a = r.start(json!({}));
     assert!(a.split.is_empty());
     assert_eq!(names(&a), vec!["imap-check"]);
     assert_eq!(a.jobs[0].item, None);
+    assert_eq!(
+        Value::Object(a.jobs[0].data.clone()),
+        json!({"host": "imap.örnek.test", "user": "ayşe@örnek.test"})
+    );
 }

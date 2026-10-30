@@ -1,3 +1,5 @@
 #!/bin/sh
-# posts the run's state (on stdin) to $reply_url, the URL the app sent
-curl -fsS --retry 5 -H 'content-type: application/json' --data-binary @- "$reply_url"
+# Posts its args but $reply_url (what the app asked, and the answer or why
+# there is none) to $reply_url, the URL the app sent.
+jq -c '.args | del(.reply_url)' |
+  curl -fsS --retry 5 -H 'content-type: application/json' --data-binary @- "$reply_url"

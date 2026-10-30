@@ -77,8 +77,7 @@ def check(m, validity, last):
         mail = email.parser.BytesHeaderParser(policy=email.policy.default).parsebytes(header)
         sender, subject = str(mail["From"] or ""), str(mail["Subject"] or "")
         # data: which mail, passed on by a click on its notification
-        told = {"title": "Gmail", "subtitle": sender, "text": subject or "(no subject)",
-                "from": sender, "subject": subject,
+        told = {"from": sender, "subject": subject or "(no subject)",
                 "data": {"uid": uid, "mailbox": MAILBOX}}
         if url := link(str(mail["Message-ID"] or "")):
             told["url"] = url

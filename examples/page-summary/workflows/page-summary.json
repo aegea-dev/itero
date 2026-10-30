@@ -1,10 +1,9 @@
 {
-  "on": [{ "event": "website.requested" }, { "has": "$url" }],
+  "on": [{ "event": "website.requested" }, { "has": "$event.url" }],
   "steps": [
-    { "#fetch": { "args": { "url": "$url" } } },
+    { "#fetch": { "args": { "url": "$event.url" } } },
     { "#ask-ai": { "args": { "prompt": "From its title and meta tags, say in 3 bullets what this page is about.",
-                             "key": "$$LM_STUDIO_TOKEN", "page": "$output" },
-                   "strict": true } }
+                             "key": "$$LM_STUDIO_TOKEN", "page": "$output" } } }
   ],
-  "success": [{ "#print": { "args": { "text": "$output" } } }]
+  "success": [{ "#print": { "args": { "url": "$event.url", "text": "$output" } } }]
 }

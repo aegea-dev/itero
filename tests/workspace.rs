@@ -162,36 +162,22 @@ fn a_connector_sends_messages_of_its_file_name() {
 }
 
 #[test]
-fn args_are_an_object_or_a_list_of_objects() {
+fn an_action_entry_holds_no_args() {
     let d = tempfile::tempdir().unwrap();
     let ws = simple(d.path());
-    assert_eq!(ws.args("kargola").unwrap(), None);
     write(
         d.path(),
         "itero.config.json",
         r##"{ "action": {
               "kargola": { "description": "Kargoya verir", "args": { "firma": "PTT Kargo" } },
-              "posta": { "args": [ { "host": "imap.örnek.test" }, { "user": "can@örnek.test" } ] },
               "sade": { "description": "Args yok" } } }"##,
     );
-    assert_eq!(
-        ws.args("kargola").unwrap(),
-        Some(serde_json::json!({"firma": "PTT Kargo"}))
+    ws.no_args("sade").unwrap();
+    let e = format!("{:#}", ws.no_args("kargola").unwrap_err());
+    assert!(
+        e.contains("action.kargola.args are gone") && e.contains("the step that runs it"),
+        "{e}"
     );
-    assert!(ws.args("posta").unwrap().unwrap().is_array());
-    assert_eq!(ws.args("sade").unwrap(), None);
-    for (args, name) in [("[1, 2]", "bir"), (r#""çay""#, "iki")] {
-        write(
-            d.path(),
-            "itero.config.json",
-            &format!(r#"{{"action": {{"{name}": {{"args": {args}}}}}}}"#),
-        );
-        let e = format!("{:#}", ws.args(name).unwrap_err());
-        assert!(
-            e.contains(&format!("action.{name}.args")) && e.contains("itero.config.json"),
-            "{args}: {e}"
-        );
-    }
 }
 
 #[test]
@@ -475,7 +461,7 @@ fn flow(ws: &workspace::Workspace, name: &str) -> itero::flow::Flow {
 }
 
 #[test]
-fn a_workflows_entry_gives_what_it_is_and_its_settings() {
+fn a_workflows_entry_gives_what_it_is_and_no_settings() {
     let d = tempfile::tempdir().unwrap();
     let ws = simple(d.path());
     write(
@@ -483,21 +469,16 @@ fn a_workflows_entry_gives_what_it_is_and_its_settings() {
         "workflows/gözcü.json",
         r##"{ "on": [{ "event": "saat.geldi" }], "steps": ["#bak"] }"##,
     );
-    // no entry: nothing said, no settings
+    // no entry: nothing said
     let f = flow(&ws, "gözcü");
-    assert!(f.settings.is_empty() && f.meta.description.is_none());
+    assert!(f.meta.description.is_none());
     write(
         d.path(),
         "itero.config.json",
-        r#"{ "workflow": { "gözcü": { "description": "Siteler", "off": true, "until": "2026-12-31",
-             "settings": { "siteler": ["https://örnek.test"], "en_az": 10 } } } }"#,
+        r#"{ "workflow": { "gözcü": { "description": "Siteler", "off": true, "until": "2026-12-31" } } }"#,
     );
     // read as it is now: the manifest is read again
     let f = flow(&ws, "gözcü");
-    assert_eq!(
-        serde_json::Value::Object(f.settings),
-        serde_json::json!({ "siteler": ["https://örnek.test"], "en_az": 10 })
-    );
     assert!(f.meta.off);
     assert_eq!(f.meta.description.as_deref(), Some("Siteler"));
     assert_eq!(
@@ -543,7 +524,7 @@ fn entry_mistakes_name_the_manifest_and_the_workflow() {
         ),
         (
             r#"{"workflow": {"gözcü": {"settings": 3}}}"#,
-            "settings are an object",
+            "settings are gone",
         ),
         (r#"{"workflow": ["gözcü"]}"#, "workflow is an object"),
     ] {
@@ -618,12 +599,4 @@ fn repeat_is_a_list_of_objects() {
             "{repeat}: {e}"
         );
     }
-    // a list of args gives a name once, as a step's does
-    write(
-        d.path(),
-        "itero.config.json",
-        r#"{"action": {"bir": {"args": [{"a": 1}, {"a": 2}]}}}"#,
-    );
-    let e = format!("{:#}", ws.args("bir").unwrap_err());
-    assert!(e.contains("a is given twice"), "{e}");
 }

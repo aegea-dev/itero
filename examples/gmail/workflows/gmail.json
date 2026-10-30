@@ -1,1 +1,7 @@
-{ "on": [{ "event": "gmail.received" }], "steps": [{ "#notify": { "args": { "sound": "default" } } }] }
+{
+  "on": [{ "event": "gmail.received" }],
+  "steps": [{ "#notify": { "args": {
+    "title": "Gmail", "subtitle": "$event.from", "text": "$event.subject",
+    "url": "$event.url", "data": "$event.data", "sound": "default"
+  } } }]
+}

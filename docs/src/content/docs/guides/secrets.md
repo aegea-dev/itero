@@ -4,35 +4,27 @@ description: Where an action's values come from, and how tokens and passwords st
 ---
 
 An action needs values to work with: a host, a list of sites, a password.
-They come from the workflow, from the action's args, or from the run so
-far. Passwords and tokens are kept as secrets, out of every file.
+It gets them as its args, written in the step that runs it. Passwords and
+tokens are kept as secrets, out of every file; values that change from one
+machine to another go in the workspace's `.env`.
 
 ## Where a value comes from
 
-An action's environment variables are found by name, the first in:
+An action gets only its step's args, as environment variables and on its
+stdin ([Actions](/guides/actions/#what-it-gets)):
 
-1. **the step's args** in the workflow: `{"#imap-check": {"args": {"host": "imap.example.com"}}}`;
-2. **the action's args**, `action.<name>.args` in `itero.config.json`;
-3. **the run's state**: the event that started it, the args of earlier
-   steps, and `$output`, the step before's result.
-
-In a step's args and in an action's, a value that is exactly `"$name"`
-takes the state's value, a `$name` inside text is filled
-([Workflows](/guides/workflows/#a-state-variable-inside-text)), and
-`"$$NAME"` is a secret's or an environment variable's ([Secrets](#secrets)). A step's args join the state, for the
-steps after it, unless the step is `strict`
-([Workflows](/guides/workflows/#a-steps-result-output)).
-
-## Args
-
-```sh
-itero action args set imap-check '{"host": "imap.example.com", "port": 993}'
-itero action args set imap-check --file accounts.json
+```json
+{ "#imap-check": { "args": { "host": "imap.example.com", "user": "$$IMAP_USER",
+                             "password": "$$IMAP_PASS", "since": "$event.since" } } }
 ```
 
-Either writes `action.imap-check.args` in `itero.config.json`, which you
-can also edit. Args are an object, or a list of objects read in order as
-a step's are ([Workflows](/guides/workflows/#a-steps-result-output)).
+In args, a value that is exactly `"$event.x"`, `"$output.x"`,
+`"$steps.<name>.x"` or `"$config.x"` takes that value, one inside text is
+filled ([Workflows](/guides/workflows/#a-value-inside-text)), and
+`"$$NAME"` is a secret, a value in `.env` or an environment variable
+([below](#secrets-and-env)). `itero.config.json` holds no values for
+actions or workflows: an `args` in an action's entry, or a `settings` in a
+workflow's, is an error saying where the values go.
 
 ## Repeat
 
@@ -42,7 +34,7 @@ itero action repeat set imap-check '[{"user": "me@example.com",  "password": "$$
 ```
 
 writes `action.imap-check.repeat`: the action's step runs once per item,
-each item's values on top of the action's args. Each run has its own copy
+each item's values on top of its step's args. Each run has its own copy
 of the state for the rest of the run: the run that reaches the step ends
 as `split`, and one run per item goes on from there, through the rest of
 the steps and the end lists, each on its own; they never join. A step
@@ -53,7 +45,7 @@ side by side cannot repeat.
 A [connector](/guides/connectors/) gets its args the same way, from
 `connector.<name>.args` ([`itero connector args set`](/commands/connector/#args)): an object, each value an environment variable, read
 each time it starts. A connector has no run, so its values are themselves or
-`"$$NAME"`, never `"$name"`.
+`"$$NAME"`, never `"$event.x"`.
 
 ```json
 "connector": {
@@ -64,25 +56,26 @@ each time it starts. A connector has no run, so its values are themselves or
 A secret that is not set keeps the connector from starting, and the log
 says which.
 
-## Secrets
+## Secrets and `.env`
 
-`"$$NAME"` stands for a secret: a token, a password, an API key. It is
-looked up only when an action or the connector starts, and the value never
-reaches the run's state, the journal, a log or a command line. A secret in
-a step's args joins the state as its name, `"$$NAME"`, so the actions of
-later steps get its value too; make the step `"strict": true` to keep it to
-that step. A secret is a whole value only: inside a text (`"Bearer
-$$TOKEN"`) it is refused, as `itero check` says. itero looks in two
-places, in this order:
+`"$$NAME"` stands for a secret (a token, a password, an API key) or a
+value of yours that changes from one machine to another (a folder, an
+address). It is looked up only when an action or the connector starts,
+and the value never reaches the run's state, the journal, a log or a
+command line; only the action whose args name it gets it. A `$$NAME` is a
+whole value only: inside a text (`"Bearer $$TOKEN"`) it is refused, as
+`itero check` says. itero looks in three places, in this order:
 
 1. **the OS secret store** (the macOS Keychain, the Secret Service on
    Linux), where [`itero secret`](/commands/secret/) keeps it;
-2. **the daemon's environment variables**, when the store has no such
-   name.
+2. **the workspace's `.env`**, `NAME=value` lines (`#` starts a comment;
+   quotes and `export` are allowed), for values that are not secret;
+3. **the daemon's environment variables**.
 
-If both have it, the secret store wins and the environment variable is
-passed over. That is easy to miss, so `itero check` and the daemon, when it
-starts, warn about each such name:
+Secrets go in the store, never in `.env`. If the store and the
+environment both have a name, the store wins and the environment variable
+is passed over. That is easy to miss, so `itero check` and the daemon,
+when it starts, warn about each such name:
 
 ```
 warning: $$IMAP_PASS is a secret and an environment variable: the secret is used

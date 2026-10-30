@@ -18,7 +18,7 @@ fn step(root: &Path) -> StepRun {
         root: root.into(),
         workflow: "models".into(),
         env: Default::default(),
-        state: Map::new(),
+        input: Map::new(),
         memory: root.join("hafıza"),
         waiting_since: None,
         quiet: 30,

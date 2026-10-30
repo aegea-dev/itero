@@ -1,1 +1,4 @@
-{ "on": [{ "event": "reminder.requested" }, { "has": "$text" }], "steps": ["#parse-date"] }
+{
+  "on": [{ "event": "reminder.requested" }, { "has": "$event.text" }],
+  "steps": [{ "#parse-date": { "args": { "text": "$event.text" } } }]
+}

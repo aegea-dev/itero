@@ -1,10 +1,10 @@
 #!/bin/sh
 # Is $order paid? A real one asks the payment provider with curl. A
-# pending payment comes back later as a payment.received message with the
+# pending payment comes back later as a payment.received event with the
 # same payment_ref as this step printed: then this step runs again, with
-# the message as its $output.
-paid=$(printf '%s' "$output" | jq '.paid | values')
+# that event's data in $event.
+paid=$(printf '%s' "${event:-}" | jq '.paid | values')
 [ -n "$paid" ] && { echo "{\"paid\": $paid}"; exit 0; }
-# the provider said "pending": wait for its message
+# the provider said "pending": wait for its event
 echo "{\"payment_ref\": \"pay-$order\"}"
 exit 75

@@ -1,17 +1,16 @@
 ---
 title: action
-description: Your actions, the ones that break, their args and their repeat.
+description: Your actions, the ones that break, and their repeat.
 ---
 
-`itero action` shows your actions and sets the data they get. Actions
+`itero action` shows your actions and sets their repeat. An action's
+args are written in the step that runs it ([Args and secrets](/guides/secrets/)). Actions
 are where things usually go wrong, so `itero action errors` tells you which
 ones broke your runs, and why.
 
 ```sh
 itero action list
 itero action errors [<action>] [--limit N]
-itero action args get <action>
-itero action args set <action> '<args>'
 itero action repeat get <action>
 itero action repeat set <action> '<items>'
 ```
@@ -20,14 +19,14 @@ Each one takes `--json`, to print JSON for scripts instead of a table.
 
 ## list
 
-Every action: its name, its file (one per version), and whether it has
-args. The built-in ones are listed too.
+Every action: its name, its file (one per version), and whether it
+repeats. The built-in ones are listed too.
 
 ```
 $ itero action list
 #check-payment   actions/check-payment
 #hello           actions/hello
-#send-mail       actions/send-mail       args
+#imap-check      actions/imap-check      repeat
 #notify          built in
 #forget          built in
 #roll-log        built in
@@ -56,27 +55,10 @@ where an error message or a traceback usually is. `--limit N` shows at most
 `N` (20). itero keeps how each run ended, so a step that failed and then
 passed when it ran again does not count.
 
-## args
-
-An action's args: the data it gets whatever workflow runs it, kept in
-`itero.config.json` under `action.<name>.args`. The name goes without `#`
-or a version.
-
-```sh
-itero action args set imap-check '{"host": "imap.example.com", "port": 993}'
-itero action args set imap-check '[{"host": "imap.example.com"}, {"port": 993}]'
-itero action args get imap-check
-```
-
-Args are an object, or a list of objects read in order as a step's are.
-`set` prints the file it wrote, which you can also edit. A value that is
-exactly `"$$NAME"` is a secret's or an environment variable's, looked up
-only when the step starts. See [Args and secrets](/guides/secrets/).
-
 ## repeat
 
 An action's repeat: its step runs once per item, each item's values on
-top of its args. Kept in `itero.config.json` under `action.<name>.repeat`:
+top of its step's args. Kept in `itero.config.json` under `action.<name>.repeat`:
 a list of one or more objects.
 
 ```sh

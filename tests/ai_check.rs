@@ -66,7 +66,7 @@ fn a_good_step_passes_and_a_missing_model_is_warned_of() {
     );
     // a model given as a value is known only in a run
     let (ok, out) = check(ai(
-        json!({ "model": "$model", "text": "x", "fields": "$alanlar" }),
+        json!({ "model": "$event.model", "text": "x", "fields": "$event.alanlar" }),
     ));
     assert!(ok && !out.contains("warning"), "{out}");
 }

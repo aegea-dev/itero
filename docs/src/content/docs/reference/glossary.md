@@ -74,29 +74,39 @@ version of its workflows it started with. It ends as `done`, `failed` or
 `error`, or `split` when it went on as one run per item of a list of
 [args](#args).
 
-### state
+### event
 
-A run's values: its workflow's settings, the data of the event that
-started it, the args of its steps, and `$output`. An action gets it as
-environment variables and on stdin.
+`$event`: the data of the event that started a run, the same in every
+step. A workflow used as a step has its step's args as its `$event`. A
+waiting action gets the event that matched it as `$event` too.
 
 ### output
 
 `$output`: the result of the step just before, what it printed, read as
-JSON when it is JSON. Each step's result takes its place; to keep one, a
-workflow passes it on as a step's [args](#args).
+JSON when it is JSON. Each step's result takes its place.
+
+### steps
+
+`$steps.<name>`: an earlier step's result, by its name (`#fetch-rates` is
+`$steps.fetch-rates`) or its `as`.
+
+### state
+
+A run's values as the journal keeps them: `event`, `output` and `steps`.
+`itero wf runs <run>` shows it.
 
 ### waiting
 
 A run whose step exited 75: it waits for an event that matches the step
 (shares a field with what it printed and agrees on all it shares), which
-is then the step's `$output`; it runs the step again every hour, and gives
+its action then gets as `$event`; it runs the step again every hour, and gives
 up after its `timeout`.
 
 ### side by side
 
 A list in `steps`: its entries run at the same time, and the next step
-waits for all of them. Their results merge into one `$output`. An object
+waits for all of them. Their results merge into one `$output`, and each
+is kept as `$steps.<name>`. An object
 says how else to wait: `race`, `any`, `some`, `settled`; the steps that
 lose are stopped. A list whose step breaks breaks the run once the others
 have ended. See
@@ -104,31 +114,25 @@ have ended. See
 
 ### condition
 
-An entry of `on` in a workflow or a step: `{"has": "$name"}` (in the
-state), `{"has": "$$NAME"}` (defined), or `{"$name": value}` (exactly);
-`$output.answer` reads one field. A step whose `on` does not hold is
+An entry of `on` in a workflow or a step: `{"has": "$event.order"}`
+(there), `{"has": "$$NAME"}` (defined), or `{"$event.kind": value}`
+(exactly). A step whose `on` does not hold is
 skipped.
 
 ### args
 
-Values for an action: a step's `args` in its workflow, which join the
-run's state unless the step is `strict`; and the action's own,
-`action.<name>.args` in `itero.config.json`, set with `itero action args set`; its
-`repeat`, a list, runs the step once per item. Args are an object or a
-list of objects; a list item with exactly `title` and `text` gives the
-arg `title` names its text, as text. A `$name` in an arg's text is filled from
-the state. A connector has args too, `connector.<name>.args`:
-an object.
-
-### settings
-
-A workflow's values, `workflow.<name>.settings` in `itero.config.json`, set with `itero wf config set`: a
-run's state starts with them. `off`, `from` and `until` there are switches.
+What an action gets, and all it gets: a step's `args` in its workflow.
+An action's `repeat` in `itero.config.json`, a list, runs the step once
+per item. Args are an object or a list of objects; a list item with
+exactly `title` and `text` gives the arg `title` names its text, as text.
+A value in an arg's text is filled (`"$event.from: $event.subject"`). A
+connector has args too, `connector.<name>.args`: an object.
 
 ### secret
 
-`$$NAME`: from the OS secret store, else the daemon's environment, bound
-only when a step starts, never written down. Set with `itero secret`.
+`$$NAME`: from the OS secret store, else the workspace's `.env`, else the
+daemon's environment, bound only when a step starts, never written down.
+Set with `itero secret`; values that are not secret go in `.env`.
 
 ### memory
 

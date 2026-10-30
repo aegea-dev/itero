@@ -1,1 +1,4 @@
-{ "on": [{ "event": "order.received" }], "steps": ["#check-order"] }
+{
+  "on": [{ "event": "order.received" }],
+  "steps": [{ "#check-order": { "args": { "order": "$event" } } }]
+}

@@ -2,8 +2,8 @@
   "on": [{ "schedule": "* * * * *" }],
   "steps": [
     { "#imap-check": { "args": { "host": "imap.example.com", "port": 993, "tls": true,
-                                 "user": "me@example.com", "password": "$$IMAP_PASS" },
-                       "strict": true } },
-    { "#notify": { "on": [{ "has": "$output.text" }], "args": "$output" } }
+                                 "user": "me@example.com", "password": "$$IMAP_PASS" } } },
+    { "#notify": { "on": [{ "has": "$output.new" }],
+                   "args": { "title": "Mail", "text": "$output.new new: $output.subject" } } }
   ]
 }

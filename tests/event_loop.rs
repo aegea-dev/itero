@@ -142,7 +142,7 @@ fn a_message_wakes_it_and_a_deadline_ends_a_waiting_run_on_time() {
     let ws = itero::workspace::find(d.path()).unwrap();
     let j = Journal::open(&ws).unwrap();
     let run = j.runs().unwrap().remove(0);
-    assert_eq!(run.runtime.state["why"], "waited 2s for data");
+    assert_eq!(run.runtime.why.as_deref(), Some("waited 2s for data"));
     let waited = j
         .events(Some(&subject(&run.id)))
         .unwrap()
@@ -169,7 +169,8 @@ fn a_click_saved_by_another_process_wakes_it() {
     write(
         d.path(),
         "workflows/tıkla.json",
-        r##"{"on": [{ "event": "itero.notification.clicked" }], "steps": ["#yaz"]}"##,
+        r##"{"on": [{ "event": "itero.notification.clicked" }],
+             "steps": [{"#yaz": {"args": {"answer": "$event.answer"}}}]}"##,
     );
     action(d.path(), "yaz", "echo $answer >> cevap.txt");
     let (_daemon, _port) = start(d.path());

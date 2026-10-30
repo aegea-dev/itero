@@ -1,8 +1,8 @@
 {
   "on": [{ "schedule": "* * * * *" }],
   "steps": [
-    { "#check-sites": { "args": { "sites": "$sites" } } },
-    "#changed",
+    { "#check-sites": { "args": { "sites": ["https://example.com", "http://localhost:3000"] } } },
+    { "#changed": { "args": { "now": "$output" } } },
     { "#notify": { "on": [{ "has": "$output.text" }],
                   "args": { "title": "beacon: sites", "text": "$output.text" } } }
   ]

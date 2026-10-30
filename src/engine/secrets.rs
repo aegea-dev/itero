@@ -47,25 +47,57 @@ fn lookup(name: &str) -> keyring::Result<Option<String>> {
     }
 }
 
-/// A secret's value: from the store, else from the environment. A store
-/// that cannot be read is reported once (to stderr, the daemon's log) and
-/// then left aside, so a machine without one still runs on its environment.
+/// A secret's value: from the store, else from the environment.
 pub fn get(name: &str) -> Option<String> {
-    if !store_off() {
-        match lookup(name) {
-            Ok(Some(v)) => return Some(v),
-            Ok(None) => {}
-            Err(e) => {
-                static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-                if REPORTED.set(()).is_ok() {
-                    eprintln!(
-                        "itero: the OS secret store cannot be read ({e}); secrets come from the environment"
-                    );
-                }
+    from_store(name).or_else(|| std::env::var(name).ok())
+}
+
+/// A `$$NAME` in the workspace at `root`: a secret from the store, else
+/// its `.env`, else the environment.
+pub fn get_in(root: &std::path::Path, name: &str) -> Option<String> {
+    from_store(name)
+        .or_else(|| dot_env(root, name))
+        .or_else(|| std::env::var(name).ok())
+}
+
+/// A secret from the store. A store that cannot be read is reported once
+/// (to stderr, the daemon's log) and then left aside, so a machine without
+/// one still runs on `.env` and its environment.
+fn from_store(name: &str) -> Option<String> {
+    if store_off() {
+        return None;
+    }
+    match lookup(name) {
+        Ok(v) => v,
+        Err(e) => {
+            static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+            if REPORTED.set(()).is_ok() {
+                eprintln!(
+                    "itero: the OS secret store cannot be read ({e}); values come from .env and the environment"
+                );
             }
+            None
         }
     }
-    std::env::var(name).ok()
+}
+
+/// A value of the workspace's `.env`: `NAME=value` lines, the user's own
+/// values (never a secret's place). `#` starts a comment line; a value in
+/// quotes is the text between them.
+pub fn dot_env(root: &std::path::Path, name: &str) -> Option<String> {
+    let text = std::fs::read_to_string(root.join(".env")).ok()?;
+    text.lines().find_map(|l| {
+        let l = l.trim();
+        let (k, v) = l.strip_prefix("export ").unwrap_or(l).split_once('=')?;
+        if l.starts_with('#') || k.trim() != name {
+            return None;
+        }
+        let v = v.trim();
+        let unquoted = ['"', '\'']
+            .iter()
+            .find_map(|q| v.strip_prefix(*q).and_then(|s| s.strip_suffix(*q)));
+        Some(unquoted.unwrap_or(v).to_string())
+    })
 }
 
 /// The `$$` names a workspace uses: in its workflows' steps and

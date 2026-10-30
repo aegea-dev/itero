@@ -1,5 +1,5 @@
-//! `itero action` and `itero connector`: what there is, their args, and
-//! which actions break.
+//! `itero action` and `itero connector`: what there is, their repeat and
+//! args, and which actions break.
 use super::out::{ago, given, plain_name, show, table, text};
 use crate::engine::journal::Journal;
 use crate::engine::worker::BUILT_IN;
@@ -8,8 +8,8 @@ use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-/// Each action: its name, its files (one per version), and whether it has
-/// args; the built-in ones too.
+/// Each action: its name, its files (one per version), and whether it
+/// repeats; the built-in ones too.
 pub fn actions(ws: &Workspace, json: bool) -> Result<()> {
     let entries = ws.entries("action")?;
     let mut by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -20,13 +20,15 @@ pub fn actions(ws: &Workspace, json: bool) -> Result<()> {
     let mut out: Vec<Value> = by_name
         .into_iter()
         .map(|(name, files)| {
-            let args = entries.get(&name).is_some_and(|e| e.get("args").is_some());
-            json!({ "name": name, "files": files, "built_in": false, "args": args })
+            let repeat = entries
+                .get(&name)
+                .is_some_and(|e| e.get("repeat").is_some());
+            json!({ "name": name, "files": files, "built_in": false, "repeat": repeat })
         })
         .collect();
     for b in BUILT_IN {
         if !out.iter().any(|a| a["name"] == b) {
-            out.push(json!({ "name": b, "files": [], "built_in": true, "args": false }));
+            out.push(json!({ "name": b, "files": [], "built_in": true, "repeat": false }));
         }
     }
     show(json, &Value::Array(out), |v| {
@@ -48,7 +50,7 @@ pub fn actions(ws: &Workspace, json: bool) -> Result<()> {
                     } else {
                         files.join(", ")
                     },
-                    if a["args"] == true { "args" } else { "" }.into(),
+                    if a["repeat"] == true { "repeat" } else { "" }.into(),
                 ]
             })
             .collect();
@@ -95,12 +97,8 @@ pub fn errors(ws: &Workspace, action: Option<&str>, limit: usize, json: bool) ->
         .runs_page(None, Some("error"), &[], usize::MAX)?
         .into_iter()
         .filter_map(|r| {
-            let st = &r.runtime.state;
-            let step = st
-                .get("failed_step")?
-                .as_str()?
-                .strip_prefix('#')?
-                .to_string();
+            let rt = &r.runtime;
+            let step = rt.failed_step.as_deref()?.strip_prefix('#')?.to_string();
             let at = r.ended.clone().unwrap_or(r.started.clone());
             Some((
                 step,
@@ -109,7 +107,7 @@ pub fn errors(ws: &Workspace, action: Option<&str>, limit: usize, json: bool) ->
                     "workflow": r.workflow,
                     "run": r.name,
                     "id": r.id,
-                    "why": st.get("why").cloned().unwrap_or(Value::Null),
+                    "why": rt.why,
                 }),
             ))
         })

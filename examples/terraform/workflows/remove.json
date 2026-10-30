@@ -1,1 +1,4 @@
-{ "on": [{ "event": "cluster.removed" }, { "has": "$name" }], "steps": ["#cluster-delete"] }
+{
+  "on": [{ "event": "cluster.removed" }, { "has": "$event.name" }],
+  "steps": [{ "#cluster-delete": { "args": { "name": "$event.name" } } }]
+}

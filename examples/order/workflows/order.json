@@ -1,11 +1,25 @@
 {
   "on": [{ "event": "order.placed" }],
   "steps": [
-    ["#check-payment", "#check-stock"],
-    { "order-process": { "args": "$output" } },
-    { "#send-mail": { "args": "$output" } }
+    [
+      { "#check-payment": { "args": { "order": "$event.order" } } },
+      { "#check-stock": { "args": { "order": "$event.order" } } }
+    ],
+    { "order-process": { "args": { "order": "$event.order",
+                                   "paid": "$steps.check-payment.paid",
+                                   "stock": "$steps.check-stock.stock" } } }
   ],
-  "success": ["#log-result"],
-  "failure": ["#log-result"],
-  "error": ["#log-result"]
+  "success": [
+    { "#send-mail": { "args": { "email": "$event.email", "order": "$event.order",
+                                "tracking": "$output.tracking" } } },
+    { "#log-result": { "args": { "order": "$event.order" } } }
+  ],
+  "failure": [
+    { "#send-mail": { "args": { "email": "$event.email", "order": "$event.order" } } },
+    { "#log-result": { "args": { "order": "$event.order", "why": "$steps.order-process.why" } } }
+  ],
+  "error": [
+    { "#log-result": { "args": { "order": "$event.order", "failed_step": "$output.failed_step",
+                                 "why": "$output.why" } } }
+  ]
 }

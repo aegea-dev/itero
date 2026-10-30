@@ -29,13 +29,14 @@ looked into. [`itero which`](/commands/which/) says where a name is.
 
 ```json
 { "on": [{ "event": "order.placed" }],
-  "steps": [["#check-payment", "#check-stock"], { "order-process": { "args": "$output" } }, "#send-mail"] }
+  "steps": [{ "#check-payment": { "args": { "order": "$event.order" } } },
+            { "#ship": { "on": [{ "$output.paid": true }], "args": { "order": "$event.order" } } }] }
 ```
 
-**An action** (`#check-payment`) is a small program. It reads its values
-as environment variables, prints its result, and its exit code says how
-it went. The next step has that result as `$output`, and a step's `args`
-pass on what to keep. **A workflow** can be a step too (`order-process`).
+**An action** (`#check-payment`) is a small program. It gets its step's
+args as environment variables, prints its result, and its exit code says
+how it went. The next step has that result as `$output`; any later step
+reads it as `$steps.check-payment`. **A workflow** can be a step too.
 
 **An event** (a message) has a type, two or more words joined by dots
 (`order.placed`), and data. Apps send them with `itero emit` or `POST
@@ -44,10 +45,11 @@ whose `on` has an `event` of its type. A schedule or a change to a
 watched file starts runs too.
 
 **A run** is one go through a workflow, with an id and a name of two
-random words (`misty-lake`). It has a **state**: the data of the event
-that started it, plus the args its steps were given, and `$output`. A step that is
-not ready yet (exit 75) makes the run **wait** until an event for it
-arrives. A run ends as `done`, `failed` (the state says
+random words (`misty-lake`). Its steps read the event that started it
+(`$event`), the step just before (`$output`) and any earlier step by its
+name (`$steps.<name>`); each action gets only the args its step gives it.
+A step that is not ready yet (exit 75) makes the run **wait** until an
+event for it arrives. A run ends as `done`, `failed` (the last step says
 `"success": false`) or `error` (something broke).
 
 **The daemon** runs the workspace, one per workspace. When something
@@ -91,6 +93,8 @@ Names at a glance:
 | `{"event": "order.placed"}` | an event type in `on` |
 | `{"schedule": "0 9 * * *"}` | a schedule in `on` |
 | `{"path": "inbox"}` | a watched file or folder in `on` |
-| `$order` | a value in the run's state |
+| `$event.order` | a field of the event that started the run |
 | `$output` | the step before's result |
-| `$$API_KEY` | an environment variable or a secret |
+| `$steps.check-payment` | an earlier step's result, by its name |
+| `$config.description` | a value of `itero.config.json` |
+| `$$API_KEY` | a secret, a value in `.env`, or an environment variable |

@@ -1,15 +1,14 @@
 {
-  "on": [{ "event": "cluster.requested" }, { "has": "$name" }],
+  "on": [{ "event": "cluster.requested" }, { "has": "$event.name" }],
   "steps": [
-    { "#cluster-create": { "undo": "#cluster-delete" } },
-    { "#tf-plan": { "args": "$output" } },
-    "#check-plan",
-    "#tf-apply",
-    "#web-check"
+    { "#cluster-create": { "args": { "name": "$event.name", "port": "$event.port" },
+                           "undo": { "#cluster-delete": { "args": { "name": "$event.name" } } } } },
+    { "#tf-plan": { "args": { "name": "$event.name" } } },
+    { "#check-plan": { "args": { "plan": "$output", "max_add": "$event.max_add" } } },
+    { "#tf-apply": { "args": { "name": "$event.name" } } },
+    { "#web-check": { "args": { "url": "$steps.cluster-create.url" } } }
   ],
   "error": [
-    { "#notify": { "args": { "title": "$name", "text": "$why" } } },
-    { "#notify": { "on": [{ "has": "$undo_failed" }],
-                   "args": { "title": "$name is left", "text": "$undo_failed" } } }
+    { "#notify": { "args": { "title": "$event.name", "text": "$output.why" } } }
   ]
 }

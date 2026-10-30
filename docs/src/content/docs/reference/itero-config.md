@@ -6,7 +6,10 @@ description: A workspace's manifest, everything about it in one file.
 A folder with an `itero.config.json` is a workspace: itero uses the
 nearest one upwards, as npm does with `package.json`. Every key has a
 default, so `{}` is a whole workspace. The folders keep only the things
-themselves: workflow files, actions, connectors.
+themselves: workflow files, actions, connectors. It says what the
+workspace is and how it runs, never values to work on: those come from
+an event, a step's args, or the workspace's `.env` ([Args and
+secrets](/guides/secrets/)). A workflow reads it, read-only, as `$config`.
 
 ```json
 {
@@ -17,11 +20,11 @@ themselves: workflow files, actions, connectors.
   "folders": { "workflows": ["workflows"], "actions": ["actions"], "connectors": ["connectors"] },
   "limits": { "runs": 1000, "quiet": "10m" },
   "workflow": {
-    "sites": { "description": "Each site, every minute", "settings": { "sites": ["https://example.com"] } },
+    "sites": { "description": "Each site, every minute" },
     "keep": { "off": true }
   },
   "action": {
-    "imap-check": { "description": "New mail on the server", "args": { "host": "imap.example.com" } }
+    "imap-check": { "description": "New mail on the server", "limits": { "quiet": "1h" } }
   },
   "connector": {
     "mail.received": { "description": "New mail in the local mailbox" }
@@ -86,13 +89,11 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 | `off` | `true`: nothing starts it |
 | `from`, `until` | a date (`2026-11-01`, a whole day) or a time: nothing starts it before or from then |
 | `internal` | `true`: it looks after the workspace; its runs are left out of lists unless asked, and outside the limits |
-| `settings` | values a run's state starts with: [Settings](/guides/workflows/#settings) |
 
 | In an `action` entry | Is |
 |---|---|
 | `description`, `tags`, your own keys | what it is |
-| `args` | data for the action, whatever workflow runs it: an object, or a list of objects read in order, as a step's; [Args and secrets](/guides/secrets/) |
-| `repeat` | a list of objects: the step runs once per item, each item's values on top of `args`; [Args and secrets](/guides/secrets/#repeat) |
+| `repeat` | a list of objects: the step runs once per item, each item's values on top of its step's args; [Args and secrets](/guides/secrets/#repeat) |
 | `limits` | `quiet` and `most` for this action's steps, like `{"quiet": "1h", "most": "2d"}`; unless given, the workspace's [`limits`](#limits) |
 
 | In a `connector` entry | Is |
@@ -100,6 +101,7 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 | `description`, `tags`, your own keys | what it is |
 | `args` | data for the connector, as environment variables: an object; [A connector's args](/guides/secrets/#a-connectors-args) |
 
-`itero action args set`, `itero action repeat set`, `itero connector args set` and `itero wf config set` write `args`, `repeat` and `settings` here, keeping
-the rest of the file as it was. A workflow file has no `meta`: one is an
+`itero action repeat set` and `itero connector args set` write `repeat`
+and `args` here, keeping the rest of the file as it was. A workflow's
+`settings` and an action's `args` are errors saying where the values go. A workflow file has no `meta`: one is an
 error saying where it goes.

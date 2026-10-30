@@ -1,7 +1,8 @@
 #!/bin/sh
-# New mail in a POP3 mailbox since the last check: {"title", "text"}, or
-# nothing. The first check only notes where the mailbox is. The password
-# goes to curl on stdin, never on its command line.
+# New mail in a POP3 mailbox since the last check: {"new": <how many>,
+# "subject": <the newest one's>}, or nothing. The first check only notes
+# where the mailbox is. The password goes to curl on stdin, never on its
+# command line.
 scheme=pop3; [ "$tls" = true ] && scheme=pop3s
 url="$scheme://$host:$port"
 esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
@@ -31,4 +32,4 @@ fi
 n=$(printf '%s\n' "$new" | wc -l | tr -d ' ')
 newest=$(printf '%s\n' "$new" | tail -n 1 | cut -d ' ' -f 1)
 subject=$(ask "$url/$newest" -X "TOP $newest 0" | tr -d '\r' | sed -n 's/^Subject: //p' | head -n 1)
-printf '{"title": "Mail", "text": "%s new: %s"}\n' "$n" "$(esc "$(decode "$subject")")"
+printf '{"new": %s, "subject": "%s"}\n' "$n" "$(esc "$(decode "$subject")")"

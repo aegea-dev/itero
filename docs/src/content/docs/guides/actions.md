@@ -1,6 +1,6 @@
 ---
 title: Actions
-description: An executable file that reads its values from the environment, prints its result, and says with its exit code how it went.
+description: An executable file that gets its args as environment variables and on stdin, prints its result, and says with its exit code how it went.
 ---
 
 An action is an executable file in `actions/` or any subfolder of it, in
@@ -14,21 +14,26 @@ beside actions; they are not actions.
 
 ```sh
 #!/bin/sh
-# hands $order to the carrier; prints its tracking number
+# hands $order (its arg) to the carrier; prints its tracking number
 curl -fsS "https://carrier.example.com/ship?order=$order" | jq -r '.id'
 ```
 
 ## What it gets
 
-- **Its values, as environment variables**: `$order`, `$host`. A value is
-  the first found in the step's args, the action's own args, then the
-  run's state ([Args and secrets](/guides/secrets/)), where `$output` is
-  the step before's result. A value that is not text arrives as JSON
-  text. A name that cannot be an environment variable, and a state value
+- **Its args, as environment variables**: `$order`, `$host`, the args
+  its step gives (`{ "#ship": { "args": { "order": "$event.order" } } }`),
+  filled when the step starts ([Workflows](/guides/workflows/#args-what-a-step-gives-its-action)).
+  A value that is not text arrives as JSON text; a `null` arrives as no
+  variable. A name that cannot be an environment variable, and a value
   over 64 KB (a whole web page, say), are on stdin only: the system would
-  refuse to start the action with them. A value that big in a step's
-  args is an error naming it.
-- **The run's whole state, as JSON on stdin.**
+  refuse to start the action with them. Secrets in its args arrive as
+  their values ([Args and secrets](/guides/secrets/)).
+- **Its args again, as JSON on stdin**: `{"args": {...}}`, each with its
+  type (`1042` stays a number).
+- **The event it waited for**, when it runs again after waiting: as
+  `$event` (JSON text) and in its stdin, `{"args": {...}, "event": {...}}`.
+- Nothing else: not the event that started the run, not another step's
+  result, unless its step gives it as an arg.
 - **`$ITERO_MEMORY`**: a file it may read and write, kept between runs, one
   per workflow (for "the last mail seen").
 - **`$ITERO_WAITING_SINCE`**, when it runs again after waiting.
@@ -41,15 +46,14 @@ It runs in the workspace, with the daemon's own `itero` first on its
 What it prints is its result, the next step's `$output`: read as JSON
 when it is JSON (`3`, `true`, `[1, 2]`, `{"count": 3}`), else kept as
 text, trimmed. A plain command's output is enough (`ls | wc -l`), and an
-object carries several values. Printing nothing is `""`. Nothing it prints
-joins the state by itself: the workflow passes on what it keeps, as a
-later step's args ([Workflows](/guides/workflows/#a-steps-result-output)).
+object carries several values. Printing nothing is `""`. Later steps read
+it as `$steps.<name>` ([Workflows](/guides/workflows/#steps-every-step-by-its-name)).
 Its exit code:
 
 | Exit | Means |
 |---|---|
 | `0` | done |
-| `75` | not yet: the run waits. The step runs again every hour, or when an event comes that agrees with what it printed (an object, such as `{"payment_ref": "pay-1"}`); then that event is its `$output` |
+| `75` | not yet: the run waits. The step runs again every hour, or when an event comes that agrees with what it printed (an object, such as `{"payment_ref": "pay-1"}`); then it gets that event as `$event` |
 | anything else | an error: the end of its stderr says why |
 
 A step may print nothing for 10 minutes, `quiet` in
@@ -82,27 +86,27 @@ $ itero wf runs
 ## Versions
 
 A version is part of the file name: `notify@0.2`, `notify@0.10`. `#notify`
-is the highest, compared as numbers; `#notify@0.2` pins one. Args and
-secrets are the action's, whatever the version.
+is the highest, compared as numbers; `#notify@0.2` pins one. Its entry
+in `itero.config.json` is the action's, whatever the version.
 
 ## Built in
 
 `#notify` shows a desktop notification: through Itero.app on macOS
 (`osascript` without it), `notify-send` on Linux.
 
-| Value | Is |
+| Arg | Is |
 |---|---|
-| `$text` | what it says; needed |
-| `$title` | its title; `itero` when not set |
-| `$subtitle` | a line under the title (on Linux, the text's first line) |
-| `$sound` | `default`, or a macOS sound's name such as `Glass` (those in `/System/Library/Sounds`); on Linux, a sound theme's name |
-| `$url` | opened by a click on it, on macOS through Itero.app: http or https, anything else an error, as it may come from an event |
-| `$buttons` | a list of 1 to 4 labels, shown as its buttons (macOS); the step then waits for an answer |
-| `$wait` | `true`: the step waits for a click on it, with no buttons |
-| `$data` | an object a click on it passes on, as `data` |
+| `text` | what it says; needed |
+| `title` | its title; `itero` when not given |
+| `subtitle` | a line under the title (on Linux, the text's first line) |
+| `sound` | `default`, or a macOS sound's name such as `Glass` (those in `/System/Library/Sounds`); on Linux, a sound theme's name |
+| `url` | opened by a click on it, on macOS through Itero.app: http or https, anything else an error, as it may come from an event |
+| `buttons` | a list of 1 to 4 labels, shown as its buttons (macOS); the step then waits for an answer |
+| `wait` | `true`: the step waits for a click on it, with no buttons |
+| `data` | an object a click on it passes on, as `data` |
 
 ```json
-{ "#notify": { "args": { "title": "Backup", "subtitle": "disk 2", "text": "$why", "sound": "Basso" } } }
+{ "#notify": { "args": { "title": "Backup", "subtitle": "disk 2", "text": "$output.why", "sound": "Basso" } } }
 ```
 
 On macOS, each click on a notification from `#notify` is an event,
@@ -110,8 +114,8 @@ On macOS, each click on a notification from `#notify` is an event,
 the button's label, `open` for a click on the notification itself, or
 `dismissed` when one that waits is closed without one. A workflow can start
 on it ([Events from the daemon](/guides/maintenance/#events-from-the-daemon)),
-and a step with `$buttons` or `$wait` waits for it; then the click is
-its `$output`, and the run goes on:
+and a step with `buttons` or `wait` waits for it; then the click is
+its result, `$output` to the next step, and the run goes on:
 
 ```json
 { "steps": [
@@ -152,9 +156,9 @@ The first line picks the language. A Python action:
 
 ```python
 #!/usr/bin/env python3
-import json, os, sys
-state = json.load(sys.stdin)
-print(state["price"] * state["count"])
+import json, sys
+args = json.load(sys.stdin)["args"]
+print(args["price"] * args["count"])
 ```
 
 An action that uses packages should bring them, so it runs the same on any
@@ -221,12 +225,11 @@ into its project before it starts the program.
 
 A program that comes as an image runs in it, with Docker pulling it the
 first time. `examples/languages`'s `docker/to-markdown` turns a page's HTML,
-the step before's result, into Markdown with pandoc, reading it from the
-state on stdin:
+its arg `page`, into Markdown with pandoc, reading it from stdin:
 
 ```sh
 #!/bin/sh
-jq -r '.output' |
+jq -r '.args.page' |
   docker run --rm -i pandoc/minimal:3.11.0 -f html -t gfm-raw_html --wrap=none |
   jq -Rrs '.[0:20000]'
 ```

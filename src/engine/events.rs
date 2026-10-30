@@ -99,14 +99,21 @@ pub struct Fate {
 
 pub fn fate(ws: &Workspace, kind: &str, data: &Map<String, Value>) -> anyhow::Result<Fate> {
     let now = chrono::Utc::now();
-    let defined = |n: &str| super::secrets::get(n).is_some();
+    let defined = |n: &str| super::secrets::get_in(&ws.root, n).is_some();
     let flows = ws.flows()?;
     let starts = flows
         .iter()
         .filter(|(_, f)| {
             f.on.events.iter().any(|e| e == kind)
                 && crate::flow::active(&f.meta, now)
-                && crate::flow::holds(&f.on, data, &defined)
+                && crate::flow::holds(
+                    &f.on,
+                    &super::steps::first_state(
+                        Value::Object(data.clone()),
+                        ws.manifest().unwrap_or_default(),
+                    ),
+                    &defined,
+                )
         })
         .map(|(n, _)| n.clone())
         .collect::<Vec<_>>();

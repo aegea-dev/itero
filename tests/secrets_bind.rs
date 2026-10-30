@@ -20,14 +20,16 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
         d.path().join("workflows/kapı.json"),
         json!({
             "on": [{ "event": "kapı.çal" }, { "has": "$$ITERO_TEST_ANAHTAR" }],
-            "steps": [{"#aç": {"args": {"anahtar": "$$ITERO_TEST_ANAHTAR"}}}, "#kapat"]
+            "steps": [
+                {"#aç": {"args": {"anahtar": "$$ITERO_TEST_ANAHTAR"}}},
+                {"#kapat": {"args": {"anahtar": "$$ITERO_TEST_ANAHTAR"}}}
+            ]
         })
         .to_string(),
     )
     .unwrap();
     use std::os::unix::fs::PermissionsExt;
-    // a secret in args joins the state as its name: the next step gets
-    // its value too, on stdin as well
+    // each step that is given the secret gets its value, on stdin as well
     for (name, body) in [
         ("aç", "echo \"$anahtar\" > açıldı.txt"),
         ("kapat", "echo \"$anahtar\" > kapandı.txt; cat > durum.json"),
@@ -65,8 +67,9 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
     let stdin: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(d.path().join("durum.json")).unwrap())
             .unwrap();
-    assert_eq!(stdin["anahtar"], "gizli-şifre-123");
-    assert_eq!(runs[0].runtime.state["anahtar"], "$$ITERO_TEST_ANAHTAR");
+    assert_eq!(stdin["args"]["anahtar"], "gizli-şifre-123");
+    // the run's state holds no args at all
+    assert!(runs[0].runtime.state.get("anahtar").is_none());
     // nowhere in the journal, its write-ahead log, nor the log
     let wal = ws.journal().with_extension("sqlite-wal");
     let log = d.path().join(".itero/itero.log");
@@ -88,31 +91,60 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
 }
 
 #[test]
-fn an_action_gets_its_args_merged_and_its_repeat_item_on_top() {
+fn an_action_gets_its_steps_args_with_its_repeat_item_on_top_and_a_waited_event() {
     use itero::engine::steps::StepJob;
-    let state = json!({"bölge": "tr"}).as_object().unwrap().clone();
-    let job = |item: Option<serde_json::Value>| StepJob {
+    let d = tempfile::tempdir().unwrap();
+    let state = json!({"event": {"bölge": "tr"}})
+        .as_object()
+        .unwrap()
+        .clone();
+    let job = |item: Option<serde_json::Value>, event: Option<serde_json::Value>| StepJob {
         path: vec![0],
         action: "imap-check".into(),
         version: None,
-        data: serde_json::Map::new(),
+        data: json!({"host": "imap.örnek.test"})
+            .as_object()
+            .unwrap()
+            .clone(),
         item,
         waiting_since: None,
-        output: None,
+        event,
     };
-    let args = json!([{"host": "imap.örnek.test", "user": "kimse"}, {"title": "etiket", "text": "$bölge posta"}]);
-    let env = itero::engine::daemon::bind(
-        &state,
-        Some(&args),
-        &job(Some(json!({"user": "ayşe@örnek.test"}))),
+    let item = json!({"user": "ayşe@örnek.test", "host": "başka", "etiket": "$event.bölge posta"});
+    let (env, input) =
+        itero::engine::daemon::bind(d.path(), &state, &job(Some(item), None)).unwrap();
+    assert_eq!(env["host"], "başka", "the item on top of the step's args");
+    assert_eq!(env["user"], "ayşe@örnek.test");
+    assert_eq!(env["etiket"], "tr posta");
+    assert_eq!(input["args"]["host"], "başka");
+    assert!(input.get("event").is_none() && !env.contains_key("event"));
+    // nothing else of the run reaches it
+    assert!(!env.contains_key("bölge"));
+    // run again after waiting: the event that came, as $event and on stdin
+    let came = json!({"order": 7, "amount": 25});
+    let (env, input) =
+        itero::engine::daemon::bind(d.path(), &state, &job(None, Some(came.clone()))).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&env["event"]).unwrap(),
+        came
+    );
+    assert_eq!(input["event"], came);
+}
+
+#[test]
+fn a_value_comes_from_dot_env_after_the_secret_store() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join(".env"),
+        "# kişisel değerler\nKLASOR=~/Belgeler\nexport BOYUT=\"1M\"\n",
     )
     .unwrap();
-    assert_eq!(env["host"], "imap.örnek.test");
-    assert_eq!(
-        env["user"], "ayşe@örnek.test",
-        "the item on top of the args"
-    );
-    assert_eq!(env["etiket"], "tr posta");
-    let env = itero::engine::daemon::bind(&state, Some(&args), &job(None)).unwrap();
-    assert_eq!(env["user"], "kimse");
+    let get = |n: &str| itero::engine::secrets::get_in(d.path(), n);
+    assert_eq!(get("KLASOR").as_deref(), Some("~/Belgeler"));
+    assert_eq!(get("BOYUT").as_deref(), Some("1M"), "export and quotes");
+    assert_eq!(get("YOK"), None);
+    // the environment after .env
+    // SAFETY: no thread of this test binary reads the environment now
+    unsafe { std::env::set_var("ITERO_TEST_ORTAM_DEGERI", "ortamdan") };
+    assert_eq!(get("ITERO_TEST_ORTAM_DEGERI").as_deref(), Some("ortamdan"));
 }

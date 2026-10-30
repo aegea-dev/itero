@@ -132,7 +132,7 @@ async fn runs_and_workflows_can_be_read() {
     assert_eq!(run["input"], json!({"kim": "ayşe"}));
     assert_eq!(
         run["state"],
-        json!({"kim": "ayşe", "output": {"son": "çay"}})
+        json!({"event": {"kim": "ayşe"}, "output": {"son": "çay"}, "steps": {"yaz": {"son": "çay"}}})
     );
     assert_eq!(run["events"][0]["type"], "run.started");
     let name = runs[0]["name"].as_str().unwrap();

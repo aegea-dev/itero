@@ -65,6 +65,14 @@ export class Workspace {
     writeFileSync(f, JSON.stringify(m, null, 2));
   }
 
+  /** Changes a workflow: `edit` gets its file as an object and changes it. */
+  workflow(name, edit) {
+    const f = join(this.dir, "workflows", `${name}.json`);
+    const w = JSON.parse(readFileSync(f, "utf8"));
+    edit(w);
+    writeFileSync(f, JSON.stringify(w, null, 2));
+  }
+
   read(rel) {
     const f = join(this.dir, rel);
     return existsSync(f) ? readFileSync(f, "utf8") : "";

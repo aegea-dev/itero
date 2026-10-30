@@ -2,9 +2,10 @@
 
 A notification for each new Gmail mail, the moment it arrives: no polling.
 `connectors/gmail.received` keeps a connection to Gmail open with IMAP
-IDLE, and Gmail tells it when a mail comes; it prints one line per mail,
-and `workflows/gmail.json` shows it with `#notify`, with a sound: the
-subject, under the sender. On macOS a click on
+IDLE, and Gmail tells it when a mail comes; it prints one line per mail
+(`from`, `subject`, `url`, `data`), and `workflows/gmail.json` shows it
+with `#notify`, with a sound: the subject (`$event.subject`), under the
+sender (`$event.from`). On macOS a click on
 the notification opens the mail in Gmail on the web, and is a message,
 `itero.notification.clicked`, whose `data` names the mail (`uid`,
 `mailbox`): a workflow on it could mark the mail read.

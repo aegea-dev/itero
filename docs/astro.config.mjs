@@ -103,6 +103,7 @@ export default defineConfig({
 				{
 					label: 'Reference',
 					items: [
+						{ label: 'Concepts', slug: 'reference/concepts' },
 						{ label: 'Glossary', slug: 'reference/glossary' },
 						{ label: 'itero.config.json', slug: 'reference/itero-config' },
 						{ label: 'Workflow files', slug: 'reference/workflow-file' },

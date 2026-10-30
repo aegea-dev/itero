@@ -1,9 +1,10 @@
 {
-  "on": [{ "has": ["$paid", "$stock"] }],
+  "on": [{ "has": ["$event.paid", "$event.stock"] }],
   "steps": [
-    { "#ship":           { "on": [{ "$paid": true,  "$stock": true }] } },
-    { "#remind-payment": { "on": [{ "$paid": false, "$stock": true }] } },
-    { "#remind-stock":   { "on": [{ "$paid": true,  "$stock": false }] } },
-    { "#cancel":         { "on": [{ "$paid": false, "$stock": false }] } }
+    { "#ship":           { "on": [{ "$event.paid": true,  "$event.stock": true }],
+                           "args": { "order": "$event.order" } } },
+    { "#remind-payment": { "on": [{ "$event.paid": false, "$event.stock": true }] } },
+    { "#remind-stock":   { "on": [{ "$event.paid": true,  "$event.stock": false }] } },
+    { "#cancel":         { "on": [{ "$event.paid": false, "$event.stock": false }] } }
   ]
 }
