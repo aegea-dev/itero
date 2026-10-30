@@ -3,5 +3,5 @@
 # A Node program with its own project (links-app/: package.json, cheerio),
 # installed once by hand: (cd links-app && npm install). itero starts this
 # action in the workspace; it moves into its project and runs it there,
-# passing on its values and the state on stdin.
+# passing on its args and its stdin.
 cd "$(dirname "$0")/links-app" && exec node main.js

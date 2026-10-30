@@ -1,6 +1,6 @@
 #!/bin/sh
 # The disk this folder is on: {"disk": "ok"}, or low under $min_free
-# percent free (10 unless its step says).
+# percent free (10 unless its step's args say).
 min_free=${min_free:-10}
 used=$(df -P . | awk 'NR == 2 { sub("%", "", $5); print $5 }')
 if [ $((100 - used)) -lt "$min_free" ]; then

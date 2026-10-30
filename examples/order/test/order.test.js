@@ -27,8 +27,12 @@ describe("order", () => {
     ws.pass();
     const [run] = ws.runs();
     expect(run.status).toBe("done");
-    // each result passed on as args: into the state
-    expect(ws.state(run)).toMatchObject({ paid: true, stock: true, tracking: "TR-43" });
+    // each step's result, by its name
+    expect(ws.state(run).steps).toMatchObject({
+      "check-payment": { paid: true },
+      "check-stock": { stock: true },
+      "order-process": { tracking: "TR-43" },
+    });
     expect(ws.read(".itero/sent.log")).toBe("to ayşe@örnek.test: order 43, TR-43\n");
     expect(ws.read(".itero/results.log")).toBe("order 43: done\n");
   });
@@ -40,7 +44,7 @@ describe("order", () => {
     ws.pass();
     const [run] = ws.runs();
     expect(run.status).toBe("failed");
-    expect(ws.state(run)).toMatchObject({ success: false, why: "not paid" });
+    expect(ws.state(run).steps["order-process"]).toEqual({ success: false, why: "not paid" });
     expect(ws.read(".itero/sent.log")).toBe("to ayşe@örnek.test: order 43, not shipped\n");
     expect(ws.read(".itero/results.log")).toBe("order 43: failed: not paid\n");
   });

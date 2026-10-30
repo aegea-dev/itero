@@ -9,10 +9,8 @@ describe("beacon", () => {
     ws = new Workspace();
     // a site nothing answers on, so the test needs no network; the disk
     // workflow is off, so only the sites run
-    ws.manifest((m) => {
-      m.workflow.sites.settings.sites = ["http://127.0.0.1:9"];
-      m.workflow.disk.off = true;
-    });
+    ws.workflow("sites", (w) => (w.steps[0]["#check-sites"].args.sites = ["http://127.0.0.1:9"]));
+    ws.manifest((m) => (m.workflow.disk.off = true));
   });
   afterEach(() => ws.remove());
 
@@ -40,7 +38,7 @@ describe("beacon", () => {
   it("tells again when a site's state changes", () => {
     ws.pass(at(0));
     ws.pass(at(1));
-    ws.manifest((m) => m.workflow.sites.settings.sites.push("http://127.0.0.1:19"));
+    ws.workflow("sites", (w) => w.steps[0]["#check-sites"].args.sites.push("http://127.0.0.1:19"));
     ws.pass(at(2));
     expect(ws.output(ws.runs()[0], "#changed").text).toBe("http://127.0.0.1:19: down");
   });

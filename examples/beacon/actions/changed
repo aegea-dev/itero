@@ -1,9 +1,9 @@
 #!/bin/sh
-# What changed since the last run: the step before's result, $output (what
-# each thing is now), against the one kept in $ITERO_MEMORY. Prints
+# What changed since the last run: $now (what each thing is now, the step
+# before's result) against the one kept in $ITERO_MEMORY. Prints
 # {"text": "<what>: <how it is now>"}, a line for each change, or {} when
-# all is as it was.
-now=$(jq -c '.output // {}')
+# all is as it was. $now is read from stdin, where a big one fits too.
+now=$(jq -c '.args.now // {}')
 before=$(cat "$ITERO_MEMORY" 2>/dev/null || echo '{}')
 printf '%s\n' "$now" > "$ITERO_MEMORY.new" && mv "$ITERO_MEMORY.new" "$ITERO_MEMORY"
 jq -cn --argjson a "$before" --argjson b "$now" '

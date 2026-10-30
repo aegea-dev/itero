@@ -106,14 +106,14 @@ fn run_action(ws: &Path, name: &str, env: &[(&str, &str)], stdin: &str) -> Strin
 fn the_beacon_tells_only_what_changed() {
     let d = tempfile::tempdir().unwrap();
     let ws = copy("beacon", d.path());
-    // its sites are a setting, a JSON list in $sites as a run gives it; a
-    // port nothing listens on is down, without the network
-    let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(ws.join("itero.config.json")).unwrap())
+    // its sites are its step's arg, a JSON list in $sites as a run gives
+    // it; a port nothing listens on is down, without the network
+    let flow: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join("workflows/sites.json")).unwrap())
             .unwrap();
     assert!(
-        manifest["workflow"]["sites"]["settings"]["sites"].is_array(),
-        "{manifest}"
+        flow["steps"][0]["#check-sites"]["args"]["sites"].is_array(),
+        "{flow}"
     );
     let sites = run_action(
         &ws,
@@ -124,10 +124,10 @@ fn the_beacon_tells_only_what_changed() {
     assert_eq!(sites, r#"{"http://127.0.0.1:9":"down"}"#);
     let memory = d.path().join("hafıza");
     let memory = memory.to_str().unwrap();
-    // it reads the step before's result, $output, from the state on stdin
-    let changed = |output: &str| {
-        let state = format!(r#"{{"output": {output}}}"#);
-        run_action(&ws, "changed", &[("ITERO_MEMORY", memory)], &state)
+    // it reads the step before's result, its arg now, from its stdin
+    let changed = |now: &str| {
+        let input = format!(r#"{{"args": {{"now": {now}}}}}"#);
+        run_action(&ws, "changed", &[("ITERO_MEMORY", memory)], &input)
     };
     // the first run tells what it watches, then only changes
     assert_eq!(changed(&sites), r#"{"text":"http://127.0.0.1:9: down"}"#);

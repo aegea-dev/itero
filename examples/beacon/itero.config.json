@@ -3,19 +3,10 @@
   "description": "Health checks on a schedule, told only when something changes",
   "workflow": {
     "disk": {
-      "description": "The disk's free space, every 10 minutes; a notification when it runs low or has room again",
-      "settings": {
-        "min_free": 10
-      }
+      "description": "The disk's free space, every 10 minutes; a notification when it runs low or has room again"
     },
     "sites": {
-      "description": "Each site in its settings, every minute; a notification when one goes down or comes back",
-      "settings": {
-        "sites": [
-          "https://example.com",
-          "http://localhost:3000"
-        ]
-      }
+      "description": "Each site its step names, every minute; a notification when one goes down or comes back"
     }
   }
 }

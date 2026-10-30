@@ -1,5 +1,5 @@
 #!/bin/sh
-# Each site in $sites (a JSON list, the workflow's setting), up or down:
+# Each site in $sites (a JSON list, its step's arg), up or down:
 # {"<url>": "up"}, its result. set -e: a jq that fails inside $(...)
 # ends it, rather than leaving no sites to check.
 set -e

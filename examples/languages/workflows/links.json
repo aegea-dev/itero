@@ -1,1 +1,4 @@
-{ "on": [{ "event": "page.links" }, { "has": "$url" }], "steps": ["#links"] }
+{
+  "on": [{ "event": "page.links" }, { "has": "$event.url" }],
+  "steps": [{ "#links": { "args": { "url": "$event.url" } } }]
+}

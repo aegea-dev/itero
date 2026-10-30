@@ -1,2 +1,18 @@
-{ "on": [{ "event": "app.notify" }], "steps": ["#notify"], "timeout": "1h",
-  "success": [{ "#post-answer": { "args": "$output" } }], "failure": ["#post-answer"], "error": ["#post-answer"] }
+{
+  "on": [{ "event": "app.notify" }],
+  "steps": [
+    { "#notify": { "args": {
+        "title": "$event.title", "text": "$event.text", "subtitle": "$event.subtitle",
+        "sound": "$event.sound", "url": "$event.url", "buttons": "$event.buttons",
+        "wait": "$event.wait", "data": "$event.data"
+    } } }
+  ],
+  "timeout": "1h",
+  "success": [{ "#post-answer": { "args": { "reply_url": "$event.reply_url", "asked": "$event",
+                                            "answer": "$output.answer",
+                                            "notification": "$output.notification" } } }],
+  "failure": [{ "#post-answer": { "args": { "reply_url": "$event.reply_url", "asked": "$event",
+                                            "why": "$output.why" } } }],
+  "error": [{ "#post-answer": { "args": { "reply_url": "$event.reply_url", "asked": "$event",
+                                          "why": "$output.why" } } }]
+}

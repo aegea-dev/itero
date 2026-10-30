@@ -51,7 +51,11 @@ describe("notify-api", () => {
 
     ws.click({ notification: shown.notification, answer: "Dağıt", workflow: "app-notify" });
     await until("the answer, posted to the app", () => posted.length === 1);
-    // the run's state, posted by the workflow's success step
-    expect(posted[0]).toMatchObject({ answer: "Dağıt", request: "istek-1", notification: shown.notification });
+    // what the app asked, and its answer, posted by the workflow's success step
+    expect(posted[0]).toMatchObject({
+      asked: { request: "istek-1" },
+      answer: "Dağıt",
+      notification: shown.notification,
+    });
   });
 });

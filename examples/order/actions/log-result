@@ -1,8 +1,9 @@
 #!/bin/sh
-# How the order went: done, failed and why, or the step that broke.
+# How $order went: done, failed and $why, or the step that broke
+# ($failed_step).
 if [ -n "$failed_step" ]; then
   echo "order $order: error at $failed_step: $why" >> .itero/results.log
-elif [ "$success" = false ]; then
+elif [ -n "$why" ]; then
   echo "order $order: failed: $why" >> .itero/results.log
 else
   echo "order $order: done" >> .itero/results.log
