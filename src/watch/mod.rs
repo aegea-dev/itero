@@ -1,7 +1,8 @@
 //! Watching files and folders with the OS's own events. A `Backend` turns
-//! one system's raw events into `Change`s; kqueue (macOS) and inotify
-//! (Linux) come first, and FSEvents, fanotify or a polling backend plug in
-//! behind the same trait. A backend that may have missed something reports
+//! one system's raw events into `Change`s: inotify on Linux; kqueue on
+//! macOS, with FSEvents for a watched folder's files; fanotify or a polling
+//! backend would plug in behind the same trait. On both, a watched folder
+//! tells its direct children coming, going or changing. A backend that may have missed something reports
 //! `Rescan`, so the reader looks again instead of trusting silence.
 //! Debouncing happens once, here, not in each backend.
 use serde::Serialize;
@@ -9,6 +10,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+mod fsevents;
 #[cfg(target_os = "linux")]
 mod inotify;
 #[cfg(target_os = "macos")]

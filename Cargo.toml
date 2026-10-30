@@ -49,6 +49,10 @@ objc2-foundation = { version = "~0.3.2", default-features = false, features = ["
 objc2-user-notifications = { version = "~0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNNotification", "UNNotificationResponse", "UNNotificationSound", "UNNotificationAction", "UNNotificationCategory", "UNNotificationSettings"] }
 block2 = "~0.6.2"
 objc2-app-kit = { version = "~0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
+# watching files: FSEvents, so a watched folder tells a file's new contents
+objc2-core-foundation = { version = "~0.3.2", default-features = false, features = ["std", "CFArray", "CFString", "CFDate", "CFRunLoop", "CFUUID"] }
+objc2-core-services = { version = "~0.3.2", default-features = false, features = ["std", "FSEvents", "dispatch2"] }
+dispatch2 = { version = "~0.3.1", default-features = false, features = ["std", "alloc"] }
 
 [dev-dependencies]
 chrono-tz = "~0.10"
