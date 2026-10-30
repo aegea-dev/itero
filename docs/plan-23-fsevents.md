@@ -32,35 +32,47 @@ A throwaway probe on the FSEvents API, with file events on:
   from them: whether the path is there now decides it.
 - Each change came within about 0.8 seconds.
 
-## Design
+## Design: two modes, each with its own tool
 
-FSEvents replaces kqueue for every path on macOS: one backend for files
-and folders, no descriptor per path. `src/watch/fsevents.rs` implements the
-same `Backend` trait; `src/watch/kqueue.rs` goes. `mod.rs`, the debouncer,
-Linux and every caller stay as they are.
+A further probe (2026-10-30) found that FSEvents cannot watch a single file
+whose name has a composed letter (`ü` stored as one character, as Rust,
+the shell and most tools write it): it reports only `RootChanged`, never
+the file's writes. A folder works in every case, any file's name in it
+included. FSEvents is also recursive, so watching a single file through
+its folder would bring in its whole tree. Linux's inotify does both
+modes with one tool; macOS needs one tool for each:
 
-- **Paths.** Each watched path is kept as named and as resolved: its
-  deepest existing folder canonicalized, the rest as written. One stream
-  watches the resolved paths, on its own serial dispatch queue. Changes
-  are reported under the path as named, so `{path, kind}` and every
-  caller are unchanged.
-- **Kinds.** An event on a watched path itself: `created` when it was not
-  there and is now, `removed` when it was and is not, else `changed`. An
-  event on a direct child of a watched folder: `changed` for the folder.
-  Deeper events: none. `MustScanSubDirs`, `UserDropped` or
-  `KernelDropped`: `Rescan` for the paths it concerns (all of them when
-  dropped). `RootChanged`: the path is resolved again (the stream starts
-  again when that moves it), and only a coming or going is told.
-- **Threads.** The stream's callback sends each raw event (path, flags,
-  id) over a channel; `wait(timeout)` receives with that timeout, then
-  takes what else is there and maps it. No polling.
-- **Changing the paths.** `set(paths)` keeps the entries still wanted
-  (with whether each was there), and starts a new stream from the last
-  event id seen, so nothing in between is missed.
-- **Stream settings.** File events, no defer, watch root; latency 50 ms
-  (the debouncer waits half a second anyway).
-- **Errors.** A stream that cannot be created or started is an
-  `io::Error` naming the paths, as `naming` does for kqueue now.
+- **File mode: kqueue, as today.** Exactly that file, any name, no noise.
+  `src/watch/kqueue.rs` stays as it is.
+- **Folder mode: kqueue for the folder's own events (made, removed,
+  entries coming and going), and FSEvents for a file in it changing.**
+  Direct children only, as inotify.
+
+The mode follows what is on disk: a path that is a folder now is in
+folder mode; a file, or a path not there yet, in file mode, and a path
+that comes as a folder moves to folder mode (and back when it goes).
+Nothing a user writes changes.
+
+- **One wait.** The kqueue backend owns an FSEvents stream for its
+  folders (`src/watch/fsevents.rs`), on its own serial dispatch queue.
+  The stream's callback sends each raw event (path, flags, id) over a
+  channel and wakes the kqueue wait with a user event (`EVFILT_USER`).
+  No polling, no extra thread.
+- **Matching.** Folders are given to FSEvents as real paths
+  (canonicalized: through a symlink FSEvents gives no file events). An
+  event is compared in decomposed form (NFD) on both sides, so a name is
+  the same whether it was written composed or not: an event on a direct
+  child of a watched folder is `changed` for that folder, told under the
+  folder as named; the folder's own events and deeper ones are left out
+  (kqueue tells the folder's own). `MustScanSubDirs`, `UserDropped` or
+  `KernelDropped`: `Rescan` for the folders concerned.
+- **Keeping up.** After `set` and after each wait, the backend gives the
+  stream the folders its paths are now; a different list starts a new
+  stream from the last event id seen, so nothing in between is missed.
+- **Stream settings.** File events, no defer; latency 50 ms (the
+  debouncer waits half a second anyway).
+- **Errors.** A stream that cannot be made or started is an `io::Error`
+  naming the folders.
 
 ## Dependencies
 
@@ -84,9 +96,10 @@ both:
 - a file changing in a subfolder is not;
 - a path through a symlink is watched.
 
-Unit tests in `fsevents.rs`: resolving a path (a missing tail kept, a
-symlink followed) and mapping raw events to changes (the kinds above,
-subfolders dropped, the dropped flags as `Rescan`).
+Unit tests in `fsevents.rs`: a name composed or not compares equal;
+mapping raw events to changes (a direct child is `changed` for its
+folder, the folder itself and deeper ones nothing, the dropped flags
+`Rescan`).
 
 `make verify` and `make test-linux` pass.
 
