@@ -10,6 +10,7 @@ Before substantial work, read:
 
 - CLAUDE.md and CLAUDE.local.md files if they exist
 - README.md
+- docs/src/content/docs/reference/concepts.md: the six parts itero is made of
 - Relevant product docs under docs/src/content/docs/
 
 Private/local context may exist outside this repository, but it must not be quoted, committed, or published.
