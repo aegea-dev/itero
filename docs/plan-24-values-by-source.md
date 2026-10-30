@@ -44,9 +44,6 @@ And an action gets only its args.
   the run ended, `{"why", "failed_step", "undo_failed"}` (`$output.why`,
   `$output.failed_step`), as a group that breaks gives `$output.why` today;
   a later step of the list sees the step before, as anywhere.
-  (Suggestion, to approve: the same object stays readable as
-  `$steps.ended` in every step of the lists, `ended` being itero's, so a
-  later step can still say why.)
 - An undo step: the result of the step it takes back, as today.
 
 ### `$steps`
