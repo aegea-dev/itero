@@ -305,6 +305,7 @@ pub fn info(ws: &Workspace, json: bool) -> Result<()> {
             "logs": l.logs,
         },
         "daemon": daemon,
+        "notifications": crate::engine::worker::notifications(),
     });
     show(json, &v, |v| {
         let w = &v["workspace"];
@@ -336,6 +337,18 @@ pub fn info(ws: &Workspace, json: bool) -> Result<()> {
         } else {
             println!("daemon: not running ({})", text(&d["why"]));
         }
+        let n = &v["notifications"];
+        let mut line = format!("notifications: {}", text(&n["state"]));
+        if let Some(why) = n["why"].as_str() {
+            line.push_str(&format!(" ({why})"));
+        }
+        if let (Some(app), Some(version)) = (n["app"].as_str(), n["version"].as_u64()) {
+            line.push_str(&format!(", Itero.app {version} in {app}"));
+        }
+        if let Some(p) = n["notifier"].as_str() {
+            line.push_str(&format!(", through {p}"));
+        }
+        println!("{line}");
     })
 }
 

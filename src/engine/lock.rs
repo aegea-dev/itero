@@ -6,25 +6,34 @@ use crate::workspace::Workspace;
 use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::os::fd::AsRawFd;
+use std::path::Path;
 
 /// A workspace's lock, held while this lives.
 pub struct DaemonLock {
     _file: File,
 }
 
-/// Locks `ws` for the daemon `who` (its name and pid), or says which
-/// daemon runs it already.
-pub fn take(ws: &Workspace, who: &str) -> Result<DaemonLock, String> {
-    let dir = ws.root.join(".itero");
-    let path = dir.join("daemon.lock");
-    let at = |e: std::io::Error| format!("{}: {e}", path.display());
-    std::fs::create_dir_all(&dir).map_err(at)?;
+/// Why a lock was not taken.
+#[derive(Debug)]
+pub enum Refused {
+    /// Another holds it: what it wrote in the file.
+    Held(String),
+    Failed(String),
+}
+
+/// Locks the file `path` (made, with its folder, when missing) for `who`,
+/// written in it; the lock ends when the result drops.
+pub fn take_file(path: &Path, who: &str) -> Result<DaemonLock, Refused> {
+    let at = |e: std::io::Error| Refused::Failed(format!("{}: {e}", path.display()));
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(at)?;
+    }
     let mut file = File::options()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(&path)
+        .open(path)
         .map_err(at)?;
     // SAFETY: flock on a descriptor this function owns
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
@@ -34,14 +43,23 @@ pub fn take(ws: &Workspace, who: &str) -> Result<DaemonLock, String> {
         }
         let mut holder = String::new();
         let _ = file.read_to_string(&mut holder);
-        return Err(format!(
-            "{}: this workspace is run by {} already",
-            ws.root.display(),
-            holder.trim()
-        ));
+        return Err(Refused::Held(holder.trim().to_string()));
     }
     file.set_len(0).map_err(at)?;
     file.rewind().map_err(at)?;
     file.write_all(who.as_bytes()).map_err(at)?;
     Ok(DaemonLock { _file: file })
+}
+
+/// Locks `ws` for the daemon `who` (its name and pid), or says which
+/// daemon runs it already.
+pub fn take(ws: &Workspace, who: &str) -> Result<DaemonLock, String> {
+    match take_file(&ws.root.join(".itero").join("daemon.lock"), who) {
+        Ok(l) => Ok(l),
+        Err(Refused::Held(by)) => Err(format!(
+            "{}: this workspace is run by {by} already",
+            ws.root.display()
+        )),
+        Err(Refused::Failed(why)) => Err(why),
+    }
 }

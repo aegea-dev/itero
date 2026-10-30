@@ -59,8 +59,10 @@ make install
 
 On macOS, notifications come from `Itero.app`, which asks once to be
 allowed to show them and then has its own entry in System Settings,
-Notifications. Without the app they go through `osascript` and show as
-Script Editor's.
+Notifications. itero keeps its own copy of it in
+`~/Library/Application Support/itero/`, brought up to date as you
+upgrade, so the permission stays. Without the app they go through
+`osascript` and show as Script Editor's.
 
 On Linux, itero uses the first of `notify-send` (libnotify), `gdbus` (the
 freedesktop notification service) and `kdialog` (KDE) that it finds.

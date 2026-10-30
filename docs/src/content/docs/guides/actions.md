@@ -126,8 +126,17 @@ A run nobody answers waits until its workflow's `timeout`. On Linux a
 notification has no buttons and tells no clicks.
 
 How long a notification stays is yours to set, in System Settings,
-Notifications, itero: Banners go away by themselves, Alerts stay until
+Notifications, Itero: Banners go away by themselves, Alerts stay until
 dismissed.
+
+On macOS, notifications come from itero's own copy of Itero.app, in
+`~/Library/Application Support/itero/`, which itero brings up to date
+from the one it ships with: an upgrade needs nothing from you, and
+macOS's permission stays. If macOS refuses Itero anyway, `#notify` asks
+it once more as an app (macOS may then ask you to allow it); refused
+again, the step fails saying to turn notifications on in System Settings,
+Notifications, Itero. [`itero info`](/commands/info/) says whether Itero
+may notify.
 
 `#forget` forgets ended runs and their events past `keep`, `#roll-log`
 rolls the log, and `#find-models` finds the models on the machine; the

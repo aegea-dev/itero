@@ -1,10 +1,11 @@
 //! The worker: runs one step and reports how it went. It is dumb: the
 //! action's file with its values, or the built-in `#notify`; nothing else.
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
+use wait_timeout::ChildExt;
 
 /// Why a step gave no answer.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,17 +60,56 @@ pub fn stop_with_parent() {
 }
 
 /// `Itero.app`'s notifier on macOS: `ITERO_NOTIFIER` (the app or its
-/// program), else beside the itero binary, else in a Homebrew formula's
-/// libexec, else in ~/Applications or /Applications.
+/// program) when set; else the stable copy (`notifier_app`), brought up
+/// to date from the Itero.app itero ships with; that shipped copy itself
+/// when the stable one cannot be made, said on stderr.
 fn notifier() -> Option<PathBuf> {
-    let program = |app: PathBuf| app.join("Contents/MacOS/itero-notifier");
-    if let Some(p) = std::env::var_os("ITERO_NOTIFIER").map(PathBuf::from) {
-        return Some(if p.extension().is_some_and(|x| x == "app") {
-            program(p)
+    use super::notifier_app::{program, stable, up_to_date};
+    let given = std::env::var_os("ITERO_NOTIFIER").map(|p| {
+        let p = PathBuf::from(p);
+        if p.extension().is_some_and(|x| x == "app") {
+            program(&p)
         } else {
             p
-        });
+        }
+    });
+    if given.is_some() {
+        return given;
     }
+    let shipped = shipped_app();
+    let made = match (
+        &shipped,
+        std::env::var_os("HOME"),
+        crate::machine::state_dir(),
+    ) {
+        (Some(app), Some(home), Ok(state)) => Some(up_to_date(
+            app,
+            &stable(Path::new(&home)),
+            &state.join("notifier.lock"),
+        )),
+        _ => None,
+    };
+    if let Some(Err(why)) = &made {
+        eprintln!("itero: notifying from the shipped Itero.app: {why}");
+    }
+    choose(None, shipped, made)
+}
+
+/// Which notifier to run: the one given, else the stable copy's, else the
+/// shipped one's.
+fn choose(
+    given: Option<PathBuf>,
+    shipped: Option<PathBuf>,
+    made: Option<Result<PathBuf, String>>,
+) -> Option<PathBuf> {
+    given
+        .or(made.and_then(Result::ok))
+        .or(shipped.map(|app| super::notifier_app::program(&app)))
+}
+
+/// The Itero.app itero ships with: beside the itero binary, else in a
+/// Homebrew formula's libexec, else in ~/Applications or /Applications.
+fn shipped_app() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok();
     let beside = exe
         .as_ref()
@@ -88,8 +128,7 @@ fn notifier() -> Option<PathBuf> {
     ]
     .into_iter()
     .flatten()
-    .map(program)
-    .find(|p| p.is_file())
+    .find(|app| super::notifier_app::program(app).is_file())
 }
 
 /// Whether a notification's url can be opened on a click: http or https,
@@ -339,11 +378,18 @@ fn show(n: &Note) -> Result<(), String> {
             Err(e) => return Err(format!("cannot run {}: {e}", program.display())),
         };
         if !out.status.success() {
-            return Err(format!(
+            let why = format!(
                 "{}: {}",
                 program.display(),
                 String::from_utf8_lossy(&out.stderr).trim()
-            ));
+            );
+            // macOS refused Itero.app outright: its record follows a copy
+            // that is gone. Launched through LaunchServices, the record
+            // moves to this one (and a first run asks)
+            if let Some(app) = app_of(&program) {
+                return after(Err(why), || through_launch_services(&app, &args));
+            }
+            return Err(why);
         }
         return Ok(());
     }
@@ -351,6 +397,134 @@ fn show(n: &Note) -> Result<(), String> {
         "no way to show a notification here (tried {}): install libnotify's notify-send",
         tried.join(", ")
     ))
+}
+
+/// Whether notifications can be shown here, for `itero info`: on macOS,
+/// macOS's setting for Itero (asked of its notifier, three seconds at
+/// most) and the copy notifying; elsewhere, the desktop's notifier.
+pub fn notifications() -> Value {
+    if !cfg!(target_os = "macos") {
+        let found = ["notify-send", "gdbus", "kdialog"].into_iter().find(|p| {
+            std::env::var_os("PATH")
+                .is_some_and(|path| std::env::split_paths(&path).any(|d| d.join(p).is_file()))
+        });
+        return match found {
+            Some(p) => json!({ "state": "available", "notifier": p }),
+            None => json!({ "state": "none", "why": "no notify-send, gdbus or kdialog on PATH" }),
+        };
+    }
+    let Some(program) = notifier() else {
+        return json!({ "state": "none", "why": "no Itero.app found" });
+    };
+    let app = app_of(&program);
+    let version = app.as_deref().and_then(super::notifier_app::version);
+    let asked = Command::new(&program)
+        .arg("--status")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())
+        .and_then(|mut c| match c.wait_timeout(Duration::from_secs(3)) {
+            Ok(Some(_)) => c.wait_with_output().map_err(|e| e.to_string()),
+            Ok(None) => {
+                let _ = c.kill();
+                let _ = c.wait();
+                Err("no answer in three seconds".into())
+            }
+            Err(e) => Err(e.to_string()),
+        });
+    let mut v = match asked {
+        Ok(o) if o.status.success() => {
+            json!({ "state": String::from_utf8_lossy(&o.stdout).trim() })
+        }
+        Ok(o) => json!({ "state": "unknown", "why": String::from_utf8_lossy(&o.stderr).trim() }),
+        Err(why) => json!({ "state": "unknown", "why": why }),
+    };
+    v["app"] = json!(app.map(|a| a.display().to_string()));
+    v["version"] = json!(version);
+    v
+}
+
+/// The Itero.app a notifier program is inside, on macOS.
+fn app_of(program: &Path) -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") || !program.ends_with("Contents/MacOS/itero-notifier") {
+        return None;
+    }
+    program.ancestors().nth(3).map(Path::to_path_buf)
+}
+
+/// Whether the notifier's error says macOS refused it outright.
+fn refused(why: &str) -> bool {
+    why.contains("Notifications are not allowed")
+}
+
+/// After the notifier's `first` try: a refusal is healed once (`heal`);
+/// refused again, notifications are off for Itero.
+fn after(
+    first: Result<(), String>,
+    heal: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    match first {
+        Err(why) if refused(&why) => match heal() {
+            Err(again) if refused(&again) => Err(
+                "notifications are off for Itero: turn them on in System Settings, Notifications, Itero"
+                    .into(),
+            ),
+            other => other,
+        },
+        other => other,
+    }
+}
+
+/// Shows the notification by launching `app` through LaunchServices (a new
+/// instance, in the background): what moves macOS's record of Itero to
+/// this copy. The notifier writes how it went to a result file, waited
+/// for (`open -W` cannot wait on a notifier that ends at once).
+fn through_launch_services(app: &Path, args: &[String]) -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!("itero-notify-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let result = dir.join("result");
+    let status = Command::new("open")
+        .args(["-n", "-g"])
+        .arg(app)
+        .arg("--args")
+        .args(args)
+        .arg("--result")
+        .arg(&result)
+        .stdin(Stdio::null())
+        .status();
+    let shown = match status {
+        Err(e) => Err(format!("cannot run open: {e}")),
+        Ok(s) if !s.success() => Err(format!("open {}: {s}", app.display())),
+        // time for the permission prompt a first run shows
+        Ok(_) => wait_for_result(&result, Duration::from_secs(150)),
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    shown
+}
+
+/// Waits for the notifier's result file (`ok`, or its error), watching its
+/// folder, `limit` at most.
+fn wait_for_result(result: &Path, limit: Duration) -> Result<(), String> {
+    let read = || {
+        std::fs::read_to_string(result)
+            .ok()
+            .map(|t| t.trim().to_string())
+    };
+    let folder = result.parent().unwrap_or(Path::new("."));
+    let mut watching = crate::watch::open(folder).map_err(|e| e.to_string())?;
+    let end = std::time::Instant::now() + limit;
+    loop {
+        if let Some(t) = read() {
+            return if t == "ok" { Ok(()) } else { Err(t) };
+        }
+        let left = end.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Err(format!("no answer from Itero.app in {}s", limit.as_secs()));
+        }
+        watching.wait(Some(left)).map_err(|e| e.to_string())?;
+    }
 }
 
 /// Why a program failed: what it needs that is not there, when its stderr
@@ -647,4 +821,94 @@ fn answer(stdout: &[u8]) -> Value {
     let text = String::from_utf8_lossy(stdout);
     let text = text.trim();
     serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string()))
+}
+
+#[cfg(test)]
+mod notifier_tests {
+    use super::choose;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_refusal_is_healed_once_then_says_to_turn_notifications_on() {
+        use super::{after, refused};
+        let no = "/x/Itero.app/Contents/MacOS/itero-notifier: itero-notifier: cannot ask to notify: Notifications are not allowed for this application";
+        assert!(refused(no));
+        assert!(!refused(
+            "itero-notifier: a url to open is http or https: ftp://x"
+        ));
+        let heals = std::cell::Cell::new(0);
+        let heal = |r: Result<(), String>| {
+            heals.set(heals.get() + 1);
+            r
+        };
+        // shown at once: no healing
+        assert_eq!(after(Ok(()), || heal(Ok(()))), Ok(()));
+        assert_eq!(heals.get(), 0);
+        // refused, healed through LaunchServices
+        assert_eq!(after(Err(no.into()), || heal(Ok(()))), Ok(()));
+        assert_eq!(heals.get(), 1);
+        // refused twice: notifications are off
+        let off = after(Err(no.into()), || heal(Err(no.into()))).unwrap_err();
+        assert!(
+            off.contains("System Settings, Notifications, Itero"),
+            "{off}"
+        );
+        assert_eq!(heals.get(), 2);
+        // another error: said as it is, no healing
+        assert_eq!(
+            after(Err("disk dolu".into()), || heal(Ok(()))),
+            Err("disk dolu".into())
+        );
+        assert_eq!(heals.get(), 2);
+    }
+
+    #[test]
+    fn the_result_written_later_is_waited_for_and_read() {
+        use super::wait_for_result;
+        use std::time::Duration;
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("sonuç");
+        let g = f.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            // as the notifier writes it: whole, renamed into place
+            let tmp = g.with_extension("tmp");
+            std::fs::write(&tmp, "ok").unwrap();
+            std::fs::rename(&tmp, &g).unwrap();
+        });
+        assert_eq!(wait_for_result(&f, Duration::from_secs(5)), Ok(()));
+        t.join().unwrap();
+        // an error the notifier wrote is the result
+        std::fs::write(&f, "Notifications are not allowed for this application").unwrap();
+        assert!(
+            wait_for_result(&f, Duration::from_secs(5))
+                .unwrap_err()
+                .contains("not allowed")
+        );
+        // none in time
+        let none = d.path().join("yok");
+        let started = std::time::Instant::now();
+        assert!(wait_for_result(&none, Duration::from_millis(400)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn the_given_notifier_wins_then_the_stable_copy_then_the_shipped_one() {
+        let p = |s: &str| PathBuf::from(s);
+        let shipped = || Some(p("/Cellar/21/Itero.app"));
+        let stable = || Some(Ok(p("/destek/Itero.app/Contents/MacOS/itero-notifier")));
+        assert_eq!(
+            choose(Some(p("/deneme/bildirici")), shipped(), stable()),
+            Some(p("/deneme/bildirici"))
+        );
+        assert_eq!(
+            choose(None, shipped(), stable()),
+            Some(p("/destek/Itero.app/Contents/MacOS/itero-notifier"))
+        );
+        assert_eq!(
+            choose(None, shipped(), Some(Err("disk dolu".into()))),
+            Some(p("/Cellar/21/Itero.app/Contents/MacOS/itero-notifier"))
+        );
+        assert_eq!(choose(None, None, None), None);
+    }
 }

@@ -13,6 +13,9 @@ itero info [--json]
 The workspace: its id, name, when it was made, its folder, the itero that
 made it, what its manifest says it is, and its `limits`. Then the daemon running it, when
 one answers on the port: its id, name, start, pid, host, itero version and port.
+Last, whether notifications can be shown: on macOS, macOS's setting for
+Itero (`allowed`, `off`, `not asked`) and the copy of Itero.app that
+notifies; on Linux, the notifier it uses.
 
 ```
 $ itero info
@@ -31,6 +34,7 @@ workspace
     log 10485760
     logs 3
 daemon: not running (no answer on port 8787)
+notifications: allowed, Itero.app 22 in /Users/me/Library/Application Support/itero/Itero.app
 ```
 
 See [`itero.config.json`](/reference/itero-config/) and
