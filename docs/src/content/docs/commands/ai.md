@@ -6,7 +6,7 @@ description: The local models #ai steps use, and one model file's header.
 `itero ai` looks after the models [`#ai`](/ai/workflows/) steps use; see [itero-ai](/ai/).
 
 ```sh
-itero ai models list [--all] [--json]
+itero ai models list [WORD] [--sort COLUMN] [--reverse] [filters] [--all] [--json]
 itero ai models add <org>/<repo>[:<QUANT>] [--yes]
 itero ai models remove <org>/<repo>[:<QUANT>] [--delete]
 itero ai inspect <file.gguf> [--json]
@@ -25,6 +25,29 @@ Hugging Face names it: that name goes in a step's `model`. `--all` shows
 the removed ones too. The list is kept in `~/.cache/itero/models.json`;
 the daemon's `models` workflow looks again when it starts and every
 hour (the machine's daemon looks once for all its workspaces).
+
+To sort and filter it:
+
+| Give | Shows |
+|---|---|
+| `WORD` | those with that word in their name, any case: `itero ai models list qwen` |
+| `--sort name\|size\|params\|context\|licence` | sorted by that column (name unless given); numbers smallest first, a model with no value last |
+| `--reverse` | the other way round |
+| `--licence ID` | under that licence; give it again for another: `--licence mit --licence apache-2.0` |
+| `--maker ORG` | of that maker, like `unsloth` or `local` |
+| `--arch NAME` | of that architecture, like `qwen35` |
+| `--thinks` | those that think |
+| `--runs` | those that run with this itero-ai |
+| `--max-size SIZE` | this big or smaller, written as the list shows it: `8GB`, `500MB` |
+| `--max-params PARAMS` | this many parameters or fewer: `9B`, `500M`; a mixture (`35B-A3B`) counts them all |
+
+Every filter given must hold; none matching says `no model matches`.
+`--json` gives the same models, in the same order. The advised small
+models, for example:
+
+```sh
+itero ai models list --licence mit --licence apache-2.0 --max-params 9B --runs --sort size
+```
 
 ## `models add`
 
