@@ -186,6 +186,35 @@ pub enum AiCmd {
 pub enum ModelsCmd {
     /// The models found: LM Studio's, Hugging Face's cache, and itero's own
     List {
+        /// Only those with this word in their name (any case)
+        word: Option<String>,
+        /// Sort by this column; numbers smallest first
+        #[arg(long, value_enum, default_value_t)]
+        sort: ai::Sort,
+        /// The other way round
+        #[arg(long)]
+        reverse: bool,
+        /// Only those under this licence; give it again for another (mit, apache-2.0)
+        #[arg(long = "licence", value_name = "ID")]
+        licences: Vec<String>,
+        /// Only those of this maker, like unsloth or local
+        #[arg(long, value_name = "ORG")]
+        maker: Option<String>,
+        /// Only those of this architecture, like qwen35
+        #[arg(long, value_name = "NAME")]
+        arch: Option<String>,
+        /// Only those that think
+        #[arg(long)]
+        thinks: bool,
+        /// Only those that run on this machine
+        #[arg(long)]
+        runs: bool,
+        /// Only those this big or smaller, like 8GB or 500MB
+        #[arg(long, value_name = "SIZE")]
+        max_size: Option<String>,
+        /// Only those with this many parameters or fewer, like 9B
+        #[arg(long, value_name = "PARAMS")]
+        max_params: Option<String>,
         #[arg(long)]
         json: bool,
         /// The removed ones too
@@ -823,7 +852,40 @@ fn dispatch(cli: Cli) -> Result<()> {
         },
         Cmd::Ai { cmd } => match cmd {
             AiCmd::Models { cmd } => match cmd {
-                ModelsCmd::List { json, all } => ai::list(json, all)?,
+                ModelsCmd::List {
+                    word,
+                    sort,
+                    reverse,
+                    licences,
+                    maker,
+                    arch,
+                    thinks,
+                    runs,
+                    max_size,
+                    max_params,
+                    json,
+                    all,
+                } => {
+                    let max_params = max_params
+                        .map(|p| {
+                            ai::billions(&p)
+                                .ok_or_else(|| anyhow!("--max-params is like 9B or 500M, not {p}"))
+                        })
+                        .transpose()?;
+                    let q = ai::Query {
+                        word,
+                        sort,
+                        reverse,
+                        licences,
+                        maker,
+                        arch,
+                        thinks,
+                        runs,
+                        max_size: max_size.as_deref().map(ai::bytes_in).transpose()?,
+                        max_params,
+                    };
+                    ai::list(json, all, &q)?
+                }
                 ModelsCmd::Add { name, yes } => ai::add(&name, yes)?,
                 ModelsCmd::Remove { name, delete } => ai::remove(&name, delete)?,
             },

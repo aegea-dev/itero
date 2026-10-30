@@ -71,7 +71,9 @@ itero ai models remove unsloth/Qwen3.5-4B-GGUF:Q4_K_M
 
 - **`list`** looks again, then shows each model with its parameters,
   architecture, quantization, context, size and licence, and whether it
-  chats, runs with this itero-ai, and thinks.
+  chats, runs with this itero-ai, and thinks. A word, `--sort` and
+  filters such as `--licence`, `--thinks` and `--max-params 9B` narrow
+  it down.
 - **`add`** downloads from Hugging Face: it shows the file, its size
   and licence first, resumes a broken download, and checks the file
   against Hugging Face's SHA-256. A licence other than MIT or Apache-2.0
