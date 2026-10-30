@@ -67,6 +67,37 @@ upgrade, so the permission stays. Without the app they go through
 On Linux, itero uses the first of `notify-send` (libnotify), `gdbus` (the
 freedesktop notification service) and `kdialog` (KDE) that it finds.
 
+## Upgrading
+
+Upgrade the files the way you installed them:
+
+```bash
+brew upgrade aegea-dev/tap/itero   # Homebrew; add aegea-dev/tap/itero-ai if you have it
+curl -fsSL https://itero.sh/install | sh   # the install script
+git pull && make install           # from source
+```
+
+A daemon that is already running keeps the itero it started with: the
+new files change nothing until it starts again. If you run itero as a
+service ([Start at login](/guides/service/)), restart it:
+
+```bash
+itero service restart
+```
+
+It stops the daemon and the itero-ai it started, and starts the daemon
+again on the new version; itero-ai starts again, new too, with the next
+`#ai` step. A run under way goes on where it was. Without the
+service, stop `itero daemon` (Ctrl-C) and start it again.
+
+Check that the daemon runs the new version: in a workspace,
+[`itero info`](/commands/info/) shows the running daemon under `daemon`,
+with its `itero` (the workspace's own `itero` is the one that made it).
+
+A release that changes how workflows or actions are written says so in
+its notes, under **Breaking**; run [`itero check`](/commands/check/) in
+each workspace after upgrading, and it names what to change.
+
 ## Check it
 
 ```bash

@@ -38,8 +38,12 @@ class Itero < Formula
 
   def caveats
     <<~EOS
-      Start a workspace's daemon at login, in that workspace:
+      Start the machine's daemon at login, for the workspaces on its list:
+        itero workspace add      (in each workspace)
         itero service install
+
+      After an upgrade, run the new itero:
+        itero service restart
 
       On macOS, notifications come from itero (Itero.app, in this formula's
       libexec); macOS asks once to allow them.
