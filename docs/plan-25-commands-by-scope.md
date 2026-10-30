@@ -83,8 +83,9 @@ Names and aliases: `workspace` (`ws`), `workflow` (`wf`), `action`
 - An action that runs `itero emit` now reaches every workspace; one that
   means its own workspace runs `itero ws emit` (it runs in its workspace,
   so the folder picks it). The docs say which to use.
-- Suggestion, to confirm: the machine's API gets `POST /events`, sending
-  to every workspace, as `itero emit` does. Not in this plan unless asked.
+- The machine's API gets `POST /events`, sending to every workspace, as
+  `itero emit` does: one id per workspace in its answer. `POST
+  /ws/<name>/events` stays the one workspace's.
 
 ## `itero secret` and `itero ws secret`
 
@@ -95,22 +96,21 @@ Names and aliases: `workspace` (`ws`), `workflow` (`wf`), `action`
   a renamed workspace keeps its secrets).
 - `$$NAME` is looked up in the workspace's own secrets, then the
   machine's, then the workspace's `.env`, then the environment: the first
-  found. Suggestion, to confirm: the workspace's own secret before the
-  machine's, so one workspace can use another account without changing
-  the others.
+  found. The workspace's own secret comes before the machine's, so one
+  workspace can use another account without changing the others.
 - `itero check`'s warning (a name both a secret and an environment
   variable) covers both kinds of secret.
 
 ## The commands that moved
 
-Suggestion, to confirm: a command that moved is an error naming its new
-form, for the release that moves it: `itero wf runs` says "itero ws wf
+A command that moved is an error naming its new form, for the release that moves it: `itero wf runs` says "itero ws wf
 runs". They are hidden from `itero help` and completion. Nothing else
 of the old forms stays (no aliases).
 
 ## What stays
 
-- The HTTP API: `/health`, `/workspaces`, `/ws/<name>/...` as they are.
+- The HTTP API: `/health`, `/workspaces`, `/ws/<name>/...` as they are;
+  `POST /events` is new on the machine's API.
 - What each command prints, but for `itero info` (new) and `itero emit`
   (one line per workspace).
 - Completion: names (workflows, actions, runs) come from the workspace of
@@ -128,6 +128,8 @@ of the old forms stays (no aliases).
 - `src/engine/secrets.rs`: a workspace's secrets (set, get, the index of
   names), and the lookup order in `get_in`.
 - `src/cli/complete.rs`: names from `--ws` when given.
+- `src/engine/http.rs`: the machine's `POST /events`, through the same
+  function as `itero emit`.
 - Every message that names a command (`itero workflow list lists them`,
   `itero wf runs`, `itero action errors`, `itero check`, ...).
 - Tests: `tests/cli.rs` and every test that runs a moved command; the
