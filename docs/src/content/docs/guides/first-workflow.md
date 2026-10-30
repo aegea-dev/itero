@@ -29,7 +29,7 @@ if curl -fsS -o /dev/null --max-time 10 "$url"; then echo true; else echo false;
 chmod +x actions/ping
 ```
 
-It gets its values as environment variables (`$url`). What it prints is
+It gets its args as environment variables (`$url`). What it prints is
 its result, `true` or `false`: the next step has it as `$output`.
 
 ## 3. The workflow
@@ -42,28 +42,29 @@ its result, `true` or `false`: the next step has it as `$output`.
   "steps": [
     { "#ping": { "args": { "url": "https://example.com" } } },
     { "#notify": { "on": [{ "$output": false }],
-                   "args": { "title": "Site is down", "text": "$url" } } }
+                   "args": { "title": "Site is down", "text": "https://example.com does not answer" } } }
   ]
 }
 ```
 
 - `on`: when it runs. Every five minutes, or when a `site.check` event
   comes, so you can try it now.
-- `#ping`: run the action, with `url` as its value. A step's args also
-  join the run's **state**, the values every later step sees.
+- `#ping`: run the action, with `url` as its arg. An action gets its
+  args and nothing else.
 - `#notify`: show a notification (it is built in), but only when its `on`
-  holds: `#ping` printed `false`. Its text is the state's `url`.
+  holds: `#ping` printed `false`.
 
 ## The expressions
 
 | Write | Means |
 |---|---|
-| `"$url"` | the state's `url` |
+| `"$event.url"` | the `url` of the event that started the run |
 | `"$output"` | the step before's result |
-| `"$url is down"` | a text with the state's `url` in it |
+| `"$steps.ping"` | `#ping`'s result, by its name, in any later step |
+| `"$event.url is down"` | a text with the event's `url` in it |
 | `{ "$output": false }` | holds when the step before printed exactly `false` |
-| `{ "has": "$url" }` | holds when there is a `url` |
-| `"$$TOKEN"` | the secret `TOKEN` ([Args and secrets](/guides/secrets/)) |
+| `{ "has": "$event.url" }` | holds when the event has a `url` |
+| `"$$TOKEN"` | the secret `TOKEN`, or a value in `.env` ([Args and secrets](/guides/secrets/)) |
 
 A condition is a field and the value it must have; a step whose `on` does
 not hold is skipped.

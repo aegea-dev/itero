@@ -12,7 +12,7 @@ the machine.
 
 ```json
 { "#ai": { "args": { "model": "unsloth/Qwen3.5-4B-GGUF",
-                     "text": "Sum up this mail in one line: $output.body" } } }
+                     "text": "Sum up this mail in one line: $event.body" } } }
 ```
 
 `$output` is the answer, as text. Two other kinds of answer hold the
@@ -21,7 +21,7 @@ model to a form, so the next steps can rely on it:
 **One of a list:** `$output` is exactly one of the labels.
 
 ```json
-{ "#ai": { "args": { "model": "unsloth/Qwen3.5-4B-GGUF", "text": "$output.body",
+{ "#ai": { "args": { "model": "unsloth/Qwen3.5-4B-GGUF", "text": "$event.body",
                      "choose": ["urgent", "later", "spam"] } } }
 ```
 
@@ -29,7 +29,7 @@ model to a form, so the next steps can rely on it:
 types.
 
 ```json
-{ "#ai": { "args": { "model": "unsloth/Qwen3.5-4B-GGUF", "text": "$output.body",
+{ "#ai": { "args": { "model": "unsloth/Qwen3.5-4B-GGUF", "text": "$event.body",
                      "fields": { "urgent": "boolean", "amount": "number", "due": "date" } } } }
 ```
 
@@ -37,7 +37,7 @@ A condition reads them as any step's result:
 
 ```json
 { "#notify": { "on": [{ "$output.urgent": true }],
-               "args": { "title": "Urgent", "text": "$output.body" } } }
+               "args": { "title": "Urgent", "text": "$event.subject" } } }
 ```
 
 For `choose` and `fields`, the model is held to the form in two ways:

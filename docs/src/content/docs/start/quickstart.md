@@ -16,12 +16,14 @@ action `#hello`, then show what it said.
 
 ```json
 { "on": [{ "event": "greet.someone" }],
-  "steps": ["#hello", { "#notify": { "args": { "text": "$output" } } }] }
+  "steps": [{ "#hello": { "args": { "name": "$event.name" } } },
+            { "#notify": { "args": { "text": "$output" } } }] }
 ```
 
-An action, `actions/hello`: any executable file. It gets the event's
-fields as environment variables, and what it prints is its result, which
-`#notify` is given as its text: `$output`.
+An action, `actions/hello`: any executable file. It gets its args as
+environment variables (`name`, the event's `name`: `$event.name`), and
+what it prints is its result, which `#notify` is given as its text:
+`$output`.
 
 ```sh
 #!/bin/sh

@@ -76,7 +76,7 @@ Types starting with `itero.`, `action.`, `timer.`, `run.`, `workflow.` or
 
 - **It starts a run** of every workflow whose `on` has an `event` of its
   type, whose conditions hold over its data, and that is not `off` or
-  outside its `from` and `until`. Its data is the run's first state.
+  outside its `from` and `until`. Its data is the run's `$event`.
   Every such workflow starts, side by side. With `runs` runs under way
   ([`limits`](/reference/itero-config/#limits)), it waits its turn.
 - **It reaches the steps waiting for data** (a step exited 75) that it
@@ -84,8 +84,8 @@ Types starting with `itero.`, `action.`, `timer.`, `run.`, `workflow.` or
   printed and agrees with it on every one they share, as the same JSON
   value (`"1042"` and `1042` differ). `{"payment_ref":
   "pay-1", "paid": true}` matches the step that printed `{"payment_ref":
-  "pay-1"}`, and every waiting step it matches gets it. Its data is that
-  step's `$output`, and the step runs again.
+  "pay-1"}`, and every waiting step it matches gets it. The step runs
+  again, and its action gets the event's data as `$event`.
 - A run that starts waiting gets the matching events that came since it
   started, so a fast reply is not missed.
 
@@ -97,7 +97,7 @@ An event is sent and forgotten, unless its sender asks what came of it:
 
 - **Wait for it**, for runs that end soon: `itero emit --wait` returns when
   the runs it started have ended and prints them as JSON, each with its
-  status and state; `POST /events?wait=60` answers the same
+  status and state (`event`, `output`, `steps`); `POST /events?wait=60` answers the same
   ([`itero emit`](/commands/emit/#waiting-for-the-answer)).
 - **Let the workflow post it**, for runs that may wait for days: the app
   sends its URL in the event's data, and the workflow's `success`,
@@ -107,7 +107,8 @@ An event is sent and forgotten, unless its sender asks what came of it:
 ## Watching files
 
 ```json
-{ "on": [{ "path": "~/Pictures/inbox" }], "steps": ["#make-thumbnails"] }
+{ "on": [{ "path": "~/Pictures/inbox" }],
+  "steps": [{ "#make-thumbnails": { "args": { "folder": "$event.path" } } }] }
 ```
 
 The daemon watches every `path` of every workflow itself, with the OS's
@@ -139,9 +140,9 @@ prints the files not seen before, as a JSON list:
 
 ```sh
 #!/bin/sh
-# the files in $path not seen before, as a JSON list; remembers them all
+# the files in $folder not seen before, as a JSON list; remembers them all
 now=$(mktemp)
-ls -1 "$path" | sort > "$now"
+ls -1 "$folder" | sort > "$now"
 touch "$ITERO_MEMORY"
 comm -13 "$ITERO_MEMORY" "$now" | jq -R . | jq -sc .
 mv "$now" "$ITERO_MEMORY"
@@ -149,7 +150,7 @@ mv "$now" "$ITERO_MEMORY"
 
 ```json
 { "on": [{ "path": "~/Inbox" }],
-  "steps": ["#new-files",
+  "steps": [{ "#new-files": { "args": { "folder": "$event.path" } } },
             { "#notify": { "args": { "title": "New in Inbox", "text": "$output" } } }] }
 ```
 

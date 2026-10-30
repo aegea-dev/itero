@@ -13,7 +13,7 @@ itero check [--json]
 ```
 
 It reads every workflow, action and connector. It prints each workflow with its
-id, its entry in `itero.config.json`, its settings, its runs so far and its last run, then the actions and
+id, its entry in `itero.config.json`, its runs so far and its last run, then the actions and
 workflows its steps name and where each is; then each connector. Internal
 workflows come last, apart.
 

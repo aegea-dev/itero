@@ -43,7 +43,7 @@ and a workflow, `workflows/beacon.json`:
 ```json
 { "on": [{ "schedule": "* * * * *" }],
   "steps": [{ "#check-site": { "args": { "url": "http://localhost:3000" } } }],
-  "error": [{ "#notify": { "args": { "title": "beacon", "text": "$why" } } }] }
+  "error": [{ "#notify": { "args": { "title": "beacon", "text": "$output.why" } } }] }
 ```
 
 With `{}` in an `itero.config.json` beside them, `itero daemon` runs it. The
@@ -94,9 +94,10 @@ A model is one more program to chain, used only where judgment is needed:
 {
   "on": [{ "event": "mail.received" }],
   "steps": [
-    { "#ai": { "args": { "ask": "Summarize this mail in one line, and rate it: important, normal or spam." } } },
+    { "#ai": { "args": { "system": "Summarize this mail in one line, and rate it: important, normal or spam.",
+                         "text": "$event.subject\n\n$event.body" } } },
     { "#notify": { "on": [{ "$output.rating": "important" }],
-                   "args": { "title": "$from", "text": "$output.summary" } } }
+                   "args": { "title": "$event.from", "text": "$output.summary" } } }
   ]
 }
 ```

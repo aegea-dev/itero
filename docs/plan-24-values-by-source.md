@@ -60,8 +60,10 @@ the event, from a step's args in the workflow file, or from `.env`.
 - `as` names a step for this, anywhere (today only inside a group): the
   same action twice, `"as": "eu"` and `"as": "us"`, are `$steps.eu` and
   `$steps.us`.
-- A step name used twice in one workflow (its steps and its lists
-  together) without `as` is an error of `itero check`, naming both.
+- A name two steps have (the same action twice, without `as`) is
+  fine until a `$steps.<name>` reads it: then `itero check` refuses it,
+  asking for an `as`. (The same action in the `success`, `failure` and
+  `error` lists, or `#notify` twice, is common and needs nothing.)
 - Steps side by side: each one's result under its own name
   (`$steps.size`, `$steps.type`); this replaces `$output.#size`.
 - `$steps.x` naming no step of the workflow is an error of `itero

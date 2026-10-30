@@ -35,7 +35,7 @@ A workflow on one is written like any other:
 
 ```json
 { "on": [{ "event": "itero.run.error" }],
-  "steps": [{ "#notify": { "args": { "title": "itero", "text": "$workflow: $why" } } }] }
+  "steps": [{ "#notify": { "args": { "title": "itero", "text": "$event.workflow: $event.why" } } }] }
 ```
 
 An event about a run never starts its own workflow, so a broken workflow
@@ -45,7 +45,7 @@ end would otherwise start each other forever. To start a workflow when
 another one is done, name it in the event's condition:
 
 ```json
-{ "on": [{ "event": "itero.run.done" }, { "$workflow": "nightly-backup" }],
+{ "on": [{ "event": "itero.run.done" }, { "$event.workflow": "nightly-backup" }],
   "steps": ["#upload-report"] }
 ``` No run waits for these events:
 they only start workflows.
