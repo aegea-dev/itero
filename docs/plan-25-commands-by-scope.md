@@ -43,7 +43,10 @@ whether it is about the machine or about one workspace.
 
 Names and aliases: `workspace` (`ws`), `workflow` (`wf`), `action`
 (`ac`), `connector` (`cn`). `connector` keeps its name: renaming it to
-`event` would clash with the events it prints.
+`event` would clash with the events it prints. Help shows each alias after its
+command's name, and clap's own note after the text, as both:
+`action (ac)  The actions, the ones that break, and their repeat
+[aliases: ac]`.
 
 ## Which workspace
 
