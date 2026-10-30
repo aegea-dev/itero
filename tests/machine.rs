@@ -321,17 +321,17 @@ fn one_api_for_the_machine_each_workspace_under_its_name() {
     });
     // an event posted to one workspace runs there only
     let r = http()
-        .post(format!("http://127.0.0.1:{port}/w/{na}/events"))
+        .post(format!("http://127.0.0.1:{port}/ws/{na}/events"))
         .json(&serde_json::json!({ "type": "deneme.geldi" }))
         .send()
         .unwrap();
     assert_eq!(r.status().as_u16(), 202);
     until("a's workflow", || a.join("çıktı").is_file());
     assert!(!b.join("çıktı").exists());
-    let (code, runs) = get(port, &format!("/w/{na}/runs"));
+    let (code, runs) = get(port, &format!("/ws/{na}/runs"));
     assert_eq!(code, 200, "{runs}");
     assert_eq!(runs.as_array().map(Vec::len), Some(1), "{runs}");
-    let (code, h) = get(port, &format!("/w/{nb}/health"));
+    let (code, h) = get(port, &format!("/ws/{nb}/health"));
     assert_eq!(
         (code, &h["workspace"]["name"]),
         (200, &Value::from(nb.as_str()))
@@ -343,7 +343,7 @@ fn one_api_for_the_machine_each_workspace_under_its_name() {
         Some(true),
         "{h}"
     );
-    let (code, e) = get(port, "/w/yok/runs");
+    let (code, e) = get(port, "/ws/yok/runs");
     assert_eq!(code, 404);
     assert!(
         e["error"]
@@ -488,13 +488,13 @@ fn info_in_a_listed_workspace_names_the_machines_daemon() {
     let port = free_port();
     let _d = m.daemon_all_on(port);
     until("a running", || {
-        get(port, &format!("/w/{na}/health")).0 == 200
+        get(port, &format!("/ws/{na}/health")).0 == 200
     });
     let v = m.json(&a, &["info", "--json"]);
     let d = &v["daemon"];
     assert_eq!(d["running"], true, "{v}");
     assert_eq!(d["run_by"], "machine", "{v}");
-    let api = format!("http://127.0.0.1:{port}/w/{na}/");
+    let api = format!("http://127.0.0.1:{port}/ws/{na}/");
     assert_eq!(d["api"], api.as_str(), "{v}");
     let text = m.ok(&a, &["info"]);
     assert!(

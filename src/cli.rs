@@ -565,7 +565,7 @@ struct Answering {
 }
 
 /// The daemon that runs this workspace, when one answers for its journal:
-/// the machine's, under `/w/<name>/`, else the workspace's own on its port.
+/// the machine's, under `/ws/<name>/`, else the workspace's own on its port.
 fn daemon_for(
     ws: &crate::workspace::Workspace,
     j: &crate::engine::journal::Journal,
@@ -573,7 +573,7 @@ fn daemon_for(
     let me = j.workspace()?;
     let mine = |h: &serde_json::Value| h["workspace"]["id"] == me.id.as_str();
     if let Some(port) = crate::engine::http::machine_port() {
-        let api = format!("http://127.0.0.1:{port}/w/{}/", me.name);
+        let api = format!("http://127.0.0.1:{port}/ws/{}/", me.name);
         if let Some(health) = health_at(&api).filter(mine) {
             return Ok(Some(Answering {
                 api,
