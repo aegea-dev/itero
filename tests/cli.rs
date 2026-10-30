@@ -1,4 +1,6 @@
 //! The command line: the commands by kind, their args and settings, secrets.
+#[path = "common/stop.rs"]
+mod stop;
 use std::path::Path;
 use std::process::Output;
 
@@ -721,8 +723,7 @@ impl Daemon {
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        stop::stop(&mut self.0);
     }
 }
 

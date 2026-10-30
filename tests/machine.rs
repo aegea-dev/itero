@@ -2,6 +2,8 @@
 //! daemon that runs them. Every command runs with HOME and
 //! XDG_STATE_HOME in a temporary folder.
 #![cfg(unix)]
+#[path = "common/stop.rs"]
+mod stop;
 use itero::engine::journal::Journal;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -13,8 +15,7 @@ struct Daemon(Child);
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        stop::stop(&mut self.0);
     }
 }
 

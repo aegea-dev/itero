@@ -3,6 +3,8 @@
 //! failed or error.
 #![cfg(unix)]
 mod common;
+#[path = "common/stop.rs"]
+mod stop;
 use chrono::{DateTime, Utc};
 use itero::engine::daemon::{Pass, next_due, run_once};
 use itero::engine::journal::{Journal, Run};
@@ -1346,8 +1348,7 @@ struct Running(std::process::Child);
 
 impl Drop for Running {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        stop::stop(&mut self.0);
     }
 }
 
