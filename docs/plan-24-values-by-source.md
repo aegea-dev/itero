@@ -61,6 +61,8 @@ And an action gets only its args.
   together) without `as` is an error of `itero check`, naming both.
 - Steps side by side: each one's result under its own name
   (`$steps.size`, `$steps.type`); this replaces `$output.#size`.
+- `$steps.x` naming no step of the workflow is an error of `itero
+  check` (a typo would otherwise be a silent `null`).
 - A step that has not run (yet, or at all): its name gives nothing
   (`null`, or empty inside text), as a missing field does today.
 - A step that waited: its result is what it printed once done.
@@ -147,5 +149,6 @@ workflows change); the examples' `bun test`.
 One PR, commits split by topic (engine and its tests; examples; docs),
 each under 30 files. A minor release, with a Breaking paragraph: the
 three words, an action gets only its args (environment and stdin),
-`strict` gone, the lists' `$output`. The model harness's rebuilt guide
+`strict` gone, the lists' `$output`; runs under way when upgrading may
+end in error, their state having the old shape. The model harness's rebuilt guide
 teaches the new form from the start.
