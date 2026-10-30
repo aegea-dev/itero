@@ -55,3 +55,6 @@ chrono-tz = "~0.10"
 tempfile = "~3.27.0"
 # a download that breaks, in the tests of itero ai models add
 futures-core = "~0.3.31"
+# keyring's own core: its in-memory store stands in for the OS secret store
+# in the tests of secrets
+keyring-core = "~1.0.1"

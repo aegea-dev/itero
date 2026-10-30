@@ -117,3 +117,35 @@ fn a_shipped_app_with_no_version_is_an_error_naming_it() {
     let err = up_to_date(&bad, &stable(&d.path().join("ev")), &d.path().join("k")).unwrap_err();
     assert!(err.contains("Kırık.app"), "{err}");
 }
+
+#[test]
+fn a_copy_waits_for_the_lock_another_holds_and_keeps_links_as_links() {
+    let d = tempfile::tempdir().unwrap();
+    let st = stable(&d.path().join("ev"));
+    let lock = d.path().join("durum/notifier.lock");
+    let v40 = app(&d.path().join("Cellar/40/Itero.app"), 40, "kırk");
+    // a framework's links, as a real bundle has them
+    std::os::unix::fs::symlink("MacOS/itero-notifier", v40.join("Contents/kısayol")).unwrap();
+    // another step copying: this one waits for it
+    let held = itero::engine::lock::take_file(&lock, "başka adım")
+        .ok()
+        .unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        drop(held);
+    });
+    let p = up_to_date(&v40, &st, &lock).unwrap();
+    release.join().unwrap();
+    assert_eq!(run(&p), "sürüm 40");
+    assert_eq!(
+        std::fs::read_link(st.join("Contents/kısayol")).unwrap(),
+        Path::new("MacOS/itero-notifier")
+    );
+    // a lock that cannot be made: said, nothing copied
+    let file = d.path().join("dosya");
+    std::fs::write(&file, "").unwrap();
+    let st2 = stable(&d.path().join("ev2"));
+    let e = up_to_date(&v40, &st2, &file.join("notifier.lock")).unwrap_err();
+    assert!(e.contains("dosya"), "{e}");
+    assert!(!st2.exists());
+}
