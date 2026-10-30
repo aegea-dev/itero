@@ -83,13 +83,13 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// The workflows, their runs and their settings
+    /// The workflows and their runs
     #[command(visible_alias = "wf")]
     Workflow {
         #[command(subcommand)]
         cmd: WorkflowCmd,
     },
-    /// The actions, the ones that break, and their args
+    /// The actions, the ones that break, and their repeat
     Action {
         #[command(subcommand)]
         cmd: ActionCmd,
@@ -238,42 +238,11 @@ pub enum WorkflowCmd {
         #[arg(long)]
         json: bool,
     },
-    /// A workflow's settings: the JSON object its runs start with
-    Config {
-        #[command(subcommand)]
-        cmd: ConfigCmd,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ConfigCmd {
-    /// Show a workflow's settings
-    Get {
-        #[arg(add = complete::workflows())]
-        workflow: String,
-        #[arg(long)]
-        json: bool,
-    },
-    /// Set a workflow's settings, a JSON object
-    Set {
-        #[arg(add = complete::workflows())]
-        workflow: String,
-        /// The settings, as JSON
-        #[arg(
-            value_name = "DATA",
-            required_unless_present = "file",
-            conflicts_with = "file"
-        )]
-        data: Option<String>,
-        /// Read them from this file
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
-    },
 }
 
 #[derive(Subcommand)]
 pub enum ActionCmd {
-    /// Each action, its files and whether it has args
+    /// Each action, its files and whether it repeats
     List {
         #[arg(long)]
         json: bool,
@@ -288,11 +257,6 @@ pub enum ActionCmd {
         limit: usize,
         #[arg(long)]
         json: bool,
-    },
-    /// An action's args: the data its step gets
-    Args {
-        #[command(subcommand)]
-        cmd: ActionArgsCmd,
     },
     /// An action's repeat: its step runs once per item
     Repeat {
@@ -820,17 +784,6 @@ fn dispatch(cli: Cli) -> Result<()> {
                     },
                     json,
                 )?,
-                WorkflowCmd::Config {
-                    cmd: ConfigCmd::Get { workflow, json },
-                } => workflow::config_get(&ws, &workflow, json)?,
-                WorkflowCmd::Config {
-                    cmd:
-                        ConfigCmd::Set {
-                            workflow,
-                            data,
-                            file,
-                        },
-                } => workflow::config_set(&ws, &workflow, data, file)?,
             }
         }
         Cmd::Action { cmd } => {
@@ -842,12 +795,6 @@ fn dispatch(cli: Cli) -> Result<()> {
                     limit,
                     json,
                 } => kinds::errors(&ws, action.as_deref(), limit, json)?,
-                ActionCmd::Args {
-                    cmd: ActionArgsCmd::Get { name, json },
-                } => kinds::args_get(&ws, kinds::Kind::Action, &name, json)?,
-                ActionCmd::Args {
-                    cmd: ActionArgsCmd::Set { name, data, file },
-                } => kinds::args_set(&ws, kinds::Kind::Action, &name, data, file)?,
                 ActionCmd::Repeat {
                     cmd: ActionRepeatCmd::Get { name, json },
                 } => kinds::entry_get(&ws, kinds::Kind::Action, &name, "repeat", json)?,

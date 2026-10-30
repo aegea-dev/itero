@@ -59,7 +59,7 @@ fn a_run_is_told_step_by_step() {
             "on": [{ "event": "sipariş.geldi" }],
             "steps": [
                 "#öde",
-                { "#atla": { "on": [{ "$yok": true }] } },
+                { "#atla": { "on": [{ "$event.yok": true }] } },
                 "#gönder"
             ]
         })
@@ -73,7 +73,7 @@ fn a_run_is_told_step_by_step() {
     executable(
         root,
         "actions/öde",
-        "#!/bin/sh\ncase \"$output\" in *'\"tamam\":true'*) exit 0 ;; esac\necho '{\"ödeme\": \"bekliyor\", \"sipariş\": 1}'; exit 75\n",
+        "#!/bin/sh\ncase \"$event\" in *'\"tamam\":true'*) exit 0 ;; esac\necho '{\"ödeme\": \"bekliyor\", \"sipariş\": 1}'; exit 75\n",
     );
     executable(root, "actions/atla", "#!/bin/sh\n");
     executable(

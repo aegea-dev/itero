@@ -261,9 +261,9 @@ fn labels(text: &str) -> Result<Vec<String>, String> {
 }
 
 /// The built-in `#notify`. One that waits (with `$buttons`, or `$wait`)
-/// says "not yet" with its notification's id as its `$output`, which the
-/// click is matched on; run again while waiting, it shows nothing, and is
-/// done with the click as its `$output` once one has come.
+/// says "not yet" with its notification's id, which the click is matched
+/// on; run again while waiting, it shows nothing, and is done with the
+/// click (its `$event`) as its result once one has come.
 fn notify(r: &StepRun) -> Result<Outcome, Failure> {
     let get = |k: &str| r.env.get(k).cloned();
     let text = get("text").ok_or_else(|| Failure::Error("#notify needs $text".into()))?;
@@ -273,12 +273,11 @@ fn notify(r: &StepRun) -> Result<Outcome, Failure> {
     };
     let wait = !buttons.is_empty() || r.env.get("wait").is_some_and(|w| w == "true");
     if wait && r.waiting_since.is_some() {
-        let output = r.state.get("output").cloned().unwrap_or_default();
-        let clicked = output.get("answer").is_some();
-        return Ok(if clicked {
-            Outcome::Done(output)
-        } else {
-            Outcome::NotYet(output)
+        // the click that came, its `$event`; none yet: still waiting, for
+        // the same notification
+        return Ok(match r.input.get("event") {
+            Some(click) if click.get("answer").is_some() => Outcome::Done(click.clone()),
+            _ => Outcome::NotYet(Value::Null),
         });
     }
     let data = get("data");
@@ -699,9 +698,10 @@ pub struct StepRun {
     /// Its values, as environment variables.
     #[serde(default)]
     pub env: std::collections::BTreeMap<String, String>,
-    /// The run's state, given on stdin.
+    /// Its stdin: `{"args": {...}}`, and `"event"` when it runs again
+    /// after waiting and an event came.
     #[serde(default)]
-    pub state: Map<String, Value>,
+    pub input: Map<String, Value>,
     /// `$ITERO_MEMORY`: the workflow's file to keep things in between runs.
     pub memory: PathBuf,
     /// `$ITERO_WAITING_SINCE`, when it runs again after waiting.
@@ -791,7 +791,7 @@ pub fn run_step_telling(
     })?;
     let mut stdin = child.stdin.take().expect("piped");
     // an action that reads nothing closes its end early: not an error
-    let _ = writeln!(stdin, "{}", Value::Object(r.state.clone()));
+    let _ = writeln!(stdin, "{}", Value::Object(r.input.clone()));
     drop(stdin);
     let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
     // a line on stderr may come in two pieces: the start of one is kept

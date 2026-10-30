@@ -20,8 +20,6 @@ pub struct Flow {
     pub timeout: Option<Duration>,
     /// What it is: its entry in itero.config.json, not its file.
     pub meta: Meta,
-    /// Its entry's settings: a run's state starts with them.
-    pub settings: Map<String, Value>,
 }
 
 /// What a person says about a workflow: a few keys itero knows, and any
@@ -58,24 +56,26 @@ pub fn active(meta: &Meta, now: DateTime<Utc>) -> bool {
     !meta.off && meta.from.is_none_or(|f| now >= f) && meta.until.is_none_or(|u| now < u)
 }
 
-/// A workflow's entry in itero.config.json: what it is, and its settings.
-pub fn entry(v: &Value) -> Result<(Meta, Map<String, Value>), String> {
+/// A workflow's entry in itero.config.json: what it is. The manifest holds
+/// no values to work on.
+pub fn entry(v: &Value) -> Result<Meta, String> {
     let Value::Object(m) = v else {
         return Err("an entry is an object: { \"description\": \"...\" }".into());
     };
     let flag = |k: &str, v: &Value| v.as_bool().ok_or(format!("{k} is true or false"));
     let mut out = Meta::default();
-    let mut settings = Map::new();
     for (k, v) in m {
         given_by_itero(k)?;
         match k.as_str() {
             "description" => {
                 out.description = Some(v.as_str().ok_or("description is text")?.into())
             }
-            "settings" => match v {
-                Value::Object(s) => settings = s.clone(),
-                _ => return Err("settings are an object: { \"name\": value }".into()),
-            },
+            "settings" => {
+                return Err(
+                    "settings are gone: itero.config.json holds no values; give them in .env ($$NAME), in a step's args, or in the event"
+                        .into(),
+                );
+            }
             "from" => out.from = Some(moment(k, v, false)?),
             "until" => out.until = Some(moment(k, v, true)?),
             "off" => out.off = flag(k, v)?,
@@ -85,7 +85,7 @@ pub fn entry(v: &Value) -> Result<(Meta, Map<String, Value>), String> {
             }
         }
     }
-    Ok((out, settings))
+    Ok(out)
 }
 
 /// A date or an RFC 3339 time. A date is a whole day: `from` it starts at
@@ -116,10 +116,11 @@ pub struct On {
     pub schedules: Vec<String>,
     /// `{"path": "/var/mail/$$USER"}`: files or folders, as written.
     pub paths: Vec<String>,
-    /// `{"has": ...}`: `$order` must be in the state, `$$API` defined (an
-    /// environment variable or a secret); kept as written.
+    /// `{"has": ...}`: `$event.order` must have a value, `$$API` be
+    /// defined (a secret, `.env` or the environment); kept as written.
     pub has: Vec<String>,
-    /// `{"$paid": true}`: state values that must be exactly these, by name.
+    /// `{"$event.paid": true}`: values that must be exactly these, by path
+    /// (`event.paid`).
     pub equal: Map<String, Value>,
 }
 
@@ -133,8 +134,11 @@ pub enum Step {
         args: Value,
         on: Option<Box<On>>,
         undo: Option<Name>,
-        /// Its args reach its action only, not the run's state.
-        strict: bool,
+        /// The undo's args, when it is written as a step: filled when it
+        /// runs, `$output` being the result of the step it takes back.
+        undo_args: Value,
+        /// Its `as`: the name its result is kept by (`$steps.<as>`).
+        as_name: Option<String>,
     },
     /// Actions and workflows that run side by side; the next step waits as
     /// the group says.
@@ -159,7 +163,6 @@ pub struct Member {
     /// As a step's: an object, a list of objects, or a `"$name"`.
     pub args: Value,
     pub on: Option<Box<On>>,
-    pub strict: bool,
     /// `#name` for an action's step, the name for a workflow's, as
     /// [`Name::label`]; with `as`, that name the same way: `#mirror-1`.
     pub label: String,
@@ -173,7 +176,6 @@ impl Member {
             name,
             args: Value::Object(Map::new()),
             on: None,
-            strict: false,
         }
     }
 }
@@ -282,8 +284,20 @@ pub fn from_value(v: &Value) -> Result<Flow, String> {
     if f.steps.is_empty() {
         return Err("steps is empty".into());
     }
+    f.check_names()?;
     Ok(f)
 }
+
+/// The name a step's result is kept by, `$steps.<key>`: its `as`, else the
+/// action's name without `#`, or the workflow's.
+pub fn step_key(label: &str) -> String {
+    label.trim_start_matches('#').to_string()
+}
+
+/// Where a value comes from: `$event` (the event that started the run),
+/// `$output` (the step before), `$steps.<name>` (any step by its name),
+/// `$config` (the manifest).
+pub const ROOTS: [&str; 4] = ["event", "output", "steps", "config"];
 
 /// Whether `on`'s conditions hold over a run's state, `defined` telling
 /// which environment variables and secrets are. Its messages and
@@ -291,41 +305,69 @@ pub fn from_value(v: &Value) -> Result<Flow, String> {
 pub fn holds(on: &On, state: &Map<String, Value>, defined: &dyn Fn(&str) -> bool) -> bool {
     on.has.iter().all(|h| match h.strip_prefix("$$") {
         Some(n) => defined(n),
-        None => lookup(state, h.trim_start_matches('$')).is_some(),
+        None => lookup(state, h.trim_start_matches('$')).is_some_and(|v| !v.is_null()),
     }) && on.equal.iter().all(|(k, v)| lookup(state, k) == Some(v))
 }
 
-/// A state value by name, or one field of it: `output.count`.
-pub fn lookup<'s>(state: &'s Map<String, Value>, name: &str) -> Option<&'s Value> {
-    if let Some(v) = state.get(name) {
-        return Some(v);
+/// A value by its path from a root: `event.order`, `output.total`,
+/// `steps.fetch-rates.price`; fields at any depth.
+pub fn lookup<'s>(state: &'s Map<String, Value>, path: &str) -> Option<&'s Value> {
+    let mut parts = path.split('.');
+    let mut at = state.get(parts.next()?)?;
+    for p in parts {
+        at = at.as_object()?.get(p)?;
     }
-    let (n, field) = name.split_once('.')?;
-    state.get(n)?.as_object()?.get(field)
+    Some(at)
 }
 
-/// A value of args filled from the state. A whole `"$name"` or
-/// `"$name.field"` is the state's value, with its type, null when it has
-/// none; a whole secret, `"$$NAME"`, stays as written, for the action
-/// alone. Inside text each name is filled ([`pieces`]); texts in lists and
-/// objects are filled too. A secret inside text is refused, and so is a
-/// state value holding one.
+/// How far a path goes: the value at its end; or, when a field is asked
+/// of a text or a number, that value and the fields left (`$event.file.txt`
+/// with `file` a text is the file's name and `.txt`); else nothing.
+enum Found<'s> {
+    Whole(&'s Value),
+    Short(&'s Value, String),
+    Missing,
+}
+
+fn find<'s>(state: &'s Map<String, Value>, path: &str) -> Found<'s> {
+    let mut parts = path.split('.').peekable();
+    let Some(mut at) = parts.next().and_then(|r| state.get(r)) else {
+        return Found::Missing;
+    };
+    // `steps`' first part is a step's name, never a field of a text
+    let steps = path.starts_with("steps.");
+    let mut first = true;
+    while let Some(p) = parts.next() {
+        match at.as_object() {
+            Some(o) => match o.get(p) {
+                Some(v) => at = v,
+                None => return Found::Missing,
+            },
+            None if !(at.is_null() || steps && first) => {
+                let rest: Vec<&str> = std::iter::once(p).chain(parts).collect();
+                return Found::Short(at, format!(".{}", rest.join(".")));
+            }
+            None => return Found::Missing,
+        }
+        first = false;
+    }
+    Found::Whole(at)
+}
+
+/// A value of args filled from the state. A whole `"$event.count"` is the
+/// state's value, with its type, null when it has none; a whole secret,
+/// `"$$NAME"`, stays as written, for the action alone. Inside text each
+/// name is filled ([`pieces`]); texts in lists and objects are filled too.
+/// A secret inside text is refused, and so is a value holding one.
 pub fn fill(v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
     match v {
         Value::String(_) if secret_ref(v).is_some() => Ok(v.clone()),
         Value::String(text) => match state_ref(v) {
-            // "$file.txt", file not an object: the dot is text
-            Some(n)
-                if !state.contains_key(n)
-                    && n.split_once('.').is_some_and(|(base, _)| {
-                        state
-                            .get(base)
-                            .is_some_and(|b| !b.is_object() && !b.is_null())
-                    }) =>
-            {
-                fill_text(text, state).map(Value::String)
-            }
-            Some(n) => Ok(lookup(state, n).cloned().unwrap_or(Value::Null)),
+            Some(path) => match find(state, path) {
+                Found::Whole(v) => Ok(v.clone()),
+                Found::Short(..) => fill_text(text, state).map(Value::String),
+                Found::Missing => Ok(Value::Null),
+            },
             None => fill_text(text, state).map(Value::String),
         },
         Value::Array(items) => items
@@ -342,8 +384,8 @@ pub fn fill(v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
     }
 }
 
-/// The state names a value of args uses, whole or inside its texts, at
-/// any depth.
+/// The paths a value of args reads (`event.order`, `steps.ask.price`),
+/// whole or inside its texts, at any depth.
 pub fn names_in(v: &Value) -> Vec<String> {
     match v {
         Value::String(_) if secret_ref(v).is_some() => vec![],
@@ -353,7 +395,7 @@ pub fn names_in(v: &Value) -> Vec<String> {
         Value::String(text) => pieces(text)
             .into_iter()
             .filter_map(|p| match p {
-                Piece::Name { name, .. } => Some(name.to_string()),
+                Piece::Name(path) => Some(path.to_string()),
                 _ => None,
             })
             .collect(),
@@ -363,18 +405,46 @@ pub fn names_in(v: &Value) -> Vec<String> {
     }
 }
 
-/// A piece of a text with names in it.
+/// The `$word`s a value writes that are no value: not one of [`ROOTS`]
+/// (`$order`, `$why`), and not a secret.
+pub fn unknown_in(v: &Value) -> Vec<String> {
+    match v {
+        Value::String(text) => pieces(text)
+            .into_iter()
+            .filter_map(|p| match p {
+                Piece::Unknown(w) => Some(w.to_string()),
+                _ => None,
+            })
+            .collect(),
+        Value::Array(items) => items.iter().flat_map(unknown_in).collect(),
+        Value::Object(o) => o.values().flat_map(unknown_in).collect(),
+        _ => vec![],
+    }
+}
+
+/// What to write instead of a `$word` that is no value.
+pub fn instead(word: &str) -> String {
+    match word.split('.').next().unwrap_or(word) {
+        "why" | "failed_step" | "undo_failed" => format!("$output.{word}"),
+        _ if word.starts_with("output.#") => {
+            format!("$steps.{}", word.trim_start_matches("output.#"))
+        }
+        _ => format!("$event.{word}"),
+    }
+}
+
+/// A piece of a text with values in it.
 #[derive(Debug, PartialEq)]
 pub enum Piece<'t> {
     Text(String),
-    /// `$name`, or `$name.field`: a field when the value is an object that
-    /// has it, else the dot and the rest are text.
-    Name {
-        name: &'t str,
-        field: Option<&'t str>,
-    },
+    /// `$event.order`, `$output`, `$steps.ask.price`, `$config.name`: the
+    /// path, without `$`.
+    Name(&'t str),
     /// `$$NAME`, which no text may hold.
     Secret(&'t str),
+    /// `$order`, `$output.#size`: a word after `$` that is no value, kept as
+    /// text; `itero check` names what to write instead.
+    Unknown(&'t str),
 }
 
 /// A text cut into its pieces: `\$` is a dollar sign, and a `$` that
@@ -406,28 +476,41 @@ pub fn pieces(text: &str) -> Vec<Piece<'_>> {
             rest = &s[n..];
             continue;
         }
-        let n = name_len(after);
-        if n == 0 {
-            plain.push('$');
-            rest = after;
+        let n = path_len(after);
+        // `$output.#size`, the old form of a step's result, is no value
+        let old = n == "output".len()
+            && after[n..]
+                .strip_prefix(".#")
+                .is_some_and(|r| step_len(r) > 0);
+        if n > 0 && !old {
+            out.push(Piece::Text(std::mem::take(&mut plain)));
+            out.push(Piece::Name(&after[..n]));
+            rest = &after[n..];
             continue;
         }
-        let (name, mut tail) = after.split_at(n);
-        let mut field = None;
-        if let Some(f) = tail.strip_prefix('.')
-            && field_len(f) > 0
-        {
-            field = Some(&f[..field_len(f)]);
-            tail = &f[field_len(f)..];
+        let w = old_len(after);
+        if w > 0 {
+            plain.push('$');
+            plain.push_str(&after[..w]);
+            out.push(Piece::Unknown(&after[..w]));
+            rest = &after[w..];
+            continue;
         }
-        out.push(Piece::Text(std::mem::take(&mut plain)));
-        out.push(Piece::Name { name, field });
-        rest = tail;
+        plain.push('$');
+        rest = after;
     }
     plain.push_str(rest);
     out.push(Piece::Text(plain));
     out.retain(|p| *p != Piece::Text(String::new()));
-    out
+    // an unknown word is kept in the text too: join the texts around it
+    let mut joined: Vec<Piece> = vec![];
+    for p in out {
+        match (joined.last_mut(), p) {
+            (Some(Piece::Text(a)), Piece::Text(b)) => a.push_str(&b),
+            (_, p) => joined.push(p),
+        }
+    }
+    joined
 }
 
 fn fill_text(text: &str, state: &Map<String, Value>) -> Result<String, String> {
@@ -436,21 +519,19 @@ fn fill_text(text: &str, state: &Map<String, Value>) -> Result<String, String> {
     for p in pieces(text) {
         match p {
             Piece::Text(t) => out.push_str(&t),
+            Piece::Unknown(_) => {}
             Piece::Secret(n) => return Err(refused(format!("$${n}"))),
-            Piece::Name { name, field } => {
-                let whole = state.get(name);
-                let (v, rest) = match field {
-                    Some(f) => match whole.and_then(Value::as_object).and_then(|o| o.get(f)) {
-                        Some(v) => (Some(v), String::new()),
-                        None => (whole, format!(".{f}")),
-                    },
-                    None => (whole, String::new()),
+            Piece::Name(path) => {
+                let (v, rest) = match find(state, path) {
+                    Found::Whole(v) => (Some(v), String::new()),
+                    Found::Short(v, rest) => (Some(v), rest),
+                    Found::Missing => (None, String::new()),
                 };
                 match v {
                     None | Some(Value::Null) => {}
                     Some(v) if secret_ref(v).is_some() => {
                         return Err(refused(format!(
-                            "${name}, which holds {}",
+                            "${path}, which holds {}",
                             v.as_str().unwrap_or("")
                         )));
                     }
@@ -477,18 +558,56 @@ fn name_len(s: &str) -> usize {
         .map_or(s.len(), |(i, _)| i)
 }
 
-/// The length of the field `s` starts with: a name, or `#` and an action's
-/// name (letters, digits, `_` or `-`), which is how steps side by side
-/// keep a result that is no object: `$output.#size`. 0 when it starts with
-/// neither.
-fn field_len(s: &str) -> usize {
-    let Some(rest) = s.strip_prefix('#') else {
-        return name_len(s);
-    };
-    let n = rest
-        .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
-        .unwrap_or(rest.len());
-    if n == 0 { 0 } else { 1 + n }
+/// The length of a step's name `s` starts with, as `#name` has it:
+/// letters, digits, `_` or `-`.
+fn step_len(s: &str) -> usize {
+    s.find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
+        .unwrap_or(s.len())
+}
+
+/// The length of the value's path `s` starts with (after `$`): a root of
+/// [`ROOTS`], then `.` and a field (a step's name after `steps`), any
+/// number of times; 0 when `s` starts with no root.
+fn path_len(s: &str) -> usize {
+    let root = name_len(s);
+    if root == 0 || !ROOTS.contains(&&s[..root]) {
+        return 0;
+    }
+    let steps = &s[..root] == "steps";
+    let mut n = root;
+    let mut first = true;
+    while let Some(after) = s[n..].strip_prefix('.') {
+        let f = if steps && first {
+            step_len(after)
+        } else {
+            name_len(after)
+        };
+        if f == 0 {
+            break;
+        }
+        n += 1 + f;
+        first = false;
+    }
+    n
+}
+
+/// The length of a `$word` that is no value (`order`, `why`,
+/// `output.#size`, `input.path`), for `itero check` to name.
+fn old_len(s: &str) -> usize {
+    let n = name_len(s);
+    if n == 0 {
+        return 0;
+    }
+    match s[n..].strip_prefix('.') {
+        Some(after) => {
+            let f = after
+                .strip_prefix('#')
+                .map(|r| 1 + step_len(r))
+                .unwrap_or_else(|| name_len(after));
+            if f > 0 { n + 1 + f } else { n }
+        }
+        None => n,
+    }
 }
 
 /// Whether anything in `on` starts a run: an event, a schedule or a path.
@@ -510,7 +629,7 @@ pub fn is_message_type(s: &str) -> bool {
 
 /// `on`: a list of objects, each saying what it is with its key.
 fn on(v: &Value) -> Result<On, String> {
-    const FORMS: &str = "{\"event\": ...}, {\"schedule\": ...}, {\"path\": ...}, {\"$name\": value} or {\"has\": ...}";
+    const FORMS: &str = "{\"event\": ...}, {\"schedule\": ...}, {\"path\": ...}, {\"$event.x\": value} or {\"has\": ...}";
     let Value::Array(items) = v else {
         return Err(format!("on is a list of objects: {FORMS}"));
     };
@@ -556,21 +675,25 @@ fn on(v: &Value) -> Result<On, String> {
                         let s = n.as_str().ok_or(format!(
                             "on: has takes \"$name\", \"$$NAME\" or a list of them, not {v}"
                         ))?;
-                        let bare = s.strip_prefix("$$").or_else(|| s.strip_prefix('$'));
-                        match bare {
-                            Some(b) => {
+                        match (s.strip_prefix("$$"), s.strip_prefix('$')) {
+                            (Some(b), _) => {
                                 word(b, s)?;
                                 o.has.push(s.to_string());
                             }
-                            None => {
-                                return Err(format!("on: has \"{s}\" is not a $name or a $$NAME"));
+                            (None, Some(b)) => {
+                                o.has.push(format!("${}", value_path(b, s)?));
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "on: has \"{s}\" is not a value ($event.x) or a $$NAME"
+                                ));
                             }
                         }
                     }
                 }
                 _ => match k.strip_prefix('$') {
                     Some(n) if !n.starts_with('$') => {
-                        o.equal.insert(word(n, k)?, v.clone());
+                        o.equal.insert(value_path(n, k)?, v.clone());
                     }
                     _ => {
                         return Err(format!(
@@ -582,6 +705,15 @@ fn on(v: &Value) -> Result<On, String> {
         }
     }
     Ok(o)
+}
+
+/// A condition's value, `event.kind` for `$event.kind`; a `$word` that is
+/// no value says what to write instead.
+fn value_path(n: &str, whole: &str) -> Result<String, String> {
+    if path_len(n) == n.len() {
+        return Ok(n.to_string());
+    }
+    Err(format!("on: \"{whole}\" is no value: write {}", instead(n)))
 }
 
 fn word(n: &str, whole: &str) -> Result<String, String> {
@@ -603,7 +735,8 @@ fn step(v: &Value) -> Result<Step, String> {
             args: Value::Object(Map::new()),
             on: None,
             undo: None,
-            strict: false,
+            undo_args: Value::Object(Map::new()),
+            as_name: None,
         }),
         Value::Array(items) => Ok(Step::Side(Group {
             members: side_members(items, "a list side by side")?,
@@ -613,18 +746,13 @@ fn step(v: &Value) -> Result<Step, String> {
         Value::Object(m) if is_group(m) => group(v, m),
         Value::Object(m) => {
             let w = written(m)?;
-            if w.as_name.is_some() {
-                return Err(format!(
-                    "{}: as names a step side by side, in a group: {{ \"any\": [{{ \"#ask\": {{ \"as\": \"ask-1\" }} }}, ...] }}",
-                    w.key
-                ));
-            }
             Ok(Step::One {
                 name: w.name,
                 args: w.args,
                 on: w.on.map(Box::new),
                 undo: w.undo,
-                strict: w.strict,
+                undo_args: w.undo_args,
+                as_name: w.as_name,
             })
         }
         _ => Err("a step is a name, a list side by side, or { name: { data } }".into()),
@@ -638,8 +766,11 @@ fn step(v: &Value) -> Result<Step, String> {
 /// itero's.
 pub(crate) fn read_args(a: &Value) -> Result<Value, String> {
     let given = |name: &str, seen: &mut Vec<String>| -> Result<(), String> {
-        if name == "output" {
-            return Err("args: output is given by itero, the step before's result".into());
+        if name == "event" {
+            return Err(
+                "args: event is itero's: a waiting action gets the event that came as $event; name the arg otherwise"
+                    .into(),
+            );
         }
         if seen.iter().any(|s| s == name) {
             return Err(format!("args: {name} is given twice"));
@@ -647,8 +778,11 @@ pub(crate) fn read_args(a: &Value) -> Result<Value, String> {
         seen.push(name.to_string());
         Ok(())
     };
-    // a secret inside text: with no state, only that is refused
+    // a secret inside text, and a `$word` that is no value, are refused
     let no_secret = |v: &Value| {
+        if let Some(w) = unknown_in(v).first() {
+            return Err(format!("args: ${w} is no value: write {}", instead(w)));
+        }
         fill(v, &Map::new())
             .map(drop)
             .map_err(|why| format!("args: {why}"))
@@ -770,8 +904,8 @@ struct Written {
     args: Value,
     on: Option<On>,
     undo: Option<Name>,
-    strict: bool,
-    /// Its `as`, the name a group knows it by.
+    undo_args: Value,
+    /// Its `as`: the name its result is kept by.
     as_name: Option<String>,
 }
 
@@ -799,49 +933,65 @@ fn written(m: &Map<String, Value>) -> Result<Written, String> {
             ));
         }
     }
-    let undo = fields
-        .remove("undo")
-        .map(|u| match u.as_str() {
-            Some(s) => name(s).map_err(|e| format!("{k}: undo: {e}")),
-            None => Err(format!(
-                "{k}: undo is an action or a workflow, like \"#cluster-delete\""
-            )),
-        })
-        .transpose()?;
+    // a name, or a step with args: `{ "#küme-sil": { "args": { "id": "$output.id" } } }`
+    let (undo, undo_args) = match fields.remove("undo") {
+        None => (None, Value::Object(Map::new())),
+        Some(Value::String(s)) => (
+            Some(name(&s).map_err(|e| format!("{k}: undo: {e}"))?),
+            Value::Object(Map::new()),
+        ),
+        Some(Value::Object(u)) if u.len() == 1 => {
+            let (n, v) = u.iter().next().expect("one");
+            let args = match v {
+                Value::Object(f) if f.keys().all(|key| key == "args") => match f.get("args") {
+                    Some(a) => read_args(a).map_err(|why| format!("{k}: undo: {why}"))?,
+                    None => Value::Object(Map::new()),
+                },
+                _ => {
+                    return Err(format!(
+                        "{k}: undo: a step to undo takes args only: {{ \"{n}\": {{ \"args\": {{ ... }} }} }}"
+                    ));
+                }
+            };
+            (Some(name(n).map_err(|e| format!("{k}: undo: {e}"))?), args)
+        }
+        Some(_) => {
+            return Err(format!(
+                "{k}: undo is an action or a workflow, like \"#cluster-delete\", or one with args"
+            ));
+        }
+    };
     let args = match fields.remove("args") {
         None => Value::Object(Map::new()),
         Some(a) => read_args(&a).map_err(|why| format!("{k}: {why}"))?,
     };
-    let strict = match fields.remove("strict") {
-        None => false,
-        Some(Value::Bool(b)) => b,
-        Some(_) => return Err(format!("{k}: strict is true or false")),
-    };
+    if fields.remove("strict").is_some() {
+        return Err(format!(
+            "{k}: strict is gone: a step's args reach its action and nothing else now"
+        ));
+    }
     let as_name = match fields.remove("as") {
         None => None,
         Some(Value::String(a)) if plain(&a) => Some(a),
         Some(a) => {
             return Err(format!(
-                "{k}: as names the step in its group, without # or spaces, like \"mirror-1\", not {a}"
+                "{k}: as names the step's result ($steps.<as>), without # or spaces, like \"mirror-1\", not {a}"
             ));
         }
     };
     if let Some(other) = fields.keys().next() {
         return Err(format!(
-            "{k}: \"{other}\" is not one of args, on, undo, strict, as: a step's values go under args"
+            "{k}: \"{other}\" is not one of args, on, undo, as: a step's values go under args"
         ));
     }
     let name = name(k)?;
-    if strict && matches!(name, Name::Workflow(_)) {
-        return Err(format!("{k}: strict is for an action's step"));
-    }
     Ok(Written {
         key: k.clone(),
         name,
         args,
         on: when,
         undo,
-        strict,
+        undo_args,
         as_name,
     })
 }
@@ -870,7 +1020,6 @@ fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, String> {
                     name: w.name,
                     args: w.args,
                     on: w.on.map(Box::new),
-                    strict: w.strict,
                     label,
                 })
             }
@@ -1075,6 +1224,73 @@ impl Flow {
             .chain(&self.error)
     }
 
+    /// The names its steps' results are kept by, in every list, as
+    /// [`step_key`] gives them.
+    pub fn step_keys(&self) -> Vec<String> {
+        let mut out = vec![];
+        for s in self.all_steps() {
+            match s {
+                Step::One { name, as_name, .. } => {
+                    out.push(as_name.clone().unwrap_or_else(|| step_key(&name.label())))
+                }
+                Step::Side(g) => out.extend(g.members.iter().map(|m| step_key(&m.label))),
+            }
+        }
+        out
+    }
+
+    /// A `$steps.x` naming no step, or a name two steps have, is an error.
+    fn check_names(&self) -> Result<(), String> {
+        let keys = self.step_keys();
+        let mut read = vec![];
+        let conditions = |on: &On, read: &mut Vec<String>| {
+            read.extend(
+                on.has
+                    .iter()
+                    .filter(|h| !h.starts_with("$$"))
+                    .map(|h| h.trim_start_matches('$').to_string()),
+            );
+            read.extend(on.equal.keys().cloned());
+        };
+        conditions(&self.on, &mut read);
+        for s in self.all_steps() {
+            let parts: Vec<(&Value, Option<&On>)> = match s {
+                Step::One { args, on, .. } => vec![(args, on.as_deref())],
+                Step::Side(g) => g
+                    .members
+                    .iter()
+                    .map(|m| (&m.args, m.on.as_deref()))
+                    .collect(),
+            };
+            for (args, on) in parts {
+                read.extend(names_in(args));
+                if let Some(on) = on {
+                    conditions(on, &mut read);
+                }
+            }
+        }
+        for path in read {
+            if let Some(rest) = path.strip_prefix("steps.") {
+                let step = rest.split('.').next().unwrap_or(rest);
+                match keys.iter().filter(|k| *k == step).count() {
+                    0 => {
+                        return Err(format!(
+                            "$steps.{step} names no step of this workflow (its steps: {})",
+                            keys.join(", ")
+                        ));
+                    }
+                    1 => {}
+                    _ => {
+                        return Err(format!(
+                            "$steps.{step}: two steps are {step}; give one an as, like {{ \"#{step}\": {{ \"as\": \"{step}-2\" }} }}"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The actions and workflows it names, each once, in order.
     pub fn uses(&self) -> Vec<Name> {
         let mut out: Vec<Name> = vec![];
@@ -1205,19 +1421,10 @@ pub fn secret_ref(v: &Value) -> Option<&str> {
     (!n.is_empty() && name_len(n) == n.len()).then_some(n)
 }
 
-/// `"$name"` or `"$name.field"`, the whole value: the state value it
-/// stands for.
+/// `"$event.order"`, `"$output"`, `"$steps.ask.price"`: the whole value,
+/// its path from a root, without `$`.
 pub fn state_ref(v: &Value) -> Option<&str> {
     let s = v.as_str()?.strip_prefix('$')?;
-    let n = name_len(s);
-    if n == 0 {
-        return None;
-    }
-    match &s[n..] {
-        "" => Some(s),
-        dot => {
-            let f = dot.strip_prefix('.')?;
-            (!f.is_empty() && field_len(f) == f.len()).then_some(s)
-        }
-    }
+    let n = path_len(s);
+    (n > 0 && n == s.len()).then_some(s)
 }

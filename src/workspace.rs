@@ -472,7 +472,7 @@ impl Workspace {
     }
 
     /// The workflow `name`, its file read as `v`, with its entry in the
-    /// manifest (`entries`, the `workflow` ones): what it is, its settings.
+    /// manifest (`entries`, the `workflow` ones): what it is.
     pub fn read_flow(
         &self,
         name: &str,
@@ -489,14 +489,13 @@ impl Workspace {
         if let Some(Value::Object(e)) = entries.get(name) {
             entry.extend(e.clone());
         }
-        let (meta, settings) = crate::flow::entry(&Value::Object(entry)).map_err(|e| {
+        let meta = crate::flow::entry(&Value::Object(entry)).map_err(|e| {
             anyhow!(
                 "{}: workflow.{name}: {e}",
                 self.root.join(MANIFEST).display()
             )
         })?;
         f.meta = meta;
-        f.settings = settings;
         Ok(f)
     }
 
@@ -661,19 +660,16 @@ impl Workspace {
         Ok(named("connector", files)?.into_iter().collect())
     }
 
-    /// An action's args, `action.<name>.args` in the manifest: an object,
-    /// or a list of objects read as a step's are (one set of values). None
-    /// when its entry has none.
-    pub fn args(&self, action: &str) -> Result<Option<Value>> {
-        let Some(v) = self.entry_key("action", action, "args")? else {
-            return Ok(None);
-        };
-        let at = format!("{}: action.{action}", self.root.join(MANIFEST).display());
-        if !matches!(&v, Value::Object(_) | Value::Array(_)) {
-            bail!("{at}.args are an object, or a list of objects");
+    /// An action's entry holds no args: they are written in the step that
+    /// runs it.
+    pub fn no_args(&self, action: &str) -> Result<()> {
+        if self.entry_key("action", action, "args")?.is_some() {
+            bail!(
+                "{}: action.{action}.args are gone: an action's args are written in the step that runs it",
+                self.root.join(MANIFEST).display()
+            );
         }
-        crate::flow::read_args(&v).map_err(|why| anyhow!("{at}.{why}"))?;
-        Ok(Some(v))
+        Ok(())
     }
 
     /// An action's repeat, `action.<name>.repeat` in the manifest: a list

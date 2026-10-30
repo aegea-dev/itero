@@ -205,10 +205,13 @@ pub fn run_loop(
     }
 }
 
-/// The workspace's workflows as their files say, and read.
+/// The workspace's workflows as their files say, and read; and the
+/// manifest, a run's `$config`.
 struct Flows {
     values: BTreeMap<String, Value>,
     read: BTreeMap<String, Flow>,
+    config: Map<String, Value>,
+    root: PathBuf,
 }
 
 impl Flows {
@@ -219,7 +222,12 @@ impl Flows {
         for (n, v) in &values {
             read.insert(n.clone(), ws.read_flow(n, v, &entries)?);
         }
-        Ok(Flows { values, read })
+        Ok(Flows {
+            values,
+            read,
+            config: ws.manifest()?,
+            root: ws.root.clone(),
+        })
     }
 
     /// Whether a workflow looks after the workspace (`meta.internal`).
@@ -436,9 +444,10 @@ pub fn watch_paths(
     }
 }
 
-/// Whether an environment variable or a secret is defined.
-fn defined(name: &str) -> bool {
-    super::secrets::get(name).is_some()
+/// Whether a `$$NAME` is defined in the workspace at `root`: a secret, a
+/// value in its `.env`, or an environment variable.
+fn defined(root: &Path, name: &str) -> bool {
+    super::secrets::get_in(root, name).is_some()
 }
 
 /// One pass over a workspace; `exe` is the itero binary, run as `itero
@@ -869,11 +878,17 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log)
             }
             let pinned = flows.pinned(name);
             match pinned {
-                Ok(pinned) if flow::holds(&f.on, &f.settings, &defined) => {
+                Ok(pinned)
+                    if flow::holds(
+                        &f.on,
+                        &steps::first_state(json!({}), flows.config.clone()),
+                        &|n: &str| defined(&flows.root, n),
+                    ) =>
+                {
                     let start = Start {
                         workflow: name.clone(),
                         flows: pinned,
-                        input: Value::Object(f.settings.clone()),
+                        input: json!({}),
                         cause: None,
                     };
                     j.start_run(&start, &stamp(now), Some(&key))?;
@@ -929,13 +944,11 @@ fn route(
     };
     let mut starts = vec![];
     for (name, f) in &flows.read {
-        // a run's state starts with its workflow's settings, the message's
-        // data on top
-        let mut first = f.settings.clone();
-        first.extend(data.clone());
+        // a run's state starts with the message's data, its `$event`
+        let first = steps::first_state(Value::Object(data.clone()), flows.config.clone());
         if !(f.on.events.contains(&r.event.kind) || names_it(f))
             || !flow::active(&f.meta, now)
-            || !flow::holds(&f.on, &first, &defined)
+            || !flow::holds(&f.on, &first, &|n: &str| defined(&ws.root, n))
             || (on_a_run && data.get("workflow") == Some(&json!(name)))
         {
             continue;
@@ -944,7 +957,7 @@ fn route(
             Ok(pinned) => starts.push(Start {
                 workflow: name.clone(),
                 flows: pinned,
-                input: Value::Object(first),
+                input: Value::Object(data.clone()),
                 cause: Some(r.event.id.clone()),
             }),
             Err(why) => log.write(
@@ -1071,9 +1084,9 @@ fn deliver(
             format!("version {} is not in the journal", run.pin),
         );
     };
-    // what the manager needs beyond the run: the args of the actions its
+    // what the manager needs beyond the run: the repeat of the actions its
     // workflows name, and which of their $$ names are defined
-    let mut args = BTreeMap::new();
+    let mut seen = std::collections::BTreeSet::new();
     let mut repeat = BTreeMap::new();
     let mut names = vec![];
     let mut who = Who {
@@ -1092,14 +1105,10 @@ fn deliver(
         }
         for u in f.uses() {
             if let Name::Action { name, .. } = u
-                && !args.contains_key(&name)
+                && seen.insert(name.clone())
             {
-                match ws.args(&name) {
-                    Ok(Some(a)) => {
-                        args.insert(name.clone(), a);
-                    }
-                    Ok(None) => {}
-                    Err(e) => return give_up(log, j, r.seq, &at, format!("{e:#}")),
+                if let Err(e) = ws.no_args(&name) {
+                    return give_up(log, j, r.seq, &at, format!("{e:#}"));
                 }
                 match ws.repeat(&name) {
                     Ok(Some(items)) => {
@@ -1118,9 +1127,9 @@ fn deliver(
         now: at.clone(),
         workflow: root,
         flows: values,
-        args,
         repeat,
-        defined: names.into_iter().filter(|n| defined(n)).collect(),
+        config: ws.manifest().unwrap_or_default(),
+        defined: names.into_iter().filter(|n| defined(&ws.root, n)).collect(),
         runtime: run.runtime.clone(),
         event: Event {
             id: r.event.id.clone(),
@@ -1169,18 +1178,13 @@ fn deliver(
         let quiet_when_done = j
             .started_on(&run)?
             .is_some_and(|t| t.starts_with("itero.run."));
-        let why = answer
-            .runtime
-            .state
-            .get("why")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let why = json!(answer.runtime.why);
         let own = match &answer.runtime.ended {
             Some(steps::Ended::Error { .. }) => Some((
                 "itero.run.error",
                 json!({
                     "workflow": run.workflow, "run": id, "why": why,
-                    "failed_step": answer.runtime.state.get("failed_step"),
+                    "failed_step": answer.runtime.failed_step,
                 }),
             )),
             Some(steps::Ended::Failed) => Some((
@@ -1330,12 +1334,7 @@ fn tell(log: &Log, who: &Who, r: &Recorded, answer: &StepAnswer) {
     {
         let why = match ended {
             steps::Ended::Error { why } => json!(why),
-            _ => answer
-                .runtime
-                .state
-                .get("why")
-                .cloned()
-                .unwrap_or(Value::Null),
+            _ => json!(answer.runtime.why),
         };
         log.write(
             "run.ended",
@@ -1355,72 +1354,48 @@ fn env_name(n: &str) -> bool {
 
 /// A value of an action's args: `"$name"` is the state's, `"$$NAME"`
 /// the secret's (or the environment variable's); anything else itself.
-fn resolve(v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
+fn resolve(root: &Path, v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
     match flow::secret_ref(v) {
-        Some(n) => secret(n),
+        Some(n) => secret(root, n),
         None => flow::fill(v, state),
     }
 }
 
-fn secret(n: &str) -> Result<Value, String> {
-    super::secrets::get(n)
+fn secret(root: &Path, n: &str) -> Result<Value, String> {
+    super::secrets::get_in(root, n)
         .map(Value::String)
-        .ok_or_else(|| format!("{n} is not set: no secret, no environment variable"))
+        .ok_or_else(|| format!("{n} is not set: no secret, not in .env, no environment variable"))
 }
 
-/// The state an action is given: the run's, with the step's own
-/// `$output` when it runs again, and each `"$$NAME"` in it, joined from a
-/// step's args, as the secret's value. The journal keeps only the name.
-pub fn given(state: &Map<String, Value>, job: &StepJob) -> Result<Map<String, Value>, String> {
-    let mut given = state.clone();
-    if let Some(o) = &job.output {
-        given.insert("output".into(), o.clone());
-    }
-    for v in given.values_mut() {
-        if let Some(n) = flow::secret_ref(v) {
-            *v = secret(n)?;
-        }
-    }
-    Ok(given)
-}
+/// An action's environment, and its stdin.
+pub type Bound = (BTreeMap<String, String>, Map<String, Value>);
 
-/// An action's environment: each value found first in the step's args
-/// (filled from the state when the step started), then the action's own
-/// args with its repeat item on top (after a split), then the state it is
-/// `given`. Names
-/// that cannot be environment variables, and state values past `ENV_MAX`,
-/// are on stdin only; a bigger value from the args is an error.
-pub fn bind(
-    state: &Map<String, Value>,
-    args: Option<&Value>,
-    job: &StepJob,
-) -> Result<BTreeMap<String, String>, String> {
-    let mut values = state.clone();
-    // the action's own args, read as a step's, and its repeat item on top
-    let mut own = match args {
-        Some(a) => flow::fill_args(a, state)?,
-        None => Map::new(),
-    };
+/// What an action gets: its args (the step's, filled when it started, with
+/// its repeat item on top), each `"$$NAME"` the secret's value; and, when it runs
+/// again after waiting, the event that came. As environment variables
+/// (names that cannot be one, and values past `ENV_MAX`, are on stdin
+/// only) and as its stdin, `{"args": {...}, "event": {...}}`.
+pub fn bind(root: &Path, state: &Map<String, Value>, job: &StepJob) -> Result<Bound, String> {
+    let mut args = job.data.clone();
+    // a repeat item's values on top of the step's args
     if let Some(item) = job.item.as_ref().and_then(Value::as_object) {
         for (k, v) in item {
-            own.insert(k.clone(), flow::fill(v, state)?);
+            args.insert(k.clone(), flow::fill(v, state)?);
         }
     }
-    for (k, v) in own {
-        let v = match flow::secret_ref(&v) {
-            Some(n) => secret(n)?,
-            None => v,
-        };
-        values.insert(k, v);
+    for v in args.values_mut() {
+        if let Some(n) = flow::secret_ref(v) {
+            *v = secret(root, n)?;
+        }
     }
-    for (k, v) in &job.data {
-        let v = match flow::secret_ref(v) {
-            Some(n) => secret(n)?,
-            None => v.clone(),
-        };
-        values.insert(k.clone(), v);
+    let mut values = args.clone();
+    let mut input = Map::new();
+    input.insert("args".into(), Value::Object(args));
+    if let Some(e) = &job.event {
+        values.insert("event".into(), e.clone());
+        input.insert("event".into(), e.clone());
     }
-    to_env(values, state)
+    Ok((to_env(values), input))
 }
 
 /// A connector's args (`connector.<name>.args`), each one an environment
@@ -1436,7 +1411,7 @@ pub fn connector_args(ws: &Workspace, connector: &str) -> Result<Map<String, Val
         if !env_name(k) {
             return Err(format!("{at}: not a name an environment variable can have"));
         }
-        if let Some(n) = flow::names_in(v).first() {
+        if let Some(n) = flow::names_in(v).first().or(flow::unknown_in(v).first()) {
             return Err(format!("{at}: a connector has no run state for ${n}"));
         }
     }
@@ -1449,20 +1424,17 @@ pub fn connector_env(ws: &Workspace, connector: &str) -> Result<BTreeMap<String,
     let none = Map::new();
     let mut values = Map::new();
     for (k, v) in connector_args(ws, connector)? {
-        let v =
-            resolve(&v, &none).map_err(|why| format!("connector.{connector}.args.{k}: {why}"))?;
+        let v = resolve(&ws.root, &v, &none)
+            .map_err(|why| format!("connector.{connector}.args.{k}: {why}"))?;
         values.insert(k, v);
     }
-    to_env(values, &none)
+    Ok(to_env(values))
 }
 
-/// Values as environment variables, as text. A name that cannot be one,
-/// and a `null`, are left out; a value past `ENV_MAX` is an error, unless
-/// it is the run's state's own (on stdin only).
-fn to_env(
-    values: Map<String, Value>,
-    state: &Map<String, Value>,
-) -> Result<BTreeMap<String, String>, String> {
+/// Values as environment variables, as text. A name that cannot be one, a
+/// `null`, and a value past `ENV_MAX` (the system refuses to start a
+/// program with one that big) are left out: they are on stdin.
+fn to_env(values: Map<String, Value>) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     for (k, v) in values {
         if !env_name(&k) {
@@ -1473,23 +1445,15 @@ fn to_env(
             Value::String(s) => s.clone(),
             other => other.to_string(),
         };
-        // the system refuses to start a program with a value this big
-        if text.len() > ENV_MAX {
-            if state.get(&k) == Some(&v) {
-                continue;
-            }
-            return Err(format!(
-                "{k} is {} bytes, too big for an environment variable: only the run's state goes on stdin",
-                text.len()
-            ));
+        if text.len() <= ENV_MAX {
+            env.insert(k, text);
         }
-        env.insert(k, text);
     }
-    Ok(env)
+    env
 }
 
-/// The biggest value given as an environment variable; a bigger one from
-/// the state is on stdin only. Linux takes 128 KB for one.
+/// The biggest value given as an environment variable; a bigger arg is on
+/// stdin only. Linux takes 128 KB for one.
 const ENV_MAX: usize = 64 * 1024;
 
 /// What a worker is given for an `action.requested` event: the action's
@@ -1510,10 +1474,8 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         }
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
-    let args = ws.args(&job.action).map_err(|e| format!("{e:#}"))?;
     let (quiet, most) = ws.step_limits(&job.action).map_err(|e| format!("{e:#}"))?;
-    let state = given(&run.runtime.state, &job)?;
-    let mut env = bind(&state, args.as_ref(), &job)?;
+    let (mut env, input) = bind(&ws.root, &run.runtime.state, &job)?;
     // the built-in #ai talks to the itero-ai the daemon keeps
     if file == Path::new(worker::AI) {
         let socket = crate::ai::keeper::Keeper::global().socket(ws)?;
@@ -1524,7 +1486,7 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         root: ws.root.clone(),
         workflow: workflow.into(),
         env,
-        state,
+        input,
         memory: ws.root.join(".itero").join("memory").join(workflow),
         waiting_since: job.waiting_since.clone(),
         quiet: quiet.as_secs(),
@@ -1756,7 +1718,7 @@ mod tests {
             root: d.path().into(),
             workflow: "iş".into(),
             env: BTreeMap::new(),
-            state: Map::new(),
+            input: Map::new(),
             memory: d.path().join("bellek"),
             waiting_since: None,
             quiet: 60,

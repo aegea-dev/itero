@@ -12,11 +12,17 @@ fn check_manifest(ws: &Workspace, flows: &[(String, Flow)]) -> Result<()> {
     let manifest = crate::workspace::MANIFEST;
     let mut wrong = vec![];
     for (dir, now) in [
-        ("args", "\"action\": {\"<name>\": {\"args\": ...}}"),
-        ("config", "\"workflow\": {\"<name>\": {\"settings\": ...}}"),
+        (
+            "args",
+            "an action's args are written in the step that runs it",
+        ),
+        (
+            "config",
+            "a workflow's values go in .env, a step's args or the event",
+        ),
     ] {
         if ws.root.join(dir).is_dir() {
-            wrong.push(format!("{dir}/: this goes in {manifest} now, as {now}"));
+            wrong.push(format!("{dir}/: is gone: {now}"));
         }
     }
     let actions: Vec<String> = ws
@@ -35,12 +41,11 @@ fn check_manifest(ws: &Workspace, flows: &[(String, Flow)]) -> Result<()> {
             wrong.push(why);
         }
     }
-    // with no state, filling an action's args refuses only a secret inside text
-    for (name, e) in ws.entries("action")? {
-        if let Some(args) = e.get("args")
-            && let Err(why) = crate::flow::fill(args, &serde_json::Map::new())
-        {
-            wrong.push(format!("action.{name}.args: {why}"));
+    for (name, _) in ws.entries("action")? {
+        if let Err(why) = ws.no_args(&name) {
+            let why = format!("{why:#}");
+            let path = format!("{}: ", ws.root.join(manifest).display());
+            wrong.push(why.strip_prefix(&path).unwrap_or(&why).to_string());
         }
         // its error names the manifest, which the list below names once
         if let Err(why) = ws.step_limits(&name) {
@@ -122,7 +127,6 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
             "id": id.id,
             "since": id.created,
             "file": files.get(name).map(|f| ws.shown(f)),
-            "settings": Value::Object(f.settings.clone()),
             "description": m.description,
             "from": m.from.map(crate::engine::daemon::stamp),
             "until": m.until.map(crate::engine::daemon::stamp),
@@ -198,9 +202,6 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
             println!("{}", text(&w["name"]));
             println!("  id {}  since {}", text(&w["id"]), text(&w["since"]));
             println!("  file {}", w["file"].as_str().unwrap_or("built in"));
-            if w["settings"].as_object().is_some_and(|s| !s.is_empty()) {
-                println!("  settings {}", w["settings"]);
-            }
             if let Some(d) = w["description"].as_str() {
                 println!("  description {d}");
             }

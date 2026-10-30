@@ -428,7 +428,8 @@ fn a_stuck_workspace_is_told_and_the_others_run_on() {
     // b hears of it, with the stuck one's name
     std::fs::write(
         b.join("workflows/duyar.json"),
-        r##"{"on": [{"event": "itero.workspace.stuck"}], "steps": ["#not"]}"##,
+        r##"{"on": [{"event": "itero.workspace.stuck"}],
+             "steps": [{"#not": {"args": {"workspace": "$event.workspace"}}}]}"##,
     )
     .unwrap();
     let not = b.join("actions/not");

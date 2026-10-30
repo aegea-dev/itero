@@ -17,7 +17,7 @@ fn step(root: &Path, sock: &Path, env: &[(&str, &str)]) -> StepRun {
         root: root.into(),
         workflow: "posta".into(),
         env: e,
-        state: Map::new(),
+        input: Map::new(),
         memory: root.join("hafıza"),
         waiting_since: None,
         quiet: 30,

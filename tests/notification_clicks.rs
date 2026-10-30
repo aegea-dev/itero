@@ -171,8 +171,8 @@ fn a_click_is_itero_s_own_message_and_starts_workflows() {
     file(
         d.path(),
         "workflows/okundu.json",
-        r##"{ "on": [{ "event": "itero.notification.clicked" }, { "$workflow": "posta" }],
-             "steps": ["#işaretle"] }"##,
+        r##"{ "on": [{ "event": "itero.notification.clicked" }, { "$event.workflow": "posta" }],
+             "steps": [{ "#işaretle": { "args": { "answer": "$event.answer", "data": "$event.data" } } }] }"##,
     );
     file(
         d.path(),

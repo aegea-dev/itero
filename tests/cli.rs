@@ -29,110 +29,50 @@ fn manifest(d: &Path) -> serde_json::Value {
 }
 
 #[test]
-fn args_are_written_for_the_action() {
+fn action_args_and_workflow_settings_are_gone() {
     let d = workspace();
-    file(
-        d.path(),
-        "itero.config.json",
-        r#"{"name": "ev", "port": 8787, "action": {"kargola": {"description": "Kargoya verir"}}}"#,
-    );
     file(d.path(), "actions/kargola", "#!/bin/sh\n");
-    file(d.path(), "actions/posta-bak", "#!/bin/sh\n");
-    let o = itero(
-        d.path(),
-        &[
-            "action",
-            "args",
-            "set",
-            "kargola",
-            r#"{"firma": "PTT Kargo"}"#,
-        ],
-    );
-    assert!(o.status.success(), "{o:?}");
-    let m = manifest(d.path());
-    assert_eq!(m["action"]["kargola"]["args"]["firma"], "PTT Kargo");
-    assert_eq!(m["action"]["kargola"]["description"], "Kargoya verir");
-    // the rest is kept as it was, in its order
-    let keys: Vec<&String> = m.as_object().unwrap().keys().collect();
-    assert_eq!(keys, ["name", "port", "action"]);
-    // from a file, a list of objects: one set of values, read in order
-    let list = d.path().join("hesap.json");
-    std::fs::write(
-        &list,
-        r#"[{"host": "imap.örnek.test"}, {"user": "can@örnek.test"}]"#,
-    )
-    .unwrap();
-    let o = itero(
-        d.path(),
-        &[
-            "action",
-            "args",
-            "set",
-            "posta-bak",
-            "--file",
-            list.to_str().unwrap(),
-        ],
-    );
-    assert!(o.status.success(), "{o:?}");
-    assert_eq!(
-        manifest(d.path())["action"]["posta-bak"]["args"][1]["user"],
-        "can@örnek.test"
-    );
-    // a name given twice is refused: once per item is repeat's
-    std::fs::write(
-        &list,
-        r#"[{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]"#,
-    )
-    .unwrap();
-    let o = itero(
-        d.path(),
-        &[
-            "action",
-            "args",
-            "set",
-            "posta-bak",
-            "--file",
-            list.to_str().unwrap(),
-        ],
-    );
-    assert!(
-        !o.status.success() && err(&o).contains("user is given twice"),
-        "{o:?}"
-    );
-    // shown, and as JSON
-    let shown = out(&itero(d.path(), &["action", "args", "get", "kargola"]));
-    assert!(shown.contains("PTT Kargo"), "{shown}");
-    let v: serde_json::Value = serde_json::from_str(&out(&itero(
-        d.path(),
-        &["action", "args", "get", "kargola", "--json"],
-    )))
-    .unwrap();
-    assert_eq!(v["firma"], "PTT Kargo");
-    // an action that is not there has no args to set
-    let o = itero(d.path(), &["action", "args", "set", "yok", "{}"]);
-    assert!(
-        !o.status.success() && err(&o).contains("no action yok"),
-        "{o:?}"
-    );
+    for args in [
+        &["action", "args", "get", "kargola"][..],
+        &["wf", "config", "get", "kargola"],
+    ] {
+        let o = itero(d.path(), args);
+        assert!(
+            !o.status.success() && err(&o).contains("unrecognized subcommand"),
+            "{o:?}"
+        );
+    }
 }
 
 #[test]
-fn args_that_are_not_an_object_or_a_list_of_objects_are_refused() {
+fn check_refuses_values_in_the_manifest() {
     let d = workspace();
     file(d.path(), "actions/kargola", "#!/bin/sh\n");
-    for bad in ["[1, 2]", r#""çay""#, "{", "42"] {
-        let o = itero(d.path(), &["action", "args", "set", "kargola", bad]);
-        assert!(!o.status.success(), "{bad}");
-        assert!(
-            err(&o).contains("an object, or a list of objects"),
-            "{bad}: {}",
-            err(&o)
-        );
-    }
-    assert!(!d.path().join("args/kargola.json").exists());
-    let o = itero(d.path(), &["action", "args", "set", "../dışarı", "{}"]);
-    assert!(!o.status.success());
-    assert!(err(&o).contains("../dışarı"), "{}", err(&o));
+    file(
+        d.path(),
+        "workflows/gözcü.json",
+        r##"{ "on": [{ "event": "saat.geldi" }], "steps": ["#kargola"] }"##,
+    );
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"action": {"kargola": {"args": {"firma": "PTT Kargo"}}}}"#,
+    );
+    let o = itero(d.path(), &["check"]);
+    assert!(
+        !o.status.success() && err(&o).contains("action.kargola.args are gone"),
+        "{o:?}"
+    );
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"workflow": {"gözcü": {"settings": {"siteler": ["https://örnek.test"]}}}}"#,
+    );
+    let o = itero(d.path(), &["check"]);
+    assert!(
+        !o.status.success() && err(&o).contains("settings are gone"),
+        "{o:?}"
+    );
 }
 
 #[test]
@@ -225,7 +165,7 @@ fn out(o: &Output) -> String {
 }
 
 #[test]
-fn config_is_written_shown_and_checked_for_the_workflow() {
+fn check_refuses_an_entry_naming_nothing_and_folders_from_before() {
     let d = workspace();
     file(
         d.path(),
@@ -238,37 +178,7 @@ fn config_is_written_shown_and_checked_for_the_workflow() {
         "itero.config.json",
         r#"{"workflow": {"gözcü": {"description": "Siteler"}}}"#,
     );
-    let o = itero(
-        d.path(),
-        &[
-            "wf",
-            "config",
-            "set",
-            "gözcü",
-            r#"{"siteler": ["https://örnek.test"]}"#,
-        ],
-    );
-    assert!(o.status.success(), "{o:?}");
-    let m = manifest(d.path());
-    assert_eq!(
-        m["workflow"]["gözcü"]["settings"]["siteler"][0],
-        "https://örnek.test"
-    );
-    assert_eq!(m["workflow"]["gözcü"]["description"], "Siteler");
-    let shown = out(&itero(d.path(), &["workflow", "config", "get", "gözcü"]));
-    assert!(shown.contains("örnek.test"), "{shown}");
-    for (name, data, says) in [
-        ("../dışarı", "{}", "not a workflow's name"),
-        ("gözcü", "[1]", "an object"),
-    ] {
-        let o = itero(d.path(), &["wf", "config", "set", name, data]);
-        assert!(
-            !o.status.success() && err(&o).contains(says),
-            "{data}: {o:?}"
-        );
-    }
     assert!(itero(d.path(), &["check"]).status.success());
-    // check: an entry naming nothing, and folders from before, are refused
     file(
         d.path(),
         "itero.config.json",
@@ -285,7 +195,9 @@ fn config_is_written_shown_and_checked_for_the_workflow() {
     file(d.path(), "args/bak.json", "{}");
     let o = itero(d.path(), &["check"]);
     assert!(
-        !o.status.success() && err(&o).contains("args") && err(&o).contains("itero.config.json"),
+        !o.status.success()
+            && err(&o).contains("args/: is gone")
+            && err(&o).contains("the step that runs it"),
         "{o:?}"
     );
 }
@@ -425,7 +337,7 @@ fn runs_with_a_name_or_id_tells_the_runs_story() {
     file(
         d.path(),
         "actions/öde",
-        "#!/bin/sh\ncase \"$output\" in *'\"tamam\":true'*) exit 0 ;; esac\necho '{\"ödeme\": \"bekliyor\", \"sipariş\": 1}'; exit 75\n",
+        "#!/bin/sh\ncase \"$event\" in *'\"tamam\":true'*) exit 0 ;; esac\necho '{\"ödeme\": \"bekliyor\", \"sipariş\": 1}'; exit 75\n",
     );
     file(
         d.path(),
@@ -529,10 +441,14 @@ fn a_step_that_breaks_undoes_those_before_it_and_the_story_says_so() {
         d.path(),
         "workflows/kurulum.json",
         r##"{ "on": [{ "event": "küme.istendi" }],
-              "steps": [{ "#kur": { "undo": "#sil" } }, "#dene"],
+              "steps": [{ "#kur": { "undo": { "#sil": { "args": { "kume": "$output.küme" } } } } }, "#dene"],
               "error": ["#bildir"] }"##,
     );
-    file(d.path(), "actions/kur", "#!/bin/sh\necho kur >> sıra.txt\n");
+    file(
+        d.path(),
+        "actions/kur",
+        "#!/bin/sh\necho kur >> sıra.txt\necho '{\"küme\": \"k-1\"}'\n",
+    );
     file(
         d.path(),
         "actions/dene",
@@ -541,7 +457,7 @@ fn a_step_that_breaks_undoes_those_before_it_and_the_story_says_so() {
     file(
         d.path(),
         "actions/sil",
-        "#!/bin/sh\necho \"sil $failed_step\" >> sıra.txt\n",
+        "#!/bin/sh\necho \"sil $kume\" >> sıra.txt\n",
     );
     file(
         d.path(),
@@ -551,7 +467,7 @@ fn a_step_that_breaks_undoes_those_before_it_and_the_story_says_so() {
     itero(d.path(), &["emit", "küme.istendi", r#"{"ad": "deneme"}"#]);
     itero(d.path(), &["daemon", "--once"]);
     let order = std::fs::read_to_string(d.path().join("sıra.txt")).unwrap();
-    assert_eq!(order, "kur\nsil #dene\nbildir\n");
+    assert_eq!(order, "kur\nsil k-1\nbildir\n");
     let list = out(&itero(d.path(), &["wf", "runs"]));
     let id = list.split_whitespace().next().unwrap();
     let story = out(&itero(d.path(), &["wf", "runs", id]));
@@ -734,7 +650,7 @@ fn emit_wait_answers_with_the_runs_end() {
     file(
         d.path(),
         "workflows/selam.json",
-        r##"{ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }"##,
+        r##"{ "on": [{ "event": "kişi.geldi" }], "steps": [{ "#selamla": { "args": { "kim": "$event.kim" } } }] }"##,
     );
     file(
         d.path(),
@@ -947,7 +863,7 @@ fn commands_that_print_also_print_json() {
     file(
         d.path(),
         "workflows/selam.json",
-        r##"{ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }"##,
+        r##"{ "on": [{ "event": "kişi.geldi" }], "steps": [{ "#selamla": { "args": { "kim": "$event.kim" } } }] }"##,
     );
     file(d.path(), "actions/selamla", "#!/bin/sh\n");
     itero(d.path(), &["emit", "kişi.geldi", "{}"]);
@@ -984,7 +900,6 @@ fn commands_that_print_also_print_json() {
     assert!(json(&["info", "--json"])["workspace"]["id"].is_string());
     assert_eq!(json(&["which", "selam", "--json"])[0]["kind"], "workflow");
     assert_eq!(json(&["check", "--json"])["workflows"][0]["name"], "selam");
-    assert!(json(&["wf", "config", "get", "selam", "--json"]).is_null());
     assert!(json(&["emit", "kişi.geldi", "{}", "--json"])["id"].is_string());
 }
 
@@ -1029,10 +944,10 @@ fn tab_completes_the_workspaces_own_names() {
     file(d.path(), "actions/öde@2", "#!/bin/sh\n");
     file(d.path(), "connectors/posta.geldi", "#!/bin/sh\n");
     // the workspace's workflows, beside itero's own
-    let workflows = completions(d.path(), &["wf", "config", "get", ""]);
+    let workflows = completions(d.path(), &["wf", "runs", "--workflow", ""]);
     assert!(workflows.contains(&"sipariş".to_string()), "{workflows:?}");
     // an action's version is not part of its name; the built-ins are there too
-    let actions = completions(d.path(), &["action", "args", "get", ""]);
+    let actions = completions(d.path(), &["wf", "runs", "--action", ""]);
     assert!(actions.contains(&"gönder".to_string()), "{actions:?}");
     assert!(actions.contains(&"öde".to_string()), "{actions:?}");
     assert!(actions.contains(&"notify".to_string()), "{actions:?}");
@@ -1050,7 +965,7 @@ fn tab_completes_the_workspaces_own_names() {
     assert_eq!(completions(d.path(), &["wf", "runs", ""]), [name]);
     // outside a workspace: no names, and no error
     let outside = tempfile::tempdir().unwrap();
-    assert!(completions(outside.path(), &["wf", "config", "get", ""]).is_empty());
+    assert!(completions(outside.path(), &["wf", "runs", "--workflow", ""]).is_empty());
     assert!(completions(outside.path(), &["wf", "runs", ""]).is_empty());
 }
 
@@ -1077,22 +992,15 @@ fn check_refuses_a_secret_inside_text() {
     let d = workspace();
     file(
         d.path(),
-        "itero.config.json",
-        r#"{"action": {"gönder": {"args": {"başlık": "Bearer $$POSTA_ANAHTARI"}}}}"#,
-    );
-    file(
-        d.path(),
         "workflows/kargo.json",
-        r##"{ "on": [{ "event": "kargo.hazır" }], "steps": ["#gönder"] }"##,
+        r##"{ "on": [{ "event": "kargo.hazır" }],
+             "steps": [{ "#gönder": { "args": { "başlık": "Bearer $$POSTA_ANAHTARI" } } }] }"##,
     );
     file(d.path(), "actions/gönder", "#!/bin/sh\n");
     let o = itero(d.path(), &["check"]);
     assert!(!o.status.success(), "{o:?}");
     let said = format!("{}{}", out(&o), err(&o));
-    assert!(
-        said.contains("action.gönder.args") && said.contains("a secret is a whole value only"),
-        "{said}"
-    );
+    assert!(said.contains("a secret is a whole value only"), "{said}");
 }
 
 #[test]

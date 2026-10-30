@@ -19,7 +19,7 @@ fn the_built_in_notify_shows_text() {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
-        state: Map::new(),
+        input: Map::new(),
         memory: d.path().join("hafıza"),
         waiting_since: None,
         quiet: 10,

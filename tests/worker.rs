@@ -15,7 +15,7 @@ mod steps {
         f
     }
 
-    fn step(dir: &Path, file: PathBuf, env: &[(&str, &str)], state: Value) -> StepRun {
+    fn step(dir: &Path, file: PathBuf, env: &[(&str, &str)], input: Value) -> StepRun {
         StepRun {
             file,
             root: dir.to_path_buf(),
@@ -24,7 +24,7 @@ mod steps {
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
-            state: state.as_object().cloned().unwrap_or_default(),
+            input: input.as_object().cloned().unwrap_or_default(),
             memory: dir.join(".itero/memory/sipariş"),
             waiting_since: None,
             quiet: 10,
@@ -41,22 +41,25 @@ mod steps {
     }
 
     #[test]
-    fn an_action_reads_its_values_and_the_state_and_prints_json() {
+    fn an_action_reads_its_args_as_variables_and_on_stdin_and_prints_json() {
         let d = tempfile::tempdir().unwrap();
         let f = action(
             d.path(),
             "selam",
-            r#"read -r state
-printf '{"host": "%s", "state": %s, "where": "%s"}' "$host" "$state" "$(pwd)""#,
+            r#"read -r input
+printf '{"host": "%s", "input": %s, "where": "%s"}' "$host" "$input" "$(pwd)""#,
         );
         let out = done(worker::run_step(&step(
             d.path(),
             f,
             &[("host", "posta.örnek.test")],
-            json!({"sipariş": 43}),
+            json!({"args": {"host": "posta.örnek.test", "sipariş": 43}}),
         )));
         assert_eq!(out["host"], "posta.örnek.test");
-        assert_eq!(out["state"], json!({"sipariş": 43}));
+        assert_eq!(
+            out["input"],
+            json!({"args": {"host": "posta.örnek.test", "sipariş": 43}})
+        );
         let here = std::fs::canonicalize(d.path()).unwrap();
         assert_eq!(out["where"], here.display().to_string());
     }
