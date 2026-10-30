@@ -17,15 +17,21 @@ for an action's args in 39 of 78 answers.
 
 ## What changes
 
-A workflow reads a value by where it comes from, with three words:
+A workflow reads a value by where it comes from:
 
 | Write | Means |
 |---|---|
 | `$event`, `$event.foo` | the event that started the run |
 | `$output`, `$output.bar` | what the step just before gave (or a group's merged result) |
 | `$steps.fetch-rates`, `$steps.fetch-rates.price` | what an earlier step gave, by its name |
+| `$config`, `$config.description` | the workspace's manifest, `itero.config.json`, read-only |
+| `$$NAME` | a secret, a value in the workspace's `.env`, or an environment variable |
 
-And an action gets only its args.
+And an action gets only its args, written in the step that runs it.
+
+`itero.config.json` is the manifest, like `package.json`: what the
+workspace is and how it runs, never values to work on. A value comes from
+the event, from a step's args in the workflow file, or from `.env`.
 
 ### `$event`
 
@@ -64,6 +70,23 @@ And an action gets only its args.
   (`null`, or empty inside text), as a missing field does today.
 - A step that waited: its result is what it printed once done.
 
+### `$config`
+
+- `itero.config.json` as it is, read-only: `$config.name`,
+  `$config.description`, `$config.workflow.daily.timeout`.
+- It holds no values to work on: `workflow.<name>.settings` and
+  `action.<name>.args` are gone (below).
+
+### `$$NAME` and `.env`
+
+- A workspace may have a `.env` (`NAME=value` lines) for the user's own
+  values, such as a folder or a size.
+- `$$NAME` is looked up in the OS secret store, then `.env`, then the
+  daemon's environment: the first found.
+- Secrets stay in the store, never in `.env`.
+- `.env` never leaves the workspace in anything itero shares (later:
+  deploys and the hub).
+
 ### Fields and text
 
 - After `$event`, `$output` or `$steps.<name>`, a path of fields at any
@@ -78,11 +101,11 @@ And an action gets only its args.
 
 ### An action gets only its args
 
-- Its environment: each arg as a variable (`"args": {"order":
-  "$event.order"}` gives `$order`), from its step's args over its own
-  args in `itero.config.json` (and a `repeat` item, as today); secrets
-  resolved; plus itero's own `$ITERO_MEMORY` and `$ITERO_WAITING_SINCE`.
-  Nothing from the run's state.
+- Its environment: each arg its step gives as a variable (`"args":
+  {"order": "$event.order"}` gives `$order`), and a `repeat` item, as
+  today; secrets resolved; plus itero's own `$ITERO_MEMORY` and
+  `$ITERO_WAITING_SINCE`. Nothing from the run's state, and no args from
+  `itero.config.json`.
 - Its stdin: one JSON object, `{"args": {...}}`, the same args (with
   values too big for a variable, or names a variable cannot have).
 - An arg named `event` is an error: the name is itero's (below).
@@ -108,6 +131,12 @@ And an action gets only its args.
 - `$output.#name`, `$why`, `$failed_step`, `$undo_failed` (now
   `$output.why` and so on in the lists).
 - The whole state on an action's stdin.
+- `workflow.<name>.settings` and `itero wf config` (a workflow's settings
+  were the state it started with): its values go to `.env`, a step's
+  args or the event.
+- `action.<name>.args` and `itero action args`: an action's args are
+  written in the step that runs it.
+- `repeat` stays as it is for now; looping is designed later.
 
 ## Where in the code
 
