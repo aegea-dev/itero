@@ -12,23 +12,39 @@ itero service install      # once, from anywhere
 ```
 
 This registers a per-user service (a launchd agent on macOS, a systemd user
-unit on Linux) that starts at login and runs a watchdog. The watchdog runs
-[`itero daemon --all`](/guides/machine/), which runs every workspace on
-the list, and restarts it when it:
-
-- exits;
-- stops answering `/health` (3 checks in a row, 10 seconds apart).
-
-A workspace whose pass runs past its limit (10 minutes) does not restart
-the daemon: it is shown as `stuck`, and the others run on.
-
-What each workspace does is in its `.itero/itero.log`
-([The log, IDs and names](/guides/log/)); what the daemon and the
-watchdog print themselves, such as what a crash leaves, is in
-`~/.local/state/itero/daemon.log`.
+unit on Linux) that starts at login and runs a watchdog, which keeps
+[`itero daemon --all`](/guides/machine/) running: one daemon for every
+workspace on the list. If the watchdog itself ends, the service starts it
+again.
 
 The service keeps the `PATH` of the shell that installed it, so actions find
 the same programs you do. After changing your `PATH`, install it again.
+
+## The watchdog
+
+The watchdog starts the daemon, then asks its `/health` every 10 seconds.
+It restarts the daemon when it:
+
+- exits, for any reason;
+- does not answer 3 checks in a row. A daemon just started has 30
+  seconds to answer before a missed check counts.
+
+A workspace whose pass runs past its limit (10 minutes) does not restart
+the daemon: that workspace is shown as `stuck`, and the others run on.
+
+Between restarts it waits 1 second, then twice as long each time, up to a
+minute, so a daemon that cannot start does not start over and over. Once
+a daemon has run for 5 minutes, the wait is back to 1 second.
+
+Stopping the watchdog (`SIGTERM` or `SIGINT`, as the service or a `kill`
+sends) stops its daemon too, as `itero stop` does, so no daemon is left
+running without one.
+
+What each workspace does is in its `.itero/itero.log`
+([The log, IDs and names](/guides/log/)). What the daemon and the watchdog
+print themselves is in `~/.local/state/itero/daemon.log`: each start of
+the daemon with its process id, why it was restarted, and what a crash
+leaves.
 
 ## Status
 

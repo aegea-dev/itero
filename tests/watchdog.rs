@@ -108,7 +108,9 @@ fn the_pause_before_a_restart_doubles_and_resets() {
     );
 }
 
-/// A process group started for a test, killed whole when dropped.
+/// A process group started for a test, stopped whole when dropped: SIGTERM
+/// first, so each process ends as it would for a user and writes its
+/// coverage (`make coverage`), then SIGKILL for anything left.
 #[cfg(unix)]
 struct Group(std::process::Child);
 
@@ -119,6 +121,11 @@ impl Drop for Group {
         // and the wait below would then never end
         // SAFETY: killpg only sends a signal to the group this test started,
         // which the child leads (process_group(0))
+        unsafe {
+            libc::killpg(self.0.id() as i32, libc::SIGTERM);
+        }
+        let _ =
+            wait_timeout::ChildExt::wait_timeout(&mut self.0, std::time::Duration::from_secs(10));
         unsafe {
             libc::killpg(self.0.id() as i32, libc::SIGKILL);
         }
@@ -157,7 +164,7 @@ fn a_watchdog_restarts_a_daemon_that_dies() {
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::null())
     .process_group(0);
-    let _watchdog = Group(c.spawn().unwrap());
+    let mut watchdog = Group(c.spawn().unwrap());
     let client = itero::net::client(std::time::Duration::from_secs(5)).unwrap();
     let pid = |client: &reqwest::blocking::Client| -> Option<u64> {
         let v: serde_json::Value = client
@@ -188,6 +195,28 @@ fn a_watchdog_restarts_a_daemon_that_dies() {
     assert_eq!(killed, 0, "{}", std::io::Error::last_os_error());
     let second = wait("a new daemon", &|| pid(&client).filter(|p| *p != first));
     assert_ne!(first, second);
+
+    // SIGTERM to the watchdog alone (a person's kill, not the service's
+    // stop of the whole group): it stops its daemon too, then ends
+    // SAFETY: sends a signal to the watchdog this test started
+    unsafe {
+        libc::kill(watchdog.0.id() as i32, libc::SIGTERM);
+    }
+    let ended =
+        wait_timeout::ChildExt::wait_timeout(&mut watchdog.0, std::time::Duration::from_secs(15))
+            .unwrap();
+    assert!(
+        ended.is_some_and(|e| e.success()),
+        "{ended:?}; the watchdog's log:\n{}",
+        std::fs::read_to_string(&log).unwrap_or_default()
+    );
+    // SAFETY: signal 0 only asks whether the process is there
+    let alive = || unsafe { libc::kill(second as i32, 0) } == 0;
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while alive() && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(!alive(), "the daemon outlived its watchdog");
 }
 
 #[test]

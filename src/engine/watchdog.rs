@@ -169,8 +169,47 @@ fn probe(client: &reqwest::blocking::Client, port: Option<u16>) -> Probe {
     }
 }
 
+/// The daemon the watchdog runs now: 0 before the first, `STOPPED` once
+/// the watchdog is stopping (no daemon is started after).
+static DAEMON: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+const STOPPED: u32 = u32::MAX;
+
+/// Stops the daemon the watchdog runs, when the watchdog itself is asked
+/// to stop: SIGTERM, as `itero stop` sends; killed if it has not ended in
+/// 10 seconds. The service stops the whole process group, but a person may
+/// stop the watchdog alone.
+#[cfg(unix)]
+pub fn stop_daemon() {
+    use std::sync::atomic::Ordering;
+    let pid = DAEMON.swap(STOPPED, Ordering::SeqCst);
+    if pid == 0 || pid == STOPPED {
+        return;
+    }
+    let pid = pid as libc::pid_t;
+    // SAFETY: kill only sends a signal, to the daemon this watchdog started
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+    }
+    // waitpid reaps it (it is this process's child); -1 when `run` has
+    // already reaped it
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        // SAFETY: waits on this process's own child; no status is read
+        unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+        let _ = tx.send(());
+    });
+    if rx.recv_timeout(Duration::from_secs(10)).is_err() {
+        // SAFETY: as above
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+        let _ = rx.recv_timeout(Duration::from_secs(5));
+    }
+}
+
 /// Keeps the daemon running until the watchdog is stopped (the service
-/// stops its whole process group, the daemon with it).
+/// stops its whole process group, the daemon with it; a SIGTERM to the
+/// watchdog alone stops the daemon through `stop_daemon`).
 pub fn run(o: &Options) -> Result<()> {
     let log = match &o.log {
         Some(path) => Some(
@@ -207,6 +246,14 @@ pub fn run(o: &Options) -> Result<()> {
             .stderr(stderr)
             .spawn()
             .map_err(|e| anyhow::anyhow!("cannot start the daemon: {e}"))?;
+        let now_running = DAEMON.swap(child.id(), std::sync::atomic::Ordering::SeqCst);
+        if now_running == STOPPED {
+            // stopping began while it started: it goes too
+            DAEMON.store(STOPPED, std::sync::atomic::Ordering::SeqCst);
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(());
+        }
         let begun = Instant::now();
         say(&format!("started the daemon (pid {})", child.id()));
         let mut w = Watch::new(Utc::now());
@@ -226,5 +273,56 @@ pub fn run(o: &Options) -> Result<()> {
         wait = pause(wait, begun.elapsed());
         say(&format!("restarting in {}s", wait.as_secs()));
         std::thread::sleep(wait);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Probe, probe};
+    use std::io::{Read, Write};
+
+    /// A port that answers one request with `status` and `body`.
+    fn answers_once(status: &str, body: &str) -> u16 {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let reply = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = s.read(&mut buf);
+            s.write_all(reply.as_bytes()).unwrap();
+        });
+        port
+    }
+
+    #[test]
+    fn a_check_reads_health_and_counts_anything_else_as_no_answer() {
+        let client = crate::net::client(std::time::Duration::from_secs(5)).unwrap();
+        // no port yet
+        assert_eq!(probe(&client, None), Probe::NoAnswer);
+        // idle, then a pass under way
+        let p = answers_once("200 OK", r#"{"pid": 7}"#);
+        assert_eq!(probe(&client, Some(p)), Probe::Health { busy_since: None });
+        let p = answers_once("200 OK", r#"{"busy_since": "2026-10-30T09:15:00Z"}"#);
+        assert_eq!(
+            probe(&client, Some(p)),
+            Probe::Health {
+                busy_since: Some("2026-10-30T09:15:00Z".parse().unwrap())
+            }
+        );
+        // an error, a body that is no JSON, nobody listening
+        let p = answers_once("500 Internal Server Error", "{}");
+        assert_eq!(probe(&client, Some(p)), Probe::NoAnswer);
+        let p = answers_once("200 OK", "sağlık yok");
+        assert_eq!(probe(&client, Some(p)), Probe::NoAnswer);
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        assert_eq!(probe(&client, Some(closed)), Probe::NoAnswer);
     }
 }
