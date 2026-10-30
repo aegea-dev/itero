@@ -26,5 +26,5 @@ extension, in any language its first line names.
 A step may print nothing for 10 minutes and run for a day at most
 (`quiet` and `most` in [`limits`](/reference/itero-config/#limits)); a
 lost or stopped step runs again, up to 3 times. Built in, unless the workspace has an action of the name:
-`#notify` (shows `$text` and `$title`), `#forget` and `#roll-log`. See
+`#notify` (shows its args `text` and `title`), `#forget` and `#roll-log`. See
 [Actions](/guides/actions/).
