@@ -65,7 +65,17 @@ fn it_is_started_once_answers_and_is_used_again() {
         std::fs::metadata(dir).unwrap().permissions().mode() & 0o777,
         0o700
     );
+    // SIGTERM (what the daemon sends when it stops) ends it as when idle:
+    // the model freed, then a plain exit
     let mut child = s.child.take().unwrap();
-    child.kill().unwrap();
-    child.wait().unwrap();
+    // SAFETY: kill only sends a signal, to the itero-ai this test started
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+    }
+    let ended = wait_timeout::ChildExt::wait_timeout(&mut child, Duration::from_secs(10)).unwrap();
+    if ended.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    assert!(ended.is_some_and(|e| e.success()), "{ended:?}");
 }

@@ -1,7 +1,21 @@
 //! itero-ai: a local model for itero, behind the OpenAI Chat Completions
 //! API on a Unix socket. itero starts it with what it needs in its
 //! environment; it has no commands of its own.
+
+/// SIGTERM or SIGINT (the daemon stopping, a person's Ctrl-C) ends serving
+/// as when idle, so the model is freed before the process exits.
+extern "C" fn on_stop(_: libc::c_int) {
+    // only stores to an atomic
+    itero_ai::server::stop();
+}
+
 fn main() {
+    // SAFETY: the handler only stores to an atomic
+    unsafe {
+        let handler = on_stop as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        libc::signal(libc::SIGINT, handler);
+        libc::signal(libc::SIGTERM, handler);
+    }
     let cfg = match itero_ai::server::config_from_env() {
         Ok(c) => c,
         Err(e) => {
