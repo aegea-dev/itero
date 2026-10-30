@@ -91,6 +91,49 @@ fn a_folder_reports_entries_coming_and_going() {
 }
 
 #[test]
+fn a_file_changing_in_a_folder_is_a_change() {
+    // names with a composed letter: FSEvents compares them decomposed
+    let d = tempfile::tempdir().unwrap();
+    let folder = d.path().join("gelen kutusü");
+    std::fs::create_dir(&folder).unwrap();
+    let f = folder.join("fatüra.txt");
+    append(&f, "ilk");
+    let mut b = watch::open(&folder).unwrap();
+    append(&f, "ikinci");
+    let seen = until(&mut b, Kind::Changed, 3);
+    assert!(seen.contains(&Kind::Changed), "{seen:?}");
+}
+
+#[test]
+fn a_file_changing_in_a_subfolder_is_no_change() {
+    let d = tempfile::tempdir().unwrap();
+    let folder = d.path().join("gelen kutusu");
+    let sub = folder.join("eski");
+    std::fs::create_dir_all(&sub).unwrap();
+    let f = sub.join("makbuz.txt");
+    append(&f, "ilk");
+    let mut b = watch::open(&folder).unwrap();
+    append(&f, "ikinci");
+    let seen = until(&mut b, Kind::Changed, 1);
+    assert!(seen.is_empty(), "{seen:?}");
+}
+
+#[test]
+fn a_path_through_a_link_is_watched() {
+    let d = tempfile::tempdir().unwrap();
+    let real = d.path().join("gerçek");
+    std::fs::create_dir(&real).unwrap();
+    let link = d.path().join("bağ");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let f = link.join("not.txt");
+    append(&f, "ilk");
+    let mut b = watch::open(&f).unwrap();
+    append(&f, "ikinci");
+    let seen = until(&mut b, Kind::Changed, 3);
+    assert!(seen.contains(&Kind::Changed), "{seen:?}");
+}
+
+#[test]
 fn nothing_happening_is_no_change() {
     let d = tempfile::tempdir().unwrap();
     let f = d.path().join("sessiz");

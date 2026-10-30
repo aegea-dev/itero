@@ -111,8 +111,9 @@ An event is sent and forgotten, unless its sender asks what came of it:
 ```
 
 The daemon watches every `path` of every workflow itself, with the OS's
-own file events (kqueue on macOS, inotify on Linux), all in one thread: a
-path costs a file descriptor and no CPU until something changes.
+own file events (inotify on Linux; on macOS kqueue, with FSEvents for a
+folder's files), all in one thread: a path costs a file descriptor and
+no CPU until something changes.
 
 - Each change starts a run with `{"path": "...", "kind": "changed"}`
   (`created`, `removed`); a burst of changes is one, once the path has
@@ -129,12 +130,8 @@ path costs a file descriptor and no CPU until something changes.
 
 ### A watched folder
 
-A folder's event says that something in it changed, not what:
-
-| In the folder | macOS | Linux |
-|---|---|---|
-| a file comes or goes | `changed` | `changed` |
-| a file's contents change | no event | `changed` |
+A folder's event says that a file in it came, went or changed, not
+which. Files in its subfolders are not watched.
 
 To act on what is new, a step lists the folder and remembers what it has
 seen in `$ITERO_MEMORY`, a file kept between runs. `actions/new-files`

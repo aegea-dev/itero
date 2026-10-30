@@ -2,6 +2,8 @@
 //! all on one kqueue. A target's own events say it changed, was removed or
 //! renamed; its parent's say an entry came or went, which is how a file
 //! that is not there yet, or that an atomic save replaced, is found again.
+//! A target that is a folder is in folder mode too: FSEvents tells a file
+//! in it changing (`fsevents`), which kqueue cannot, and wakes this wait.
 use super::{Backend, Change, Kind};
 use std::ffi::CString;
 use std::io;
@@ -27,6 +29,8 @@ struct Entry {
 }
 
 pub struct Kqueue {
+    /// Before `kq`: its stream wakes `kq`, so it goes first.
+    folders: super::fsevents::Folders,
     kq: OwnedFd,
     entries: Vec<Entry>,
 }
@@ -147,13 +151,50 @@ impl Kqueue {
         if kq < 0 {
             return Err(io::Error::last_os_error());
         }
+        // SAFETY: a new descriptor this function owns
+        let kq = unsafe { OwnedFd::from_raw_fd(kq) };
+        // the folders' stream wakes the wait through this user event
+        let ev = libc::kevent {
+            ident: super::fsevents::WAKE,
+            filter: libc::EVFILT_USER,
+            flags: libc::EV_ADD | libc::EV_CLEAR,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        };
+        // SAFETY: one valid kevent in, none out, no timeout
+        if unsafe {
+            libc::kevent(
+                kq.as_raw_fd(),
+                &ev,
+                1,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null(),
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
         let mut k = Kqueue {
-            // SAFETY: a new descriptor this function owns
-            kq: unsafe { OwnedFd::from_raw_fd(kq) },
+            folders: super::fsevents::Folders::new(kq.as_raw_fd()),
+            kq,
             entries: vec![],
         };
         k.set(paths)?;
         Ok(k)
+    }
+
+    /// The targets that are folders now, in folder mode: their files'
+    /// changes come from FSEvents.
+    fn sync_folders(&mut self) -> io::Result<()> {
+        let folders: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter(|e| e.target.is_some() && e.path.is_dir())
+            .map(|e| e.path.clone())
+            .collect();
+        self.folders.set(&folders)
     }
 }
 
@@ -171,6 +212,7 @@ impl Backend for Kqueue {
                 }
             }
         }
+        self.sync_folders()?;
         failed.map_or(Ok(()), Err)
     }
 
@@ -204,6 +246,13 @@ impl Backend for Kqueue {
         let evs = &evs[..n as usize];
         let kq = self.kq.as_raw_fd();
         let mut out = vec![];
+        if evs.iter().any(|ev| ev.filter == libc::EVFILT_USER) {
+            out.extend(self.folders.take());
+        }
+        let evs: Vec<&libc::kevent> = evs
+            .iter()
+            .filter(|ev| ev.filter == libc::EVFILT_VNODE)
+            .collect();
         for e in &mut self.entries {
             let target = e.target.as_ref().map(|(fd, _)| fd.as_raw_fd());
             let parent = e.parent.as_raw_fd();
@@ -223,6 +272,8 @@ impl Backend for Kqueue {
                 });
             }
         }
+        // a target made or removed may have come into folder mode or left it
+        self.sync_folders()?;
         Ok(out)
     }
 }
