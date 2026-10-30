@@ -44,7 +44,7 @@ fn every_example_checks() {
     assert!(names.len() >= 4, "{names:?}");
     for name in names {
         let ws = copy(&name, d.path());
-        let out = String::from_utf8(itero(&ws, &["check"]).stdout).unwrap();
+        let out = String::from_utf8(itero(&ws, &["ws", "check"]).stdout).unwrap();
         assert!(!out.is_empty(), "{name}");
     }
 }
@@ -62,7 +62,7 @@ fn the_order_example_waits_for_its_payment_then_ships() {
         ],
     );
     itero(&ws, &["daemon", "--once"]);
-    let runs = String::from_utf8(itero(&ws, &["wf", "runs"]).stdout).unwrap();
+    let runs = String::from_utf8(itero(&ws, &["ws", "wf", "runs"]).stdout).unwrap();
     assert!(runs.contains("waiting"), "{runs}");
     itero(
         &ws,

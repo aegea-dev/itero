@@ -12,6 +12,16 @@ fn names(list: impl IntoIterator<Item = String>) -> Vec<CompletionCandidate> {
     list.into_iter().map(CompletionCandidate::new).collect()
 }
 
+/// The names on the machine's list.
+pub fn workspaces() -> ArgValueCandidates {
+    ArgValueCandidates::new(|| {
+        let list = crate::machine::list_path()
+            .and_then(|p| crate::machine::List::read(&p))
+            .unwrap_or_default();
+        names(list.workspaces.into_iter().map(|e| e.name))
+    })
+}
+
 pub fn workflows() -> ArgValueCandidates {
     ArgValueCandidates::new(|| {
         names(

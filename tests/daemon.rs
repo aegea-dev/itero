@@ -728,7 +728,7 @@ fn a_running_step_shows_its_last_line_on_stderr() {
     });
     let runs = || {
         let o = std::process::Command::new(exe())
-            .args(["wf", "runs", "--json"])
+            .args(["ws", "wf", "runs", "--json"])
             .current_dir(ws.d.path())
             .output()
             .unwrap();

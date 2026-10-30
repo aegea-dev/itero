@@ -491,13 +491,13 @@ fn info_in_a_listed_workspace_names_the_machines_daemon() {
     until("a running", || {
         get(port, &format!("/ws/{na}/health")).0 == 200
     });
-    let v = m.json(&a, &["info", "--json"]);
+    let v = m.json(&a, &["ws", "info", "--json"]);
     let d = &v["daemon"];
     assert_eq!(d["running"], true, "{v}");
     assert_eq!(d["run_by"], "machine", "{v}");
     let api = format!("http://127.0.0.1:{port}/ws/{na}/");
     assert_eq!(d["api"], api.as_str(), "{v}");
-    let text = m.ok(&a, &["info"]);
+    let text = m.ok(&a, &["ws", "info"]);
     assert!(
         text.contains(&api) && text.contains("the machine's daemon"),
         "{text}"
@@ -563,7 +563,7 @@ fn a_listed_workspace_has_no_models_workflow_of_its_own() {
     let (a, b) = (m.workspace("bir"), m.workspace("iki"));
     m.ok(&a, &["workspace", "add"]);
     let names = |dir: &Path| {
-        m.json(dir, &["wf", "list", "--json"])["workflows"]
+        m.json(dir, &["ws", "wf", "list", "--json"])["workflows"]
             .as_array()
             .unwrap()
             .iter()

@@ -7,6 +7,19 @@ use crate::workspace::Workspace;
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
 
+/// The workspace a `ws` command is about: the one named on the machine's
+/// list, else the folder's.
+pub fn chosen(name: Option<&str>) -> Result<Workspace> {
+    let Some(name) = name else {
+        return crate::workspace::find(&std::env::current_dir()?);
+    };
+    let list = List::read(&list_path()?)?;
+    let Some(e) = list.by_name(name) else {
+        bail!("no workspace {name} on this machine's list: itero ws list lists them");
+    };
+    crate::workspace::find(&e.folder)
+}
+
 /// `itero workspace add`: this workspace on the list, under its journal's
 /// name; a name another listed workspace has is replaced in this one's
 /// journal. A folder already listed by its journal id (it moved) is
