@@ -72,10 +72,12 @@ Scratch copies of Itero.app, run on the owner's Mac:
 ### Healing on refusal
 
 - When the notifier exits with "Notifications are not allowed", itero
-  launches the stable copy once through LaunchServices (`open -g -W`,
-  its output captured in files) with the same notification. The record
-  moves to it, and the notification shows, or the permission prompt on
-  a first run.
+  launches the stable copy once through LaunchServices (`open -n -g`)
+  with the same notification and `--result <file>`: the notifier writes
+  `ok` or its error there as it ends, and itero waits for that file
+  (watching its folder, two and a half minutes at most, for a first
+  run's prompt). The record moves to it, and the notification shows, or
+  the permission prompt on a first run.
 - Refused again: notifications are off for Itero. The step fails with
   "notifications are off for Itero: turn them on in System Settings,
   Notifications, Itero".
