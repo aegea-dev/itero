@@ -59,6 +59,21 @@ check: ## Type-check every target (the binary, tests), without building them
 audit: ## Check Cargo.lock for known vulnerabilities (cargo-audit)
 	$(CARGO) audit
 
+# Line coverage of the same tests `make test` runs, binaries the tests start
+# included. Needs cargo-llvm-cov (`cargo install cargo-llvm-cov --locked`);
+# llvm-tools is added here, not in rust-toolchain.toml, so CI does not
+# download it. A table per file in the terminal, the HTML report in
+# target/llvm-cov/html/index.html. With Qwen3.5-4B where `make test-ai`
+# finds it, itero-ai's tests with a real model run too (10 s), so its
+# llama.cpp engine counts; without it, that file shows little.
+.PHONY: coverage
+coverage: ## Measure test coverage per file (cargo-llvm-cov), with an HTML report
+	rustup component add llvm-tools --toolchain $(TOOLCHAIN)
+	if [ -f "$(ITERO_AI_TEST_MODEL)" ]; then export ITERO_AI_TEST_MODEL="$(ITERO_AI_TEST_MODEL)"; \
+	else echo "no Qwen3.5-4B at $(ITERO_AI_TEST_MODEL): itero-ai's engine is not measured"; fi; \
+	$(CARGO) llvm-cov --workspace --no-fail-fast --html
+	$(CARGO) llvm-cov --workspace --no-run
+
 .PHONY: verify
 verify: fmt-check check lint-check test audit docs-build ## Every gate CI runs before a release: formatting, check, clippy, tests, audit, docs
 

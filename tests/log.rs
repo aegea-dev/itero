@@ -2,6 +2,8 @@
 //! each line with its time, workspace, daemon and event.
 #![cfg(unix)]
 mod common;
+#[path = "common/stop.rs"]
+mod stop;
 use itero::engine::journal::Journal;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -193,8 +195,7 @@ fn a_daemon_says_when_it_starts_and_stops() {
     struct Running(std::process::Child);
     impl Drop for Running {
         fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
+            stop::stop(&mut self.0);
         }
     }
     let mut daemon = Running(

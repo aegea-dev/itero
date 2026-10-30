@@ -1,4 +1,6 @@
 //! The command line: the commands by kind, their args and settings, secrets.
+#[path = "common/stop.rs"]
+mod stop;
 use std::path::Path;
 use std::process::Output;
 
@@ -721,8 +723,7 @@ impl Daemon {
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        stop::stop(&mut self.0);
     }
 }
 
@@ -995,6 +996,62 @@ fn completion_prints_a_script_for_each_shell() {
         assert!(o.status.success(), "{shell}: {o:?}");
         assert!(out(&o).contains("itero"), "{shell}: {}", out(&o));
     }
+}
+
+/// What the shell offers for the last of `words` (`""`: nothing typed
+/// yet), asked as fish asks: `COMPLETE=fish itero -- itero <words>`.
+fn completions(dir: &Path, words: &[&str]) -> Vec<String> {
+    let o = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+        .args(["--", "itero"])
+        .args(words)
+        .current_dir(dir)
+        .env("COMPLETE", "fish")
+        .env("ITERO_NO_SECRET_STORE", "1")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{o:?}");
+    out(&o)
+        .lines()
+        .map(|l| l.split('\t').next().unwrap().to_string())
+        .filter(|w| !w.starts_with('-'))
+        .collect()
+}
+
+#[test]
+fn tab_completes_the_workspaces_own_names() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/sipariş.json",
+        r##"{ "on": [{ "event": "sipariş.geldi" }], "steps": ["#gönder"] }"##,
+    );
+    file(d.path(), "actions/gönder", "#!/bin/sh\necho '{}'\n");
+    file(d.path(), "actions/öde@2", "#!/bin/sh\n");
+    file(d.path(), "connectors/posta.geldi", "#!/bin/sh\n");
+    // the workspace's workflows, beside itero's own
+    let workflows = completions(d.path(), &["wf", "config", "get", ""]);
+    assert!(workflows.contains(&"sipariş".to_string()), "{workflows:?}");
+    // an action's version is not part of its name; the built-ins are there too
+    let actions = completions(d.path(), &["action", "args", "get", ""]);
+    assert!(actions.contains(&"gönder".to_string()), "{actions:?}");
+    assert!(actions.contains(&"öde".to_string()), "{actions:?}");
+    assert!(actions.contains(&"notify".to_string()), "{actions:?}");
+    assert!(!actions.iter().any(|a| a.contains('@')), "{actions:?}");
+    assert_eq!(
+        completions(d.path(), &["connector", "args", "get", ""]),
+        ["posta.geldi"]
+    );
+    // no runs yet, then the run's name
+    assert!(completions(d.path(), &["wf", "runs", ""]).is_empty());
+    itero(d.path(), &["emit", "sipariş.geldi", "{}"]);
+    itero(d.path(), &["daemon", "--once"]);
+    let list = out(&itero(d.path(), &["wf", "runs"]));
+    let name = list.split_whitespace().nth(1).unwrap().to_string();
+    assert_eq!(completions(d.path(), &["wf", "runs", ""]), [name]);
+    // outside a workspace: no names, and no error
+    let outside = tempfile::tempdir().unwrap();
+    assert!(completions(outside.path(), &["wf", "config", "get", ""]).is_empty());
+    assert!(completions(outside.path(), &["wf", "runs", ""]).is_empty());
 }
 
 #[test]

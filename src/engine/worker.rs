@@ -139,7 +139,7 @@ pub fn openable(url: &str) -> bool {
 
 /// What `#notify` shows: `$title`, `$text`, and `$subtitle`, `$sound`
 /// (`default`, or a sound's name), `$url` and `$buttons` when set.
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Note {
     pub title: String,
     pub text: String,
@@ -157,6 +157,7 @@ pub struct Note {
 /// Where a click on a notification goes: `itero notification-clicked`,
 /// run by the `itero` that showed it in its workspace, with its id, its
 /// workflow and `$data`.
+#[derive(Debug, PartialEq)]
 pub struct Click {
     pub id: String,
     pub workspace: PathBuf,
@@ -169,6 +170,53 @@ pub struct Click {
 pub const BUTTONS: usize = 4;
 
 impl Note {
+    /// The note `itero-notifier` is given, `<title> <text> [--<name>
+    /// <value>]...` (as `fields` names them), and its `--result` file; none
+    /// when the arguments are not that.
+    pub fn from_args(args: &[String]) -> Option<(Note, Option<String>)> {
+        let [title, text, rest @ ..] = args else {
+            return None;
+        };
+        let mut n = Note {
+            title: title.clone(),
+            text: text.clone(),
+            ..Note::default()
+        };
+        let (mut id, mut workspace, mut itero, mut workflow, mut data) =
+            (None, None, None, None, None);
+        let mut result = None;
+        for pair in rest.chunks(2) {
+            let [name, v] = pair else {
+                return None;
+            };
+            let v = Some(v.clone());
+            match name.as_str() {
+                "--subtitle" => n.subtitle = v,
+                "--sound" => n.sound = v,
+                "--url" => n.url = v,
+                "--buttons" => n.buttons = serde_json::from_str(v.as_deref()?).ok()?,
+                "--wait" => n.wait = v.as_deref() == Some("true"),
+                "--notification" => id = v,
+                "--workspace" => workspace = v,
+                "--itero" => itero = v,
+                "--workflow" => workflow = v,
+                "--data" => data = v,
+                "--result" => result = v,
+                _ => return None,
+            }
+        }
+        if let (Some(id), Some(workspace), Some(itero)) = (id, workspace, itero) {
+            n.click = Some(Click {
+                id,
+                workspace: workspace.into(),
+                itero: itero.into(),
+                workflow: workflow.unwrap_or_default(),
+                data,
+            });
+        }
+        Some((n, result))
+    }
+
     /// Its values past the title and text, by name, in this order: those
     /// shown, then (`all`, for the notifier) what a click is told with.
     /// The id is among the first when it waits, so tests can answer it.
@@ -273,9 +321,16 @@ fn notify(r: &StepRun) -> Result<Outcome, Failure> {
 /// notification service), kdialog (KDE); a subtitle is the text's first
 /// line there.
 fn notifiers(n: &Note) -> Vec<(PathBuf, Vec<String>)> {
+    let macos = cfg!(target_os = "macos");
+    commands(n, macos, if macos { notifier() } else { None })
+}
+
+/// `notifiers`, for macOS (with Itero.app's notifier `app`, when there is
+/// one) or another OS.
+fn commands(n: &Note, macos: bool, app: Option<PathBuf>) -> Vec<(PathBuf, Vec<String>)> {
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-    if cfg!(target_os = "macos") {
-        let mut out: Vec<(PathBuf, Vec<String>)> = notifier()
+    if macos {
+        let mut out: Vec<(PathBuf, Vec<String>)> = app
             .into_iter()
             .map(|p| {
                 let mut a = vec![n.title.clone(), n.text.clone()];
@@ -363,8 +418,14 @@ fn show(n: &Note) -> Result<(), String> {
         f.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
         return Ok(());
     }
+    first_that_runs(notifiers(n))
+}
+
+/// Runs the first of `ways` (a program and its arguments) that is there;
+/// an error says why it failed, or which were tried.
+fn first_that_runs(ways: Vec<(PathBuf, Vec<String>)>) -> Result<(), String> {
     let mut tried = vec![];
-    for (program, args) in notifiers(n) {
+    for (program, args) in ways {
         let out = match Command::new(&program)
             .args(&args)
             .stdin(Stdio::null())
@@ -827,6 +888,167 @@ fn answer(stdout: &[u8]) -> Value {
 mod notifier_tests {
     use super::choose;
     use std::path::PathBuf;
+
+    fn note() -> super::Note {
+        super::Note {
+            title: "Sipariş".into(),
+            text: "Kargo yolda".into(),
+            subtitle: Some("çay ve şeker".into()),
+            ..Default::default()
+        }
+    }
+
+    fn words(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn on_macos_itero_app_first_then_osascript_with_the_values_as_arguments() {
+        let app = PathBuf::from("/destek/Itero.app/Contents/MacOS/itero-notifier");
+        let mut n = note();
+        n.sound = Some("Glass".into());
+        let ways = super::commands(&n, true, Some(app.clone()));
+        assert_eq!(ways.len(), 2);
+        assert_eq!(ways[0].0, app);
+        assert_eq!(
+            ways[0].1,
+            words(&[
+                "Sipariş",
+                "Kargo yolda",
+                "--subtitle",
+                "çay ve şeker",
+                "--sound",
+                "Glass"
+            ])
+        );
+        assert_eq!(ways[1].0, PathBuf::from("osascript"));
+        let script = &ways[1].1;
+        assert!(
+            script[3].ends_with("sound name (item 4 of argv)"),
+            "{script:?}"
+        );
+        assert_eq!(
+            script[6..],
+            words(&["Sipariş", "Kargo yolda", "çay ve şeker", "Glass"])[..]
+        );
+        // the default sound is no name: osascript plays none; no Itero.app,
+        // only osascript
+        n.sound = Some("default".into());
+        let ways = super::commands(&n, true, None);
+        assert_eq!(ways.len(), 1);
+        assert!(!ways[0].1[3].contains("sound name"), "{:?}", ways[0].1);
+        assert_eq!(ways[0].1.len(), 9);
+    }
+
+    #[test]
+    fn elsewhere_notify_send_then_gdbus_then_kdialog_with_the_subtitle_first() {
+        let mut n = note();
+        n.sound = Some("default".into());
+        let ways = super::commands(&n, false, Some(PathBuf::from("/yok")));
+        let programs: Vec<_> = ways.iter().map(|(p, _)| p.display().to_string()).collect();
+        assert_eq!(programs, ["notify-send", "gdbus", "kdialog"]);
+        let body = "çay ve şeker\nKargo yolda";
+        assert_eq!(
+            ways[0].1,
+            words(&[
+                "--app-name=itero",
+                "--hint=string:sound-name:message-new-instant",
+                "Sipariş",
+                body
+            ])
+        );
+        assert_eq!(ways[1].1[8..10], words(&["Sipariş", body])[..]);
+        assert_eq!(
+            ways[2].1,
+            words(&["--title", "Sipariş", "--passivepopup", body, "10"])
+        );
+        // a sound by name; no subtitle: the text alone
+        n.sound = Some("bell".into());
+        n.subtitle = None;
+        let ways = super::commands(&n, false, None);
+        assert_eq!(
+            ways[0].1,
+            words(&[
+                "--app-name=itero",
+                "--hint=string:sound-name:bell",
+                "Sipariş",
+                "Kargo yolda"
+            ])
+        );
+    }
+
+    #[test]
+    fn the_notifier_reads_back_the_note_itero_gives_it() {
+        use super::{Click, Note};
+        let app = PathBuf::from("/destek/Itero.app/Contents/MacOS/itero-notifier");
+        let n = Note {
+            title: "Sipariş".into(),
+            text: "Ödeme bekleniyor".into(),
+            subtitle: Some("çay ve şeker".into()),
+            sound: Some("Glass".into()),
+            url: Some("https://örnek.test/sipariş/1".into()),
+            buttons: vec!["Öde".into(), "İptal".into()],
+            wait: true,
+            click: Some(Click {
+                id: "019a-bildirim".into(),
+                workspace: PathBuf::from("/ev/çalışma"),
+                itero: PathBuf::from("/usr/local/bin/itero"),
+                workflow: "sipariş".into(),
+                data: Some(r#"{"sipariş": 1}"#.into()),
+            }),
+        };
+        let mut args = super::commands(&n, true, Some(app)).remove(0).1;
+        assert_eq!(Note::from_args(&args), Some((n, None)));
+        args.extend(["--result".into(), "/tmp/sonuç".into()]);
+        let (_, result) = Note::from_args(&args).unwrap();
+        assert_eq!(result.as_deref(), Some("/tmp/sonuç"));
+        // the least: a title and a text
+        let plain = Note::from_args(&words(&["Başlık", "Metin"])).unwrap().0;
+        assert_eq!(
+            (plain.title.as_str(), plain.text.as_str()),
+            ("Başlık", "Metin")
+        );
+        assert_eq!(plain.click, None);
+        // what it does not take
+        for bad in [
+            &["yalnız başlık"][..],
+            &["B", "M", "--sound"],
+            &["B", "M", "--renk", "kırmızı"],
+            &["B", "M", "--buttons", "Öde"],
+        ] {
+            assert_eq!(Note::from_args(&words(bad)), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_first_way_there_is_runs_and_its_failure_is_said() {
+        use super::first_that_runs;
+        let none = PathBuf::from("/yok/bildirici");
+        let sh = |script: &str| (PathBuf::from("sh"), words(&["-c", script]));
+        // one not there is passed over
+        assert_eq!(
+            first_that_runs(vec![(none.clone(), vec![]), sh("exit 0")]),
+            Ok(())
+        );
+        // the first there decides, even when it fails
+        assert_eq!(
+            first_that_runs(vec![sh("echo olmadı >&2; exit 3"), sh("exit 0")]),
+            Err("sh: olmadı".into())
+        );
+        // none there: which were tried
+        let e = first_that_runs(vec![(none, vec![]), (PathBuf::from("/yok/öteki"), vec![])])
+            .unwrap_err();
+        assert!(
+            e.contains("tried /yok/bildirici, /yok/öteki") && e.contains("notify-send"),
+            "{e}"
+        );
+        // there, but not a program
+        let d = tempfile::tempdir().unwrap();
+        let not_runnable = d.path().join("düz-dosya");
+        std::fs::write(&not_runnable, "metin").unwrap();
+        let e = first_that_runs(vec![(not_runnable, vec![])]).unwrap_err();
+        assert!(e.starts_with("cannot run"), "{e}");
+    }
 
     #[test]
     fn a_refusal_is_healed_once_then_says_to_turn_notifications_on() {

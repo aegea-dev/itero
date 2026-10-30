@@ -61,9 +61,12 @@ fn manager() -> Result<Box<dyn ServiceManager>> {
     Ok(m)
 }
 
-/// Installs (or reinstalls) and starts the workspace's service.
+/// Installs (or reinstalls) and starts the machine's service.
 pub fn install(ctx: ServiceInstallCtx) -> Result<()> {
-    let m = manager()?;
+    install_on(&*manager()?, ctx)
+}
+
+fn install_on(m: &dyn ServiceManager, ctx: ServiceInstallCtx) -> Result<()> {
     let label = ctx.label.clone();
     if !matches!(
         m.status(ServiceStatusCtx {
@@ -71,7 +74,7 @@ pub fn install(ctx: ServiceInstallCtx) -> Result<()> {
         }),
         Ok(ServiceStatus::NotInstalled)
     ) {
-        uninstall_with(&*m, &label)?;
+        uninstall_with(m, &label)?;
     }
     m.install(ctx)
         .map_err(|e| anyhow!("cannot install the service: {e}"))?;
@@ -92,37 +95,49 @@ fn uninstall_with(m: &dyn ServiceManager, label: &ServiceLabel) -> Result<()> {
 
 /// Stops and removes the service `label`; false when there was none.
 pub fn uninstall(label: &ServiceLabel) -> Result<bool> {
-    let m = manager()?;
+    uninstall_on(&*manager()?, label)
+}
+
+fn uninstall_on(m: &dyn ServiceManager, label: &ServiceLabel) -> Result<bool> {
     if let Ok(ServiceStatus::NotInstalled) = m.status(ServiceStatusCtx {
         label: label.clone(),
     }) {
         return Ok(false);
     }
-    uninstall_with(&*m, label)?;
+    uninstall_with(m, label)?;
     Ok(true)
 }
 
 /// Starts the installed service `label`.
 pub fn start(label: &ServiceLabel) -> Result<()> {
-    manager()?
-        .start(ServiceStartCtx {
-            label: label.clone(),
-        })
-        .map_err(|e| anyhow!("cannot start the service: {e}"))
+    start_on(&*manager()?, label)
+}
+
+fn start_on(m: &dyn ServiceManager, label: &ServiceLabel) -> Result<()> {
+    m.start(ServiceStartCtx {
+        label: label.clone(),
+    })
+    .map_err(|e| anyhow!("cannot start the service: {e}"))
 }
 
 /// Stops the service `label`; it stays installed, and starts at login.
 pub fn stop(label: &ServiceLabel) -> Result<()> {
-    manager()?
-        .stop(ServiceStopCtx {
-            label: label.clone(),
-        })
-        .map_err(|e| anyhow!("cannot stop the service: {e}"))
+    stop_on(&*manager()?, label)
+}
+
+fn stop_on(m: &dyn ServiceManager, label: &ServiceLabel) -> Result<()> {
+    m.stop(ServiceStopCtx {
+        label: label.clone(),
+    })
+    .map_err(|e| anyhow!("cannot stop the service: {e}"))
 }
 
 /// The service `label`'s state, in words.
 pub fn status(label: &ServiceLabel) -> Result<String> {
-    let m = manager()?;
+    status_on(&*manager()?, label)
+}
+
+fn status_on(m: &dyn ServiceManager, label: &ServiceLabel) -> Result<String> {
     Ok(
         match m
             .status(ServiceStatusCtx {
@@ -199,4 +214,170 @@ pub fn old_services(home: &Path, config: &Path) -> Vec<Old> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::io;
+
+    /// A service manager that keeps one service's state, says what it was
+    /// asked, and fails the call named in `fails`.
+    struct Fake {
+        state: RefCell<ServiceStatus>,
+        calls: RefCell<Vec<String>>,
+        fails: Option<&'static str>,
+    }
+
+    impl Fake {
+        fn new(state: ServiceStatus, fails: Option<&'static str>) -> Fake {
+            Fake {
+                state: RefCell::new(state),
+                calls: RefCell::new(vec![]),
+                fails,
+            }
+        }
+        fn call(&self, what: &'static str) -> io::Result<()> {
+            self.calls.borrow_mut().push(what.into());
+            if self.fails == Some(what) {
+                return Err(io::Error::other("izin yok"));
+            }
+            Ok(())
+        }
+        fn calls(&self) -> Vec<String> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl ServiceManager for Fake {
+        fn available(&self) -> io::Result<bool> {
+            Ok(true)
+        }
+        fn install(&self, _: ServiceInstallCtx) -> io::Result<()> {
+            self.call("install")?;
+            *self.state.borrow_mut() = ServiceStatus::Stopped(None);
+            Ok(())
+        }
+        fn uninstall(&self, _: ServiceUninstallCtx) -> io::Result<()> {
+            self.call("uninstall")?;
+            *self.state.borrow_mut() = ServiceStatus::NotInstalled;
+            Ok(())
+        }
+        fn start(&self, _: ServiceStartCtx) -> io::Result<()> {
+            self.call("start")?;
+            *self.state.borrow_mut() = ServiceStatus::Running;
+            Ok(())
+        }
+        fn stop(&self, _: ServiceStopCtx) -> io::Result<()> {
+            self.call("stop")?;
+            *self.state.borrow_mut() = ServiceStatus::Stopped(Some("durduruldu".into()));
+            Ok(())
+        }
+        fn level(&self) -> ServiceLevel {
+            ServiceLevel::User
+        }
+        fn set_level(&mut self, _: ServiceLevel) -> io::Result<()> {
+            Ok(())
+        }
+        fn status(&self, _: ServiceStatusCtx) -> io::Result<ServiceStatus> {
+            self.call("status")?;
+            Ok(self.state.borrow().clone())
+        }
+    }
+
+    fn ctx() -> ServiceInstallCtx {
+        machine_ctx(
+            Path::new("/usr/local/bin/itero"),
+            Path::new("/Users/çalışan"),
+            Path::new("/Users/çalışan/.local/state/itero"),
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn install_replaces_one_there_and_starts_it() {
+        let fresh = Fake::new(ServiceStatus::NotInstalled, None);
+        install_on(&fresh, ctx()).unwrap();
+        assert_eq!(fresh.calls(), ["status", "install", "start"]);
+        assert_eq!(status_on(&fresh, &machine_label()).unwrap(), "running");
+
+        // one there is stopped and removed first
+        let there = Fake::new(ServiceStatus::Running, None);
+        install_on(&there, ctx()).unwrap();
+        assert_eq!(
+            there.calls(),
+            ["status", "stop", "uninstall", "install", "start"]
+        );
+    }
+
+    #[test]
+    fn install_says_which_step_failed() {
+        let e = install_on(
+            &Fake::new(ServiceStatus::NotInstalled, Some("install")),
+            ctx(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(e, "cannot install the service: izin yok");
+        let e = install_on(
+            &Fake::new(ServiceStatus::NotInstalled, Some("start")),
+            ctx(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(e, "installed, but cannot start the service: izin yok");
+        let e = install_on(&Fake::new(ServiceStatus::Running, Some("uninstall")), ctx())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(e, "cannot uninstall the service: izin yok");
+        // a status that cannot be read: removed first, to be sure
+        let unknown = Fake::new(ServiceStatus::Running, Some("status"));
+        install_on(&unknown, ctx()).unwrap();
+        assert_eq!(
+            unknown.calls(),
+            ["status", "stop", "uninstall", "install", "start"]
+        );
+    }
+
+    #[test]
+    fn uninstall_says_whether_there_was_one() {
+        let label = machine_label();
+        let none = Fake::new(ServiceStatus::NotInstalled, None);
+        assert!(!uninstall_on(&none, &label).unwrap());
+        assert_eq!(none.calls(), ["status"]);
+        // stopping one that is not running is no problem
+        let stopped = Fake::new(ServiceStatus::Stopped(None), Some("stop"));
+        assert!(uninstall_on(&stopped, &label).unwrap());
+        assert_eq!(stopped.calls(), ["status", "stop", "uninstall"]);
+        assert_eq!(status_on(&stopped, &label).unwrap(), "not installed");
+    }
+
+    #[test]
+    fn start_stop_and_status_in_words() {
+        let label = machine_label();
+        let m = Fake::new(ServiceStatus::Stopped(None), None);
+        assert_eq!(status_on(&m, &label).unwrap(), "stopped");
+        start_on(&m, &label).unwrap();
+        assert_eq!(status_on(&m, &label).unwrap(), "running");
+        stop_on(&m, &label).unwrap();
+        assert_eq!(status_on(&m, &label).unwrap(), "stopped (durduruldu)");
+
+        let broken = Fake::new(ServiceStatus::Running, Some("start"));
+        assert_eq!(
+            start_on(&broken, &label).unwrap_err().to_string(),
+            "cannot start the service: izin yok"
+        );
+        let broken = Fake::new(ServiceStatus::Running, Some("stop"));
+        assert_eq!(
+            stop_on(&broken, &label).unwrap_err().to_string(),
+            "cannot stop the service: izin yok"
+        );
+        let broken = Fake::new(ServiceStatus::Running, Some("status"));
+        assert_eq!(
+            status_on(&broken, &label).unwrap_err().to_string(),
+            "cannot ask the service manager: izin yok"
+        );
+    }
 }

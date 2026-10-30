@@ -183,6 +183,11 @@ impl Keeper {
         })
     }
 
+    /// The process id of the itero-ai this daemon started, while it runs.
+    pub fn pid(&self) -> Option<u32> {
+        self.lock().pid
+    }
+
     /// Stops the itero-ai this daemon started, when the daemon stops.
     pub fn stop(&self) {
         if let Some(pid) = self.lock().pid.take() {

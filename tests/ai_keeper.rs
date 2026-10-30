@@ -59,8 +59,11 @@ fn started_once_used_again_and_after_a_bad_end_started_after_a_pause() {
     // ended badly (killed): it is not started again before its pause. The
     // keeper's own state turns first, and is asked at once: waiting for the
     // event in the journal could outlast the one-second pause on a slow
-    // machine
-    k.stop();
+    // machine. (`stop` sends SIGTERM, which itero-ai ends on cleanly.)
+    // SAFETY: kill only sends a signal, to the itero-ai the keeper started
+    unsafe {
+        libc::kill(k.pid().unwrap() as libc::pid_t, libc::SIGKILL);
+    }
     for _ in 0..1000 {
         if k.health().unwrap().state == "failed" {
             break;

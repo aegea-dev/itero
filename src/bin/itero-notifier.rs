@@ -31,7 +31,7 @@ fn usage() -> ! {
 
 #[cfg(target_os = "macos")]
 fn main() {
-    use itero::engine::worker::{Click, Note};
+    use itero::engine::worker::Note;
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args == ["--status"] {
         match mac::status() {
@@ -43,50 +43,13 @@ fn main() {
         }
         return;
     }
-    let [title, text, rest @ ..] = args.as_slice() else {
-        if args.is_empty() {
-            mac::clicked();
-            return;
-        }
-        usage();
-    };
-    let mut n = Note {
-        title: title.clone(),
-        text: text.clone(),
-        ..Note::default()
-    };
-    let (mut id, mut workspace, mut itero, mut workflow, mut data) = (None, None, None, None, None);
-    let mut result: Option<String> = None;
-    for pair in rest.chunks(2) {
-        let [name, v] = pair else { usage() };
-        let v = Some(v.clone());
-        match name.as_str() {
-            "--subtitle" => n.subtitle = v,
-            "--sound" => n.sound = v,
-            "--url" => n.url = v,
-            "--buttons" => {
-                n.buttons =
-                    serde_json::from_str(v.as_deref().unwrap_or("")).unwrap_or_else(|_| usage())
-            }
-            "--wait" => n.wait = v.as_deref() == Some("true"),
-            "--notification" => id = v,
-            "--workspace" => workspace = v,
-            "--itero" => itero = v,
-            "--workflow" => workflow = v,
-            "--data" => data = v,
-            "--result" => result = v,
-            _ => usage(),
-        }
+    if args.is_empty() {
+        mac::clicked();
+        return;
     }
-    if let (Some(id), Some(workspace), Some(itero)) = (id, workspace, itero) {
-        n.click = Some(Click {
-            id,
-            workspace: workspace.into(),
-            itero: itero.into(),
-            workflow: workflow.unwrap_or_default(),
-            data,
-        });
-    }
+    let Some((n, result)) = Note::from_args(&args) else {
+        usage()
+    };
     let shown = mac::show(&n);
     if let Some(path) = result {
         // whole or not at all: written beside, then renamed

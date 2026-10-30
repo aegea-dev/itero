@@ -958,6 +958,8 @@ fn dispatch(cli: Cli) -> Result<()> {
             } else {
                 Target::Workspace(Box::new(workspace()?))
             };
+            #[cfg(unix)]
+            stop_on_signal(crate::engine::watchdog::stop_daemon);
             run(&Options {
                 exe: std::env::current_exe()?,
                 target,

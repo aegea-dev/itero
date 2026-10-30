@@ -1,6 +1,8 @@
 //! The daemon as it runs: it waits for something to do, and makes no pass
 //! until a message, an edit or the next due time wakes it.
 #![cfg(unix)]
+#[path = "common/stop.rs"]
+mod stop;
 use itero::engine::journal::{Journal, subject};
 use itero::engine::steps;
 use serde_json::Value;
@@ -15,8 +17,7 @@ struct Daemon(Child);
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        stop::stop(&mut self.0);
     }
 }
 

@@ -1,6 +1,8 @@
 //! The daemon's port: the manifest's when it sets one, else one the OS
 //! gives, kept in .itero/port and asked for again on the next start.
 #![cfg(unix)]
+#[path = "common/stop.rs"]
+mod stop;
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
@@ -30,8 +32,7 @@ fn daemon(dir: &Path) -> Child {
 }
 
 fn stop(mut c: Child) {
-    let _ = c.kill();
-    let _ = c.wait();
+    stop::stop(&mut c);
 }
 
 fn until(what: &str, done: impl Fn() -> bool) {

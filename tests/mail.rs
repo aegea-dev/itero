@@ -1,6 +1,8 @@
 //! The mail-alert example, live: its connector tells the daemon about each new
 //! mail in a local mailbox, and its workflow shows it.
 #![cfg(unix)]
+#[path = "common/stop.rs"]
+mod stop;
 use std::path::{Path, PathBuf};
 
 /// The example workspace, copied into `d`, with its mailbox at `mbox`.
@@ -58,8 +60,7 @@ struct Daemon(std::process::Child);
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        stop::stop(&mut self.0);
     }
 }
 
