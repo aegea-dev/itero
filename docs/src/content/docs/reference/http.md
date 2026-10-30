@@ -117,7 +117,7 @@ check:
 |---|---|
 | `GET /health` | the daemon, each running workspace's passes and connectors by name, itero-ai |
 | `GET /workspaces` | each listed workspace: `name`, `folder`, `state`, `why` |
-| `/w/<name>/...` | that workspace's routes above: `POST /w/<name>/events`, `GET /w/<name>/runs` |
+| `/ws/<name>/...` | that workspace's routes above: `POST /ws/<name>/events`, `GET /ws/<name>/runs` |
 
 ```json
 [{ "name": "quiet-river", "folder": "/Users/me/projects/home", "state": "running", "why": null },

@@ -83,7 +83,7 @@ from its last start (in `~/.local/state/itero/port`):
 |---|---|
 | `GET /health` | the daemon, each workspace's passes and connectors, itero-ai |
 | `GET /workspaces` | the list, with each one's state |
-| `/w/<name>/...` | that workspace's own routes: `/w/quiet-river/events`, `/w/quiet-river/runs` |
+| `/ws/<name>/...` | that workspace's own routes: `/ws/quiet-river/events`, `/ws/quiet-river/runs` |
 
 See the [HTTP API](/reference/http/#one-itero-per-machine). Commands run
 in a workspace's folder find the daemon running it, whichever it is;

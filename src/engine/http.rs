@@ -354,14 +354,14 @@ struct MachineShared {
 
 /// The machine's routes, for `itero daemon --all` on `port`: its health,
 /// its workspaces, and each running workspace's own routes under
-/// `/w/<name>/`.
+/// `/ws/<name>/`.
 pub fn machine_router(machine: Arc<super::machine::Machine>, port: u16) -> Router {
     let s = MachineShared { machine, port };
     Router::new()
         .route("/health", get(machine_health))
         .route("/workspaces", get(workspaces))
-        .route("/w/{name}", axum::routing::any(in_workspace))
-        .route("/w/{name}/{*rest}", axum::routing::any(in_workspace))
+        .route("/ws/{name}", axum::routing::any(in_workspace))
+        .route("/ws/{name}/{*rest}", axum::routing::any(in_workspace))
         .layer(middleware::from_fn_with_state(port, local_only_on))
         .with_state(s)
 }
@@ -381,7 +381,7 @@ async fn workspaces(State(s): State<MachineShared>) -> Json<Value> {
     Json(Value::Array(s.machine.states()))
 }
 
-/// A request to `/w/<name>/<rest>`, answered by that workspace's routes
+/// A request to `/ws/<name>/<rest>`, answered by that workspace's routes
 /// as `/<rest>`.
 async fn in_workspace(
     State(s): State<MachineShared>,
