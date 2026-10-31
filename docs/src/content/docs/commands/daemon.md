@@ -23,7 +23,7 @@ Ctrl-C stops it.
 
 It works in passes, and makes one only when something wakes it:
 
-- an event: `POST /events`, `itero emit`, a connector, a click on a
+- an event: `POST /events`, `itero ws emit`, a connector, a click on a
   notification;
 - a watched path that changed, or an edit to a workflow or
   `itero.config.json`;

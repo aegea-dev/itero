@@ -1,41 +1,43 @@
 ---
 title: info
-description: The workspace and its daemon - IDs, names, limits.
+description: The machine's daemon - its version, port and workspaces.
 ---
 
-`itero info` tells you about the workspace you are in and the daemon
-running it, if one is.
+`itero info` tells you about this machine's daemon, from any folder: the
+question after an upgrade is which itero it runs. For one workspace, see
+[`itero ws info`](/commands/workspace/#info).
 
 ```sh
 itero info [--json]
 ```
 
-The workspace: its id, name, when it was made, its folder, the itero that
-made it, what its manifest says it is, and its `limits`. Then the daemon running it, when
-one answers on the port: its id, name, start, pid, host, itero version and port.
-Last, whether notifications can be shown: on macOS, macOS's setting for
-Itero (`allowed`, `off`, `not asked`) and the copy of Itero.app that
-notifies; on Linux, the notifier it uses.
+This itero's version, then the daemon that runs the machine's list: its
+pid, port, itero version and start, and each workspace with its passes and
+its last error. Then [itero-ai](/ai/), when it has started, and whether
+notifications can be shown: on macOS, macOS's setting for Itero (`allowed`,
+`off`, `not asked`) and the copy of Itero.app that notifies; on Linux, the
+notifier it uses.
 
 ```
 $ itero info
-workspace
-  id 01a16000-8c56-7202-87a3-b6b17d7a725d
-  name warm-otter
-  created 2026-10-21T19:46:51Z
-  path /Users/me/home
-  itero 0.15.0
-  limits
-    workflows 100
-    runs 1000
-    steps 8
-    space 1073741824
-    keep 1day
-    log 10485760
-    logs 3
-daemon: not running (no answer on port 8787)
-notifications: allowed, Itero.app 22 in /Users/me/Library/Application Support/itero/Itero.app
+itero 0.22.0
+daemon: pid 4211, port 8787, itero 0.21.0, started 2026-10-31T09:12:03Z
+this itero is 0.22.0: itero service restart runs it
+  misty-lake: 214 passes, last 2026-10-31T10:02:11Z
+  quiet-river: 214 passes, last 2026-10-31T10:02:11Z, last error: no such file
+ai: running unsloth/Qwen3.5-4B-GGUF
+notifications: allowed, Itero.app 24 in /Applications/Itero.app
 ```
 
-See [`itero.config.json`](/reference/itero-config/) and
-[The log, IDs and names](/guides/log/).
+With no daemon answering it says so, and exits 0:
+
+```
+$ itero info
+itero 0.22.0
+daemon: none answering on port 8787
+itero service status says why
+notifications: allowed, Itero.app 24 in /Applications/Itero.app
+```
+
+See [One itero per machine](/guides/machine/) and
+[Upgrading](/start/install/#upgrading).

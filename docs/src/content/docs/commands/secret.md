@@ -1,15 +1,19 @@
 ---
 title: secret
-description: Keeps a secret in the OS secret store.
+description: Keeps a secret in the OS secret store, for every workspace or for one.
 ---
 
 `itero secret` keeps a password, a token or an API key safe in your
 system's secret store, so your workflows can use it as `$$NAME` without it
-ever being written in a file.
+ever being written in a file. It is for every workspace on the machine;
+[`itero ws secret`](#one-workspaces-secret) keeps one for a single
+workspace.
 
 ```sh
 itero secret <NAME>
 itero secret <NAME> --file <path>
+itero ws secret <NAME>
+itero ws secret <NAME> --file <path>
 ```
 
 Keeps a secret, for `$$NAME`, in the OS secret store: the macOS Keychain,
@@ -24,6 +28,21 @@ LM_STUDIO_TOKEN:
 LM_STUDIO_TOKEN: kept in the OS secret store
 ```
 
-A name is a letter or `_`, then letters, digits or `_`. A `$$NAME` with
-no secret of its name is the daemon's environment variable of that name.
-See [Args and secrets](/guides/secrets/).
+A name is a letter or `_`, then letters, digits or `_`.
+
+## One workspace's secret
+
+`itero ws secret` keeps a secret for the workspace of this folder, or the
+one `--ws <name>` names. Its `$$NAME` finds it before the machine's, so one
+workspace can use another account without changing the others. It stays
+with the workspace when the workspace is renamed.
+
+```
+$ itero ws secret IMAP_PASS
+IMAP_PASS: 
+IMAP_PASS: kept for workspace quiet-river in the OS secret store
+```
+
+`$$NAME` is looked up in the workspace's own secrets, then the machine's,
+then the workspace's `.env`, then the daemon's environment. See
+[Args and secrets](/guides/secrets/).

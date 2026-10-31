@@ -111,7 +111,7 @@ pub enum Cmd {
     #[command(visible_alias = "ws")]
     Workspace {
         /// The workspace, by its name on the machine's list (itero ws list); else this folder's
-        #[arg(long, global = true, add = complete::workspaces())]
+        #[arg(long, global = true, value_name = "NAME", add = complete::workspaces())]
         ws: Option<String>,
         #[command(subcommand)]
         cmd: WorkspaceCmd,
