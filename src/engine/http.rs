@@ -143,14 +143,7 @@ async fn event(
     let id = tokio::task::spawn_blocking(move || super::events::emit(&ws, &p.kind, p.data, &now))
         .await
         .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|e| {
-            use super::events::EmitError::*;
-            let code = match &e {
-                Bad(_) => StatusCode::BAD_REQUEST,
-                Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            fail(code, e.to_string())
-        })?;
+        .map_err(not_sent)?;
     // a loop that has stopped finds the event in the journal when it starts
     let _ = s.engine.wake.send(());
     let Some(secs) = q.wait else {
@@ -171,6 +164,16 @@ async fn event(
         _ => StatusCode::OK,
     };
     Ok((code, Json(answer)))
+}
+
+/// An event that was not sent, as a reply.
+fn not_sent(e: super::events::EmitError) -> Reply {
+    use super::events::EmitError::*;
+    let code = match &e {
+        Bad(_) => StatusCode::BAD_REQUEST,
+        Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    fail(code, e.to_string())
 }
 
 /// Runs `f` on the workspace off the async threads (the journal may wait
@@ -360,6 +363,7 @@ pub fn machine_router(machine: Arc<super::machine::Machine>, port: u16) -> Route
     Router::new()
         .route("/health", get(machine_health))
         .route("/workspaces", get(workspaces))
+        .route("/events", post(machine_event))
         .route("/ws/{name}", axum::routing::any(in_workspace))
         .route("/ws/{name}/{*rest}", axum::routing::any(in_workspace))
         .layer(middleware::from_fn_with_state(port, local_only_on))
@@ -379,6 +383,39 @@ async fn machine_health(State(s): State<MachineShared>) -> Json<Value> {
 
 async fn workspaces(State(s): State<MachineShared>) -> Json<Value> {
     Json(Value::Array(s.machine.states()))
+}
+
+/// `POST /events`: an event for every workspace on the machine's list, as
+/// `itero emit` sends it. Its answer has the id it has in each, and why it
+/// was not sent to any that could not take it.
+async fn machine_event(
+    Query(q): Query<EventQuery>,
+    body: Result<Json<Posted>, JsonRejection>,
+) -> Result<Reply, Reply> {
+    let Json(p) = body.map_err(|r| fail(r.status(), r.body_text()))?;
+    if q.wait.is_some() {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            "wait is for one workspace: POST /ws/<name>/events?wait=",
+        ));
+    }
+    let now = super::daemon::stamp(chrono::Utc::now());
+    let sent = tokio::task::spawn_blocking(move || super::machine::emit_all(&p.kind, p.data, &now))
+        .await
+        .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(not_sent)?;
+    let (mut ids, mut errors) = (serde_json::Map::new(), serde_json::Map::new());
+    for s in sent {
+        match s.to {
+            Ok((_, id)) => ids.insert(s.name, json!(id)),
+            Err(why) => errors.insert(s.name, json!(why)),
+        };
+    }
+    let mut answer = json!({ "ids": ids });
+    if !errors.is_empty() {
+        answer["errors"] = json!(errors);
+    }
+    Ok((StatusCode::ACCEPTED, Json(answer)))
 }
 
 /// A request to `/ws/<name>/<rest>`, answered by that workspace's routes

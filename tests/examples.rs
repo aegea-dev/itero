@@ -56,6 +56,7 @@ fn the_order_example_waits_for_its_payment_then_ships() {
     itero(
         &ws,
         &[
+            "ws",
             "emit",
             "order.placed",
             r#"{"order": 43, "email": "ayşe@örnek.test"}"#,
@@ -67,6 +68,7 @@ fn the_order_example_waits_for_its_payment_then_ships() {
     itero(
         &ws,
         &[
+            "ws",
             "emit",
             "payment.received",
             r#"{"payment_ref": "pay-43", "paid": true}"#,

@@ -132,7 +132,7 @@ fn a_message_wakes_it_and_a_deadline_ends_a_waiting_run_on_time() {
     );
     action(d.path(), "bekle", "exit 75");
     let (_daemon, port) = start(d.path());
-    itero(d.path(), &["emit", "order.placed", r#"{"order": 1}"#]);
+    itero(d.path(), &["ws", "emit", "order.placed", r#"{"order": 1}"#]);
     // nothing but the alarm wakes it at its deadline; the waiting itself is
     // read from the journal after, not watched for: on a slow machine the
     // run can start late, and its 2 s of waiting pass between two looks

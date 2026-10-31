@@ -17,7 +17,7 @@ pub fn chosen(name: Option<&str>) -> Result<Workspace> {
     let Some(e) = list.by_name(name) else {
         bail!("no workspace {name} on this machine's list: itero ws list lists them");
     };
-    crate::workspace::find(&e.folder)
+    Ok(crate::engine::machine::open(e)?.0)
 }
 
 /// `itero workspace add`: this workspace on the list, under its journal's
@@ -85,14 +85,9 @@ pub fn remove(name: Option<&str>) -> Result<()> {
 /// A listed workspace as it is now: `missing` when its folder is gone or
 /// holds another workspace, else `stopped` (no daemon runs it).
 fn state(e: &Entry) -> (Value, Value) {
-    let found = crate::workspace::find(&e.folder)
-        .ok()
-        .filter(|ws| ws.root == e.folder && ws.journal().is_file())
-        .and_then(|ws| Journal::open(&ws).ok())
-        .filter(|j| j.workspace().is_ok_and(|me| me.id == e.id));
-    match found {
-        None => (json!("missing"), Value::Null),
-        Some(j) => {
+    match crate::engine::machine::open(e) {
+        Err(_) => (json!("missing"), Value::Null),
+        Ok((_, j)) => {
             let last = j
                 .runs_page(None, None, &[], 1)
                 .ok()

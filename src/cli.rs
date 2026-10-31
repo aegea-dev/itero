@@ -1,6 +1,7 @@
 //! The command line.
 mod ai;
 mod complete;
+mod emit;
 mod kinds;
 mod out;
 mod top;
@@ -19,6 +20,26 @@ use clap::{Parser, Subcommand};
 pub struct Cli {
     #[command(subcommand)]
     pub cmd: Cmd,
+}
+
+/// An event to send, and how: `itero emit` and `itero ws emit`.
+#[derive(clap::Args)]
+pub struct EmitArgs {
+    /// Its type, two or more words joined by dots, like order.placed
+    #[arg(value_name = "TYPE")]
+    kind: String,
+    /// Its data, a JSON object
+    #[arg(value_name = "DATA")]
+    data: Option<String>,
+    /// Wait for the runs it starts to end, and print them as JSON (exit 1: one failed or broke; 2: time ran out)
+    #[arg(long)]
+    wait: bool,
+    /// With --wait: how long, like 30s or 5m
+    #[arg(long, default_value = "60s", requires = "wait")]
+    timeout: String,
+    /// Print what was sent as JSON (with --wait, the runs are JSON already)
+    #[arg(long, conflicts_with = "wait")]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -47,24 +68,8 @@ pub enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         rest: Vec<String>,
     },
-    /// Send an event: it starts runs, and reaches the runs waiting for it
-    Emit {
-        /// Its type, two or more words joined by dots, like order.placed
-        #[arg(value_name = "TYPE")]
-        kind: String,
-        /// Its data, a JSON object
-        #[arg(value_name = "DATA")]
-        data: Option<String>,
-        /// Wait for the runs it starts to end, and print them as JSON (exit 1: one failed or broke; 2: time ran out)
-        #[arg(long)]
-        wait: bool,
-        /// With --wait: how long, like 30s or 5m
-        #[arg(long, default_value = "60s", requires = "wait")]
-        timeout: String,
-        /// Print its id, and what it starts, as JSON (with --wait, the runs are JSON already)
-        #[arg(long, conflicts_with = "wait")]
-        json: bool,
-    },
+    /// Send an event to every workspace on the machine's list
+    Emit(EmitArgs),
     /// Keep a secret in the OS secret store, for $$NAME (asks for it, without echo)
     Secret {
         /// Its name: a letter or _, then letters, digits or _
@@ -386,6 +391,8 @@ pub enum WorkspaceCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Send an event to this workspace: it starts runs, and reaches the runs waiting for it
+    Emit(EmitArgs),
     /// The workflows and their runs
     #[command(visible_alias = "wf")]
     Workflow {
@@ -776,77 +783,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
             }
         }
-        Cmd::Emit {
-            kind,
-            data,
-            wait,
-            timeout,
-            json,
-        } => {
-            use crate::engine::events::{self, Waited};
-            let ws = workspace()?;
-            let data = data
-                .map(|d| serde_json::from_str(&d).map_err(|_| anyhow!("the data is a JSON object")))
-                .transpose()?;
-            let now = crate::engine::daemon::stamp(chrono::Utc::now());
-            let fields = data
-                .as_ref()
-                .and_then(|d: &serde_json::Value| d.as_object().cloned())
-                .unwrap_or_default();
-            if wait {
-                let timeout = humantime::parse_duration(&timeout).map_err(|_| {
-                    anyhow!("--timeout: a duration is like 30s or 5m, not {timeout}")
-                })?;
-                // with no daemon nothing would answer: say so, sending nothing
-                if !daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)? {
-                    bail!(
-                        "no daemon is running: start itero daemon (or itero workspace add, with the machine's daemon), then send it again"
-                    );
-                }
-                let id = events::emit(&ws, &kind, data, &now)?;
-                nudge(&ws, &now);
-                let (answer, how) = events::wait_for(&ws, &id, timeout)?;
-                println!("{}", serde_json::to_string_pretty(&answer)?);
-                match how {
-                    Waited::Done => return Ok(()),
-                    Waited::Failed => std::process::exit(1),
-                    Waited::TimedOut => {
-                        eprintln!("timed out: not every run it started has ended");
-                        std::process::exit(2);
-                    }
-                }
-            }
-            let id = events::emit(&ws, &kind, data, &now)?;
-            nudge(&ws, &now);
-            let fate = crate::engine::events::fate(&ws, &kind, &fields)?;
-            let running = daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)?;
-            let v = serde_json::json!({
-                "id": id,
-                "starts": fate.starts,
-                "waiting": fate.waiting,
-                "nearest": fate.nearest,
-                "daemon": { "running": running },
-            });
-            out::show(json, &v, |_| {
-                println!("{id}");
-                // what it will do, on stderr: stdout stays the id for scripts
-                if !fate.starts.is_empty() {
-                    eprintln!("starts: {}", fate.starts.join(", "));
-                }
-                if fate.waiting > 0 {
-                    eprintln!("may reach {} waiting run(s)", fate.waiting);
-                }
-                if fate.starts.is_empty() {
-                    match &fate.nearest {
-                        Some(n) => eprintln!("nothing starts on {kind}: did you mean {n}?"),
-                        None => eprintln!("nothing starts on {kind}"),
-                    }
-                }
-                if !running {
-                    eprintln!("no daemon is running: it waits for itero daemon");
-                }
-            })?;
-        }
+        Cmd::Emit(args) => emit::all(args)?,
         Cmd::Completion { shell } => complete::script(shell, command),
         Cmd::Workspace { ws, cmd } => {
             let chosen = || workspace::chosen(ws.as_deref());
@@ -875,6 +812,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 WorkspaceCmd::Info { json } => top::info(&chosen()?, json)?,
                 WorkspaceCmd::Check { json } => top::check(&chosen()?, json)?,
                 WorkspaceCmd::Which { name, json } => top::which(&chosen()?, &name, json)?,
+                WorkspaceCmd::Emit(args) => emit::one(&chosen()?, args)?,
                 WorkspaceCmd::Workflow { cmd } => {
                     let ws = chosen()?;
                     match cmd {

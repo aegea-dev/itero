@@ -567,7 +567,7 @@ impl Workspace {
     }
 
     /// Keeps the port the OS gave the daemon, for its next start and for
-    /// whoever asks it (`itero info`, the watchdog).
+    /// whoever asks it (`itero ws info`, the watchdog).
     pub fn save_port(&self, port: u16) -> Result<()> {
         let f = self.port_file();
         if let Some(dir) = f.parent() {

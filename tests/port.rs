@@ -104,9 +104,12 @@ fn a_set_port_that_is_taken_stops_the_daemon_before_it_runs_anything() {
     )
     .unwrap();
     assert!(
-        itero(d.path(), &["emit", "selam.geldi", r#"{"text": "merhaba"}"#])
-            .status
-            .success()
+        itero(
+            d.path(),
+            &["ws", "emit", "selam.geldi", r#"{"text": "merhaba"}"#]
+        )
+        .status
+        .success()
     );
     let o = daemon(d.path()).wait_with_output().unwrap();
     assert!(!o.status.success(), "{o:?}");

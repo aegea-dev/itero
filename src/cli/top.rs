@@ -6,7 +6,7 @@ use crate::workspace::Workspace;
 use anyhow::{Result, bail};
 use serde_json::{Map, Value, json};
 
-/// What `itero check` refuses in the manifest: an entry naming no workflow,
+/// What `itero ws check` refuses in the manifest: an entry naming no workflow,
 /// action or connector, and the folders from before it (`args/`, `config/`).
 fn check_manifest(ws: &Workspace, flows: &[(String, Flow)]) -> Result<()> {
     let manifest = crate::workspace::MANIFEST;
@@ -388,7 +388,7 @@ pub fn which(ws: &Workspace, name: &str, json: bool) -> Result<()> {
         }
     }
     if found.is_empty() {
-        bail!("nothing named {name}: itero workflow list and itero check list them");
+        bail!("nothing named {name}: itero ws wf list and itero ws check list them");
     }
     let v: Vec<Value> = found
         .into_iter()

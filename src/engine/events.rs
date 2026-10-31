@@ -75,7 +75,7 @@ pub fn notification_clicked(ws: &Workspace, data: Value, now: &str) -> anyhow::R
 }
 
 /// Tells the running daemon, if there is one, that a message waits in the
-/// journal: for the processes that are not the daemon (`itero emit`, a
+/// journal: for the processes that are not the daemon (`itero ws emit`, a
 /// click). A daemon that is not running finds it when it starts.
 pub fn nudge(ws: &Workspace, now: &str) -> std::io::Result<()> {
     std::fs::write(ws.wake_file(), now)
@@ -206,14 +206,8 @@ pub fn wait_for(
     }
 }
 
-/// Saves an event for the workspace, where it may start runs and reach
-/// waiting ones; returns its id.
-pub fn emit(
-    ws: &Workspace,
-    kind: &str,
-    data: Option<Value>,
-    now: &str,
-) -> Result<String, EmitError> {
+/// Whether an event may be sent from outside: its data, an object.
+pub fn check(kind: &str, data: Option<Value>) -> Result<Value, EmitError> {
     if !crate::flow::is_message_type(kind) {
         return Err(EmitError::Bad(format!(
             "an event type is two or more words joined by dots, like order.placed, not {kind}"
@@ -224,11 +218,22 @@ pub fn emit(
             "{kind} is the engine's own: it cannot be sent from outside"
         )));
     }
-    let data = match data {
-        None => Value::Object(Map::new()),
-        Some(v @ Value::Object(_)) => v,
-        Some(_) => return Err(EmitError::Bad("data must be a JSON object".into())),
-    };
+    match data {
+        None => Ok(Value::Object(Map::new())),
+        Some(v @ Value::Object(_)) => Ok(v),
+        Some(_) => Err(EmitError::Bad("data must be a JSON object".into())),
+    }
+}
+
+/// Saves an event for the workspace, where it may start runs and reach
+/// waiting ones; returns its id.
+pub fn emit(
+    ws: &Workspace,
+    kind: &str,
+    data: Option<Value>,
+    now: &str,
+) -> Result<String, EmitError> {
+    let data = check(kind, data)?;
     let internal = |e: anyhow::Error| EmitError::Internal(format!("{e:#}"));
     let j = Journal::open(ws).map_err(internal)?;
     let e = Envelope::new("outside", kind, &journal::subject("app"), now, None, data);
