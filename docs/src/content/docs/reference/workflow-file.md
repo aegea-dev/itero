@@ -63,7 +63,7 @@ is in its entry in
 
 Fields go to any depth. A whole value keeps its type; inside text, and in
 lists and objects, each is filled (`""` when it is not there); `\\$` is a
-dollar sign. Any other `$name` is an error of `itero check`, which says
+dollar sign. Any other `$name` is an error of `itero ws check`, which says
 what to write. `output` and `event` are no arg's names; `strict` is gone
 (args reach their action only). See [Workflows](/guides/workflows/).
 

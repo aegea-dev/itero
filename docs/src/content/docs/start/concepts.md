@@ -23,7 +23,7 @@ any way you like: `workflows/shop/order.json`, `actions/mail/imap-check`.
 A name stays its file name, unique within its kind: two workflows of one
 name are an error naming both files, but an action and a workflow may share
 one (`#ship` and `ship`). Hidden folders and `node_modules` are never
-looked into. [`itero which`](/commands/which/) says where a name is.
+looked into. [`itero ws which`](/commands/which/) says where a name is.
 
 **A workflow** says when it runs (`on`) and what it does (`steps`):
 
@@ -39,7 +39,7 @@ how it went. The next step has that result as `$output`; any later step
 reads it as `$steps.check-payment`. **A workflow** can be a step too.
 
 **An event** (a message) has a type, two or more words joined by dots
-(`order.placed`), and data. Apps send them with `itero emit` or `POST
+(`order.placed`), and data. Apps send them with `itero ws emit` or `POST
 /events`; connectors print them. An event starts a run of every workflow
 whose `on` has an `event` of its type. A schedule or a change to a
 watched file starts runs too.

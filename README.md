@@ -53,7 +53,7 @@ changes (down, then back up).
 - **Make the cluster, refuse a dangerous plan, roll back on failure**:
   terraform and kubectl chained, a guard step, and undo.
   [`terraform`](examples/terraform)
-- **My app needs a job done and wants the result**: `itero emit --wait`
+- **My app needs a job done and wants the result**: `itero ws emit --wait`
   answers with the run's state, or a callback when it ends.
   [`languages`](examples/languages)
 - **Every morning, a summary of these pages**: a schedule, a fetch, a
@@ -129,7 +129,7 @@ connectors/mail.received   a connector ▲: each line it prints is a message of 
 ```
 
 `workflows/`, `actions/` and `connectors/` may have subfolders to group files;
-a name stays its file name, and `itero which <name>` says where it is.
+a name stays its file name, and `itero ws which <name>` says where it is.
 
 - **A workflow** starts on a message (`{"event": "order.placed"}`), a
   schedule (`{"schedule": "0 9 * * *"}`) or a watched file
@@ -146,14 +146,16 @@ a name stays its file name, and `itero which <name>` says where it is.
   `$output`), and exits 0 (done), 75 (not yet: wait for a matching message)
   or anything else (an error). A program or a package it
   needs and lacks is named: in the run's error when a step fails, and by
-  `itero check` before anything runs.
+  `itero ws check` before anything runs.
 - **A message** starts runs of the workflows on its type, and reaches the
   steps waiting for it that it matches by what they printed.
 
-Commands: `itero daemon`, `itero emit <type> '<data>'`, `itero check`,
-`itero workflow` (`wf`) `list|runs|config`, `itero action list|errors|args`,
-`itero connector list|args`, `itero which`, `itero info`, `itero secret`,
-`itero watch`, `itero service install|status|uninstall`, `itero completion`.
+Commands at the top level are the machine's: `itero daemon`, `itero service
+install|status|restart|uninstall`, `itero info`, `itero emit`, `itero secret`,
+`itero ai`, `itero watch`, `itero completion`. Everything about one workspace
+is under `itero ws`, in its folder or with `--ws <name>`: `add|list|remove`,
+`info`, `check`, `which`, `emit <type> '<data>'`, `secret`, `wf list|runs`,
+`ac list|errors|repeat`, `cn list|args`.
 What the daemon does is in `.itero/itero.log`, one JSON line each.
 
 ## Examples
@@ -180,7 +182,7 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
   into a folder the daemon watches.
 - [`examples/languages`](examples/languages): actions in Python (uv), Node,
   Bun and Docker, each in its subfolder and bringing its own packages,
-  answering `itero emit --wait`.
+  answering `itero ws emit --wait`.
 - [`examples/terraform`](examples/terraform): a k3d cluster of 3 machines
   with a web app applied by OpenTofu, a guard on the plan, and the cluster
   deleted when a step fails.

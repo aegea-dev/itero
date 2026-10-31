@@ -97,12 +97,12 @@ or its archive, `itero-ai-<version>-<target>.tar.gz`, from the
    the event from another. Either way:
 
    ```sh
-   itero emit sky.asked
+   itero ws emit sky.asked
    ```
 
    The answer comes as a notification: "Sunlight scatters off air
-   molecules, making the sky appear blue." No notification? `itero wf
-   runs` shows the run and how it ended, and `itero wf runs <name>` each
+   molecules, making the sky appear blue." No notification? `itero ws wf
+   runs` shows the run and how it ended, and `itero ws wf runs <name>` each
    step's output and error. On macOS, notifications must be allowed for
    Itero (System Settings, Notifications).
 

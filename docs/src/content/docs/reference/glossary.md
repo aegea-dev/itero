@@ -36,13 +36,13 @@ says how it went: 0 done, 75 not yet, anything else an error. See
 A folder in `workflows/`, `actions/` or `connectors/` that groups files; it
 is never part of a name. Hidden folders and `node_modules` are not looked
 into, and files that are not executable are not actions or connectors.
-[`itero which`](/commands/which/) says where a name is.
+[`itero ws which`](/commands/which/) says where a name is.
 
 ### needs
 
 What an action needs and lacks: a program its first line or a shell
 command runs, or a Python, Node or Bun package. Named in the run's error
-when a step fails, and by `itero check` before. See
+when a step fails, and by `itero ws check` before. See
 [Actions](/guides/actions/#when-something-it-needs-is-missing).
 
 ### event
@@ -93,7 +93,7 @@ JSON when it is JSON. Each step's result takes its place.
 ### state
 
 A run's values as the journal keeps them: `event`, `output` and `steps`.
-`itero wf runs <run>` shows it.
+`itero ws wf runs <run>` shows it.
 
 ### waiting
 
@@ -162,7 +162,7 @@ next, and runs each step's action in its own process. See
 
 What itero gives the workspace, each daemon's life, each workflow and
 each run: a UUIDv7, and a name (two random words, or a workflow's file
-name). Commands take either: `itero wf runs misty-lake`.
+name). Commands take either: `itero ws wf runs misty-lake`.
 
 ### meta
 

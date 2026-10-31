@@ -101,7 +101,7 @@ These are from the `examples/` folder, each a workspace you can run.
 }
 ```
 
-- `on`: an `order.placed` event, sent by the shop (`itero emit` or
+- `on`: an `order.placed` event, sent by the shop (`itero ws emit` or
   `POST /events`).
 - `#check-payment` and `#check-stock` run side by side, each given the
   order from the event; the next step waits for both.
@@ -163,7 +163,7 @@ What a workflow is, apart from its work, is in the workspace's
 | `from`, `until` | a date or an RFC 3339 time: outside them nothing starts it; runs under way finish. A date is a whole day. |
 | `off` | `true`: nothing starts it, without deleting it |
 | `internal` | `true`: it looks after the workspace ([The daemon's own workflows](/guides/maintenance/)) |
-| any other | yours: itero keeps it, `itero check` shows it, and nothing more |
+| any other | yours: itero keeps it, `itero ws check` shows it, and nothing more |
 
 The entry says what the workflow is, never values to work on: those come
 from the event, a step's args or `.env` ([Values that change from one
@@ -263,9 +263,9 @@ now `$output`, and reads the count by the step's name.
 
 - `as` gives a step another name: one action twice, `"as": "eu"` and
   `"as": "us"`, is read as `$steps.eu` and `$steps.us`. Two steps with
-  one name are fine until a `$steps.<name>` reads it: then `itero check`
+  one name are fine until a `$steps.<name>` reads it: then `itero ws check`
   asks for an `as`.
-- `$steps.x` naming no step of the workflow is an error of `itero check`.
+- `$steps.x` naming no step of the workflow is an error of `itero ws check`.
 - A step that has not run (yet, or at all) gives nothing: `null`, or
   empty inside text.
 
@@ -330,7 +330,7 @@ With `{"count": 3}` as the step before's result and `{"folder":
   `"text": "\\$count is not filled"`. A `$` that starts no name is itself
   already: `"costs $5"`.
 - A secret is a whole value only, never part of a text: `"Bearer $$TOKEN"`
-  is refused by `itero check` and by a run, and so is an event's value
+  is refused by `itero ws check` and by a run, and so is an event's value
   holding a secret, inside text.
 
 ## How it ended: `success`, `failure`, `error`
@@ -407,7 +407,7 @@ ARCHIVE=~/Archive
 `$$NAME` is looked up in the OS secret store, then `.env`, then the
 daemon's environment: the first found. Secrets stay in the store, never in
 `.env` ([Args and secrets](/guides/secrets/)). A value for one run only
-comes with its event: `itero emit sites.check '{"timeout": 5}'`, read as
+comes with its event: `itero ws emit sites.check '{"timeout": 5}'`, read as
 `$event.timeout`.
 
 ## Undo: taking steps back
@@ -452,7 +452,7 @@ This is `examples/terraform`'s `cluster` workflow.
   so it can say what may be left; the others still run, and the run ends
   as `error` with the first why.
 - A `failure` (`"success": false`) undoes nothing: the steps all worked.
-- `itero wf runs <run>` marks them: `#cluster-delete (undo)  done`.
+- `itero ws wf runs <run>` marks them: `#cluster-delete (undo)  done`.
 
 ## Waiting: `timeout`
 

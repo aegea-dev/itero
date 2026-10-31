@@ -35,7 +35,7 @@ secrets](/guides/secrets/)). A workflow reads it, read-only, as `$config`.
 ## What it is
 
 `name`, `version`, `description`, `tags`, and any keys of your own: kept,
-and shown by `itero info` and the log's `daemon.started` line. `id`,
+and shown by `itero ws info` and the log's `daemon.started` line. `id`,
 `created` and `path` are given by itero; setting one is an error.
 
 ## How it runs
@@ -48,7 +48,7 @@ and shown by `itero info` and the log's `daemon.started` line. `id`,
 | `folders.connectors` | the folders with [connectors](/guides/connectors/), any number | `["connectors"]` |
 
 A folder is relative to the workspace; `~/` is your home folder. A folder
-that is not there holds nothing, and `itero check` notes it. Each folder's
+that is not there holds nothing, and `itero ws check` notes it. Each folder's
 subfolders count too (hidden ones and `node_modules` apart). Two workflows,
 two actions or two connectors of one name, in any of the folders, is an error
 naming both files. The journal, the log and each workflow's memory live in
@@ -56,7 +56,7 @@ naming both files. The journal, the log and each workflow's memory live in
 
 Without a `port`, the daemon asks the OS for a free one when it starts
 and keeps it in `.itero/port`; its next start asks for the same one, and
-only when that is taken gets another (the log says so). `itero info` shows
+only when that is taken gets another (the log says so). `itero ws info` shows
 it. A daemon that cannot listen on its port stops before it starts
 anything.
 
@@ -80,7 +80,7 @@ An action's entry may set its own `quiet` and `most` (below).
 ## `workflow`, `action`, `connector`
 
 An entry per workflow, action or connector, by its name. An entry describes;
-it never creates: one that names nothing is an error from `itero check`.
+it never creates: one that names nothing is an error from `itero ws check`.
 An entry may not set `name`, `id`, `version`, `created` or `path`.
 
 | In a `workflow` entry | Is |
@@ -101,7 +101,7 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 | `description`, `tags`, your own keys | what it is |
 | `args` | data for the connector, as environment variables: an object; [A connector's args](/guides/secrets/#a-connectors-args) |
 
-`itero action repeat set` and `itero connector args set` write `repeat`
+`itero ws ac repeat set` and `itero ws cn args set` write `repeat`
 and `args` here, keeping the rest of the file as it was. A workflow's
 `settings` and an action's `args` are errors saying where the values go. A workflow file has no `meta`: one is an
 error saying where it goes.

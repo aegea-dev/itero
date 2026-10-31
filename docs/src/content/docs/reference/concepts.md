@@ -72,7 +72,7 @@ Each has parts of its own, listed under it.
 - `undo` for steps that finished (with args when needed); `success`,
   `failure`, `error` lists at the end; the `error` list starts with
   `$output.why`.
-- Each run has an id and a two-word name: `itero wf runs`.
+- Each run has an id and a two-word name: `itero ws wf runs`.
 
 See [Workflows](/guides/workflows/).
 
@@ -90,7 +90,7 @@ See [Workflows](/guides/workflows/).
 - `$ITERO_MEMORY`: a file kept between runs.
 - Time limits: quiet 10 minutes, at most a day; run again up to 3 times
   when lost.
-- Can send an event itself: `itero emit`.
+- Can send an event itself: `itero ws emit`.
 
 See [Actions](/guides/actions/).
 

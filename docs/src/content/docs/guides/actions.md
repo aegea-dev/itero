@@ -39,7 +39,9 @@ curl -fsS "https://carrier.example.com/ship?order=$order" | jq -r '.id'
 - **`$ITERO_WAITING_SINCE`**, when it runs again after waiting.
 
 It runs in the workspace, with the daemon's own `itero` first on its
-`PATH`, so an action can send an event with `itero emit`.
+`PATH`, so an action can send an event: `itero ws emit` to its own
+workspace, [`itero emit`](/commands/emit/#every-workspace) to every
+workspace on the machine's list.
 
 ## What it says
 
@@ -66,7 +68,7 @@ runs again, up to 3 times; then it is an error, `quiet for 10m` or
 days, gets its own in its entry in `itero.config.json`:
 `"action": {"train-model": {"limits": {"quiet": "1h", "most": "3d"}}}`.
 
-Its last line on stderr is also its progress: `itero wf runs` shows it
+Its last line on stderr is also its progress: `itero ws wf runs` shows it
 beside a running run, and the run's story on the step, so a step of hours
 can say how far it is:
 
@@ -79,7 +81,7 @@ done
 ```
 
 ```
-$ itero wf runs
+$ itero ws wf runs
 0199...  calm-river  import  running  2026-10-27T10:00:00Z  -  #import: [21] data/orders-21.csv
 ```
 
@@ -139,7 +141,7 @@ from the one it ships with: an upgrade needs nothing from you, and
 macOS's permission stays. If macOS refuses Itero anyway, `#notify` asks
 it once more as an app (macOS may then ask you to allow it); refused
 again, the step fails saying to turn notifications on in System Settings,
-Notifications, Itero. [`itero info`](/commands/info/) says whether Itero
+Notifications, Itero. [`itero ws info`](/commands/workspace/#info) says whether Itero
 may notify.
 
 `#forget` forgets ended runs and their events past `keep`, `#roll-log`
@@ -245,7 +247,7 @@ itero finds what an action needs from the action itself, with no list to
 keep up to date:
 
 - **When a step fails,** it reads the exit code and stderr, and the run's
-  `why` (in `itero wf runs <name>` and `itero action errors`) starts with what was
+  `why` (in `itero ws wf runs <name>` and `itero ws ac errors`) starts with what was
   missing:
 
   | The action printed | The run's why |
@@ -256,7 +258,7 @@ keep up to date:
   | `Cannot find package 'axios'` (Node, Bun) | `needs the package axios` |
   | a first line naming a program that is not there | `needs /opt/python3 (the first line of …): not found` |
 
-- **Before anything runs,** [`itero check`](/commands/check/) lists, under
+- **Before anything runs,** [`itero ws check`](/commands/check/) lists, under
   each action, what its first line needs and is not on the `PATH` actions
   run with (`needs bun: not found on PATH`). For a shell script it also
   reads the commands it runs, and lists the missing ones as `may need`: a

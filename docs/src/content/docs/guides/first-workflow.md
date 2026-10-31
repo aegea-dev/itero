@@ -72,16 +72,16 @@ not hold is skipped.
 ## 4. Run it
 
 ```sh
-itero check     # says what is wrong, if anything
-itero daemon    # leave it running
+itero ws check    # says what is wrong, if anything
+itero daemon      # leave it running
 ```
 
 In another terminal, in the same folder:
 
 ```sh
-itero emit site.check
-itero wf runs           # the run, with its name
-itero wf runs <name>    # what each step did
+itero ws emit site.check
+itero ws wf runs           # the run, with its name
+itero ws wf runs <name>    # what each step did
 ```
 
 ```

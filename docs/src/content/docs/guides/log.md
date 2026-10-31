@@ -1,6 +1,6 @@
 ---
 title: The log, IDs and names
-description: What happened, line by line; the IDs and names itero gives; itero info and itero wf runs.
+description: What happened, line by line; the IDs and names itero gives; itero ws info and itero ws wf runs.
 ---
 
 ## The log
@@ -69,15 +69,15 @@ with a new workspace id.
 ## Seeing them
 
 ```sh
-itero wf list              # each workflow: what starts it, its runs, the last; the daemon
-itero info                 # the workspace: id, name, what it is, limits; and its daemon
-itero wf runs              # every run: id, name, workflow, status, started, ended
-itero wf runs misty-lake   # one run, by name or id, step by step
-itero action errors        # which actions broke runs, and why
-itero check                # each workflow: its id, meta, runs so far, last run
+itero ws wf list              # each workflow: what starts it, its runs, the last; the daemon
+itero ws info                 # the workspace: id, name, what it is, limits; and its daemon
+itero ws wf runs              # every run: id, name, workflow, status, started, ended
+itero ws wf runs misty-lake   # one run, by name or id, step by step
+itero ws ac errors            # which actions broke runs, and why
+itero ws check                # each workflow: its id, meta, runs so far, last run
 ```
 
-`itero wf runs <run>` tells a run's story from the journal: how it started,
+`itero ws wf runs <run>` tells a run's story from the journal: how it started,
 each step and how it went, the events it took, where it waits, and its
 state at the end. Of two runs with one name it shows the newest, and says
 so.

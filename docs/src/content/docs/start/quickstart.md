@@ -32,10 +32,10 @@ echo "Merhaba, $name!"
 
 ```sh
 chmod +x actions/hello
-itero check
+itero ws check
 ```
 
-`itero check` reads every file and says what is wrong. Start the daemon
+`itero ws check` reads every file and says what is wrong. Start the daemon
 and leave it running; it takes each event as it comes:
 
 ```sh
@@ -45,15 +45,15 @@ itero daemon
 In another terminal, in the same folder, send an event (a message):
 
 ```sh
-itero emit greet.someone '{"name": "Ayşe"}'
+itero ws emit greet.someone '{"name": "Ayşe"}'
 ```
 
 Within a second a notification says "Merhaba, Ayşe!". Then:
 
 ```sh
-itero wf list          # each workflow, its runs, and whether the daemon runs
-itero wf runs          # the run, done, with its name
-itero wf runs <name>   # the run step by step
+itero ws wf list          # each workflow, its runs, and whether the daemon runs
+itero ws wf runs          # the run, done, with its name
+itero ws wf runs <name>   # the run step by step
 ```
 
 `.itero/itero.log` has a line for each step. Ctrl-C stops the daemon. To
