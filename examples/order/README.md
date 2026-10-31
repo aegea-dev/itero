@@ -6,8 +6,8 @@ gets what it needs as its args: the order from `$event`, the checks'
 results from `$steps.check-payment` and `$steps.check-stock`. The
 actions only pretend; each says what a real one would do. Run `itero
 daemon` in this folder, then:
-  itero emit order.placed '{"order": 43, "email": "ayse@example.com"}'
-  itero emit payment.received '{"payment_ref": "pay-43", "paid": true}'
+  itero ws emit order.placed '{"order": 43, "email": "ayse@example.com"}'
+  itero ws emit payment.received '{"payment_ref": "pay-43", "paid": true}'
 
 ## Tests
 

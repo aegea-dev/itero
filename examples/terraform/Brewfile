@@ -1,5 +1,5 @@
 # What this example's actions run, installed by the tools workflow
-# (`itero emit --wait tools.requested`), which runs `brew bundle`: it installs
+# (`itero ws emit --wait tools.requested`), which runs `brew bundle`: it installs
 # only what is missing, so running it again changes nothing.
 brew "k3d"
 brew "kubectl"
