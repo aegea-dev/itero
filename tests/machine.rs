@@ -743,3 +743,110 @@ fn the_machines_api_sends_an_event_to_every_workspace() {
         until("its workflow", || dir.join("çıktı").is_file());
     }
 }
+
+/// A server on a free port that gives every request `health`, for as long
+/// as the test runs: a daemon of another itero.
+fn fake_health(health: Value) -> u16 {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for s in listener.incoming() {
+            let mut s = s.unwrap();
+            let mut asked = [0u8; 1024];
+            let _ = s.read(&mut asked);
+            let body = health.to_string();
+            let _ = write!(
+                s,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    port
+}
+
+#[test]
+fn info_says_no_daemon_answers_from_any_folder() {
+    let m = Machine::new();
+    let elsewhere = m.d.path().join("başka");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let out = m.ok(&elsewhere, &["info"]);
+    let this = format!("itero {}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(out.lines().next(), Some(this.as_str()), "{out}");
+    assert!(
+        out.contains("daemon: none answering: no port yet")
+            && out.contains("itero service status"),
+        "{out}"
+    );
+    let state = m.d.path().join("durum/itero");
+    std::fs::create_dir_all(&state).unwrap();
+    let port = free_port();
+    std::fs::write(state.join("port"), port.to_string()).unwrap();
+    let out = m.ok(&elsewhere, &["info"]);
+    assert!(
+        out.contains(&format!("daemon: none answering on port {port}")),
+        "{out}"
+    );
+    let v = m.json(&elsewhere, &["info", "--json"]);
+    assert_eq!(v["itero"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(v["port"], port);
+    assert_eq!(v["daemon"], Value::Null);
+}
+
+#[test]
+fn info_shows_the_machines_daemon_and_its_workspaces() {
+    let m = Machine::new();
+    let a = m.busy_workspace("bir");
+    m.ok(&a, &["ws", "add"]);
+    let na = m.journal_name(&a);
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    until("a running", || {
+        get(port, &format!("/ws/{na}/health")).0 == 200
+    });
+    let elsewhere = m.d.path().join("başka");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let v = m.json(&elsewhere, &["info", "--json"]);
+    assert_eq!(v["itero"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(v["daemon"]["itero"], env!("CARGO_PKG_VERSION"), "{v}");
+    assert_eq!(v["port"], port, "{v}");
+    assert!(v["workspaces"][&na]["passes"].is_u64(), "{v}");
+    assert!(v["notifications"]["state"].is_string(), "{v}");
+    let out = m.ok(&elsewhere, &["info"]);
+    assert!(out.contains(&format!("port {port}")), "{out}");
+    assert!(
+        out.lines().any(|l| l.starts_with(&format!("  {na}: "))),
+        "{out}"
+    );
+    assert!(!out.contains("itero service restart"), "{out}");
+}
+
+#[test]
+fn info_says_when_the_daemon_runs_another_itero() {
+    let m = Machine::new();
+    let port = fake_health(serde_json::json!({
+        "ok": true,
+        "pid": 7,
+        "daemon": { "pid": 7, "itero": "0.0.1", "started": "2026-10-31T09:00:00Z" },
+        "workspaces": {
+            "pala-su": { "passes": 3, "last_pass": "2026-10-31T09:01:00Z", "last_error": "kötü" }
+        },
+        "ai": { "state": "running", "model": "yerel/küçük", "failures": 0 },
+    }));
+    let state = m.d.path().join("durum/itero");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("port"), port.to_string()).unwrap();
+    let elsewhere = m.d.path().join("başka");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let out = m.ok(&elsewhere, &["info"]);
+    for says in [
+        "itero 0.0.1",
+        "itero service restart",
+        "pala-su: 3 passes",
+        "last error: kötü",
+        "ai: running yerel/küçük",
+    ] {
+        assert!(out.contains(says), "{says}: {out}");
+    }
+}

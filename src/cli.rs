@@ -78,7 +78,7 @@ pub enum Cmd {
         #[arg(long)]
         file: Option<std::path::PathBuf>,
     },
-    /// The workspace: its identity, meta and limits, and the daemon running it
+    /// The machine's daemon: its version, pid, port, workspaces, itero-ai and notifications
     Info {
         #[arg(long)]
         json: bool,
@@ -937,7 +937,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             crate::engine::secrets::set(&name, &value)?;
             println!("{name}: kept in the OS secret store");
         }
-        Cmd::Info { json } => top::info(&workspace()?, json)?,
+        Cmd::Info { json } => top::machine_info(json)?,
         Cmd::Watch { path } => {
             let watch = crate::connectors::Watch::new(&path)?;
             // the daemon going away closes stdin: then the connector using

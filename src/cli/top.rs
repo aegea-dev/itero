@@ -1,4 +1,5 @@
-//! The workspace as a whole: `check`, `info`, `which`, `service status`.
+//! The machine and the workspace as a whole: `info`, `service status`, and
+//! `ws info`, `ws check`, `ws which`.
 use super::out::{show, text};
 use crate::engine::journal::Journal;
 use crate::flow::{Flow, Name};
@@ -338,18 +339,80 @@ pub fn info(ws: &Workspace, json: bool) -> Result<()> {
         } else {
             println!("daemon: not running ({})", text(&d["why"]));
         }
-        let n = &v["notifications"];
-        let mut line = format!("notifications: {}", text(&n["state"]));
-        if let Some(why) = n["why"].as_str() {
-            line.push_str(&format!(" ({why})"));
+        println!("{}", notifications_line(&v["notifications"]));
+    })
+}
+
+/// What `notifications()` says, as a line.
+fn notifications_line(n: &Value) -> String {
+    let mut line = format!("notifications: {}", text(&n["state"]));
+    if let Some(why) = n["why"].as_str() {
+        line.push_str(&format!(" ({why})"));
+    }
+    if let (Some(app), Some(version)) = (n["app"].as_str(), n["version"].as_u64()) {
+        line.push_str(&format!(", Itero.app {version} in {app}"));
+    }
+    if let Some(p) = n["notifier"].as_str() {
+        line.push_str(&format!(", through {p}"));
+    }
+    line
+}
+
+/// What the machine's `/health` says of each workspace, a line each.
+fn workspace_lines(workspaces: &Value) {
+    for (name, w) in workspaces.as_object().into_iter().flatten() {
+        println!(
+            "  {name}: {} passes, last {}{}",
+            w["passes"],
+            w["last_pass"].as_str().unwrap_or("none yet"),
+            w["last_error"]
+                .as_str()
+                .map(|e| format!(", last error: {e}"))
+                .unwrap_or_default()
+        );
+    }
+}
+
+/// `itero info`: this itero, and the machine's daemon as its `/health` says.
+pub fn machine_info(json: bool) -> Result<()> {
+    let this = env!("CARGO_PKG_VERSION");
+    let port = crate::engine::http::machine_port();
+    let health = port.and_then(super::daemon_health);
+    let of = |k: &str| health.as_ref().map(|h| h[k].clone());
+    let v = json!({
+        "itero": this,
+        "port": port,
+        "daemon": of("daemon"),
+        "workspaces": of("workspaces"),
+        "ai": of("ai"),
+        "notifications": crate::engine::worker::notifications(),
+    });
+    show(json, &v, |v| {
+        println!("itero {this}");
+        let d = &v["daemon"];
+        if d.is_null() {
+            match v["port"].as_u64() {
+                Some(p) => println!("daemon: none answering on port {p}"),
+                None => println!("daemon: none answering: no port yet"),
+            }
+            println!("itero service status says why");
+        } else {
+            println!(
+                "daemon: pid {}, port {}, itero {}, started {}",
+                d["pid"],
+                v["port"],
+                text(&d["itero"]),
+                text(&d["started"])
+            );
+            if d["itero"] != this {
+                println!("this itero is {this}: itero service restart runs it");
+            }
+            workspace_lines(&v["workspaces"]);
         }
-        if let (Some(app), Some(version)) = (n["app"].as_str(), n["version"].as_u64()) {
-            line.push_str(&format!(", Itero.app {version} in {app}"));
+        if let Some(state) = v["ai"]["state"].as_str() {
+            println!("ai: {state} {}", text(&v["ai"]["model"]));
         }
-        if let Some(p) = n["notifier"].as_str() {
-            line.push_str(&format!(", through {p}"));
-        }
-        println!("{line}");
+        println!("{}", notifications_line(&v["notifications"]));
     })
 }
 
@@ -469,16 +532,6 @@ pub fn service_status(json: bool) -> Result<()> {
             return;
         }
         println!("daemon: pid {}, port {}", h["pid"], v["port"]);
-        for (name, w) in h["workspaces"].as_object().into_iter().flatten() {
-            println!(
-                "  {name}: {} passes, last {}{}",
-                w["passes"],
-                w["last_pass"].as_str().unwrap_or("none yet"),
-                w["last_error"]
-                    .as_str()
-                    .map(|e| format!(", last error: {e}"))
-                    .unwrap_or_default()
-            );
-        }
+        workspace_lines(&h["workspaces"]);
     })
 }
