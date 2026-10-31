@@ -169,6 +169,8 @@ pub struct Workspace {
     /// On the machine's list: run by `itero daemon --all`, whose one scan
     /// for models stands for the built-in `models` workflow.
     pub machine: bool,
+    /// Its id, once read (`id`).
+    known_id: std::sync::OnceLock<String>,
 }
 
 /// A listed folder: `~/` is the home folder, a relative path is under the
@@ -248,6 +250,7 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
             .read()
             .with_context(|| format!("{}", path.display()))?,
         machine: on_the_list(root),
+        known_id: std::sync::OnceLock::new(),
     })
 }
 
@@ -348,6 +351,16 @@ fn executable(f: &Path) -> bool {
 }
 
 impl Workspace {
+    /// The workspace's id, from its journal: what stays when it is renamed.
+    /// Read once.
+    pub fn id(&self) -> Result<String> {
+        if let Some(id) = self.known_id.get() {
+            return Ok(id.clone());
+        }
+        let id = crate::engine::journal::read_id(self)?;
+        Ok(self.known_id.get_or_init(|| id).clone())
+    }
+
     /// A path as people read it: from the workspace when it is in it.
     pub fn shown(&self, p: &Path) -> String {
         p.strip_prefix(&self.root)

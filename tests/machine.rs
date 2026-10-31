@@ -775,8 +775,7 @@ fn info_says_no_daemon_answers_from_any_folder() {
     let this = format!("itero {}", env!("CARGO_PKG_VERSION"));
     assert_eq!(out.lines().next(), Some(this.as_str()), "{out}");
     assert!(
-        out.contains("daemon: none answering: no port yet")
-            && out.contains("itero service status"),
+        out.contains("daemon: none answering: no port yet") && out.contains("itero service status"),
         "{out}"
     );
     let state = m.d.path().join("durum/itero");

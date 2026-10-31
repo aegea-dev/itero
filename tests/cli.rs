@@ -134,6 +134,24 @@ fn args_are_written_for_the_connector_and_checked() {
 }
 
 #[test]
+fn a_workspaces_secret_needs_the_store_and_a_workspace() {
+    let d = workspace();
+    file(d.path(), "değer", "gizli");
+    let o = itero(d.path(), &["ws", "secret", "POSTA", "--file", "değer"]);
+    assert!(
+        !o.status.success() && err(&o).contains("ITERO_NO_SECRET_STORE"),
+        "{}",
+        err(&o)
+    );
+    let o = itero(d.path(), &["ws", "secret", "ad-soyad", "--file", "değer"]);
+    assert!(
+        !o.status.success() && err(&o).contains("a secret's name"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
 fn a_secret_needs_the_store_and_a_name_like_an_environment_variable() {
     let d = workspace();
     let o = itero(d.path(), &["secret", "API_KEY"]);
@@ -973,12 +991,18 @@ fn completion_prints_a_script_for_each_shell() {
 /// What the shell offers for the last of `words` (`""`: nothing typed
 /// yet), asked as fish asks: `COMPLETE=fish itero -- itero <words>`.
 fn completions(dir: &Path, words: &[&str]) -> Vec<String> {
+    completions_on(dir, &dir.join("durum"), words)
+}
+
+/// What the shell's Tab offers, with the machine's state in `state`.
+fn completions_on(dir: &Path, state: &Path, words: &[&str]) -> Vec<String> {
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
         .args(["--", "itero"])
         .args(words)
         .current_dir(dir)
         .env("COMPLETE", "fish")
         .env("ITERO_NO_SECRET_STORE", "1")
+        .env("XDG_STATE_HOME", state)
         .output()
         .unwrap();
     assert!(o.status.success(), "{o:?}");
@@ -1024,6 +1048,34 @@ fn tab_completes_the_workspaces_own_names() {
     let outside = tempfile::tempdir().unwrap();
     assert!(completions(outside.path(), &["ws", "wf", "runs", "--workflow", ""]).is_empty());
     assert!(completions(outside.path(), &["ws", "wf", "runs", ""]).is_empty());
+}
+
+#[test]
+fn tab_completes_the_names_of_the_workspace_ws_names() {
+    let state = tempfile::tempdir().unwrap();
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/sipariş.json",
+        r##"{ "on": [{ "event": "sipariş.geldi" }], "steps": ["#notify"] }"##,
+    );
+    assert!(
+        itero_on(d.path(), state.path(), &["ws", "add"])
+            .status
+            .success()
+    );
+    let name = listed(state.path()).remove(0);
+    let elsewhere = tempfile::tempdir().unwrap();
+    let tab = |words: &[&str]| completions_on(elsewhere.path(), state.path(), words);
+    assert_eq!(tab(&["ws", "--ws", ""]), [name.as_str()]);
+    assert_eq!(tab(&["ws", "wf", "list", "--ws", ""]), [name.as_str()]);
+    let flows = tab(&["ws", "wf", "runs", "--ws", &name, "--workflow", ""]);
+    assert!(flows.contains(&"sipariş".to_string()), "{flows:?}");
+    let flows = tab(&["ws", "--ws", &name, "wf", "runs", "--workflow", ""]);
+    assert!(flows.contains(&"sipariş".to_string()), "{flows:?}");
+    // the folder's when none is named, and none for a name not listed
+    assert!(tab(&["ws", "wf", "runs", "--workflow", ""]).is_empty());
+    assert!(tab(&["ws", "wf", "runs", "--ws", "yok", "--workflow", ""]).is_empty());
 }
 
 #[test]

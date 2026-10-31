@@ -3,9 +3,18 @@
 //! now, not as a script generated once had them.
 use clap_complete::engine::{ArgValueCandidates, CompletionCandidate};
 
-/// The workspace the shell is in; none outside one.
+/// The workspace `--ws` names in the words being completed, else the one
+/// the shell is in; none outside one.
 fn workspace() -> Option<crate::workspace::Workspace> {
-    crate::workspace::find(&std::env::current_dir().ok()?).ok()
+    let words: Vec<String> = std::env::args().collect();
+    let named = words
+        .iter()
+        .enumerate()
+        .find_map(|(i, w)| match w.as_str() {
+            "--ws" => words.get(i + 1).cloned(),
+            w => w.strip_prefix("--ws=").map(str::to_string),
+        });
+    super::workspace::chosen(named.as_deref()).ok()
 }
 
 fn names(list: impl IntoIterator<Item = String>) -> Vec<CompletionCandidate> {

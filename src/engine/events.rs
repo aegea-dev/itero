@@ -99,7 +99,7 @@ pub struct Fate {
 
 pub fn fate(ws: &Workspace, kind: &str, data: &Map<String, Value>) -> anyhow::Result<Fate> {
     let now = chrono::Utc::now();
-    let defined = |n: &str| super::secrets::get_in(&ws.root, n).is_some();
+    let defined = |n: &str| super::secrets::get_in(ws, n).is_some();
     let flows = ws.flows()?;
     let starts = flows
         .iter()

@@ -6,6 +6,7 @@ use crate::flow::{Flow, Name};
 use crate::workspace::Workspace;
 use anyhow::{Result, bail};
 use serde_json::{Map, Value, json};
+use std::path::PathBuf;
 
 /// What `itero ws check` refuses in the manifest: an entry naming no workflow,
 /// action or connector, and the folders from before it (`args/`, `config/`).
@@ -462,6 +463,40 @@ pub fn which(ws: &Workspace, name: &str, json: bool) -> Result<()> {
             println!("{:<10}{}", text(&f["kind"]), text(&f["path"]));
         }
     })
+}
+
+/// `itero secret` and `itero ws secret`: kept in the store for every
+/// workspace, or for `ws` alone.
+pub fn secret(ws: Option<&Workspace>, name: &str, file: Option<PathBuf>) -> Result<()> {
+    use crate::engine::secrets;
+    secrets::ready(name)?;
+    let value = match file {
+        Some(f) => {
+            let t = std::fs::read_to_string(&f)
+                .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", f.display()))?;
+            let t = t.strip_suffix('\n').unwrap_or(&t);
+            t.strip_suffix('\r').unwrap_or(t).to_string()
+        }
+        None => rpassword::prompt_password(format!("{name}: "))?,
+    };
+    if value.is_empty() {
+        bail!("{name}: an empty secret is not kept");
+    }
+    match ws {
+        None => {
+            secrets::set(name, &value)?;
+            println!("{name}: kept in the OS secret store");
+        }
+        Some(ws) => {
+            secrets::set_for(&ws.id()?, name, &value)?;
+            let me = Journal::open(ws)?.workspace()?;
+            println!(
+                "{name}: kept for workspace {} in the OS secret store",
+                me.name
+            );
+        }
+    }
+    Ok(())
 }
 
 /// `itero service install`: the machine's service, `itero watchdog

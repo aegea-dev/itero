@@ -70,7 +70,7 @@ pub enum Cmd {
     },
     /// Send an event to every workspace on the machine's list
     Emit(EmitArgs),
-    /// Keep a secret in the OS secret store, for $$NAME (asks for it, without echo)
+    /// Keep a secret in the OS secret store, for $$NAME in every workspace (asks for it, without echo)
     Secret {
         /// Its name: a letter or _, then letters, digits or _
         name: String,
@@ -393,6 +393,14 @@ pub enum WorkspaceCmd {
     },
     /// Send an event to this workspace: it starts runs, and reaches the runs waiting for it
     Emit(EmitArgs),
+    /// Keep a secret for this workspace alone: its $$NAME finds it before the machine's (asks for it, without echo)
+    Secret {
+        /// Its name: a letter or _, then letters, digits or _
+        name: String,
+        /// Read it from this file (its last newline left out)
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
     /// The workflows and their runs
     #[command(visible_alias = "wf")]
     Workflow {
@@ -813,6 +821,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 WorkspaceCmd::Check { json } => top::check(&chosen()?, json)?,
                 WorkspaceCmd::Which { name, json } => top::which(&chosen()?, &name, json)?,
                 WorkspaceCmd::Emit(args) => emit::one(&chosen()?, args)?,
+                WorkspaceCmd::Secret { name, file } => top::secret(Some(&chosen()?), &name, file)?,
                 WorkspaceCmd::Workflow { cmd } => {
                     let ws = chosen()?;
                     match cmd {
@@ -920,23 +929,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             },
             AiCmd::Inspect { file, json } => ai::inspect(&file, json)?,
         },
-        Cmd::Secret { name, file } => {
-            crate::engine::secrets::ready(&name)?;
-            let value = match file {
-                Some(f) => {
-                    let t = std::fs::read_to_string(&f)
-                        .map_err(|e| anyhow!("cannot read {}: {e}", f.display()))?;
-                    let t = t.strip_suffix('\n').unwrap_or(&t);
-                    t.strip_suffix('\r').unwrap_or(t).to_string()
-                }
-                None => rpassword::prompt_password(format!("{name}: "))?,
-            };
-            if value.is_empty() {
-                bail!("{name}: an empty secret is not kept");
-            }
-            crate::engine::secrets::set(&name, &value)?;
-            println!("{name}: kept in the OS secret store");
-        }
+        Cmd::Secret { name, file } => top::secret(None, &name, file)?,
         Cmd::Info { json } => top::machine_info(json)?,
         Cmd::Watch { path } => {
             let watch = crate::connectors::Watch::new(&path)?;

@@ -30,6 +30,16 @@ fn fail_next(name: &str) {
     ));
 }
 
+/// A workspace in a folder of its own, kept for the whole test, its
+/// journal made.
+fn workspace_with_journal() -> itero::workspace::Workspace {
+    let d = tempfile::tempdir().unwrap().keep();
+    std::fs::write(d.join("itero.config.json"), "{}").unwrap();
+    let ws = itero::workspace::find(&d).unwrap();
+    itero::engine::journal::Journal::open(&ws).unwrap();
+    ws
+}
+
 #[test]
 fn secrets_are_kept_listed_read_and_removed() {
     in_memory_store();
@@ -96,6 +106,51 @@ fn secrets_are_kept_listed_read_and_removed() {
         .unwrap();
     let e = secrets::names().unwrap_err().to_string();
     assert!(e.contains("unreadable"), "{e}");
+
+    keyring::Entry::new("itero", "itero.names")
+        .unwrap()
+        .set_password("[]")
+        .unwrap();
+
+    // a workspace's own secret: before the machine's, for it alone, and
+    // under its id, so a new name keeps it
+    let bir = workspace_with_journal();
+    let iki = workspace_with_journal();
+    std::fs::write(bir.root.join(".env"), "POSTA=dosyadan\n").unwrap();
+    assert_eq!(secrets::get_in(&bir, "POSTA").as_deref(), Some("dosyadan"));
+    secrets::set("POSTA", "makineden").unwrap();
+    assert_eq!(secrets::get_in(&bir, "POSTA").as_deref(), Some("makineden"));
+    secrets::set_for(&bir.id().unwrap(), "POSTA", "çalışma alanından").unwrap();
+    assert_eq!(
+        secrets::get_in(&bir, "POSTA").as_deref(),
+        Some("çalışma alanından")
+    );
+    assert_eq!(secrets::get_in(&iki, "POSTA").as_deref(), Some("makineden"));
+    assert_eq!(secrets::get("POSTA").as_deref(), Some("makineden"));
+    itero::engine::journal::Journal::open(&bir)
+        .unwrap()
+        .rename_workspace("yeni-ad")
+        .unwrap();
+    let bir_again = itero::workspace::find(&bir.root).unwrap();
+    assert_eq!(
+        secrets::get_in(&bir_again, "POSTA").as_deref(),
+        Some("çalışma alanından")
+    );
+    assert!(
+        secrets::names()
+            .unwrap()
+            .contains(&format!("{}.POSTA", bir.id().unwrap()))
+    );
+    assert!(secrets::set_for(&bir.id().unwrap(), "ad-soyad", "x").is_err());
+    // the warning sees a workspace's own secret too
+    secrets::set_for(&bir.id().unwrap(), "ORTAM_SIRRI", "kendi").unwrap();
+    std::fs::write(
+        bir.root.join("itero.config.json"),
+        r#"{"action": {"gönder": {"args": {"a": "$$ORTAM_SIRRI"}}}}"#,
+    )
+    .unwrap();
+    let bir_used = itero::workspace::find(&bir.root).unwrap();
+    assert_eq!(secrets::shadowed(&bir_used).unwrap(), ["ORTAM_SIRRI"]);
 
     // with the store off, nothing is kept or listed, and nothing shadows
     // SAFETY: as above, no other thread
