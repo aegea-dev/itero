@@ -263,6 +263,17 @@ fn until(what: &str, done: impl Fn() -> bool) {
     }
 }
 
+/// How many runs of the gmail workflow have ended, each saved by then. A
+/// daemon killed sooner has told of a mail without having saved that it
+/// did, and its step runs again: a step is repeated only if it was cut off.
+fn gmail_runs_ended(ws: &Path) -> usize {
+    std::fs::read_to_string(ws.join(".itero/itero.log"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.contains(r#""event":"run.ended""#) && l.contains(r#""workflow":"gmail""#))
+        .count()
+}
+
 #[test]
 fn gmail_tells_each_new_mail_as_it_arrives_and_none_twice() {
     let Some(host) = server() else { return };
@@ -277,6 +288,7 @@ fn gmail_tells_each_new_mail_as_it_arrives_and_none_twice() {
     std::thread::sleep(std::time::Duration::from_secs(1)); // in IDLE
     send(&host, &user, "Sipariş geldi: çay ve şeker");
     until("the notification", || !shown(&log).is_empty());
+    until("its run to end", || gmail_runs_ended(&ws) == 1);
     first.kill().unwrap();
     first.wait().unwrap();
     assert_eq!(
@@ -297,7 +309,12 @@ fn gmail_tells_each_new_mail_as_it_arrives_and_none_twice() {
         shown(&log).lines().last().unwrap(),
         "Gmail\tKahve molası\tsubtitle=gonderen@ornek.test\tsound=default"
     );
-    assert_eq!(shown(&log).lines().count(), 2, "none twice");
+    assert_eq!(
+        shown(&log).lines().count(),
+        2,
+        "none twice: {}",
+        shown(&log)
+    );
 }
 
 #[test]

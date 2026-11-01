@@ -26,7 +26,14 @@ fn app(at: &Path, v: u64, extra: &str) -> PathBuf {
     at.to_path_buf()
 }
 
+/// One at a time. Tests run side by side in this process: a child forked
+/// while another test's `up_to_date` writes a notifier holds that file open
+/// until its exec, and on Linux running the file then is "Text file busy".
+/// A spawn returns after the exec, so no such child outlives this lock.
+static RUNNING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn run(program: &Path) -> String {
+    let _one = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
     let o = std::process::Command::new(program).output().unwrap();
     String::from_utf8_lossy(&o.stdout).trim().to_string()
 }

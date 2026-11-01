@@ -65,6 +65,7 @@ Environment variables for tests:
 - `ITERO_TEST_DIE_AT=<point>`, with `ITERO_TEST_DIE_ONCE` or `ITERO_TEST_DIE_WHILE` (a file's path): kills the process at that point, for the kill tests.
 - `ITERO_STUCK_AFTER=<seconds>`: how long a pass may run before the watchdog calls its workspace stuck.
 - `ITERO_AI_BIN`: which itero-ai to start.
+- `ITERO_TEST_START_SECS=<seconds>`: itero-ai holds its start that long, standing in for compiling Metal's shaders.
 
 CI (`test.yml`) runs fmt-check, check, lint-check and test on both
 ubuntu-latest and macos-latest, and test-docker on ubuntu-latest. A Mac

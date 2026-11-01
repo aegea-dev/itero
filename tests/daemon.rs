@@ -1425,7 +1425,7 @@ fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
             .write_all(format!("From ayşe {i}\n").as_bytes())
             .unwrap();
     }
-    assert!(soon(|| !w.read("görülen.txt").is_empty()));
+    assert!(soon(|| !w.read("görülen.txt").is_empty()), "{:#?}", w.log());
     std::thread::sleep(std::time::Duration::from_millis(1500));
     let seen = w.read("görülen.txt");
     assert_eq!(seen.lines().count(), 1, "one run for the burst: {seen}");
@@ -1440,7 +1440,12 @@ fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
     assert!(watching(&second), "{:#?}", w.log());
     std::fs::write(&inbox, "artık izlenmiyor").unwrap();
     std::fs::write(&second, "ğ").unwrap();
-    assert!(soon(|| w.read("görülen.txt").lines().count() == 2));
+    assert!(
+        soon(|| w.read("görülen.txt").lines().count() == 2),
+        "{}{:#?}",
+        w.read("görülen.txt"),
+        w.log()
+    );
     std::thread::sleep(std::time::Duration::from_millis(1500));
     let seen = w.read("görülen.txt");
     assert_eq!(seen.lines().count(), 2, "{seen}");
@@ -1460,6 +1465,47 @@ fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
     assert!(watching(&root.join("dosya-9")));
     std::thread::sleep(std::time::Duration::from_millis(500));
     assert_eq!(threads(daemon.0.id()), before);
+}
+
+#[test]
+fn a_message_during_a_long_step_meets_the_workflows_edited_before_it() {
+    let w = Ws::with(KEEP_OFF);
+    let root = w.d.path().to_path_buf();
+    w.action(
+        "uzun",
+        "touch başladı\nwhile [ ! -e bitir ]; do sleep 0.02; done",
+    );
+    w.action("say", "echo $from >> görülen.txt");
+    let say = |from: &str| json!({"#say": {"args": {"from": from}}});
+    w.flow(
+        "uzun",
+        json!({"on": [{"event": "uzun.istendi"}], "steps": ["#uzun"]}),
+    );
+    w.flow(
+        "posta",
+        json!({"on": [{"event": "eski.geldi"}], "steps": [say("eski")]}),
+    );
+    w.emit("uzun.istendi", json!({}));
+    std::thread::scope(|s| {
+        let pass = s.spawn(|| w.pass(NOW));
+        assert!(soon(|| root.join("başladı").exists()));
+        // the pass has read its workflows: one moves, one comes
+        w.flow(
+            "posta",
+            json!({"on": [{"event": "yeni.geldi"}], "steps": [say("taşınan")]}),
+        );
+        w.flow(
+            "yepyeni",
+            json!({"on": [{"event": "yeni.geldi"}], "steps": [say("yepyeni")]}),
+        );
+        w.emit("yeni.geldi", json!({}));
+        std::fs::write(root.join("bitir"), "").unwrap();
+        pass.join().unwrap();
+    });
+    let seen = w.read("görülen.txt");
+    let mut seen: Vec<&str> = seen.lines().collect();
+    seen.sort();
+    assert_eq!(seen, ["taşınan", "yepyeni"]);
 }
 
 fn at(s: &str) -> DateTime<Utc> {

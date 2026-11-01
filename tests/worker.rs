@@ -6,12 +6,25 @@ mod steps {
     use serde_json::{Value, json};
     use std::path::{Path, PathBuf};
 
-    /// An executable shell action in `dir`.
+    /// An executable shell action in `dir`, written by a child. These
+    /// tests run steps side by side in this process: a step's child forked
+    /// while this process has another's action open to write holds it until
+    /// its exec, and on Linux running that action then is "Text file busy".
     fn action(dir: &Path, name: &str, body: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
+        use std::io::Write;
+        use std::process::{Command, Stdio};
         let f = dir.join(name);
-        std::fs::write(&f, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut sh = Command::new("sh")
+            .args(["-c", r#"cat > "$1" && chmod 755 "$1""#, "sh"])
+            .arg(&f)
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let script = format!("#!/bin/sh\n{body}\n");
+        let mut stdin = sh.stdin.take().unwrap();
+        stdin.write_all(script.as_bytes()).unwrap();
+        drop(stdin);
+        assert!(sh.wait().unwrap().success());
         f
     }
 

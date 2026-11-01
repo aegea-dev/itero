@@ -20,12 +20,25 @@ impl Drop for Daemon {
 }
 
 fn until(what: &str, f: impl Fn() -> bool) {
-    let end = Instant::now() + Duration::from_secs(20);
+    assert!(within(20, f), "waited 20s for {what}");
+}
+
+/// Whether `f` comes true within `secs` seconds.
+fn within(secs: u64, f: impl Fn() -> bool) -> bool {
+    let end = Instant::now() + Duration::from_secs(secs);
     while !f() {
-        assert!(Instant::now() < end, "waited 20s for {what}");
+        if Instant::now() >= end {
+            return false;
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
+    true
 }
+
+/// Seconds for what starts a real itero-ai. On a Mac a start may first
+/// compile its Metal shaders, 15 seconds and more, and itero gives it 60 to
+/// answer.
+const ITERO_AI_STARTS: u64 = 90;
 
 struct Machine {
     d: tempfile::TempDir,
@@ -529,9 +542,13 @@ fn one_itero_ai_for_every_workspace_of_the_daemon() {
     });
     let kinds = |dir: &Path, kind: &str| m.ai_events(dir).iter().filter(|(k, _)| k == kind).count();
     m.ok(&a, &["ws", "emit", "soru.geldi"]);
-    until("a's step to ask", || {
-        kinds(&a, "itero.ai.model.missing") == 1
-    });
+    assert!(
+        within(ITERO_AI_STARTS, || {
+            kinds(&a, "itero.ai.model.missing") == 1
+        }),
+        "a's step did not ask: {:?}",
+        m.ai_events(&a)
+    );
     // itero-ai started once, told to both; the missing model only to a
     assert_eq!(kinds(&a, "itero.ai.started"), 1);
     until("b to hear", || kinds(&b, "itero.ai.started") == 1);
@@ -604,7 +621,12 @@ fn the_daemon_scans_for_models_once_and_when_a_step_asks() {
             .count()
     };
     let _d = m.daemon_all_said(free_port(), &said);
-    until("the scan at its start", || scans() == 1);
+    let told = || std::fs::read_to_string(&said).unwrap_or_default();
+    assert!(
+        within(ITERO_AI_STARTS, || scans() == 1),
+        "no scan at its start: {}",
+        told()
+    );
     let index = m.d.path().join("önbellek/itero/models.json");
     let ix: Value = serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
     assert_eq!(ix["models"][0]["repo"], "örnek/Sözlük-GGUF", "{ix}");
@@ -613,7 +635,12 @@ fn the_daemon_scans_for_models_once_and_when_a_step_asks() {
     assert_eq!(scans(), 1);
     // a step asks for a model the list has not: one more
     m.ok(&a, &["ws", "emit", "soru.geldi"]);
-    until("the scan it asked for", || scans() == 2);
+    assert!(
+        within(ITERO_AI_STARTS, || scans() == 2),
+        "no scan when asked: {}\n{:?}",
+        told(),
+        m.ai_events(&a)
+    );
 }
 
 #[test]

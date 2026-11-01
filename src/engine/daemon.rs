@@ -493,7 +493,7 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let mut pass = Pass::default();
     std::thread::scope(|scope| {
         let mut w = Workers::new(scope, exe);
-        let mut done = work(ws, &flows, &mut j, &mut w, clock, &log, no_room, &mut pass);
+        let mut done = work(ws, flows, &mut j, &mut w, clock, &log, no_room, &mut pass);
         while !w.running.is_empty() {
             let saved = end_one(ws, &mut j, &mut w, clock, &mut pass, None);
             if done.is_ok() {
@@ -634,7 +634,7 @@ const AGAIN: std::time::Duration = std::time::Duration::from_secs(1);
 #[allow(clippy::too_many_arguments)]
 fn work(
     ws: &Workspace,
-    flows: &Flows,
+    mut flows: Flows,
     j: &mut Journal,
     w: &mut Workers,
     clock: Clock,
@@ -659,7 +659,10 @@ fn work(
             };
             again = None;
             if r.event.subject == journal::subject("app") {
-                if route(ws, flows, j, &r, clock.now(), log, no_room)? {
+                // read again: a long step keeps the pass going, and a
+                // message must meet the edits made before it came
+                flows = Flows::load(ws)?;
+                if route(ws, &flows, j, &r, clock.now(), log, no_room)? {
                     pass.delivered += 1;
                 } else {
                     held.push(r.seq);
