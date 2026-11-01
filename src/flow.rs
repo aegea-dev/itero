@@ -1,4 +1,4 @@
-//! A workflow file in the simple form (`docs/design-simple.md`): `on`,
+//! A workflow file in the simple form: `on`,
 //! `steps`, and the `success`, `failure` and `error` lists run at the end.
 //! Its name is its file name, so the file has none.
 use chrono::{DateTime, Utc};

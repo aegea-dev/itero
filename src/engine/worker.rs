@@ -686,7 +686,7 @@ fn roll_log(r: &StepRun) -> Result<Outcome, Failure> {
     Ok(Outcome::Done(Value::String(String::new())))
 }
 
-/// What `itero worker` reads for one step (`docs/design-simple.md`).
+/// What `itero worker` reads for one step.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StepRun {
     /// The action's file, or a built-in's name (`NOTIFY`, `AI`, ...).

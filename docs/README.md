@@ -2,9 +2,7 @@
 
 The source for <https://docs.itero.sh>, built with
 [Astro](https://astro.build) and [Starlight](https://starlight.astro.build),
-the same setup as primum's and videre's. `design.md` and the `plan-*.md`
-files beside this README are the design and the iterations' plans; they are
-not part of the site.
+the same setup as primum's and videre's.
 
 ```bash
 yarn install      # once
