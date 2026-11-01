@@ -13,8 +13,9 @@ description: "How itero-ai starts, idles and fails; its events, its environment,
   workspace it runs, and its events go to each of them;
   `itero.ai.model.missing` goes only to the workspace whose step asked.
 - **Gone when idle.** After five minutes with nothing asked, it frees the
-  model's memory and exits. The next `#ai` step starts it again, in a
-  second or two.
+  model's memory and exits. The next `#ai` step starts it again, in
+  under a second. On a Mac a start may first compile Metal's shaders,
+  about 15 seconds on an M1 Max; itero waits up to a minute for it.
 - **Gone with the daemon.** When the daemon stops, so does its itero-ai.
 
 ## When it ends badly
