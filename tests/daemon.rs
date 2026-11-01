@@ -1425,7 +1425,7 @@ fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
             .write_all(format!("From ayşe {i}\n").as_bytes())
             .unwrap();
     }
-    assert!(soon(|| !w.read("görülen.txt").is_empty()));
+    assert!(soon(|| !w.read("görülen.txt").is_empty()), "{:#?}", w.log());
     std::thread::sleep(std::time::Duration::from_millis(1500));
     let seen = w.read("görülen.txt");
     assert_eq!(seen.lines().count(), 1, "one run for the burst: {seen}");
@@ -1440,7 +1440,12 @@ fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
     assert!(watching(&second), "{:#?}", w.log());
     std::fs::write(&inbox, "artık izlenmiyor").unwrap();
     std::fs::write(&second, "ğ").unwrap();
-    assert!(soon(|| w.read("görülen.txt").lines().count() == 2));
+    assert!(
+        soon(|| w.read("görülen.txt").lines().count() == 2),
+        "{}{:#?}",
+        w.read("görülen.txt"),
+        w.log()
+    );
     std::thread::sleep(std::time::Duration::from_millis(1500));
     let seen = w.read("görülen.txt");
     assert_eq!(seen.lines().count(), 2, "{seen}");
