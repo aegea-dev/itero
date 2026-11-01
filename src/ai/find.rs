@@ -250,7 +250,8 @@ pub fn rebuild(
 
 /// Runs `#find-models`. Only when a file is new or changed does it start
 /// an itero-ai, its own on its own socket, beside the daemon's, and stops
-/// it when done: a machine with no model never runs one. itero-ai not
+/// it when done: a machine with no model never runs one. It only reads
+/// headers, so it runs without the GPU (`header_reader_at`). itero-ai not
 /// installed: nothing can use a model, and it ends well, saying so.
 pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
     scan(&r.root)
@@ -279,7 +280,7 @@ pub fn scan_on(own: PathBuf) -> Result<Value, String> {
             let sock = match &socket {
                 Some(s) => s.clone(),
                 None => {
-                    let s = super::ensure_at(own.clone(), Duration::from_secs(60), |_| ())
+                    let s = super::header_reader_at(own.clone(), Duration::from_secs(60))
                         .map_err(|e| format!("{e:#}"))?;
                     let sock = s.socket.clone();
                     started = Some(s);
