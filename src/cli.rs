@@ -191,6 +191,19 @@ pub enum AiCmd {
         #[arg(long)]
         json: bool,
     },
+    /// The values #ai steps leave out: each one and where it comes from
+    Defaults {
+        #[command(subcommand)]
+        cmd: Option<DefaultsCmd>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DefaultsCmd {
+    /// Sets the machine's: a JSON object of #ai's arg names; null takes one out
+    Set { values: String },
 }
 
 #[derive(Subcommand)]
@@ -933,6 +946,10 @@ fn dispatch(cli: Cli) -> Result<()> {
                 ModelsCmd::Remove { name, delete } => ai::remove(&name, delete)?,
             },
             AiCmd::Inspect { file, json } => ai::inspect(&file, json)?,
+            AiCmd::Defaults { cmd, json } => match cmd {
+                Some(DefaultsCmd::Set { values }) => ai::defaults_set(&values)?,
+                None => ai::defaults(json)?,
+            },
         },
         Cmd::Secret { name, file } => top::secret(None, &name, file)?,
         Cmd::Info { json } => top::machine_info(json)?,

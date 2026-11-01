@@ -1,4 +1,5 @@
-//! `itero ai`: the models a machine has, and one model file's header.
+//! `itero ai`: the models a machine has, one model file's header, and the
+//! values `#ai` steps leave out.
 use super::out::{show, table, text};
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
@@ -306,6 +307,78 @@ pub fn add(name: &str, yes_given: bool) -> Result<()> {
     let n = e.name.clone();
     ix.write(&path)?;
     println!("{n}: added");
+    let defaults = crate::ai::defaults::path()?;
+    let mut machine = crate::ai::defaults::read(&defaults)?;
+    if !machine.contains_key("model") {
+        machine.insert("model".into(), json!(n));
+        crate::ai::defaults::write(&defaults, &machine)?;
+        println!("{n} is this machine's model for #ai now (itero ai defaults)");
+    }
+    Ok(())
+}
+
+/// What a step gets when nothing above says: its key, value and where from.
+const UNDERNEATH: [(&str, &str, &str); 10] = [
+    ("model", "null", "none"),
+    ("thinking", "false", "itero-ai"),
+    ("temperature", "0.8", "llama.cpp"),
+    ("top_p", "0.95", "llama.cpp"),
+    ("top_k", "40", "llama.cpp"),
+    ("min_p", "0.05", "llama.cpp"),
+    ("presence_penalty", "0.0", "llama.cpp"),
+    ("max_tokens", "null", "what the context leaves"),
+    ("seed", "null", "the clock"),
+    ("context", "32768", "itero-ai"),
+];
+
+/// `itero ai defaults`: each value a step would get, and where from.
+pub fn defaults(json_out: bool) -> Result<()> {
+    let machine = crate::ai::defaults::read(&crate::ai::defaults::path()?)?;
+    let ix = itero_ai_index::Index::read(&crate::ai::index_path()?)?;
+    let thinking = machine.get("thinking") == Some(&json!(true));
+    let from_model = machine
+        .get("model")
+        .and_then(Value::as_str)
+        .and_then(|m| itero_ai_index::resolve(&ix, m).ok())
+        .map(|e| crate::ai::defaults::model_values(e, thinking))
+        .unwrap_or_default();
+    let mut v = serde_json::Map::new();
+    for (k, value, from) in UNDERNEATH {
+        let (value, from) = if let Some(m) = machine.get(k) {
+            (m.clone(), "machine".to_string())
+        } else if let Some((_, m, f)) = from_model.iter().find(|(n, _, _)| *n == k) {
+            (m.clone(), f.clone())
+        } else {
+            (serde_json::from_str(value)?, from.to_string())
+        };
+        v.insert(k.to_string(), json!({ "value": value, "from": from }));
+    }
+    show(json_out, &Value::Object(v), |v| {
+        let rows: Vec<Vec<String>> = UNDERNEATH
+            .iter()
+            .map(|(k, _, _)| vec![k.to_string(), text(&v[*k]["value"]), text(&v[*k]["from"])])
+            .collect();
+        table(&rows);
+    })
+}
+
+/// `itero ai defaults set`: merged into the machine's, by `#ai`'s rules.
+pub fn defaults_set(values: &str) -> Result<()> {
+    let changes: Value =
+        serde_json::from_str(values).map_err(|e| anyhow::anyhow!("not JSON ({e}): {values}"))?;
+    let Value::Object(changes) = changes else {
+        bail!("the values are an object of #ai's arg names: {values}");
+    };
+    let path = crate::ai::defaults::path()?;
+    let new = crate::ai::defaults::changed(&crate::ai::defaults::read(&path)?, &changes)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    crate::ai::defaults::write(&path, &new)?;
+    if let Some(m) = changes.get("model").and_then(Value::as_str) {
+        let ix = itero_ai_index::Index::read(&crate::ai::index_path()?)?;
+        if let Err(e) = itero_ai_index::resolve(&ix, m) {
+            eprintln!("warning: {e} (itero ai models list shows them)");
+        }
+    }
     Ok(())
 }
 
@@ -385,6 +458,9 @@ mod tests {
             chat: true,
             runs: true,
             thinking: thinks,
+            basename: None,
+            sampling: None,
+            thinking_off: None,
             modified: 0,
             downloaded: None,
             removed: None,

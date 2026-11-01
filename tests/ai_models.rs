@@ -152,6 +152,7 @@ impl Machine {
             .current_dir(self.d.path())
             .env("HOME", self.d.path().join("ev"))
             .env("XDG_CACHE_HOME", self.d.path().join("önbellek"))
+            .env("XDG_STATE_HOME", self.d.path().join("durum"))
             .env("HF_ENDPOINT", endpoint)
             .env("HF_HUB_CACHE", self.d.path().join("hf"))
             .env("ITERO_AI_BIN", bin.with_file_name("itero-ai"))
@@ -210,6 +211,27 @@ fn add_downloads_resumes_and_checks_it() {
     // added again: there already, nothing downloaded
     let (ok, out) = m.itero(&url, &["ai", "models", "add", "örnek/Küçük-GGUF", "--yes"]);
     assert!(ok && out.contains("on this machine already"), "{out}");
+}
+
+#[test]
+fn the_first_model_added_is_the_machines_and_a_second_leaves_it() {
+    let m = Machine::new();
+    let (url, _h) = hub("apache-2.0", vec!["Q3_K_M", "Q4_K_M"], false, None);
+    let (ok, out) = m.itero(&url, &["ai", "models", "add", "örnek/Küçük-GGUF", "--yes"]);
+    assert!(ok && out.contains("this machine's model for #ai"), "{out}");
+    let read = || -> Value {
+        serde_json::from_slice(
+            &std::fs::read(m.d.path().join("durum/itero/ai-defaults.json")).unwrap(),
+        )
+        .unwrap()
+    };
+    assert_eq!(read(), json!({ "model": "örnek/Küçük-GGUF:Q4_K_M" }));
+    let (ok, out) = m.itero(
+        &url,
+        &["ai", "models", "add", "örnek/Küçük-GGUF:Q3_K_M", "--yes"],
+    );
+    assert!(ok && !out.contains("this machine's model for #ai"), "{out}");
+    assert_eq!(read(), json!({ "model": "örnek/Küçük-GGUF:Q4_K_M" }));
 }
 
 #[test]

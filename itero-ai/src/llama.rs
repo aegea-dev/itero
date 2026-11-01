@@ -11,8 +11,9 @@ use llama_cpp_2::sampling::LlamaSampler;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-/// The context every answer has: its prompt and what it writes.
-const CONTEXT: u32 = 16_384;
+/// The context an answer has unless it asks for another: its prompt and
+/// what it writes.
+const CONTEXT: u32 = 32_768;
 /// Prompt tokens decoded at once.
 const BATCH: usize = 2048;
 /// Tokens back the repetition penalties look.
@@ -156,20 +157,29 @@ impl Engine for LlamaEngine {
         let prompt = render(&l.template, p)?;
         let tokens = l.model.vocab().tokenize(prompt.as_bytes(), false, true);
         let n_prompt = tokens.len() as u32;
-        if n_prompt >= CONTEXT {
+        let context = p.context.unwrap_or(CONTEXT);
+        let most = l.model.n_ctx_train();
+        if most > 0 && context > most {
             return Err(EngineError::BadRequest(format!(
-                "the prompt is {n_prompt} tokens: the context holds {CONTEXT}"
+                "context {context} is more than {} holds: {most}",
+                p.model
             )));
         }
-        let room = CONTEXT - n_prompt;
+        if n_prompt >= context {
+            return Err(EngineError::BadRequest(format!(
+                "the prompt is {n_prompt} tokens: the context holds {context}"
+            )));
+        }
+        let room = context - n_prompt;
         let max = p.max_tokens.map_or(room, |m| m.min(room));
+        // a context per answer: its size needs no reload of the model
         let cparams = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(CONTEXT))
+            .with_n_ctx(NonZeroU32::new(context))
             .with_n_batch(BATCH as u32);
         let mut ctx = l
             .model
             .new_context(&self.backend, cparams)
-            .map_err(failed)?;
+            .map_err(|e| EngineError::Failed(format!("a context of {context} tokens: {e}")))?;
         let mut batch = LlamaBatch::new(BATCH, 1);
         let mut pos = 0i32;
         for chunk in tokens.chunks(BATCH) {

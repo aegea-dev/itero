@@ -103,6 +103,22 @@ models again at once; when the file is there, the step works a minute
 later. Check the name with `itero ai models list`, and see
 [Models](/ai/models/) for where files are found.
 
+**`#ai: it needs a model: give the step $model, or itero ai defaults set '{"model": "..."}'`**
+
+The step names no model, and this machine has none set. Set one with
+[`itero ai defaults set`](/commands/ai/#defaults), or add `model` to the
+step.
+
+**`context <n> is more than <model> holds: <most>`**
+
+The step asks for more than the model was made for. `itero ai models list`
+shows each model's context.
+
+**`a context of <n> tokens: ...`**
+
+The machine could not give that much memory. Lower the step's `context`:
+about 500 MB for each 16,384 tokens on Qwen3.5-4B.
+
 **`itero-ai ended badly (<why>); it starts again in <n> s`**
 
 It crashed, and is in its pause ([When it ends badly](#when-it-ends-badly)).

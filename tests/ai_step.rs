@@ -108,7 +108,6 @@ fn what_is_wrong_is_said() {
     let sock = d.path().join("ai.sock");
     let _s = fake_ai::serve(&sock, Some("x"));
     for (env, says) in [
-        (vec![("text", "x")], "$model"),
         (vec![("model", "u/k")], "$text"),
         (
             vec![("model", "u/k"), ("text", "x"), ("choose", "[]")],

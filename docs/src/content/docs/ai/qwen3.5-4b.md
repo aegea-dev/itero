@@ -6,14 +6,14 @@ description: "The model itero advises: its files, its sampling by mode, what we 
 
 itero advises **Qwen3.5-4B**, by the Qwen team, for `#ai` steps:
 
-- **small:** 2.74 GB as `Q4_K_M`, about 5.5 GB of memory in all;
+- **small:** 2.74 GB as `Q4_K_M`, about 6 GB of memory in all;
 - **fast on a laptop:** about 40 tokens a second on an M1 Max;
 - **open:** Apache-2.0, for any use;
 - **thinks when asked:** it can reason before it answers, or answer at
   once.
 
-Its context is 262,144 tokens; itero gives each answer 16,384 for now,
-the prompt included.
+Its context is 262,144 tokens; itero gives each answer 32,768 unless a
+step says otherwise, the prompt included.
 
 ## Its files
 
@@ -32,9 +32,11 @@ downloaded before then has the old one: download it again.
 
 ## Sampling by mode
 
-Qwen's makers advise different sampling for each kind of work. Without
-any, a step gets llama.cpp's defaults, which are not these. Thinking is
-off unless a step asks for it with `"thinking": true`.
+Qwen's makers advise different sampling for each kind of work. A step
+gets the two *general work* modes by itself, by whether it thinks; the
+other two it sets. Thinking is off unless a step asks for it with
+`"thinking": true`. This applies to any Qwen3.5 file by the name inside
+it (`general.basename`), whoever uploaded it.
 
 **Without thinking, general work** (sorting, summing up, fields):
 
@@ -62,7 +64,7 @@ off unless a step asks for it with `"thinking": true`.
 "temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0, "presence_penalty": 0
 ```
 
-These go in the step's `args`, beside `model` and `text`. Source:
+What a step sets goes in its `args`, beside `text`. Source:
 [Unsloth's Qwen3.5 guide](https://unsloth.ai/docs/models/qwen3.5), as of
 October 2026.
 
@@ -81,3 +83,19 @@ itero's own tests run Qwen3.5-4B (`make test-ai`). What they taught:
 - **Thinking takes time.** With thinking on, an answer can take many
   times as many tokens. Turn it on for steps that need reasoning, not
   for sorting.
+
+### Context
+
+Memory for each `context`, on an M1 Max with one 7,160-token prompt,
+without the model's own file:
+
+| `context` | Memory |
+|---|---|
+| 16,384 | 0.7 GB |
+| 32,768 | 1.3 GB |
+| 65,536 | 2.3 GB |
+| 131,072 | 4.3 GB |
+
+Speed did not change with it: about 570 tokens a second reading the
+prompt, 47 writing the answer. A prompt that nearly fills the context
+was not measured.

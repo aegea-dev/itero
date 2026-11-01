@@ -35,6 +35,9 @@ fn engine() -> Option<(tempfile::TempDir, LlamaEngine)> {
             chat: true,
             runs: true,
             thinking: true,
+            basename: None,
+            sampling: None,
+            thinking_off: None,
             modified: 0,
             downloaded: None,
             removed: None,
@@ -49,6 +52,11 @@ fn engine() -> Option<(tempfile::TempDir, LlamaEngine)> {
         (v["basename"].as_str(), v["params"].as_str()),
         (Some("Qwen3.5-4B"), Some("4B")),
         "ITERO_AI_TEST_MODEL is not Qwen3.5-4B: {path}"
+    );
+    assert_eq!(
+        (&v["thinking_off"], &v["sampling"]),
+        (&json!(true), &json!(null)),
+        "its template reads enable_thinking, and its file names no sampling"
     );
     Some((d, e))
 }
@@ -79,6 +87,7 @@ fn prompt(text: &str) -> Prompt {
         schema: None,
         json: false,
         thinking: false,
+        context: None,
     }
 }
 
@@ -115,6 +124,16 @@ macro_rules! ensure {
             return Err(format!($($why)+));
         }
     };
+}
+
+fn a_set_context_answers(e: &mut LlamaEngine) -> Result<(), String> {
+    let mut p = prompt("Say one word.");
+    p.context = Some(4096);
+    let (c, _, _) = ask(e, &p);
+    ensure!(!c.trim().is_empty(), "no answer");
+    p.context = Some(u32::MAX);
+    ensure!(e.complete(&p, &mut |_| true).is_err(), "more than it holds");
+    Ok(())
 }
 
 fn a_plain_answer_without_thinking(e: &mut LlamaEngine) -> Result<(), String> {
@@ -210,7 +229,7 @@ fn qwen3_5_4b_at_temperature_0() {
     let Some((_d, mut e)) = engine() else {
         return;
     };
-    let cases: [(&str, Case); 6] = [
+    let cases: [(&str, Case); 7] = [
         (
             "a plain answer without thinking",
             a_plain_answer_without_thinking,
@@ -229,6 +248,7 @@ fn qwen3_5_4b_at_temperature_0() {
             "a stop text and max_tokens end it",
             a_stop_text_and_max_tokens_end_it,
         ),
+        ("a set context answers", a_set_context_answers),
     ];
     let mut failed = vec![];
     for (name, case) in cases {

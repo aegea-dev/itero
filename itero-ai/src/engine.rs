@@ -38,6 +38,8 @@ pub struct Prompt {
     pub json: bool,
     /// The model may think first; its thinking comes apart from its answer.
     pub thinking: bool,
+    /// Tokens for the prompt and the answer; none: itero-ai's own.
+    pub context: Option<u32>,
 }
 
 /// A piece of an answer, as it comes.
