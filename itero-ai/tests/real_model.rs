@@ -132,10 +132,7 @@ fn a_set_context_answers(e: &mut LlamaEngine) -> Result<(), String> {
     let (c, _, _) = ask(e, &p);
     ensure!(!c.trim().is_empty(), "no answer");
     p.context = Some(u32::MAX);
-    ensure!(
-        e.complete(&p, &mut |_| true).is_err(),
-        "more than it holds"
-    );
+    ensure!(e.complete(&p, &mut |_| true).is_err(), "more than it holds");
     Ok(())
 }
 
@@ -251,10 +248,7 @@ fn qwen3_5_4b_at_temperature_0() {
             "a stop text and max_tokens end it",
             a_stop_text_and_max_tokens_end_it,
         ),
-        (
-            "a set context answers",
-            a_set_context_answers,
-        ),
+        ("a set context answers", a_set_context_answers),
     ];
     let mut failed = vec![];
     for (name, case) in cases {

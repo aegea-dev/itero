@@ -82,7 +82,10 @@ fn each_value_says_where_it_comes_from() {
     assert_eq!(shown(d.path())["top_p"]["value"], 0.8);
     let o = itero(d.path(), &["ai", "defaults"]);
     let out = String::from_utf8_lossy(&o.stdout);
-    assert!(out.contains("itero's table") && out.contains("u/qwen"), "{out}");
+    assert!(
+        out.contains("itero's table") && out.contains("u/qwen"),
+        "{out}"
+    );
 }
 
 #[test]

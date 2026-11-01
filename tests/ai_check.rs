@@ -98,7 +98,10 @@ fn a_step_without_a_model_is_warned_of_unless_the_machine_has_one() {
         ai(json!({ "text": "x" })),
         Some(json!({ "model": "u/yok" })),
     );
-    assert!(ok && out.contains("no model u/yok on this machine"), "{out}");
+    assert!(
+        ok && out.contains("no model u/yok on this machine"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -108,7 +111,10 @@ fn thinking_off_on_a_model_that_cannot_is_warned_of() {
     ));
     assert!(ok && out.contains("cannot turn thinking off"), "{out}");
     let (ok, out) = check(ai(json!({ "model": "u/düşünen", "text": "x" })));
-    assert!(ok && !out.contains("warning"), "says nothing, asks nothing: {out}");
+    assert!(
+        ok && !out.contains("warning"),
+        "says nothing, asks nothing: {out}"
+    );
     let (ok, out) = check(ai(
         json!({ "model": "u/var", "text": "x", "thinking": false }),
     ));
