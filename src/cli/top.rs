@@ -176,12 +176,11 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
         }
         for args in f.args_of(crate::engine::worker::AI) {
             match crate::ai::step::check(args) {
-                Ok(Some(model)) => {
-                    if let Some(w) = crate::ai::step::model_warning(&model) {
-                        warnings.push(format!("{name}: {w}"));
-                    }
-                }
-                Ok(None) => {}
+                Ok(seen) => warnings.extend(
+                    crate::ai::step::warnings(&seen)
+                        .into_iter()
+                        .map(|w| format!("{name}: {w}")),
+                ),
                 Err(e) => bail!("{name}: {e}"),
             }
         }

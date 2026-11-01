@@ -135,7 +135,14 @@ fn number(env: &BTreeMap<String, String>, k: &str) -> Result<Option<Value>, Stri
 /// The chat request for a step's args (as a step's environment has them:
 /// text, and lists and objects as JSON).
 pub fn request(env: &BTreeMap<String, String>) -> Result<Value, String> {
-    let model = env.get("model").ok_or_else(|| fail("it needs $model"))?;
+    let model = env.get("model").ok_or_else(|| {
+        fail("it needs a model: give the step $model, or itero ai defaults set '{\"model\": \"...\"}'")
+    })?;
+    body(model, env)
+}
+
+/// The request for `model`, by `#ai`'s rules on the args.
+pub(super) fn body(model: &str, env: &BTreeMap<String, String>) -> Result<Value, String> {
     let text = env.get("text").ok_or_else(|| fail("it needs $text"))?;
     let shape = shape(env)?;
     let mut messages = vec![];
@@ -204,16 +211,36 @@ pub fn request(env: &BTreeMap<String, String>) -> Result<Value, String> {
     Ok(r)
 }
 
+/// A step's model, as far as the workflow's text says.
+#[derive(Debug, PartialEq)]
+pub enum Written {
+    Named(String),
+    /// A `"$name"`: known only in a run.
+    Later,
+    Not,
+}
+
+/// What `itero ws check` learned of a step.
+#[derive(Debug, PartialEq)]
+pub struct Seen {
+    pub model: Written,
+    pub thinking_false: bool,
+}
+
 /// What `itero ws check` can say of an `#ai` step's args before a run: the
 /// same rules as a run's, on the values written in the workflow; a
-/// `"$name"` is known only in a run, and is left aside. Gives the model's
-/// name when it is written out.
-pub fn check(args: &Value) -> Result<Option<String>, String> {
+/// `"$name"` is known only in a run, and is left aside.
+pub fn check(args: &Value) -> Result<Seen, String> {
     let items: Vec<&Map<String, Value>> = match args {
         Value::Object(o) => vec![o],
         Value::Array(a) => a.iter().filter_map(Value::as_object).collect(),
         // "$output" and the like: known only in a run
-        _ => return Ok(None),
+        _ => {
+            return Ok(Seen {
+                model: Written::Later,
+                thinking_false: false,
+            });
+        }
     };
     let mut env = BTreeMap::new();
     for o in items {
@@ -230,16 +257,51 @@ pub fn check(args: &Value) -> Result<Option<String>, String> {
             env.insert(k.clone(), text);
         }
     }
-    request(&env)?;
-    Ok(env.get("model").filter(|m| !m.starts_with('$')).cloned())
+    let thinking_false = env.get("thinking").is_some_and(|t| t == "false");
+    body(env.get("model").map_or("", String::as_str), &env)?;
+    let model = match env.get("model") {
+        None => Written::Not,
+        Some(m) if m.starts_with('$') => Written::Later,
+        Some(m) => Written::Named(m.clone()),
+    };
+    Ok(Seen {
+        model,
+        thinking_false,
+    })
 }
 
-/// A warning when this machine has no such model (another machine may).
-pub fn model_warning(model: &str) -> Option<String> {
-    let ix = itero_ai_index::Index::read(&super::index_path().ok()?).ok()?;
-    match itero_ai_index::resolve(&ix, model) {
-        Ok(_) => None,
-        Err(e) => Some(format!("#ai: {e} (itero ai models list shows them)")),
+/// What `itero ws check` warns of: only warnings, as another machine may
+/// have what this one does not.
+pub fn warnings(seen: &Seen) -> Vec<String> {
+    let machine = super::defaults::path()
+        .and_then(|p| super::defaults::read(&p))
+        .unwrap_or_default();
+    let model = match &seen.model {
+        Written::Later => return vec![],
+        Written::Named(m) => m.clone(),
+        Written::Not => match machine.get("model").and_then(Value::as_str) {
+            Some(m) => m.to_string(),
+            None => {
+                return vec![fail(
+                    "no model: give the step $model, or itero ai defaults set '{\"model\": \"...\"}'",
+                )];
+            }
+        },
+    };
+    let Ok(ix) = super::index_path().and_then(|p| itero_ai_index::Index::read(&p)) else {
+        return vec![];
+    };
+    match itero_ai_index::resolve(&ix, &model) {
+        Err(e) => vec![fail(format!("{e} (itero ai models list shows them)"))],
+        Ok(e)
+            if e.thinking_off == Some(false)
+                && (seen.thinking_false || machine.get("thinking") == Some(&json!(false))) =>
+        {
+            vec![fail(format!(
+                "{model} cannot turn thinking off: it may think anyway, and its thinking goes to the log"
+            ))]
+        }
+        Ok(_) => vec![],
     }
 }
 
@@ -257,7 +319,15 @@ fn output(env: &BTreeMap<String, String>, content: &str) -> Result<Value, String
 
 /// Runs `#ai`: streams the answer, telling its token count as progress.
 pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome, Failure> {
-    let body = request(&r.env)?;
+    let mut env = r.env.clone();
+    let machine = super::defaults::path()
+        .and_then(|p| super::defaults::read(&p))
+        .map_err(fail)?;
+    let ix = super::index_path()
+        .and_then(|p| itero_ai_index::Index::read(&p))
+        .map_err(fail)?;
+    super::defaults::fill(&mut env, &machine, &ix);
+    let body = request(&env)?;
     let socket = r
         .env
         .get("ITERO_AI_SOCKET")
@@ -387,6 +457,12 @@ mod tests {
             let e = request(&env(&[("model", "u/k"), ("text", "x"), (k, v)])).unwrap_err();
             assert!(e.contains(says), "{e}");
         }
+    }
+
+    #[test]
+    fn a_step_without_a_model_says_how_to_give_one() {
+        let e = request(&env(&[("text", "x")])).unwrap_err();
+        assert!(e.contains("itero ai defaults set"), "{e}");
     }
 
     #[test]
