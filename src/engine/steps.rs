@@ -1,4 +1,4 @@
-//! The manager over steps (`docs/design-simple.md`): one decision for one
+//! The manager over steps: one decision for one
 //! run and one event, JSON in, JSON out. Pure: no clock, no files, no
 //! environment; the daemon gives it everything it needs and saves what it
 //! answers.

@@ -1,5 +1,5 @@
 //! Connectors: executables in `connectors/` that keep running and tell itero
-//! when something happens outside (`docs/design-simple.md`):
+//! when something happens outside:
 //!
 //! - each line a connector prints is the data of one message, a JSON object;
 //!   the message's type is the connector's file name (`mail.received`);
