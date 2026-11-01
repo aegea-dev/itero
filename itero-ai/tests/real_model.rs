@@ -7,7 +7,7 @@
 //! engine, one at a time. A schema holds an answer to its form, and the
 //! prompt says that form too, as `#ai` does: a model made to open a JSON
 //! string it did not mean to write answers poorly.
-use itero_ai::engine::{Engine, Finish, Message, Piece, Prompt, Reason, Sampling};
+use itero_ai::engine::{Engine, Finish, KvCache, Message, Piece, Prompt, Reason, Sampling};
 use itero_ai::llama::LlamaEngine;
 use itero_ai_index::{Entry, Index};
 use serde_json::{Value, json};
@@ -87,6 +87,8 @@ fn prompt(text: &str) -> Prompt {
         schema: None,
         json: false,
         thinking: false,
+        context: None,
+        kv_cache: None,
     }
 }
 
@@ -123,6 +125,20 @@ macro_rules! ensure {
             return Err(format!($($why)+));
         }
     };
+}
+
+fn a_set_context_and_kv_cache_answer(e: &mut LlamaEngine) -> Result<(), String> {
+    let mut p = prompt("Say one word.");
+    p.context = Some(4096);
+    p.kv_cache = Some(KvCache::Q8_0);
+    let (c, _, _) = ask(e, &p);
+    ensure!(!c.trim().is_empty(), "no answer");
+    p.context = Some(u32::MAX);
+    ensure!(
+        e.complete(&p, &mut |_| true).is_err(),
+        "more than it holds"
+    );
+    Ok(())
 }
 
 fn a_plain_answer_without_thinking(e: &mut LlamaEngine) -> Result<(), String> {
@@ -218,7 +234,7 @@ fn qwen3_5_4b_at_temperature_0() {
     let Some((_d, mut e)) = engine() else {
         return;
     };
-    let cases: [(&str, Case); 6] = [
+    let cases: [(&str, Case); 7] = [
         (
             "a plain answer without thinking",
             a_plain_answer_without_thinking,
@@ -236,6 +252,10 @@ fn qwen3_5_4b_at_temperature_0() {
         (
             "a stop text and max_tokens end it",
             a_stop_text_and_max_tokens_end_it,
+        ),
+        (
+            "a set context and KV cache answer",
+            a_set_context_and_kv_cache_answer,
         ),
     ];
     let mut failed = vec![];

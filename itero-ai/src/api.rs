@@ -1,6 +1,6 @@
 //! The OpenAI Chat Completions shapes itero-ai takes and gives. A field it
 //! does not honour is refused by name, never silently ignored.
-use crate::engine::{Finish, Message, Piece, Prompt, Reason, Sampling};
+use crate::engine::{Finish, KvCache, Message, Piece, Prompt, Reason, Sampling};
 use serde_json::{Map, Value, json};
 
 /// A request refused, in OpenAI's error shape.
@@ -20,9 +20,13 @@ fn bad(param: &str, message: impl Into<String>) -> ApiError {
     }
 }
 
+/// The smallest context it builds.
+const MIN_CONTEXT: u32 = 1024;
+
 /// The fields it reads; any other is refused by name. `top_k`, `min_p` and
-/// `chat_template_kwargs` are not OpenAI's, but llama-server's and vLLM's.
-const TAKEN: [&str; 17] = [
+/// `chat_template_kwargs` are not OpenAI's, but llama-server's and vLLM's;
+/// `context` and `kv_cache` are itero-ai's own.
+const TAKEN: [&str; 19] = [
     "model",
     "messages",
     "max_tokens",
@@ -40,6 +44,8 @@ const TAKEN: [&str; 17] = [
     "response_format",
     "chat_template_kwargs",
     "n",
+    "context",
+    "kv_cache",
 ];
 
 /// A request's body as a prompt, and whether it is to be streamed.
@@ -88,6 +94,32 @@ pub fn validate(raw: Value) -> Result<(Prompt, bool), ApiError> {
             .collect(),
         Some(_) => return Err(bad("stop", "stop is a text or a list of texts")),
     };
+    let context = match o.get("context") {
+        None => None,
+        Some(v) => match v.as_u64().and_then(|n| u32::try_from(n).ok()) {
+            Some(n) if n >= MIN_CONTEXT => Some(n),
+            _ => {
+                return Err(bad(
+                    "context",
+                    format!("context is a whole number of at least {MIN_CONTEXT}, not {v}"),
+                ));
+            }
+        },
+    };
+    let kv_cache = match o.get("kv_cache") {
+        None => None,
+        Some(v) => Some(match v.as_str() {
+            Some("f16") => KvCache::F16,
+            Some("bf16") => KvCache::Bf16,
+            Some("q8_0") => KvCache::Q8_0,
+            _ => {
+                return Err(bad(
+                    "kv_cache",
+                    format!("kv_cache is f16, bf16 or q8_0, not {v}"),
+                ));
+            }
+        }),
+    };
     let (schema, json) = match o.get("response_format") {
         None => (None, false),
         Some(f) => match f.get("type").and_then(Value::as_str) {
@@ -133,6 +165,8 @@ pub fn validate(raw: Value) -> Result<(Prompt, bool), ApiError> {
             schema,
             json,
             thinking,
+            context,
+            kv_cache,
         },
         stream,
     ))
@@ -309,6 +343,25 @@ mod tests {
             validate(r).unwrap_err().param.as_deref(),
             Some("response_format")
         );
+    }
+
+    #[test]
+    fn context_and_kv_cache_are_read_and_checked() {
+        let mut r = base();
+        r["context"] = json!(32768);
+        r["kv_cache"] = json!("q8_0");
+        let (p, _) = validate(r).unwrap();
+        assert_eq!((p.context, p.kv_cache), (Some(32768), Some(KvCache::Q8_0)));
+        let (p, _) = validate(base()).unwrap();
+        assert_eq!((p.context, p.kv_cache), (None, None));
+        let mut r = base();
+        r["kv_cache"] = json!("renkli");
+        let e = validate(r).unwrap_err();
+        assert_eq!(e.param.as_deref(), Some("kv_cache"));
+        assert!(e.message.contains("f16, bf16 or q8_0"), "{}", e.message);
+        let mut r = base();
+        r["context"] = json!(100);
+        assert_eq!(validate(r).unwrap_err().param.as_deref(), Some("context"));
     }
 
     #[test]

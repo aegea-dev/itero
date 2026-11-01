@@ -1,8 +1,8 @@
 //! The engine: llama.cpp through llama-cpp-2. One model loaded at a time;
 //! a request for another frees it first.
-use crate::engine::{Engine, EngineError, Finish, Piece, Prompt, Reason};
+use crate::engine::{Engine, EngineError, Finish, KvCache, Piece, Prompt, Reason};
 use crate::think::Splitter;
-use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::context::params::{KvCacheType, LlamaContextParams};
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::LlamaModel;
@@ -11,7 +11,8 @@ use llama_cpp_2::sampling::LlamaSampler;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-/// The context every answer has: its prompt and what it writes.
+/// The context an answer has unless it asks for another: its prompt and
+/// what it writes.
 const CONTEXT: u32 = 16_384;
 /// Prompt tokens decoded at once.
 const BATCH: usize = 2048;
@@ -156,20 +157,37 @@ impl Engine for LlamaEngine {
         let prompt = render(&l.template, p)?;
         let tokens = l.model.vocab().tokenize(prompt.as_bytes(), false, true);
         let n_prompt = tokens.len() as u32;
-        if n_prompt >= CONTEXT {
+        let context = p.context.unwrap_or(CONTEXT);
+        let most = l.model.n_ctx_train();
+        if most > 0 && context > most {
             return Err(EngineError::BadRequest(format!(
-                "the prompt is {n_prompt} tokens: the context holds {CONTEXT}"
+                "context {context} is more than {} holds: {most}",
+                p.model
             )));
         }
-        let room = CONTEXT - n_prompt;
+        if n_prompt >= context {
+            return Err(EngineError::BadRequest(format!(
+                "the prompt is {n_prompt} tokens: the context holds {context}"
+            )));
+        }
+        let room = context - n_prompt;
         let max = p.max_tokens.map_or(room, |m| m.min(room));
-        let cparams = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(CONTEXT))
+        let mut cparams = LlamaContextParams::default()
+            .with_n_ctx(NonZeroU32::new(context))
             .with_n_batch(BATCH as u32);
+        if let Some(kv) = p.kv_cache {
+            let t = match kv {
+                KvCache::F16 => KvCacheType::F16,
+                KvCache::Bf16 => KvCacheType::BF16,
+                KvCache::Q8_0 => KvCacheType::Q8_0,
+            };
+            cparams = cparams.with_type_k(t).with_type_v(t);
+        }
+        // a context per answer: these settings need no reload of the model
         let mut ctx = l
             .model
             .new_context(&self.backend, cparams)
-            .map_err(failed)?;
+            .map_err(|e| EngineError::Failed(format!("a context of {context} tokens: {e}")))?;
         let mut batch = LlamaBatch::new(BATCH, 1);
         let mut pos = 0i32;
         for chunk in tokens.chunks(BATCH) {
