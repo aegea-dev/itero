@@ -1,6 +1,7 @@
-//! A model's text into its answer and its thinking, by the marks its
-//! family uses. Qwen's `<think>...</think>` first; any other family's text
-//! is all answer until its marks are written here.
+//! A model's text into its answer and its thinking. A `<think>...</think>`
+//! that opens an answer is thinking in any family, asked for or not: a
+//! template may ignore `enable_thinking`. Through the whole answer, the
+//! marks count only where thinking was asked for, in the Qwen families.
 use crate::engine::Piece;
 
 const OPEN: &str = "<think>";
@@ -12,7 +13,10 @@ pub fn splits(arch: &str) -> bool {
 }
 
 pub struct Splitter {
-    on: bool,
+    /// A mark counts all through the answer; else only at its start.
+    everywhere: bool,
+    /// Nothing given yet: the answer may still open with the mark.
+    opening: bool,
     inside: bool,
     /// What may be the start of a mark, kept until the next piece says.
     held: String,
@@ -21,7 +25,8 @@ pub struct Splitter {
 impl Splitter {
     pub fn for_architecture(arch: &str, thinking: bool) -> Splitter {
         Splitter {
-            on: thinking && splits(arch),
+            everywhere: thinking && splits(arch),
+            opening: true,
             inside: false,
             held: String::new(),
         }
@@ -30,17 +35,33 @@ impl Splitter {
     /// Starts inside the thinking: for a template whose prompt ends by
     /// opening it.
     pub fn inside(mut self) -> Splitter {
-        self.inside = self.on;
+        self.inside = true;
+        self.opening = false;
         self
     }
 
     pub fn feed(&mut self, text: &str) -> Vec<Piece> {
-        if !self.on {
-            return vec![Piece::Content(text.into())];
-        }
         self.held.push_str(text);
         let mut out = vec![];
+        if self.opening {
+            let start = self.held.trim_start();
+            if start.starts_with(OPEN) {
+                let at = self.held.len() - start.len() + OPEN.len();
+                self.held.drain(..at);
+                self.opening = false;
+                self.inside = true;
+            } else if OPEN.starts_with(start) {
+                return out;
+            } else {
+                self.opening = false;
+            }
+        }
         loop {
+            if !self.inside && !self.everywhere {
+                let rest = std::mem::take(&mut self.held);
+                self.push(&mut out, rest);
+                return out;
+            }
             let mark = if self.inside { CLOSE } else { OPEN };
             if let Some(i) = self.held.find(mark) {
                 let before: String = self.held.drain(..i).collect();
@@ -124,14 +145,42 @@ mod tests {
     }
 
     #[test]
-    fn without_thinking_or_an_unknown_family_everything_is_content() {
+    fn a_leading_block_is_thinking_in_any_family_even_across_pieces() {
         for mut s in [
             Splitter::for_architecture("qwen35", false),
             Splitter::for_architecture("gemma4", true),
+            Splitter::for_architecture("lfm2", false),
         ] {
-            let out = all(&mut s, &["<think>x</think>y"]);
-            assert_eq!(joined(&out), (String::new(), "<think>x</think>y".into()));
+            let out = all(&mut s, &["\n<th", "ink>düşün</th", "ink>\n\ncevap"]);
+            assert_eq!(joined(&out), ("düşün".into(), "cevap".into()));
         }
+    }
+
+    #[test]
+    fn a_later_mark_stays_in_the_answer_unless_thinking_was_asked_for() {
+        let mut s = Splitter::for_architecture("qwen35", false);
+        let out = all(&mut s, &["etiket <think> ve </think> budur"]);
+        assert_eq!(
+            joined(&out),
+            (String::new(), "etiket <think> ve </think> budur".into())
+        );
         assert!(splits("qwen35moe") && !splits("llama"));
+    }
+
+    #[test]
+    fn an_answer_that_only_looks_like_the_mark_is_given_whole() {
+        let mut s = Splitter::for_architecture("qwen35", false);
+        let out = all(&mut s, &["<th", "e end"]);
+        assert_eq!(joined(&out), (String::new(), "<the end".into()));
+        let mut s = Splitter::for_architecture("qwen35", false);
+        let out = all(&mut s, &["<th"]);
+        assert_eq!(joined(&out), (String::new(), "<th".into()));
+    }
+
+    #[test]
+    fn a_template_that_opened_the_thinking_is_followed_with_thinking_off_too() {
+        let mut s = Splitter::for_architecture("qwen2", false).inside();
+        let out = all(&mut s, &["düşün", "</think>\n\ncevap"]);
+        assert_eq!(joined(&out), ("düşün".into(), "cevap".into()));
     }
 }
