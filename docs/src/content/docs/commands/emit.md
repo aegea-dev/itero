@@ -99,8 +99,10 @@ misty-lake 01a1602a-43f3-70a6-a731-c2210dc038ef
 quiet-river 01a1602a-4401-7c8e-9e0b-1f2b5a3c4d5e
 ```
 
-- A workspace that cannot take it (its folder is gone) is an error naming
-  it; the others still get the event, and it exits 1.
+- A workspace missing from its folder (`missing` in
+  [`itero ws list`](/commands/workspace/#list)) is named on stderr and
+  fails nothing: the others get the event. It exits 1 when one could not
+  save it, or when none got it.
 - A list with no workspaces is an error:
   [`itero ws add`](/commands/workspace/#add) puts one on it.
 - `--wait` waits for the runs it started in all of them, within one

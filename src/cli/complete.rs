@@ -14,7 +14,11 @@ fn workspace() -> Option<crate::workspace::Workspace> {
             "--ws" => words.get(i + 1).cloned(),
             w => w.strip_prefix("--ws=").map(str::to_string),
         });
-    super::workspace::chosen(named.as_deref()).ok()
+    match named {
+        // its folder only: a TAB takes no lock on its journal
+        Some(name) => crate::engine::machine::folder(&super::workspace::listed(&name).ok()?).ok(),
+        None => crate::workspace::find(&std::env::current_dir().ok()?).ok(),
+    }
 }
 
 fn names(list: impl IntoIterator<Item = String>) -> Vec<CompletionCandidate> {

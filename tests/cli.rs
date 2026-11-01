@@ -1308,6 +1308,9 @@ fn the_lists_own_commands_take_no_ws() {
             err(&o)
         );
     }
+    // remove takes the name itself, from any folder
+    let o = itero_on(d.path(), state.path(), &["ws", "remove", "--ws", "güneş"]);
+    assert!(err(&o).contains("itero ws remove güneş"), "{}", err(&o));
 }
 
 #[test]

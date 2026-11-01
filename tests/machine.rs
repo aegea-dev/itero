@@ -655,12 +655,13 @@ fn emit_reaches_every_workspace_on_the_list_and_ws_emit_one() {
     m.ok(&elsewhere, &["ws", "--ws", &na, "emit", "deneme.geldi"]);
     assert_eq!(said(&m.journal(&a)).len(), 3);
     assert_eq!(said(&m.journal(&b)).len(), 1);
-    // one that cannot take it does not stop the others
+    // one that is missing from its folder is said, and fails nothing: an
+    // action's itero emit still ends well
     let moved = b.with_file_name("gitti");
     std::fs::rename(&b, &moved).unwrap();
     let (ok, out) = m.run(&elsewhere, &["emit", "deneme.geldi"]);
     assert!(
-        !ok && out.contains(&format!("{nb}: no workspace in")),
+        ok && out.contains(&format!("{nb}: no workspace in")),
         "{out}"
     );
     assert_eq!(said(&m.journal(&a)).len(), 4);
@@ -668,6 +669,13 @@ fn emit_reaches_every_workspace_on_the_list_and_ws_emit_one() {
     let (ok, _) = m.run(&elsewhere, &["emit", "tek"]);
     assert!(!ok);
     assert_eq!(said(&m.journal(&a)).len(), 4);
+    // every one missing: nothing was sent, and that fails
+    std::fs::rename(&a, a.with_file_name("gitti-o-da")).unwrap();
+    let (ok, out) = m.run(&elsewhere, &["emit", "deneme.geldi"]);
+    assert!(
+        !ok && out.contains(&format!("{na}: no workspace in")),
+        "{out}"
+    );
 }
 
 #[test]
@@ -742,6 +750,39 @@ fn the_machines_api_sends_an_event_to_every_workspace() {
         assert!(v["ids"][name.as_str()].is_string(), "{v}");
         until("its workflow", || dir.join("çıktı").is_file());
     }
+    // none can take it: not accepted, and each says why
+    for dir in [&a, &b] {
+        let gone = dir.with_file_name(format!("{}-gitti", dir.file_name().unwrap().display()));
+        std::fs::rename(dir, gone).unwrap();
+    }
+    let r = post("/events", serde_json::json!({ "type": "deneme.geldi" }));
+    assert_eq!(r.status().as_u16(), 409);
+    let v: Value = r.json().unwrap();
+    assert_eq!(v["ids"], serde_json::json!({}), "{v}");
+    for name in [&na, &nb] {
+        assert!(v["errors"][name.as_str()].is_string(), "{v}");
+    }
+}
+
+#[test]
+fn the_machines_api_with_an_empty_list_sends_nothing() {
+    let m = Machine::new();
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    until("it answers", || get(port, "/health").0 == 200);
+    let r = http()
+        .post(format!("http://127.0.0.1:{port}/events"))
+        .json(&serde_json::json!({ "type": "deneme.geldi" }))
+        .send()
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 409);
+    let v: Value = r.json().unwrap();
+    assert!(
+        v["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("itero ws add")),
+        "{v}"
+    );
 }
 
 /// A server on a free port that gives every request `health`, for as long

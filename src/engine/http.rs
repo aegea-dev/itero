@@ -171,6 +171,7 @@ fn not_sent(e: super::events::EmitError) -> Reply {
     use super::events::EmitError::*;
     let code = match &e {
         Bad(_) => StatusCode::BAD_REQUEST,
+        Nowhere(_) => StatusCode::CONFLICT,
         Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     fail(code, e.to_string())
@@ -387,7 +388,9 @@ async fn workspaces(State(s): State<MachineShared>) -> Json<Value> {
 
 /// `POST /events`: an event for every workspace on the machine's list, as
 /// `itero emit` sends it. Its answer has the id it has in each, and why it
-/// was not sent to any that could not take it.
+/// was not sent to any that could not take it: 202 when it reached one,
+/// 409 when none could take it (an empty list, every folder missing), 500
+/// when a journal there could not save it.
 async fn machine_event(
     Query(q): Query<EventQuery>,
     body: Result<Json<Posted>, JsonRejection>,
@@ -405,17 +408,30 @@ async fn machine_event(
         .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(not_sent)?;
     let (mut ids, mut errors) = (serde_json::Map::new(), serde_json::Map::new());
+    let mut failed = false;
     for s in sent {
+        use super::machine::To;
         match s.to {
-            Ok((_, id)) => ids.insert(s.name, json!(id)),
-            Err(why) => errors.insert(s.name, json!(why)),
+            To::Sent(_, id) => ids.insert(s.name, json!(id)),
+            To::Missing(why) => errors.insert(s.name, json!(why)),
+            To::Failed(why) => {
+                failed = true;
+                errors.insert(s.name, json!(why))
+            }
         };
     }
+    // sent nowhere: a journal that failed is the daemon's error; only
+    // missing folders, the list's
+    let code = match (ids.is_empty(), failed) {
+        (false, _) => StatusCode::ACCEPTED,
+        (true, true) => StatusCode::INTERNAL_SERVER_ERROR,
+        (true, false) => StatusCode::CONFLICT,
+    };
     let mut answer = json!({ "ids": ids });
     if !errors.is_empty() {
         answer["errors"] = json!(errors);
     }
-    Ok((StatusCode::ACCEPTED, Json(answer)))
+    Ok((code, Json(answer)))
 }
 
 /// A request to `/ws/<name>/<rest>`, answered by that workspace's routes

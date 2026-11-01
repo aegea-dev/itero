@@ -102,20 +102,28 @@ pub fn all(args: EmitArgs) -> Result<()> {
     let timeout = wait(&args)?;
     let list = List::read(&list_path()?)?;
     if list.workspaces.is_empty() {
-        bail!(
-            "no workspaces on this machine's list: itero ws add puts one on it, and itero ws emit sends to the one you are in"
-        );
+        bail!("{}", machine::EMPTY_LIST);
     }
     if timeout.is_some() {
-        // with no daemon nothing would answer: say so, sending nothing
-        let mut idle = vec![];
-        for e in &list.workspaces {
-            if let Ok((ws, j)) = machine::open(e)
-                && !super::daemon_running(&ws, &j)?
-            {
-                idle.push(e.name.as_str());
-            }
-        }
+        // with no daemon nothing would answer: say so, sending nothing. One
+        // that cannot be asked is left to say why when it is sent to.
+        let idle: Vec<&str> = std::thread::scope(|s| {
+            let asked: Vec<_> = list
+                .workspaces
+                .iter()
+                .map(|e| {
+                    s.spawn(move || match machine::open(e) {
+                        Ok((ws, j)) => matches!(super::daemon_running(&ws, &j), Ok(false)),
+                        Err(_) => false,
+                    })
+                })
+                .collect();
+            list.workspaces
+                .iter()
+                .zip(asked)
+                .filter_map(|(e, a)| a.join().unwrap_or(false).then_some(e.name.as_str()))
+                .collect()
+        });
         if !idle.is_empty() {
             bail!(
                 "no daemon runs {}: start one (itero service start), then send it again",
@@ -130,26 +138,34 @@ pub fn all(args: EmitArgs) -> Result<()> {
     }
 }
 
+/// Exit 1 when the event reached no workspace, or one could not save it;
+/// a workspace missing from its folder is said, and fails nothing.
+fn failed(sent: &[machine::Sent]) -> bool {
+    use machine::To;
+    sent.iter().any(|s| matches!(s.to, To::Failed(_)))
+        || !sent.iter().any(|s| matches!(s.to, To::Sent(..)))
+}
+
 /// Prints where the event went, one workspace a line, and why it did not
 /// reach any that could not take it.
 fn said(sent: Vec<machine::Sent>, json_out: bool) -> Result<()> {
-    let mut failed = false;
+    use machine::To;
+    let failed = failed(&sent);
     let rows: Vec<Value> = sent
         .into_iter()
         .map(|s| match s.to {
-            Ok((_, id)) => json!({ "workspace": s.name, "id": id }),
-            Err(why) => {
-                failed = true;
-                json!({ "workspace": s.name, "error": why })
-            }
+            To::Sent(_, id) => json!({ "workspace": s.name, "id": id }),
+            To::Missing(why) => json!({ "workspace": s.name, "missing": why }),
+            To::Failed(why) => json!({ "workspace": s.name, "error": why }),
         })
         .collect();
     show(json_out, &Value::Array(rows), |v| {
         for r in v.as_array().into_iter().flatten() {
             let name = r["workspace"].as_str().unwrap_or_default();
-            match r["id"].as_str() {
-                Some(id) => println!("{name} {id}"),
-                None => eprintln!("{name}: {}", super::out::text(&r["error"])),
+            match (r["id"].as_str(), r["missing"].as_str()) {
+                (Some(id), _) => println!("{name} {id}"),
+                (None, Some(why)) => eprintln!("{name}: {why}"),
+                (None, None) => eprintln!("{name}: {}", super::out::text(&r["error"])),
             }
         }
     })?;
@@ -160,28 +176,32 @@ fn said(sent: Vec<machine::Sent>, json_out: bool) -> Result<()> {
 }
 
 /// Waits for the runs the event started in each workspace, in turn, with
-/// what time is left, and prints them by workspace; exit 1 when one failed
-/// or could not take the event, 2 when time ran out.
+/// what time is left, and prints them by workspace; exit 1 when one failed,
+/// could not take the event or none could, 2 when time ran out.
 fn wait_for_all(sent: Vec<machine::Sent>, timeout: Duration) -> Result<()> {
+    use machine::To;
     let end = Instant::now() + timeout;
     let mut answers = Map::new();
-    let mut code = 0;
+    let mut code = if failed(&sent) { 1 } else { 0 };
     for s in sent {
-        let (answer, how) = match s.to {
-            Ok((ws, id)) => {
+        let answer = match s.to {
+            To::Sent(ws, id) => {
                 let left = end.saturating_duration_since(Instant::now());
                 let (answer, how) = events::wait_for(&ws, &id, left)?;
-                let how = match how {
+                code = code.max(match how {
                     Waited::Done => 0,
                     Waited::Failed => 1,
                     Waited::TimedOut => 2,
-                };
-                (answer, how)
+                });
+                answer
             }
-            Err(why) => (json!({ "error": why }), 1),
+            To::Missing(why) => {
+                eprintln!("{}: {why}", s.name);
+                continue;
+            }
+            To::Failed(why) => json!({ "error": why }),
         };
         answers.insert(s.name, answer);
-        code = code.max(how);
     }
     println!("{}", serde_json::to_string_pretty(&answers)?);
     if code == 2 {

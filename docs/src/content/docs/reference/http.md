@@ -128,8 +128,9 @@ check:
 
 `POST /events` takes the same body as a workspace's, and answers 202 with
 the event's id in each workspace, by name, and why it was not sent to any
-that could not take it. It has no `?wait=`: that is
-`POST /ws/<name>/events?wait=`.
+that could not take it. When it reached none it is 409 (an empty list,
+or every folder missing), or 500 when a journal could not save it. It has
+no `?wait=`: that is `POST /ws/<name>/events?wait=`.
 
 ```json
 { "ids": { "quiet-river": "01a1602a-43f3-70a6-a731-c2210dc038ef" },

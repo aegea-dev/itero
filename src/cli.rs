@@ -798,6 +798,11 @@ fn dispatch(cli: Cli) -> Result<()> {
             // these are about the list, or this folder: no other workspace
             let none = |what: &str| -> Result<()> {
                 match &ws {
+                    Some(name) if what == "remove" => {
+                        bail!(
+                            "itero ws remove takes no --ws: itero ws remove {name} removes it, from any folder"
+                        )
+                    }
                     Some(_) => {
                         bail!("itero ws {what} takes no --ws: run it in the workspace's folder")
                     }

@@ -7,7 +7,7 @@ use super::lock;
 use super::running::{Report, Running};
 use crate::machine::{Entry, List, list_path};
 use crate::workspace::Workspace;
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -106,7 +106,7 @@ impl Machine {
     fn start(&self, e: &Entry) -> Result<Running, Idle> {
         let (ws, _) = open(e).map_err(|err| Idle {
             state: "missing",
-            why: format!("{err:#}"),
+            why: err.to_string(),
         })?;
         let d = super::daemon::Daemon::current();
         let who = format!("{}, pid {}", d.name, d.pid);
@@ -279,34 +279,78 @@ impl Machine {
     }
 }
 
-/// A listed workspace, opened: an error when its folder is gone or holds
-/// another workspace now.
-pub fn open(e: &Entry) -> Result<(Workspace, Journal)> {
+/// Why a listed workspace could not be opened.
+#[derive(Debug)]
+pub enum NotOpen {
+    /// Its folder is gone, has no journal, or holds another workspace now:
+    /// `missing` on the list.
+    Missing(String),
+    /// It is there, but its journal could not be read.
+    Failed(anyhow::Error),
+}
+
+impl std::fmt::Display for NotOpen {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            NotOpen::Missing(why) => f.write_str(why),
+            NotOpen::Failed(e) => write!(f, "{e:#}"),
+        }
+    }
+}
+
+impl std::error::Error for NotOpen {}
+
+/// A listed workspace's folder, its journal not opened: for what reads only
+/// its files (completion).
+pub fn folder(e: &Entry) -> std::result::Result<Workspace, NotOpen> {
     let folder = e.folder.display();
     let ws = crate::workspace::find(&e.folder)
         .ok()
         .filter(|ws| ws.root == e.folder)
-        .with_context(|| format!("no workspace in {folder}"))?;
+        .ok_or_else(|| NotOpen::Missing(format!("no workspace in {folder}")))?;
     if !ws.journal().is_file() {
-        bail!("no journal in {folder}");
+        return Err(NotOpen::Missing(format!("no journal in {folder}")));
     }
-    let j = Journal::open(&ws)?;
-    if j.workspace()?.id != e.id {
-        bail!("{folder} holds another workspace now");
+    Ok(ws)
+}
+
+/// A listed workspace, opened: missing when its folder is gone or holds
+/// another workspace now.
+pub fn open(e: &Entry) -> std::result::Result<(Workspace, Journal), NotOpen> {
+    let ws = folder(e)?;
+    let j = Journal::open(&ws).map_err(NotOpen::Failed)?;
+    if j.workspace().map_err(NotOpen::Failed)?.id != e.id {
+        return Err(NotOpen::Missing(format!(
+            "{} holds another workspace now",
+            e.folder.display()
+        )));
     }
     Ok((ws, j))
 }
 
+/// What `itero emit` and `POST /events` say when the list is empty.
+pub const EMPTY_LIST: &str = "no workspaces on this machine's list: itero ws add puts one on it, and itero ws emit sends to the one you are in";
+
 /// What sending to one listed workspace came to.
+pub enum To {
+    /// Saved there, with this id.
+    Sent(Box<Workspace>, String),
+    /// Missing from its folder: said, not a failure.
+    Missing(String),
+    /// There, but the event could not be saved.
+    Failed(String),
+}
+
+/// What sending to one listed workspace came to, by its name.
 pub struct Sent {
     pub name: String,
-    /// The workspace and the event's id there, or why it was not sent.
-    pub to: std::result::Result<(Workspace, String), String>,
+    pub to: To,
 }
 
 /// Saves an event from outside for every workspace on the machine's list,
-/// and wakes each. An event that may not be sent reaches none; one
-/// workspace that cannot take it does not stop the others.
+/// and wakes each. An event that may not be sent reaches none, nor does
+/// one when the list is empty; one workspace that cannot take it does not
+/// stop the others.
 pub fn emit_all(
     kind: &str,
     data: Option<Value>,
@@ -315,14 +359,24 @@ pub fn emit_all(
     let internal = |e: anyhow::Error| EmitError::Internal(format!("{e:#}"));
     let data = super::events::check(kind, data)?;
     let list = list_path().and_then(|p| List::read(&p)).map_err(internal)?;
+    if list.workspaces.is_empty() {
+        return Err(EmitError::Nowhere(EMPTY_LIST.into()));
+    }
     let send = |e: &Entry| {
-        let (ws, _) = open(e).map_err(|err| format!("{err:#}"))?;
-        let id = super::events::emit(&ws, kind, Some(data.clone()), now)
-            .map_err(|err| err.to_string())?;
-        if let Err(err) = super::events::nudge(&ws, now) {
-            eprintln!("itero: {}: saved, but not woken: {err}", e.name);
+        let (ws, j) = match open(e) {
+            Ok(opened) => opened,
+            Err(NotOpen::Missing(why)) => return To::Missing(why),
+            Err(failed) => return To::Failed(failed.to_string()),
+        };
+        match super::events::emit_to(&j, kind, data.clone(), now) {
+            Ok(id) => {
+                if let Err(err) = super::events::nudge(&ws, now) {
+                    eprintln!("itero: {}: saved, but not woken: {err}", e.name);
+                }
+                To::Sent(Box::new(ws), id)
+            }
+            Err(err) => To::Failed(err.to_string()),
         }
-        Ok((ws, id))
     };
     Ok(list
         .workspaces
@@ -343,8 +397,14 @@ pub fn tell_all(kind: &str, data: Value) {
         return;
     };
     for e in &list.workspaces {
-        let Ok((ws, j)) = open(e) else {
-            continue;
+        let (ws, j) = match open(e) {
+            Ok(opened) => opened,
+            // the list says so: nothing to tell
+            Err(NotOpen::Missing(_)) => continue,
+            Err(err) => {
+                eprintln!("itero: telling {} {kind}: {err}", e.name);
+                continue;
+            }
         };
         match j.publish(&super::events::own(kind, data.clone(), &now)) {
             Ok(()) => {

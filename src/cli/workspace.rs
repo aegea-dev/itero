@@ -13,11 +13,16 @@ pub fn chosen(name: Option<&str>) -> Result<Workspace> {
     let Some(name) = name else {
         return crate::workspace::find(&std::env::current_dir()?);
     };
+    Ok(crate::engine::machine::open(&listed(name)?)?.0)
+}
+
+/// The entry on the machine's list with this name.
+pub fn listed(name: &str) -> Result<Entry> {
     let list = List::read(&list_path()?)?;
-    let Some(e) = list.by_name(name) else {
-        bail!("no workspace {name} on this machine's list: itero ws list lists them");
-    };
-    Ok(crate::engine::machine::open(e)?.0)
+    match list.by_name(name) {
+        Some(e) => Ok(e.clone()),
+        None => bail!("no workspace {name} on this machine's list: itero ws list lists them"),
+    }
 }
 
 /// `itero workspace add`: this workspace on the list, under its journal's

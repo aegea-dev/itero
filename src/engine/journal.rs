@@ -163,7 +163,9 @@ pub struct Identity {
 }
 
 /// The workspace's id. A journal already made is read without its write
-/// lock, so a secret can be looked up while a pass holds it.
+/// lock, so a secret can be looked up while a pass holds it; one not made
+/// yet (or half made) is opened as `Journal::open` does. A journal too busy
+/// to read is an error: opening it for writing would only wait longer.
 pub fn read_id(ws: &Workspace) -> Result<String> {
     let read = || -> Result<String> {
         let db = Connection::open_with_flags(ws.journal(), OpenFlags::SQLITE_OPEN_READ_ONLY)?;
@@ -174,7 +176,19 @@ pub fn read_id(ws: &Workspace) -> Result<String> {
             })?;
         Ok(serde_json::from_str::<Identity>(&t)?.id)
     };
-    read().or_else(|_| Ok(Journal::open(ws)?.workspace()?.id))
+    match read() {
+        Ok(id) => Ok(id),
+        Err(e) if busy(&e) => Err(e.context(format!("{} is busy", ws.journal().display()))),
+        Err(_) => Ok(Journal::open(ws)?.workspace()?.id),
+    }
+}
+
+/// Whether SQLite said the database is busy or locked.
+fn busy(e: &anyhow::Error) -> bool {
+    use rusqlite::ErrorCode::{DatabaseBusy, DatabaseLocked};
+    e.downcast_ref::<rusqlite::Error>()
+        .and_then(rusqlite::Error::sqlite_error_code)
+        .is_some_and(|c| matches!(c, DatabaseBusy | DatabaseLocked))
 }
 
 /// This itero's version.

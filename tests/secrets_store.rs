@@ -151,6 +151,13 @@ fn secrets_are_kept_listed_read_and_removed() {
     .unwrap();
     let bir_used = itero::workspace::find(&bir.root).unwrap();
     assert_eq!(secrets::shadowed(&bir_used).unwrap(), ["ORTAM_SIRRI"]);
+    // removed: off the list, and the machine's is found again
+    let id = bir.id().unwrap();
+    assert!(secrets::unset_for(&id, "POSTA").unwrap());
+    assert!(!secrets::unset_for(&id, "POSTA").unwrap());
+    assert!(!secrets::names().unwrap().contains(&format!("{id}.POSTA")));
+    assert_eq!(secrets::get_in(&bir, "POSTA").as_deref(), Some("makineden"));
+    assert!(secrets::unset_for(&id, "ad-soyad").is_err());
 
     // with the store off, nothing is kept or listed, and nothing shadows
     // SAFETY: as above, no other thread

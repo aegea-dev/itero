@@ -70,7 +70,8 @@ fn key_for(id: &str, name: &str) -> String {
 }
 
 /// `key_for` the workspace; none with the store off. A workspace whose id
-/// cannot be read is reported: its own secrets are passed over.
+/// cannot be read is reported once (each `$$` lookup asks again): its own
+/// secrets are passed over.
 fn own_key(ws: &Workspace, name: &str) -> Option<String> {
     if store_off() {
         return None;
@@ -78,10 +79,18 @@ fn own_key(ws: &Workspace, name: &str) -> Option<String> {
     match ws.id() {
         Ok(id) => Some(key_for(&id, name)),
         Err(e) => {
-            eprintln!(
-                "itero: {}: its own secrets cannot be read: {e:#}",
-                ws.root.display()
-            );
+            static REPORTED: std::sync::Mutex<std::collections::BTreeSet<std::path::PathBuf>> =
+                std::sync::Mutex::new(std::collections::BTreeSet::new());
+            let first = REPORTED
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(ws.root.clone());
+            if first {
+                eprintln!(
+                    "itero: {}: its own secrets cannot be read: {e:#}",
+                    ws.root.display()
+                );
+            }
             None
         }
     }
@@ -245,12 +254,22 @@ fn keep(key: &str, value: &str) -> Result<()> {
 /// Removes a secret from the store; false when it was not there.
 pub fn unset(name: &str) -> Result<bool> {
     ready(name)?;
-    let had = match entry(name)?.delete_credential() {
+    forget(name)
+}
+
+/// `unset`, for the workspace with this id alone.
+pub fn unset_for(id: &str, name: &str) -> Result<bool> {
+    ready(name)?;
+    forget(&key_for(id, name))
+}
+
+fn forget(key: &str) -> Result<bool> {
+    let had = match entry(key)?.delete_credential() {
         Ok(()) => true,
         Err(keyring::Error::NoEntry) => false,
         Err(e) => return Err(anyhow!("the OS secret store: {e}")),
     };
-    let all: Vec<String> = names()?.into_iter().filter(|n| n != name).collect();
+    let all: Vec<String> = names()?.into_iter().filter(|n| n != key).collect();
     save_names(all)?;
     Ok(had)
 }

@@ -9,13 +9,15 @@ use serde_json::{Map, Value};
 pub enum EmitError {
     /// The message itself is wrong.
     Bad(String),
+    /// There is no workspace to send it to.
+    Nowhere(String),
     Internal(String),
 }
 
 impl std::fmt::Display for EmitError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            EmitError::Bad(m) | EmitError::Internal(m) => f.write_str(m),
+            EmitError::Bad(m) | EmitError::Nowhere(m) | EmitError::Internal(m) => f.write_str(m),
         }
     }
 }
@@ -234,9 +236,14 @@ pub fn emit(
     now: &str,
 ) -> Result<String, EmitError> {
     let data = check(kind, data)?;
-    let internal = |e: anyhow::Error| EmitError::Internal(format!("{e:#}"));
-    let j = Journal::open(ws).map_err(internal)?;
+    let j = Journal::open(ws).map_err(|e| EmitError::Internal(format!("{e:#}")))?;
+    emit_to(&j, kind, data, now)
+}
+
+/// `emit`, into a journal already open, of an event `check` passed.
+pub fn emit_to(j: &Journal, kind: &str, data: Value, now: &str) -> Result<String, EmitError> {
     let e = Envelope::new("outside", kind, &journal::subject("app"), now, None, data);
-    j.publish(&e).map_err(internal)?;
+    j.publish(&e)
+        .map_err(|e| EmitError::Internal(format!("{e:#}")))?;
     Ok(e.id)
 }
