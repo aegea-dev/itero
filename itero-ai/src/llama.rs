@@ -1,8 +1,8 @@
 //! The engine: llama.cpp through llama-cpp-2. One model loaded at a time;
 //! a request for another frees it first.
-use crate::engine::{Engine, EngineError, Finish, KvCache, Piece, Prompt, Reason};
+use crate::engine::{Engine, EngineError, Finish, Piece, Prompt, Reason};
 use crate::think::Splitter;
-use llama_cpp_2::context::params::{KvCacheType, LlamaContextParams};
+use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::LlamaModel;
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 /// The context an answer has unless it asks for another: its prompt and
 /// what it writes.
-const CONTEXT: u32 = 16_384;
+const CONTEXT: u32 = 32_768;
 /// Prompt tokens decoded at once.
 const BATCH: usize = 2048;
 /// Tokens back the repetition penalties look.
@@ -172,18 +172,10 @@ impl Engine for LlamaEngine {
         }
         let room = context - n_prompt;
         let max = p.max_tokens.map_or(room, |m| m.min(room));
-        let mut cparams = LlamaContextParams::default()
+        // a context per answer: its size needs no reload of the model
+        let cparams = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(context))
             .with_n_batch(BATCH as u32);
-        if let Some(kv) = p.kv_cache {
-            let t = match kv {
-                KvCache::F16 => KvCacheType::F16,
-                KvCache::Bf16 => KvCacheType::BF16,
-                KvCache::Q8_0 => KvCacheType::Q8_0,
-            };
-            cparams = cparams.with_type_k(t).with_type_v(t);
-        }
-        // a context per answer: these settings need no reload of the model
         let mut ctx = l
             .model
             .new_context(&self.backend, cparams)

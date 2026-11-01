@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// What the machine may set: `#ai`'s args that are not the step's own work.
-pub const KEYS: [&str; 11] = [
+pub const KEYS: [&str; 10] = [
     "model",
     "thinking",
     "temperature",
@@ -20,7 +20,6 @@ pub const KEYS: [&str; 11] = [
     "max_tokens",
     "seed",
     "context",
-    "kv_cache",
 ];
 
 /// A family's sampling by mode, and where it comes from.
@@ -278,7 +277,7 @@ mod tests {
         for (bad, says) in [
             (json!({ "text": "x" }), "text"),
             (json!({ "temperature": "sıcak" }), "temperature"),
-            (json!({ "kv_cache": "renkli" }), "kv_cache"),
+            (json!({ "context": 100 }), "context"),
         ] {
             let e = changed(&old, &machine(bad)).unwrap_err();
             assert!(e.contains(says), "{e}");

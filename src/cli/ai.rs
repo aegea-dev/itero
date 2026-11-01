@@ -318,7 +318,7 @@ pub fn add(name: &str, yes_given: bool) -> Result<()> {
 }
 
 /// What a step gets when nothing above says: its key, value and where from.
-const UNDERNEATH: [(&str, &str, &str); 11] = [
+const UNDERNEATH: [(&str, &str, &str); 10] = [
     ("model", "null", "none"),
     ("thinking", "false", "itero-ai"),
     ("temperature", "0.8", "llama.cpp"),
@@ -328,8 +328,7 @@ const UNDERNEATH: [(&str, &str, &str); 11] = [
     ("presence_penalty", "0.0", "llama.cpp"),
     ("max_tokens", "null", "what the context leaves"),
     ("seed", "null", "the clock"),
-    ("context", "16384", "itero-ai"),
-    ("kv_cache", "\"f16\"", "llama.cpp"),
+    ("context", "32768", "itero-ai"),
 ];
 
 /// `itero ai defaults`: each value a step would get, and where from.

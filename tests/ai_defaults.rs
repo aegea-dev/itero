@@ -58,7 +58,7 @@ fn each_value_says_where_it_comes_from() {
         v["temperature"],
         json!({ "value": 0.8, "from": "llama.cpp" })
     );
-    assert_eq!(v["context"], json!({ "value": 16384, "from": "itero-ai" }));
+    assert_eq!(v["context"], json!({ "value": 32768, "from": "itero-ai" }));
     assert!(v["model"]["value"].is_null());
     let o = itero(
         d.path(),

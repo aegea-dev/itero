@@ -7,7 +7,7 @@ use std::io::BufRead;
 use std::time::Duration;
 
 /// The args `#ai` reads.
-pub const ARGS: [&str; 15] = [
+pub const ARGS: [&str; 14] = [
     "model",
     "text",
     "system",
@@ -22,7 +22,6 @@ pub const ARGS: [&str; 15] = [
     "max_tokens",
     "seed",
     "context",
-    "kv_cache",
 ];
 
 /// The types a field of `fields` may have.
@@ -201,12 +200,6 @@ pub(super) fn body(model: &str, env: &BTreeMap<String, String>) -> Result<Value,
             return Err(fail(format!("context is at least 1024, not {n}")));
         }
         r["context"] = json!(n);
-    }
-    if let Some(t) = env.get("kv_cache") {
-        if !["f16", "bf16", "q8_0"].contains(&t.as_str()) {
-            return Err(fail(format!("kv_cache is f16, bf16 or q8_0, not {t}")));
-        }
-        r["kv_cache"] = json!(t);
     }
     Ok(r)
 }
@@ -437,24 +430,19 @@ mod tests {
     }
 
     #[test]
-    fn context_and_kv_cache_are_sent_as_given_and_checked() {
+    fn context_is_sent_as_given_and_checked() {
         let r = request(&env(&[
             ("model", "u/k"),
             ("text", "özetle"),
-            ("context", "32768"),
-            ("kv_cache", "bf16"),
+            ("context", "16384"),
         ]))
         .unwrap();
-        assert_eq!(
-            (r["context"].as_u64(), r["kv_cache"].as_str()),
-            (Some(32768), Some("bf16"))
-        );
-        for (k, v, says) in [
-            ("context", "uzun", "context is a whole number"),
-            ("context", "100", "at least 1024"),
-            ("kv_cache", "renkli", "f16, bf16 or q8_0"),
+        assert_eq!(r["context"].as_u64(), Some(16384));
+        for (v, says) in [
+            ("uzun", "context is a whole number"),
+            ("100", "at least 1024"),
         ] {
-            let e = request(&env(&[("model", "u/k"), ("text", "x"), (k, v)])).unwrap_err();
+            let e = request(&env(&[("model", "u/k"), ("text", "x"), ("context", v)])).unwrap_err();
             assert!(e.contains(says), "{e}");
         }
     }

@@ -22,14 +22,6 @@ pub struct Sampling {
     pub seed: Option<u32>,
 }
 
-/// How a context keeps its keys and values.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum KvCache {
-    F16,
-    Bf16,
-    Q8_0,
-}
-
 /// One request for an answer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prompt {
@@ -48,8 +40,6 @@ pub struct Prompt {
     pub thinking: bool,
     /// Tokens for the prompt and the answer; none: itero-ai's own.
     pub context: Option<u32>,
-    /// None: llama.cpp's own.
-    pub kv_cache: Option<KvCache>,
 }
 
 /// A piece of an answer, as it comes.
