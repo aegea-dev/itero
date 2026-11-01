@@ -2,7 +2,7 @@
 //! it exits when it cannot serve. No model is loaded.
 #![cfg(unix)]
 use std::process::{Command, Output};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn itero_ai(env: &[(&str, &std::ffi::OsStr)]) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_itero-ai"));
@@ -40,10 +40,11 @@ fn on_a_socket_another_answers_on_it_exits_1() {
         .stderr(std::process::Stdio::null())
         .spawn()
         .unwrap();
-    for _ in 0..400 {
-        if std::os::unix::net::UnixStream::connect(&sock).is_ok() {
-            break;
-        }
+    // on a Mac a start may first compile its Metal shaders, 15 seconds and
+    // more; a second started sooner would take the socket itself
+    let end = Instant::now() + Duration::from_secs(90);
+    while std::os::unix::net::UnixStream::connect(&sock).is_err() {
+        assert!(Instant::now() < end, "the first did not start");
         std::thread::sleep(Duration::from_millis(25));
     }
     let second = itero_ai(&env).output().unwrap();
