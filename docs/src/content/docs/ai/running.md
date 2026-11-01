@@ -17,6 +17,9 @@ description: "How itero-ai starts, idles and fails; its events, its environment,
   under a second. On a Mac a start may first compile Metal's shaders,
   about 15 seconds on an M1 Max; itero waits up to a minute for it.
 - **Gone with the daemon.** When the daemon stops, so does its itero-ai.
+- **One start at a time.** itero-ai starts wait their turn, across every
+  daemon of this user: starting together makes Metal compile again. A
+  start that waits is told why if it is still waiting after a minute.
 - **Reading model files.** Looking for models, and `itero ai inspect`,
   start a short-lived itero-ai of their own that only reads file headers.
   It runs without the GPU, loads no model and answers no step.

@@ -181,6 +181,28 @@ pub fn header_reader_at(socket: PathBuf, idle: Duration) -> Result<Started> {
     start_at(socket, idle, |_| (), false)
 }
 
+/// This process's turn to start an itero-ai that uses the GPU: one at a
+/// time for this user, whatever starts them. Starting together makes Metal
+/// compile again, each for seconds, and can leave a start stuck; one after
+/// another the next finds the shaders ready. The lock ends with its holder,
+/// however that ends.
+fn start_turn(path: &Path, wait: Duration) -> Result<crate::engine::lock::DaemonLock> {
+    use crate::engine::lock::{Refused, take_file};
+    let since = Instant::now();
+    let who = std::process::id().to_string();
+    loop {
+        match take_file(path, &who) {
+            Ok(turn) => return Ok(turn),
+            Err(Refused::Failed(why)) => bail!(why),
+            Err(Refused::Held(by)) if since.elapsed() >= wait => bail!(
+                "another itero-ai (started by process {by}) is still starting after {} s",
+                wait.as_secs()
+            ),
+            Err(Refused::Held(_)) => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+}
+
 fn start_at(
     socket: PathBuf,
     idle: Duration,
@@ -196,6 +218,22 @@ fn start_at(
         });
     }
     own_dir(socket.parent().expect("a socket is in a folder"))?;
+    // held until it answers: dropped when this returns, however it does
+    let _turn = if gpu {
+        own_dir(&run_dir())?;
+        let turn = start_turn(&run_dir().join("start.lock"), START)?;
+        // it may have started while this waited
+        if answers(&socket) {
+            return Ok(Started {
+                socket,
+                child: None,
+                said,
+            });
+        }
+        Some(turn)
+    } else {
+        None
+    };
     let bin = binary()?;
     let mut command = Command::new(&bin);
     command
@@ -252,4 +290,22 @@ fn start_at(
         "itero-ai did not answer within {} s: {why}",
         START.as_secs()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stuck_start_is_named_and_a_turn_comes_when_it_ends() {
+        let d = tempfile::tempdir().unwrap();
+        let lock = d.path().join("sıra.lock");
+        let held = crate::engine::lock::take_file(&lock, "4242").unwrap();
+        let e = start_turn(&lock, Duration::from_millis(100))
+            .err()
+            .expect("it is held");
+        assert!(e.to_string().contains("process 4242"), "{e}");
+        drop(held);
+        assert!(start_turn(&lock, Duration::from_millis(100)).is_ok());
+    }
 }
