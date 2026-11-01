@@ -53,6 +53,28 @@ fn whole(g: &GgufContext, key: &str) -> Option<u64> {
     }
 }
 
+/// A number in the header, through llama.cpp's own text of it, rounded:
+/// a file keeps 0.95 as 0.949999988.
+fn sampling_value(m: &LlamaModel, key: &str) -> Option<f64> {
+    let v: f64 = m.meta_val_str(key).ok()?.trim().parse().ok()?;
+    Some((v * 1000.0).round() / 1000.0)
+}
+
+/// The sampling a file names, read from the model: `GgufContext` reads no
+/// floats. A model this build cannot load has none.
+fn sampling(m: &LlamaModel) -> Option<Value> {
+    let got: serde_json::Map<String, Value> = [
+        ("temperature", "general.sampling.temp"),
+        ("top_p", "general.sampling.top_p"),
+        ("top_k", "general.sampling.top_k"),
+        ("min_p", "general.sampling.min_p"),
+    ]
+    .into_iter()
+    .filter_map(|(k, key)| Some((k.to_string(), json!(sampling_value(m, key)?))))
+    .collect();
+    (!got.is_empty()).then_some(Value::Object(got))
+}
+
 pub fn inspect(backend: &LlamaBackend, path: &Path) -> Result<Value, EngineError> {
     let bytes = std::fs::metadata(path)
         .map_err(|e| EngineError::NotFound(format!("{}: {e}", path.display())))?
@@ -63,12 +85,12 @@ pub fn inspect(backend: &LlamaBackend, path: &Path) -> Result<Value, EngineError
     let quant = whole(&g, "general.file_type")
         .and_then(|t| FILE_TYPES.iter().find(|(n, _)| *n == t))
         .map_or("unknown", |(_, q)| q);
-    let runs = LlamaModel::load_from_file(
+    let vocab = LlamaModel::load_from_file(
         backend,
         path,
         &LlamaModelParams::default().with_vocab_only(true),
-    )
-    .is_ok();
+    );
+    let template = text(&g, "tokenizer.chat_template");
     Ok(json!({
         "maker": text(&g, "general.organization"),
         "basename": text(&g, "general.basename").or_else(|| text(&g, "general.name")),
@@ -79,7 +101,9 @@ pub fn inspect(backend: &LlamaBackend, path: &Path) -> Result<Value, EngineError
         "bytes": bytes,
         "licence": text(&g, "general.license").unwrap_or_else(|| "unknown".into()),
         "chat": g.find_key("tokenizer.chat_template") >= 0,
-        "runs": runs,
+        "runs": vocab.is_ok(),
+        "sampling": vocab.as_ref().ok().and_then(sampling),
+        "thinking_off": template.is_some_and(|t| t.contains("enable_thinking")),
         "thinking": crate::think::splits(&arch),
     }))
 }

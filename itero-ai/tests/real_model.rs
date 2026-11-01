@@ -35,6 +35,9 @@ fn engine() -> Option<(tempfile::TempDir, LlamaEngine)> {
             chat: true,
             runs: true,
             thinking: true,
+            basename: None,
+            sampling: None,
+            thinking_off: None,
             modified: 0,
             downloaded: None,
             removed: None,
@@ -49,6 +52,11 @@ fn engine() -> Option<(tempfile::TempDir, LlamaEngine)> {
         (v["basename"].as_str(), v["params"].as_str()),
         (Some("Qwen3.5-4B"), Some("4B")),
         "ITERO_AI_TEST_MODEL is not Qwen3.5-4B: {path}"
+    );
+    assert_eq!(
+        (&v["thinking_off"], &v["sampling"]),
+        (&json!(true), &json!(null)),
+        "its template reads enable_thinking, and its file names no sampling"
     );
     Some((d, e))
 }

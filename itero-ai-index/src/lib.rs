@@ -27,6 +27,16 @@ pub struct Entry {
     pub runs: bool,
     /// itero-ai splits its thinking from its answer.
     pub thinking: bool,
+    /// `general.basename`, else `general.name`: what the model is, whoever
+    /// uploaded it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basename: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampling: Option<FileSampling>,
+    /// Its chat template reads `enable_thinking`, so thinking can be turned
+    /// off. None: an entry from before itero looked; it is inspected again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_off: Option<bool>,
     /// The file's modification time (seconds): it is inspected again when
     /// this or its size changes.
     pub modified: u64,
@@ -36,6 +46,15 @@ pub struct Entry {
     /// When `itero ai models remove` took it out of use; the scan keeps it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removed: Option<String>,
+}
+
+/// Sampling a model's file names (`general.sampling.*`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FileSampling {
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub top_k: Option<f64>,
+    pub min_p: Option<f64>,
 }
 
 /// Where a model itero downloaded came from.
@@ -169,6 +188,9 @@ mod tests {
             chat: true,
             runs: true,
             thinking: true,
+            basename: None,
+            sampling: None,
+            thinking_off: None,
             modified: 0,
             downloaded: None,
             removed: None,

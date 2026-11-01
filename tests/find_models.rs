@@ -2,8 +2,9 @@
 //! are. Its own test binary: it sets HOME, XDG_CACHE_HOME, HF_HUB_CACHE
 //! and ITERO_AI_BIN for the process.
 #![cfg(unix)]
-use itero::ai::find::{Root, model_files, rebuild};
+use itero::ai::find::{Found, Root, model_files, rebuild};
 use itero::engine::worker::{self, Outcome, StepRun};
+use itero_ai_index::Index;
 use serde_json::Map;
 use std::path::{Path, PathBuf};
 
@@ -93,6 +94,9 @@ fn an_unchanged_file_takes_the_name_its_file_name_says() {
             chat: true,
             runs: true,
             thinking: true,
+            basename: None,
+            sampling: None,
+            thinking_off: Some(true),
             modified: secs,
             downloaded: None,
             removed: Some("2026-10-29T10:00:00Z".into()),
@@ -164,4 +168,34 @@ fn the_index_is_written_kept_and_its_marks_carried() {
         out,
         Outcome::Done(serde_json::json!({ "models": 0, "inspected": 0 }))
     );
+}
+
+#[test]
+fn an_entry_from_before_is_inspected_again_and_learns_its_facts() {
+    let d = tempfile::tempdir().unwrap();
+    let f = d.path().join("u/küçük/k-Q4_K_M.gguf");
+    touch(&f);
+    let found = vec![Found {
+        repo: "u/küçük".into(),
+        quant_hint: Some("Q4_K_M".into()),
+        path: f.clone(),
+    }];
+    let v = serde_json::json!({ "architecture": "qwen35", "basename": "Qwen3.5-4B",
+        "bytes": 4, "thinking_off": true,
+        "sampling": { "temperature": 1.0, "top_k": 20.0 } });
+    let mut ask = |_: &Path| Ok(Some(v.clone()));
+    let (ix, n) = rebuild(&Index::default(), &found, &mut ask).unwrap();
+    assert_eq!(n, 1);
+    let e = &ix.models[0];
+    assert_eq!(e.basename.as_deref(), Some("Qwen3.5-4B"));
+    assert_eq!(e.thinking_off, Some(true));
+    assert_eq!(e.sampling.as_ref().unwrap().top_k, Some(20.0));
+    // known, and nothing to learn: not inspected
+    let (_, n) = rebuild(&ix, &found, &mut ask).unwrap();
+    assert_eq!(n, 0);
+    // from before: inspected again
+    let mut old = ix.clone();
+    old.models[0].thinking_off = None;
+    let (_, n) = rebuild(&old, &found, &mut ask).unwrap();
+    assert_eq!(n, 1);
 }

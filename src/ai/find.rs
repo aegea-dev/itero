@@ -178,10 +178,23 @@ fn entry(f: &Found, v: &Value, modified: u64) -> Entry {
         chat: v["chat"].as_bool().unwrap_or(false),
         runs: v["runs"].as_bool().unwrap_or(false),
         thinking: v["thinking"].as_bool().unwrap_or(false),
+        basename: v["basename"].as_str().map(String::from),
+        sampling: serde_json::from_value(v["sampling"].clone()).ok(),
+        thinking_off: Some(v["thinking_off"].as_bool().unwrap_or(false)),
         modified,
         downloaded: None,
         removed: None,
     }
+}
+
+/// This file's entry, when it can be kept as it is.
+fn current<'a>(ix: &'a Index, path: &Path, secs: u64, bytes: u64) -> Option<&'a Entry> {
+    ix.models.iter().find(|e| {
+        e.paths.first().is_some_and(|p| p == path)
+            && e.modified == secs
+            && e.bytes == bytes
+            && e.thinking_off.is_some()
+    })
 }
 
 /// The index, built again from what is on disk: an unchanged file keeps
@@ -199,11 +212,7 @@ pub fn rebuild(
     let mut new: Vec<Entry> = vec![];
     for f in found {
         let (secs, bytes) = modified(&f.path);
-        let known = old
-            .models
-            .iter()
-            .find(|e| e.paths.first() == Some(&f.path) && e.modified == secs && e.bytes == bytes);
-        let mut e = match known {
+        let mut e = match current(old, &f.path, secs, bytes) {
             // named again: an index from an older itero may name it otherwise
             Some(e) => {
                 let quant = quant(f, Some(&e.quant));
@@ -303,9 +312,7 @@ pub fn scan_on(own: PathBuf) -> Result<Value, String> {
     };
     let needs_inspecting = found.iter().any(|f| {
         let (secs, bytes) = modified(&f.path);
-        !old.models
-            .iter()
-            .any(|e| e.paths.first() == Some(&f.path) && e.modified == secs && e.bytes == bytes)
+        current(&old, &f.path, secs, bytes).is_none()
     });
     if needs_inspecting && socket.is_none() && super::binary().is_err() {
         return Ok(json!({
