@@ -1,5 +1,5 @@
 //! What a running step said last: its latest line on stderr, kept in
-//! `.itero/progress/<job>.json` while it runs, for `itero wf runs` and the
+//! `.itero/progress/<job>.json` while it runs, for `itero ws wf runs` and the
 //! HTTP API to show. A file, not the journal: the journal is the daemon's
 //! between passes, and a step's progress changes while a pass waits for it.
 use serde_json::{Value, json};

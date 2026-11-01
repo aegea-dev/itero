@@ -11,11 +11,11 @@ bringing its own packages with its own tools; itero installs nothing.
   docker/to-markdown                   pandoc in Docker (pandoc/minimal)
 
 Run `itero daemon` in this folder, then from another terminal:
-  itero emit --wait title.received '{"title": "Çok Güzel Bir Başlık"}'
-  itero emit --wait reminder.requested '{"text": "yarın 15:00"}'
-  itero emit --wait page.links '{"url": "https://www.rust-lang.org"}'
-  itero emit --wait order.received '{"order": 43, "email": "ayse@example.com", "total": 120}'
-  itero emit website.summarize '{"url": "https://www.rust-lang.org"}'
+  itero ws emit --wait title.received '{"title": "Çok Güzel Bir Başlık"}'
+  itero ws emit --wait reminder.requested '{"text": "yarın 15:00"}'
+  itero ws emit --wait page.links '{"url": "https://www.rust-lang.org"}'
+  itero ws emit --wait order.received '{"order": 43, "email": "ayse@example.com", "total": 120}'
+  itero ws emit website.summarize '{"url": "https://www.rust-lang.org"}'
 The last one also needs LM Studio with a model, and its token as
 $$LM_STUDIO_TOKEN (see examples/page-summary); its summary shows in the
-daemon's terminal. `itero check` says what a machine lacks.
+daemon's terminal. `itero ws check` says what a machine lacks.

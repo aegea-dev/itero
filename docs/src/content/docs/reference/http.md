@@ -5,7 +5,7 @@ description: The daemon's local API, its routes and answers.
 
 `itero daemon` serves on `127.0.0.1:<port>` only: `port` in
 [`itero.config.json`](/reference/itero-config/), or, when it sets none, one
-the OS gives, which `itero info` shows; an app that calls the API sets
+the OS gives, which `itero ws info` shows; an app that calls the API sets
 one. The examples here use 8787. Answers are JSON;
 an error is `{"error": "..."}` with its status.
 
@@ -117,12 +117,24 @@ check:
 |---|---|
 | `GET /health` | the daemon, each running workspace's passes and connectors by name, itero-ai |
 | `GET /workspaces` | each listed workspace: `name`, `folder`, `state`, `why` |
+| `POST /events` | an event for every workspace on the list, as [`itero emit`](/commands/emit/#every-workspace) sends it |
 | `/ws/<name>/...` | that workspace's routes above: `POST /ws/<name>/events`, `GET /ws/<name>/runs` |
 
 ```json
 [{ "name": "quiet-river", "folder": "/Users/me/projects/home", "state": "running", "why": null },
  { "name": "misty-lake", "folder": "/Users/me/projects/mail", "state": "stopped",
    "why": "/Users/me/projects/mail: this workspace is run by brave-otter, pid 4211 already" }]
+```
+
+`POST /events` takes the same body as a workspace's, and answers 202 with
+the event's id in each workspace, by name, and why it was not sent to any
+that could not take it. When it reached none it is 409 (an empty list,
+or every folder missing), or 500 when a journal could not save it. It has
+no `?wait=`: that is `POST /ws/<name>/events?wait=`.
+
+```json
+{ "ids": { "quiet-river": "01a1602a-43f3-70a6-a731-c2210dc038ef" },
+  "errors": { "misty-lake": "no workspace in /Users/me/projects/mail" } }
 ```
 
 A name that is not running there is 404, saying to look at

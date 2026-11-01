@@ -16,10 +16,10 @@ itero --version
 command's arguments and options, as does `--help` after it.
 
 ```
-$ itero help emit
-Send an event: it starts runs, and reaches the runs waiting for it
+$ itero help ws emit
+Send an event to this workspace: it starts runs, and reaches the runs waiting for it
 
-Usage: itero emit <TYPE> [DATA]
+Usage: itero workspace emit [OPTIONS] <TYPE> [DATA]
 
 Arguments:
   <TYPE>  Its type, two or more words joined by dots, like order.placed

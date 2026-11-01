@@ -84,7 +84,7 @@ fn a_notification_with_buttons_waits_for_its_answer() {
     let d = tempfile::tempdir().unwrap();
     asking(d.path());
     assert!(
-        itero(d.path(), &["emit", "dağıtım.istendi"])
+        itero(d.path(), &["ws", "emit", "dağıtım.istendi"])
             .status
             .success()
     );
@@ -123,7 +123,7 @@ fn another_answer_or_a_dismissal_goes_on_without_the_step() {
         let d = tempfile::tempdir().unwrap();
         asking(d.path());
         assert!(
-            itero(d.path(), &["emit", "dağıtım.istendi"])
+            itero(d.path(), &["ws", "emit", "dağıtım.istendi"])
                 .status
                 .success()
         );
@@ -132,7 +132,7 @@ fn another_answer_or_a_dismissal_goes_on_without_the_step() {
         click(d.path(), &id, answer);
         pass(d.path());
         assert!(!d.path().join("uygulandı.txt").exists(), "{answer}");
-        let runs = String::from_utf8(itero(d.path(), &["wf", "runs"]).stdout).unwrap();
+        let runs = String::from_utf8(itero(d.path(), &["ws", "wf", "runs"]).stdout).unwrap();
         assert!(runs.contains("done"), "{answer}: {runs}");
     }
 }
@@ -155,10 +155,14 @@ fn notify_s_buttons_are_a_short_list_of_labels() {
                      "steps": [{{ "#notify": {{ "args": {{ "text": "?", "buttons": {bad} }} }} }}] }}"##
             ),
         );
-        assert!(itero(d.path(), &["emit", "soru.geldi"]).status.success());
+        assert!(
+            itero(d.path(), &["ws", "emit", "soru.geldi"])
+                .status
+                .success()
+        );
         pass(d.path());
         let errors =
-            String::from_utf8(itero(d.path(), &["wf", "runs", "--errors"]).stdout).unwrap();
+            String::from_utf8(itero(d.path(), &["ws", "wf", "runs", "--errors"]).stdout).unwrap();
         assert!(errors.contains("buttons"), "{bad}: {errors}");
         assert!(shown(d.path()).is_empty(), "{bad}");
     }
@@ -200,7 +204,10 @@ fn a_click_is_itero_s_own_message_and_starts_workflows() {
     );
 
     // from outside it is refused, and it needs its notification's id
-    let o = itero(d.path(), &["emit", "itero.notification.clicked", click]);
+    let o = itero(
+        d.path(),
+        &["ws", "emit", "itero.notification.clicked", click],
+    );
     assert!(!o.status.success(), "{o:?}");
     for bad in [r#"{"answer": "open"}"#, "[1]", "{"] {
         let o = itero(d.path(), &["notification-clicked", bad]);

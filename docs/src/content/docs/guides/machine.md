@@ -20,7 +20,7 @@ puts it on the machine's list; `itero workspace remove` takes it off, and
 its folder stays as it is. Nothing runs that is not on the list.
 
 A workspace on the list is named by its journal's two words, as runs
-are (`quiet-river`); `itero info` shows it. Two workspaces on one
+are (`quiet-river`); `itero ws info` shows it. Two workspaces on one
 machine never share a name: `add` gives the newer one another, and says
 so.
 
@@ -83,8 +83,10 @@ from its last start (in `~/.local/state/itero/port`):
 |---|---|
 | `GET /health` | the daemon, each workspace's passes and connectors, itero-ai |
 | `GET /workspaces` | the list, with each one's state |
+| `POST /events` | an event for every workspace on the list |
 | `/ws/<name>/...` | that workspace's own routes: `/ws/quiet-river/events`, `/ws/quiet-river/runs` |
 
-See the [HTTP API](/reference/http/#one-itero-per-machine). Commands run
-in a workspace's folder find the daemon running it, whichever it is;
-`itero info` shows its address.
+See the [HTTP API](/reference/http/#one-itero-per-machine). A `ws` command
+finds the daemon running its workspace, whichever it is;
+`itero ws info` shows its address. [`itero info`](/commands/info/), from any
+folder, shows the machine's daemon: the itero it runs, and each workspace.

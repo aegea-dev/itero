@@ -186,7 +186,7 @@ pub fn request(env: &BTreeMap<String, String>) -> Result<Value, String> {
     Ok(r)
 }
 
-/// What `itero check` can say of an `#ai` step's args before a run: the
+/// What `itero ws check` can say of an `#ai` step's args before a run: the
 /// same rules as a run's, on the values written in the workflow; a
 /// `"$name"` is known only in a run, and is left aside. Gives the model's
 /// name when it is written out.

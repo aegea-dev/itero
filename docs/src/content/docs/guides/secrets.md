@@ -29,7 +29,7 @@ workflow's, is an error saying where the values go.
 ## Repeat
 
 ```sh
-itero action repeat set imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
+itero ws ac repeat set imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
                                      {"user": "you@example.com", "password": "$$YOU_PASS"}]'
 ```
 
@@ -43,7 +43,7 @@ side by side cannot repeat.
 ## A connector's args
 
 A [connector](/guides/connectors/) gets its args the same way, from
-`connector.<name>.args` ([`itero connector args set`](/commands/connector/#args)): an object, each value an environment variable, read
+`connector.<name>.args` ([`itero ws cn args set`](/commands/connector/#args)): an object, each value an environment variable, read
 each time it starts. A connector has no run, so its values are themselves or
 `"$$NAME"`, never `"$event.x"`.
 
@@ -64,17 +64,20 @@ address). It is looked up only when an action or the connector starts,
 and the value never reaches the run's state, the journal, a log or a
 command line; only the action whose args name it gets it. A `$$NAME` is a
 whole value only: inside a text (`"Bearer $$TOKEN"`) it is refused, as
-`itero check` says. itero looks in three places, in this order:
+`itero ws check` says. itero looks in four places, in this order:
 
-1. **the OS secret store** (the macOS Keychain, the Secret Service on
-   Linux), where [`itero secret`](/commands/secret/) keeps it;
-2. **the workspace's `.env`**, `NAME=value` lines (`#` starts a comment;
+1. **the workspace's own secrets** in the OS secret store (the macOS
+   Keychain, the Secret Service on Linux), where
+   [`itero ws secret`](/commands/secret/#one-workspaces-secret) keeps them;
+2. **the machine's secrets** in the same store, for every workspace, where
+   [`itero secret`](/commands/secret/) keeps them;
+3. **the workspace's `.env`**, `NAME=value` lines (`#` starts a comment;
    quotes and `export` are allowed), for values that are not secret;
-3. **the daemon's environment variables**.
+4. **the daemon's environment variables**.
 
 Secrets go in the store, never in `.env`. If the store and the
 environment both have a name, the store wins and the environment variable
-is passed over. That is easy to miss, so `itero check` and the daemon,
+is passed over. That is easy to miss, so `itero ws check` and the daemon,
 when it starts, warn about each such name:
 
 ```
@@ -84,6 +87,7 @@ warning: $$IMAP_PASS is a secret and an environment variable: the secret is used
 ```sh
 itero secret IMAP_PASS                  # asks for it, without echo
 itero secret IMAP_PASS --file pass.txt  # its last newline left out
+itero ws secret IMAP_PASS               # for this workspace alone
 ```
 
 A name is a letter or `_`, then letters, digits or `_`. In an `on`,

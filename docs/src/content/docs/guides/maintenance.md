@@ -5,7 +5,7 @@ description: The events the daemon sends about itself, internal workflows, the b
 
 The daemon looks after itself with the same parts as everything else:
 events about what it notices, and workflows that handle them. They show
-in `itero check`, `itero wf runs --all` and the log like any other, and a
+in `itero ws check`, `itero ws wf runs --all` and the log like any other, and a
 workspace changes or turns them off the same way.
 
 ## Events from the daemon
@@ -55,9 +55,9 @@ they only start workflows.
 A workflow whose entry in `itero.config.json` says `"internal": true` looks after the workspace
 rather than doing its work. Nothing in its name says so. Being internal:
 
-- `itero check` lists it apart, last;
-- `itero wf runs` and `GET /runs` leave its runs out unless asked
-  (`itero wf runs --all`, `?all=true`); `itero action errors` counts its
+- `itero ws check` lists it apart, last;
+- `itero ws wf runs` and `GET /runs` leave its runs out unless asked
+  (`itero ws wf runs --all`, `?all=true`); `itero ws ac errors` counts its
   errors;
 - its runs do not count against `runs`, nor it against `workflows`;
 - its lines in the log carry `"internal": true`.
@@ -95,7 +95,7 @@ itero carries three internal workflows and runs them as if they were in
 `limits` in [`itero.config.json`](/reference/itero-config/#limits):
 
 - past `runs` under way, an event that would start a run waits its turn;
-- past `workflows`, `itero check` and each of the daemon's passes stop
+- past `workflows`, `itero ws check` and each of the daemon's passes stop
   with an error naming the limit;
 - past `space`, the daemon sends `itero.space.full` and logs an `error`;
   `keep` forgets what it can, and until there is room no new run starts

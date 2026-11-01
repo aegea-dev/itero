@@ -1,12 +1,14 @@
-//! The workspace as a whole: `check`, `info`, `which`, `service status`.
+//! The machine and the workspace as a whole: `info`, `service status`, and
+//! `ws info`, `ws check`, `ws which`.
 use super::out::{show, text};
 use crate::engine::journal::Journal;
 use crate::flow::{Flow, Name};
 use crate::workspace::Workspace;
 use anyhow::{Result, bail};
 use serde_json::{Map, Value, json};
+use std::path::PathBuf;
 
-/// What `itero check` refuses in the manifest: an entry naming no workflow,
+/// What `itero ws check` refuses in the manifest: an entry naming no workflow,
 /// action or connector, and the folders from before it (`args/`, `config/`).
 fn check_manifest(ws: &Workspace, flows: &[(String, Flow)]) -> Result<()> {
     let manifest = crate::workspace::MANIFEST;
@@ -338,18 +340,80 @@ pub fn info(ws: &Workspace, json: bool) -> Result<()> {
         } else {
             println!("daemon: not running ({})", text(&d["why"]));
         }
-        let n = &v["notifications"];
-        let mut line = format!("notifications: {}", text(&n["state"]));
-        if let Some(why) = n["why"].as_str() {
-            line.push_str(&format!(" ({why})"));
+        println!("{}", notifications_line(&v["notifications"]));
+    })
+}
+
+/// What `notifications()` says, as a line.
+fn notifications_line(n: &Value) -> String {
+    let mut line = format!("notifications: {}", text(&n["state"]));
+    if let Some(why) = n["why"].as_str() {
+        line.push_str(&format!(" ({why})"));
+    }
+    if let (Some(app), Some(version)) = (n["app"].as_str(), n["version"].as_u64()) {
+        line.push_str(&format!(", Itero.app {version} in {app}"));
+    }
+    if let Some(p) = n["notifier"].as_str() {
+        line.push_str(&format!(", through {p}"));
+    }
+    line
+}
+
+/// What the machine's `/health` says of each workspace, a line each.
+fn workspace_lines(workspaces: &Value) {
+    for (name, w) in workspaces.as_object().into_iter().flatten() {
+        println!(
+            "  {name}: {} passes, last {}{}",
+            w["passes"],
+            w["last_pass"].as_str().unwrap_or("none yet"),
+            w["last_error"]
+                .as_str()
+                .map(|e| format!(", last error: {e}"))
+                .unwrap_or_default()
+        );
+    }
+}
+
+/// `itero info`: this itero, and the machine's daemon as its `/health` says.
+pub fn machine_info(json: bool) -> Result<()> {
+    let this = env!("CARGO_PKG_VERSION");
+    let port = crate::engine::http::machine_port();
+    let health = port.and_then(super::daemon_health);
+    let of = |k: &str| health.as_ref().map(|h| h[k].clone());
+    let v = json!({
+        "itero": this,
+        "port": port,
+        "daemon": of("daemon"),
+        "workspaces": of("workspaces"),
+        "ai": of("ai"),
+        "notifications": crate::engine::worker::notifications(),
+    });
+    show(json, &v, |v| {
+        println!("itero {this}");
+        let d = &v["daemon"];
+        if d.is_null() {
+            match v["port"].as_u64() {
+                Some(p) => println!("daemon: none answering on port {p}"),
+                None => println!("daemon: none answering: no port yet"),
+            }
+            println!("itero service status says why");
+        } else {
+            println!(
+                "daemon: pid {}, port {}, itero {}, started {}",
+                d["pid"],
+                v["port"],
+                text(&d["itero"]),
+                text(&d["started"])
+            );
+            if d["itero"] != this {
+                println!("this itero is {this}: itero service restart runs it");
+            }
+            workspace_lines(&v["workspaces"]);
         }
-        if let (Some(app), Some(version)) = (n["app"].as_str(), n["version"].as_u64()) {
-            line.push_str(&format!(", Itero.app {version} in {app}"));
+        if let Some(state) = v["ai"]["state"].as_str() {
+            println!("ai: {state} {}", text(&v["ai"]["model"]));
         }
-        if let Some(p) = n["notifier"].as_str() {
-            line.push_str(&format!(", through {p}"));
-        }
-        println!("{line}");
+        println!("{}", notifications_line(&v["notifications"]));
     })
 }
 
@@ -388,7 +452,7 @@ pub fn which(ws: &Workspace, name: &str, json: bool) -> Result<()> {
         }
     }
     if found.is_empty() {
-        bail!("nothing named {name}: itero workflow list and itero check list them");
+        bail!("nothing named {name}: itero ws wf list and itero ws check list them");
     }
     let v: Vec<Value> = found
         .into_iter()
@@ -399,6 +463,40 @@ pub fn which(ws: &Workspace, name: &str, json: bool) -> Result<()> {
             println!("{:<10}{}", text(&f["kind"]), text(&f["path"]));
         }
     })
+}
+
+/// `itero secret` and `itero ws secret`: kept in the store for every
+/// workspace, or for `ws` alone.
+pub fn secret(ws: Option<&Workspace>, name: &str, file: Option<PathBuf>) -> Result<()> {
+    use crate::engine::secrets;
+    secrets::ready(name)?;
+    let value = match file {
+        Some(f) => {
+            let t = std::fs::read_to_string(&f)
+                .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", f.display()))?;
+            let t = t.strip_suffix('\n').unwrap_or(&t);
+            t.strip_suffix('\r').unwrap_or(t).to_string()
+        }
+        None => rpassword::prompt_password(format!("{name}: "))?,
+    };
+    if value.is_empty() {
+        bail!("{name}: an empty secret is not kept");
+    }
+    match ws {
+        None => {
+            secrets::set(name, &value)?;
+            println!("{name}: kept in the OS secret store");
+        }
+        Some(ws) => {
+            secrets::set_for(&ws.id()?, name, &value)?;
+            let me = Journal::open(ws)?.workspace()?;
+            println!(
+                "{name}: kept for workspace {} in the OS secret store",
+                me.name
+            );
+        }
+    }
+    Ok(())
 }
 
 /// `itero service install`: the machine's service, `itero watchdog
@@ -469,16 +567,6 @@ pub fn service_status(json: bool) -> Result<()> {
             return;
         }
         println!("daemon: pid {}, port {}", h["pid"], v["port"]);
-        for (name, w) in h["workspaces"].as_object().into_iter().flatten() {
-            println!(
-                "  {name}: {} passes, last {}{}",
-                w["passes"],
-                w["last_pass"].as_str().unwrap_or("none yet"),
-                w["last_error"]
-                    .as_str()
-                    .map(|e| format!(", last error: {e}"))
-                    .unwrap_or_default()
-            );
-        }
+        workspace_lines(&h["workspaces"]);
     })
 }

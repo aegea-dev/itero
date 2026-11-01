@@ -345,3 +345,22 @@ fn a_run_has_a_two_word_name_and_is_found_by_it_or_its_id() {
         .collect();
     assert_eq!(both, vec![b, a], "two with one name: the newest first");
 }
+
+#[test]
+fn a_workspaces_id_is_read_while_the_journal_is_being_written() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let id = Journal::open(&ws).unwrap().workspace().unwrap().id;
+    let writing = rusqlite::Connection::open(ws.journal()).unwrap();
+    writing.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let again = itero::workspace::find(d.path()).unwrap();
+    let t = std::time::Instant::now();
+    assert_eq!(again.id().unwrap(), id);
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        t.elapsed()
+    );
+    writing.execute_batch("ROLLBACK").unwrap();
+}

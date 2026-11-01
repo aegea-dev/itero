@@ -72,7 +72,7 @@ prompt included.
 
 A running `#ai` step's progress is its token count (`[48 tokens]`), so a
 long answer is not stopped as quiet; the action's `limits` apply as to
-any action. `itero check` checks its args before any run, and warns of a
+any action. `itero ws check` checks its args before any run, and warns of a
 model this machine does not have.
 
 A step naming a model the machine does not have fails, and the daemon

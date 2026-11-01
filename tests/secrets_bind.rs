@@ -94,6 +94,8 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
 fn an_action_gets_its_steps_args_with_its_repeat_item_on_top_and_a_waited_event() {
     use itero::engine::steps::StepJob;
     let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
+    let ws = itero::workspace::find(d.path()).unwrap();
     let state = json!({"event": {"bölge": "tr"}})
         .as_object()
         .unwrap()
@@ -111,8 +113,7 @@ fn an_action_gets_its_steps_args_with_its_repeat_item_on_top_and_a_waited_event(
         event,
     };
     let item = json!({"user": "ayşe@örnek.test", "host": "başka", "etiket": "$event.bölge posta"});
-    let (env, input) =
-        itero::engine::daemon::bind(d.path(), &state, &job(Some(item), None)).unwrap();
+    let (env, input) = itero::engine::daemon::bind(&ws, &state, &job(Some(item), None)).unwrap();
     assert_eq!(env["host"], "başka", "the item on top of the step's args");
     assert_eq!(env["user"], "ayşe@örnek.test");
     assert_eq!(env["etiket"], "tr posta");
@@ -123,7 +124,7 @@ fn an_action_gets_its_steps_args_with_its_repeat_item_on_top_and_a_waited_event(
     // run again after waiting: the event that came, as $event and on stdin
     let came = json!({"order": 7, "amount": 25});
     let (env, input) =
-        itero::engine::daemon::bind(d.path(), &state, &job(None, Some(came.clone()))).unwrap();
+        itero::engine::daemon::bind(&ws, &state, &job(None, Some(came.clone()))).unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&env["event"]).unwrap(),
         came
@@ -139,7 +140,9 @@ fn a_value_comes_from_dot_env_after_the_secret_store() {
         "# kişisel değerler\nKLASOR=~/Belgeler\nexport BOYUT=\"1M\"\n",
     )
     .unwrap();
-    let get = |n: &str| itero::engine::secrets::get_in(d.path(), n);
+    std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let get = |n: &str| itero::engine::secrets::get_in(&ws, n);
     assert_eq!(get("KLASOR").as_deref(), Some("~/Belgeler"));
     assert_eq!(get("BOYUT").as_deref(), Some("1M"), "export and quotes");
     assert_eq!(get("YOK"), None);

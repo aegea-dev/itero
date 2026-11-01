@@ -143,7 +143,7 @@ fn check_lists_the_workflow_and_the_connector() {
     let d = tempfile::tempdir().unwrap();
     let ws = example(d.path(), &d.path().join("yok"));
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-        .arg("check")
+        .args(["ws", "check"])
         .current_dir(&ws)
         .output()
         .unwrap();

@@ -7,6 +7,6 @@ $$LM_STUDIO_TOKEN: exported in the shell that starts the daemon, or kept
 with `itero secret LM_STUDIO_TOKEN`.
 
 Run `itero daemon` in this folder, then from another terminal:
-  itero emit website.requested '{"url": "https://example.com"}'
+  itero ws emit website.requested '{"url": "https://example.com"}'
 The summary shows in the daemon's terminal. The actions need curl, jq
 and perl.

@@ -264,14 +264,14 @@ fn all_runs_each_listed_workspace_and_follows_the_list() {
     until("a to be run", || {
         itero::engine::lock::take(&m.ws(&a), "deneme").is_err()
     });
-    m.ok(&a, &["emit", "deneme.geldi"]);
+    m.ok(&a, &["ws", "emit", "deneme.geldi"]);
     until("a's workflow", || a.join("çıktı").is_file());
     // added while it runs: started
     m.ok(&b, &["workspace", "add"]);
     until("b to be run", || {
         itero::engine::lock::take(&m.ws(&b), "deneme").is_err()
     });
-    m.ok(&b, &["emit", "deneme.geldi"]);
+    m.ok(&b, &["ws", "emit", "deneme.geldi"]);
     until("b's workflow", || b.join("çıktı").is_file());
     // removed while it runs: stopped, its lock free
     m.ok(&a, &["workspace", "remove"]);
@@ -280,7 +280,7 @@ fn all_runs_each_listed_workspace_and_follows_the_list() {
     });
     // and b runs on
     std::fs::remove_file(b.join("çıktı")).unwrap();
-    m.ok(&b, &["emit", "deneme.geldi"]);
+    m.ok(&b, &["ws", "emit", "deneme.geldi"]);
     until("b's workflow again", || b.join("çıktı").is_file());
 }
 
@@ -465,7 +465,7 @@ fn a_stuck_workspace_is_told_and_the_others_run_on() {
     until("both running", || {
         state(&na) == Some("running".into()) && state(&m.journal_name(&b)) == Some("running".into())
     });
-    m.ok(&a, &["emit", "deneme.geldi"]);
+    m.ok(&a, &["ws", "emit", "deneme.geldi"]);
     until("a stuck", || state(&na) == Some("stuck".into()));
     until("b to hear", || b.join("takıldı").is_file());
     assert_eq!(
@@ -473,7 +473,7 @@ fn a_stuck_workspace_is_told_and_the_others_run_on() {
         na
     );
     // b runs on meanwhile
-    m.ok(&b, &["emit", "deneme.geldi"]);
+    m.ok(&b, &["ws", "emit", "deneme.geldi"]);
     until("b's workflow", || b.join("çıktı").is_file());
     // a's step ends: running again
     until("a's workflow", || a.join("çıktı").is_file());
@@ -491,19 +491,19 @@ fn info_in_a_listed_workspace_names_the_machines_daemon() {
     until("a running", || {
         get(port, &format!("/ws/{na}/health")).0 == 200
     });
-    let v = m.json(&a, &["info", "--json"]);
+    let v = m.json(&a, &["ws", "info", "--json"]);
     let d = &v["daemon"];
     assert_eq!(d["running"], true, "{v}");
     assert_eq!(d["run_by"], "machine", "{v}");
     let api = format!("http://127.0.0.1:{port}/ws/{na}/");
     assert_eq!(d["api"], api.as_str(), "{v}");
-    let text = m.ok(&a, &["info"]);
+    let text = m.ok(&a, &["ws", "info"]);
     assert!(
         text.contains(&api) && text.contains("the machine's daemon"),
         "{text}"
     );
-    // `itero emit --wait` waits on the same daemon
-    let out = m.ok(&a, &["emit", "deneme.geldi", "--wait"]);
+    // `itero ws emit --wait` waits on the same daemon
+    let out = m.ok(&a, &["ws", "emit", "deneme.geldi", "--wait"]);
     assert!(a.join("çıktı").is_file(), "{out}");
 }
 
@@ -528,7 +528,7 @@ fn one_itero_ai_for_every_workspace_of_the_daemon() {
             .is_some_and(|l| l.len() == 2 && l.iter().all(|w| w["state"] == "running"))
     });
     let kinds = |dir: &Path, kind: &str| m.ai_events(dir).iter().filter(|(k, _)| k == kind).count();
-    m.ok(&a, &["emit", "soru.geldi"]);
+    m.ok(&a, &["ws", "emit", "soru.geldi"]);
     until("a's step to ask", || {
         kinds(&a, "itero.ai.model.missing") == 1
     });
@@ -543,7 +543,7 @@ fn one_itero_ai_for_every_workspace_of_the_daemon() {
         .unwrap();
     let socket = started["socket"].as_str().unwrap().to_string();
     // b's step asks the same itero-ai: started no second time
-    m.ok(&b, &["emit", "soru.geldi"]);
+    m.ok(&b, &["ws", "emit", "soru.geldi"]);
     until("b's step to ask", || {
         kinds(&b, "itero.ai.model.missing") == 1
     });
@@ -563,7 +563,7 @@ fn a_listed_workspace_has_no_models_workflow_of_its_own() {
     let (a, b) = (m.workspace("bir"), m.workspace("iki"));
     m.ok(&a, &["workspace", "add"]);
     let names = |dir: &Path| {
-        m.json(dir, &["wf", "list", "--json"])["workflows"]
+        m.json(dir, &["ws", "wf", "list", "--json"])["workflows"]
             .as_array()
             .unwrap()
             .iter()
@@ -612,6 +612,281 @@ fn the_daemon_scans_for_models_once_and_when_a_step_asks() {
     std::thread::sleep(Duration::from_secs(1));
     assert_eq!(scans(), 1);
     // a step asks for a model the list has not: one more
-    m.ok(&a, &["emit", "soru.geldi"]);
+    m.ok(&a, &["ws", "emit", "soru.geldi"]);
     until("the scan it asked for", || scans() == 2);
+}
+
+#[test]
+fn emit_reaches_every_workspace_on_the_list_and_ws_emit_one() {
+    let m = Machine::new();
+    let (a, b) = (m.busy_workspace("bir"), m.busy_workspace("iki"));
+    m.ok(&a, &["ws", "add"]);
+    m.ok(&b, &["ws", "add"]);
+    let (na, nb) = (m.journal_name(&a), m.journal_name(&b));
+    // no daemon: each waits in its journal, and is said by name
+    let elsewhere = m.d.path().join("başka");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let out = m.ok(
+        &elsewhere,
+        &["emit", "deneme.geldi", r#"{"şehir": "İzmir"}"#],
+    );
+    let said = |journal: &Journal| {
+        journal
+            .events(None)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.event.kind == "deneme.geldi")
+            .map(|r| (r.event.id, r.event.data["şehir"].clone()))
+            .collect::<Vec<_>>()
+    };
+    for (dir, name) in [(&a, &na), (&b, &nb)] {
+        let got = said(&m.journal(dir));
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].1, "İzmir");
+        let line = format!("{name} {}", got[0].0);
+        assert!(out.lines().any(|l| l == line), "{line}: {out}");
+    }
+    // --wait: nothing sent while no daemon runs them
+    let (ok, why) = m.run(&elsewhere, &["emit", "deneme.geldi", "--wait"]);
+    assert!(!ok && why.contains(&na) && why.contains(&nb), "{why}");
+    assert_eq!(said(&m.journal(&a)).len(), 1);
+    // one workspace, by the folder or by name
+    m.ok(&a, &["ws", "emit", "deneme.geldi"]);
+    m.ok(&elsewhere, &["ws", "--ws", &na, "emit", "deneme.geldi"]);
+    assert_eq!(said(&m.journal(&a)).len(), 3);
+    assert_eq!(said(&m.journal(&b)).len(), 1);
+    // one that is missing from its folder is said, and fails nothing: an
+    // action's itero emit still ends well
+    let moved = b.with_file_name("gitti");
+    std::fs::rename(&b, &moved).unwrap();
+    let (ok, out) = m.run(&elsewhere, &["emit", "deneme.geldi"]);
+    assert!(
+        ok && out.contains(&format!("{nb}: no workspace in")),
+        "{out}"
+    );
+    assert_eq!(said(&m.journal(&a)).len(), 4);
+    // a type that may not be sent reaches none
+    let (ok, _) = m.run(&elsewhere, &["emit", "tek"]);
+    assert!(!ok);
+    assert_eq!(said(&m.journal(&a)).len(), 4);
+    // every one missing: nothing was sent, and that fails
+    std::fs::rename(&a, a.with_file_name("gitti-o-da")).unwrap();
+    let (ok, out) = m.run(&elsewhere, &["emit", "deneme.geldi"]);
+    assert!(
+        !ok && out.contains(&format!("{na}: no workspace in")),
+        "{out}"
+    );
+}
+
+#[test]
+fn emit_with_an_empty_list_says_how_to_fill_it() {
+    let m = Machine::new();
+    let elsewhere = m.d.path().join("başka");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let (ok, out) = m.run(&elsewhere, &["emit", "deneme.geldi"]);
+    assert!(
+        !ok && out.contains("itero ws add") && out.contains("itero ws emit"),
+        "{out}"
+    );
+}
+
+#[test]
+fn emit_wait_waits_for_every_workspaces_runs() {
+    let m = Machine::new();
+    let (a, b) = (m.busy_workspace("bir"), m.busy_workspace("iki"));
+    m.ok(&a, &["ws", "add"]);
+    m.ok(&b, &["ws", "add"]);
+    let (na, nb) = (m.journal_name(&a), m.journal_name(&b));
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    assert_eq!(m.port(), port);
+    until("both running", || {
+        let (_, v) = get(port, "/workspaces");
+        v.as_array()
+            .is_some_and(|l| l.len() == 2 && l.iter().all(|w| w["state"] == "running"))
+    });
+    let v = m.json(&a, &["emit", "deneme.geldi", "--wait", "--timeout", "15s"]);
+    for name in [&na, &nb] {
+        assert_eq!(v[name]["runs"].as_array().map(Vec::len), Some(1), "{v}");
+    }
+    assert!(a.join("çıktı").is_file() && b.join("çıktı").is_file());
+}
+
+#[test]
+fn the_machines_api_sends_an_event_to_every_workspace() {
+    let m = Machine::new();
+    let (a, b) = (m.busy_workspace("bir"), m.busy_workspace("iki"));
+    m.ok(&a, &["ws", "add"]);
+    m.ok(&b, &["ws", "add"]);
+    let (na, nb) = (m.journal_name(&a), m.journal_name(&b));
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    assert_eq!(m.port(), port);
+    until("both running", || {
+        let (_, v) = get(port, "/workspaces");
+        v.as_array()
+            .is_some_and(|l| l.len() == 2 && l.iter().all(|w| w["state"] == "running"))
+    });
+    let post = |path: &str, body: Value| {
+        http()
+            .post(format!("http://127.0.0.1:{port}{path}"))
+            .json(&body)
+            .send()
+            .unwrap()
+    };
+    // a bad type, and wait, send nothing
+    let r = post("/events", serde_json::json!({ "type": "tek" }));
+    assert_eq!(r.status().as_u16(), 400);
+    let r = post(
+        "/events?wait=5",
+        serde_json::json!({ "type": "deneme.geldi" }),
+    );
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(!a.join("çıktı").exists());
+    let r = post("/events", serde_json::json!({ "type": "deneme.geldi" }));
+    assert_eq!(r.status().as_u16(), 202);
+    let v: Value = r.json().unwrap();
+    for (dir, name) in [(&a, &na), (&b, &nb)] {
+        assert!(v["ids"][name.as_str()].is_string(), "{v}");
+        until("its workflow", || dir.join("çıktı").is_file());
+    }
+    // none can take it: not accepted, and each says why
+    for dir in [&a, &b] {
+        let gone = dir.with_file_name(format!("{}-gitti", dir.file_name().unwrap().display()));
+        std::fs::rename(dir, gone).unwrap();
+    }
+    let r = post("/events", serde_json::json!({ "type": "deneme.geldi" }));
+    assert_eq!(r.status().as_u16(), 409);
+    let v: Value = r.json().unwrap();
+    assert_eq!(v["ids"], serde_json::json!({}), "{v}");
+    for name in [&na, &nb] {
+        assert!(v["errors"][name.as_str()].is_string(), "{v}");
+    }
+}
+
+#[test]
+fn the_machines_api_with_an_empty_list_sends_nothing() {
+    let m = Machine::new();
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    until("it answers", || get(port, "/health").0 == 200);
+    let r = http()
+        .post(format!("http://127.0.0.1:{port}/events"))
+        .json(&serde_json::json!({ "type": "deneme.geldi" }))
+        .send()
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 409);
+    let v: Value = r.json().unwrap();
+    assert!(
+        v["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("itero ws add")),
+        "{v}"
+    );
+}
+
+/// A server on a free port that gives every request `health`, for as long
+/// as the test runs: a daemon of another itero.
+fn fake_health(health: Value) -> u16 {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for s in listener.incoming() {
+            let mut s = s.unwrap();
+            let mut asked = [0u8; 1024];
+            let _ = s.read(&mut asked);
+            let body = health.to_string();
+            let _ = write!(
+                s,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    port
+}
+
+#[test]
+fn info_says_no_daemon_answers_from_any_folder() {
+    let m = Machine::new();
+    let elsewhere = m.d.path().join("başka");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let out = m.ok(&elsewhere, &["info"]);
+    let this = format!("itero {}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(out.lines().next(), Some(this.as_str()), "{out}");
+    assert!(
+        out.contains("daemon: none answering: no port yet") && out.contains("itero service status"),
+        "{out}"
+    );
+    let state = m.d.path().join("durum/itero");
+    std::fs::create_dir_all(&state).unwrap();
+    let port = free_port();
+    std::fs::write(state.join("port"), port.to_string()).unwrap();
+    let out = m.ok(&elsewhere, &["info"]);
+    assert!(
+        out.contains(&format!("daemon: none answering on port {port}")),
+        "{out}"
+    );
+    let v = m.json(&elsewhere, &["info", "--json"]);
+    assert_eq!(v["itero"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(v["port"], port);
+    assert_eq!(v["daemon"], Value::Null);
+}
+
+#[test]
+fn info_shows_the_machines_daemon_and_its_workspaces() {
+    let m = Machine::new();
+    let a = m.busy_workspace("bir");
+    m.ok(&a, &["ws", "add"]);
+    let na = m.journal_name(&a);
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    until("a running", || {
+        get(port, &format!("/ws/{na}/health")).0 == 200
+    });
+    let elsewhere = m.d.path().join("başka");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let v = m.json(&elsewhere, &["info", "--json"]);
+    assert_eq!(v["itero"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(v["daemon"]["itero"], env!("CARGO_PKG_VERSION"), "{v}");
+    assert_eq!(v["port"], port, "{v}");
+    assert!(v["workspaces"][&na]["passes"].is_u64(), "{v}");
+    assert!(v["notifications"]["state"].is_string(), "{v}");
+    let out = m.ok(&elsewhere, &["info"]);
+    assert!(out.contains(&format!("port {port}")), "{out}");
+    assert!(
+        out.lines().any(|l| l.starts_with(&format!("  {na}: "))),
+        "{out}"
+    );
+    assert!(!out.contains("itero service restart"), "{out}");
+}
+
+#[test]
+fn info_says_when_the_daemon_runs_another_itero() {
+    let m = Machine::new();
+    let port = fake_health(serde_json::json!({
+        "ok": true,
+        "pid": 7,
+        "daemon": { "pid": 7, "itero": "0.0.1", "started": "2026-10-31T09:00:00Z" },
+        "workspaces": {
+            "pala-su": { "passes": 3, "last_pass": "2026-10-31T09:01:00Z", "last_error": "kötü" }
+        },
+        "ai": { "state": "running", "model": "yerel/küçük", "failures": 0 },
+    }));
+    let state = m.d.path().join("durum/itero");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("port"), port.to_string()).unwrap();
+    let elsewhere = m.d.path().join("başka");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let out = m.ok(&elsewhere, &["info"]);
+    for says in [
+        "itero 0.0.1",
+        "itero service restart",
+        "pala-su: 3 passes",
+        "last error: kötü",
+        "ai: running yerel/küçük",
+    ] {
+        assert!(out.contains(says), "{says}: {out}");
+    }
 }

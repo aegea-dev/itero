@@ -38,7 +38,7 @@ fn check(steps: Value) -> (bool, String) {
     .write(&cache.join("itero/models.json"))
     .unwrap();
     let out = Command::new(Path::new(env!("CARGO_BIN_EXE_itero")))
-        .arg("check")
+        .args(["ws", "check"])
         .current_dir(d.path())
         .env("XDG_CACHE_HOME", &cache)
         .env("ITERO_NO_SECRET_STORE", "1")

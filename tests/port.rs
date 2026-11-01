@@ -53,7 +53,7 @@ fn saved(dir: &Path) -> Option<u16> {
 
 /// The daemon answers for this workspace on `port`.
 fn answers(dir: &Path, port: u16) -> bool {
-    let info = String::from_utf8(itero(dir, &["info"]).stdout).unwrap();
+    let info = String::from_utf8(itero(dir, &["ws", "info"]).stdout).unwrap();
     info.contains(&format!("port {port}")) && info.contains("daemon\n")
 }
 
@@ -104,9 +104,12 @@ fn a_set_port_that_is_taken_stops_the_daemon_before_it_runs_anything() {
     )
     .unwrap();
     assert!(
-        itero(d.path(), &["emit", "selam.geldi", r#"{"text": "merhaba"}"#])
-            .status
-            .success()
+        itero(
+            d.path(),
+            &["ws", "emit", "selam.geldi", r#"{"text": "merhaba"}"#]
+        )
+        .status
+        .success()
     );
     let o = daemon(d.path()).wait_with_output().unwrap();
     assert!(!o.status.success(), "{o:?}");
@@ -116,7 +119,7 @@ fn a_set_port_that_is_taken_stops_the_daemon_before_it_runs_anything() {
         "{err}"
     );
     assert!(!err.contains("serving on"), "{err}");
-    let runs = String::from_utf8(itero(d.path(), &["wf", "runs"]).stdout).unwrap();
+    let runs = String::from_utf8(itero(d.path(), &["ws", "wf", "runs"]).stdout).unwrap();
     assert!(runs.trim().is_empty(), "nothing ran: {runs}");
     // its loop never began: no start in the log
     let log = std::fs::read_to_string(d.path().join(".itero/itero.log")).unwrap_or_default();

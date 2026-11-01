@@ -33,7 +33,7 @@ export class Workspace {
   }
 
   emit(type, data) {
-    this.itero("emit", type, JSON.stringify(data));
+    this.itero("ws", "emit", type, JSON.stringify(data));
   }
 
   /** One daemon pass, as if it were `now` (an RFC 3339 time). */
@@ -43,17 +43,17 @@ export class Workspace {
 
   /** The runs, newest first: { id, name, workflow, status, ... }. */
   runs() {
-    return JSON.parse(this.itero("workflow", "runs", "--json"));
+    return JSON.parse(this.itero("ws", "wf", "runs", "--json"));
   }
 
   /** A run's state, from its story. */
   state(run) {
-    return JSON.parse(this.itero("workflow", "runs", run.id, "--json")).state;
+    return JSON.parse(this.itero("ws", "wf", "runs", run.id, "--json")).state;
   }
 
   /** What `step` (like "#changed") printed in a run: its result. */
   output(run, step) {
-    const story = JSON.parse(this.itero("workflow", "runs", run.id, "--json"));
+    const story = JSON.parse(this.itero("ws", "wf", "runs", run.id, "--json"));
     return story.steps.findLast((s) => s.what === "done" && s.step === step)?.data;
   }
 

@@ -211,7 +211,6 @@ struct Flows {
     values: BTreeMap<String, Value>,
     read: BTreeMap<String, Flow>,
     config: Map<String, Value>,
-    root: PathBuf,
 }
 
 impl Flows {
@@ -226,7 +225,6 @@ impl Flows {
             values,
             read,
             config: ws.manifest()?,
-            root: ws.root.clone(),
         })
     }
 
@@ -444,10 +442,10 @@ pub fn watch_paths(
     }
 }
 
-/// Whether a `$$NAME` is defined in the workspace at `root`: a secret, a
-/// value in its `.env`, or an environment variable.
-fn defined(root: &Path, name: &str) -> bool {
-    super::secrets::get_in(root, name).is_some()
+/// Whether a `$$NAME` is defined in the workspace: a secret, a value in its
+/// `.env`, or an environment variable.
+fn defined(ws: &Workspace, name: &str) -> bool {
+    super::secrets::get_in(ws, name).is_some()
 }
 
 /// One pass over a workspace; `exe` is the itero binary, run as `itero
@@ -487,7 +485,7 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let flows = Flows::load(ws)?;
     j.see_workflows(flows.read.keys(), &stamp(now))?;
     let no_room = watch_limits(ws, &j, now, &log)?;
-    fire_schedules(&flows, &mut j, now, &log)?;
+    fire_schedules(ws, &flows, &mut j, now, &log)?;
     // runs' events first; then the waiting jobs, whose results are the
     // next events. Each worker's result is saved as it ends, while others
     // still run; when the pass fails, what runs is still saved.
@@ -860,7 +858,13 @@ pub fn next_due(ws: &Workspace, now: DateTime<Utc>) -> Result<Option<DateTime<Ut
     Ok(due.into_iter().min())
 }
 
-fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log) -> Result<()> {
+fn fire_schedules(
+    ws: &Workspace,
+    flows: &Flows,
+    j: &mut Journal,
+    now: DateTime<Utc>,
+    log: &Log,
+) -> Result<()> {
     for (name, f) in &flows.read {
         for cron in &f.on.schedules {
             let key = format!("{name}#{cron}");
@@ -882,7 +886,7 @@ fn fire_schedules(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log)
                     if flow::holds(
                         &f.on,
                         &steps::first_state(json!({}), flows.config.clone()),
-                        &|n: &str| defined(&flows.root, n),
+                        &|n: &str| defined(ws, n),
                     ) =>
                 {
                     let start = Start {
@@ -948,7 +952,7 @@ fn route(
         let first = steps::first_state(Value::Object(data.clone()), flows.config.clone());
         if !(f.on.events.contains(&r.event.kind) || names_it(f))
             || !flow::active(&f.meta, now)
-            || !flow::holds(&f.on, &first, &|n: &str| defined(&ws.root, n))
+            || !flow::holds(&f.on, &first, &|n: &str| defined(ws, n))
             || (on_a_run && data.get("workflow") == Some(&json!(name)))
         {
             continue;
@@ -1129,7 +1133,7 @@ fn deliver(
         flows: values,
         repeat,
         config: ws.manifest().unwrap_or_default(),
-        defined: names.into_iter().filter(|n| defined(&ws.root, n)).collect(),
+        defined: names.into_iter().filter(|n| defined(ws, n)).collect(),
         runtime: run.runtime.clone(),
         event: Event {
             id: r.event.id.clone(),
@@ -1354,15 +1358,15 @@ fn env_name(n: &str) -> bool {
 
 /// A value of an action's args: `"$name"` is the state's, `"$$NAME"`
 /// the secret's (or the environment variable's); anything else itself.
-fn resolve(root: &Path, v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
+fn resolve(ws: &Workspace, v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
     match flow::secret_ref(v) {
-        Some(n) => secret(root, n),
+        Some(n) => secret(ws, n),
         None => flow::fill(v, state),
     }
 }
 
-fn secret(root: &Path, n: &str) -> Result<Value, String> {
-    super::secrets::get_in(root, n)
+fn secret(ws: &Workspace, n: &str) -> Result<Value, String> {
+    super::secrets::get_in(ws, n)
         .map(Value::String)
         .ok_or_else(|| format!("{n} is not set: no secret, not in .env, no environment variable"))
 }
@@ -1375,7 +1379,7 @@ pub type Bound = (BTreeMap<String, String>, Map<String, Value>);
 /// again after waiting, the event that came. As environment variables
 /// (names that cannot be one, and values past `ENV_MAX`, are on stdin
 /// only) and as its stdin, `{"args": {...}, "event": {...}}`.
-pub fn bind(root: &Path, state: &Map<String, Value>, job: &StepJob) -> Result<Bound, String> {
+pub fn bind(ws: &Workspace, state: &Map<String, Value>, job: &StepJob) -> Result<Bound, String> {
     let mut args = job.data.clone();
     // a repeat item's values on top of the step's args
     if let Some(item) = job.item.as_ref().and_then(Value::as_object) {
@@ -1385,7 +1389,7 @@ pub fn bind(root: &Path, state: &Map<String, Value>, job: &StepJob) -> Result<Bo
     }
     for v in args.values_mut() {
         if let Some(n) = flow::secret_ref(v) {
-            *v = secret(root, n)?;
+            *v = secret(ws, n)?;
         }
     }
     let mut values = args.clone();
@@ -1424,7 +1428,7 @@ pub fn connector_env(ws: &Workspace, connector: &str) -> Result<BTreeMap<String,
     let none = Map::new();
     let mut values = Map::new();
     for (k, v) in connector_args(ws, connector)? {
-        let v = resolve(&ws.root, &v, &none)
+        let v = resolve(ws, &v, &none)
             .map_err(|why| format!("connector.{connector}.args.{k}: {why}"))?;
         values.insert(k, v);
     }
@@ -1475,7 +1479,7 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
     let (quiet, most) = ws.step_limits(&job.action).map_err(|e| format!("{e:#}"))?;
-    let (mut env, input) = bind(&ws.root, &run.runtime.state, &job)?;
+    let (mut env, input) = bind(ws, &run.runtime.state, &job)?;
     // the built-in #ai talks to the itero-ai the daemon keeps
     if file == Path::new(worker::AI) {
         let socket = crate::ai::keeper::Keeper::global().socket(ws)?;

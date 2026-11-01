@@ -90,12 +90,12 @@ again on the new version; itero-ai starts again, new too, with the next
 `#ai` step. A run under way goes on where it was. Without the
 service, stop `itero daemon` (Ctrl-C) and start it again.
 
-Check that the daemon runs the new version: in a workspace,
-[`itero info`](/commands/info/) shows the running daemon under `daemon`,
-with its `itero` (the workspace's own `itero` is the one that made it).
+Check that the daemon runs the new version:
+[`itero info`](/commands/info/) shows the itero it runs, and says so when
+that is not this one.
 
 A release that changes how workflows or actions are written says so in
-its notes, under **Breaking**; run [`itero check`](/commands/check/) in
+its notes, under **Breaking**; run [`itero ws check`](/commands/check/) in
 each workspace after upgrading, and it names what to change.
 
 ## Check it

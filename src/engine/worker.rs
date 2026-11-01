@@ -459,9 +459,10 @@ fn first_that_runs(ways: Vec<(PathBuf, Vec<String>)>) -> Result<(), String> {
     ))
 }
 
-/// Whether notifications can be shown here, for `itero info`: on macOS,
-/// macOS's setting for Itero (asked of its notifier, three seconds at
-/// most) and the copy notifying; elsewhere, the desktop's notifier.
+/// Whether notifications can be shown here, for `itero info` and `itero ws
+/// info`: on macOS, macOS's setting for Itero (asked of its notifier, three
+/// seconds at most) and the copy notifying; elsewhere, the desktop's
+/// notifier.
 pub fn notifications() -> Value {
     if !cfg!(target_os = "macos") {
         let found = ["notify-send", "gdbus", "kdialog"].into_iter().find(|p| {

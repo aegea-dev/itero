@@ -1,4 +1,4 @@
-//! `itero action` and `itero connector`: what there is, their repeat and
+//! `itero ws ac` and `itero ws cn`: what there is, their repeat and
 //! args, and which actions break.
 use super::out::{ago, given, plain_name, show, table, text};
 use crate::engine::journal::Journal;

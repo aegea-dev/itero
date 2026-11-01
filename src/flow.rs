@@ -443,7 +443,7 @@ pub enum Piece<'t> {
     /// `$$NAME`, which no text may hold.
     Secret(&'t str),
     /// `$order`, `$output.#size`: a word after `$` that is no value, kept as
-    /// text; `itero check` names what to write instead.
+    /// text; `itero ws check` names what to write instead.
     Unknown(&'t str),
 }
 
@@ -592,7 +592,7 @@ fn path_len(s: &str) -> usize {
 }
 
 /// The length of a `$word` that is no value (`order`, `why`,
-/// `output.#size`, `input.path`), for `itero check` to name.
+/// `output.#size`, `input.path`), for `itero ws check` to name.
 fn old_len(s: &str) -> usize {
     let n = name_len(s);
     if n == 0 {

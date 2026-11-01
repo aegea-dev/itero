@@ -16,7 +16,7 @@ Verification for your Google account, then make one at
 work over IMAP.
 
 ```sh
-itero connector args set gmail.received '{"user": "you@gmail.com", "password": "$$GMAIL_PASS"}'
+itero ws cn args set gmail.received '{"user": "you@gmail.com", "password": "$$GMAIL_PASS"}'
 itero secret GMAIL_PASS     # the app password, without its spaces
 itero daemon
 ```

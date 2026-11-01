@@ -7,7 +7,9 @@ Workflows run when something happens. Each thing that happens is an
 **event** (you may know it as a message): a type, such as `order.placed`,
 and its data, a JSON object. An event comes from one of these:
 
-- **an app or a script**: `itero emit`, or `POST /events` to the daemon;
+- **an app or a script**: `itero ws emit`, or `POST /events` to the daemon
+  ([`itero emit`](/commands/emit/#every-workspace) to every workspace on
+  the machine's list);
 - **a connector**: a program that keeps running and prints a line for
   each new thing it sees (a new mail, a sensor reading);
 - **a schedule**: `"on": [{ "schedule": "0 9 * * *" }]` in a workflow;
@@ -30,7 +32,7 @@ exec itero watch "$HOME/notes.txt"
 
 It runs in the workspace, with the daemon's `itero` first on its `PATH`
 and its args (`connector.<name>.args` in `itero.config.json`, set with
-[`itero connector args set`](/commands/connector/#args)) as environment
+[`itero ws cn args set`](/commands/connector/#args)) as environment
 variables, secrets among them:
 [A connector's args](/guides/secrets/#a-connectors-args). Its stdin closes
 when the daemon goes; its stderr goes to the daemon's stderr. The daemon
@@ -58,7 +60,7 @@ The first word is the service, the app or the thing (`gmail`, `stripe`,
 convention, so that a type says at a glance which way it goes.
 
 ```sh
-itero emit order.placed '{"order": 43, "total": 120}'
+itero ws emit order.placed '{"order": 43, "total": 120}'
 ```
 
 ```
@@ -95,10 +97,10 @@ Events are kept until their runs end, then `keep` more (a day).
 
 An event is sent and forgotten, unless its sender asks what came of it:
 
-- **Wait for it**, for runs that end soon: `itero emit --wait` returns when
+- **Wait for it**, for runs that end soon: `itero ws emit --wait` returns when
   the runs it started have ended and prints them as JSON, each with its
   status and state (`event`, `output`, `steps`); `POST /events?wait=60` answers the same
-  ([`itero emit`](/commands/emit/#waiting-for-the-answer)).
+  ([`itero ws emit`](/commands/emit/#waiting-for-the-answer)).
 - **Let the workflow post it**, for runs that may wait for days: the app
   sends its URL in the event's data, and the workflow's `success`,
   `failure` and `error` steps post the result there

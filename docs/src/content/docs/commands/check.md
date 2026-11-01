@@ -1,15 +1,15 @@
 ---
-title: check
+title: ws check
 description: Reads your files before anything runs, and says what is wrong.
 ---
 
-`itero check` reads your workflows, actions and connectors and tells you
+`itero ws check` reads your workflows, actions and connectors and tells you
 what is wrong with them, before anything runs. Run it after you edit a
 file. (To see runs that already failed, use
-[`itero wf runs --errors`](/commands/workflow/#runs).)
+[`itero ws wf runs --errors`](/commands/workflow/#runs).)
 
 ```sh
-itero check [--json]
+itero ws check [--json]
 ```
 
 It reads every workflow, action and connector. It prints each workflow with its
@@ -18,7 +18,7 @@ workflows its steps name and where each is; then each connector. Internal
 workflows come last, apart.
 
 ```
-$ itero check
+$ itero ws check
 greet
   id 01a16000-8c57-75e1-b8ee-cf8f8d2199d1  since 2026-10-21T19:46:51Z
   file workflows/greet.json

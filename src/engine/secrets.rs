@@ -1,7 +1,9 @@
-//! Secrets: the values `${env.NAME}` stands for. They are kept in the OS
-//! secret store (macOS Keychain, Windows Credential Manager, the Secret
-//! Service on Linux) under the service `itero`, and looked up there first,
-//! then in the daemon's own environment. itero never writes one to a file.
+//! Secrets: the values `$$NAME` stands for. They are kept in the OS secret
+//! store (macOS Keychain, Windows Credential Manager, the Secret Service on
+//! Linux) under the service `itero`: for every workspace under the name
+//! itself, for one workspace under `<its id>.<name>` (a `.` is never in a
+//! name, so the two cannot clash). itero never writes one to a file.
+use crate::workspace::Workspace;
 use anyhow::{Result, anyhow, bail};
 
 const SERVICE: &str = "itero";
@@ -52,12 +54,46 @@ pub fn get(name: &str) -> Option<String> {
     from_store(name).or_else(|| std::env::var(name).ok())
 }
 
-/// A `$$NAME` in the workspace at `root`: a secret from the store, else
+/// A `$$NAME` in the workspace: its own secret, else the machine's, else
 /// its `.env`, else the environment.
-pub fn get_in(root: &std::path::Path, name: &str) -> Option<String> {
-    from_store(name)
-        .or_else(|| dot_env(root, name))
+pub fn get_in(ws: &Workspace, name: &str) -> Option<String> {
+    own_key(ws, name)
+        .and_then(|key| from_store(&key))
+        .or_else(|| from_store(name))
+        .or_else(|| dot_env(&ws.root, name))
         .or_else(|| std::env::var(name).ok())
+}
+
+/// A workspace's own secret's name in the store.
+fn key_for(id: &str, name: &str) -> String {
+    format!("{id}.{name}")
+}
+
+/// `key_for` the workspace; none with the store off. A workspace whose id
+/// cannot be read is reported once (each `$$` lookup asks again): its own
+/// secrets are passed over.
+fn own_key(ws: &Workspace, name: &str) -> Option<String> {
+    if store_off() {
+        return None;
+    }
+    match ws.id() {
+        Ok(id) => Some(key_for(&id, name)),
+        Err(e) => {
+            static REPORTED: std::sync::Mutex<std::collections::BTreeSet<std::path::PathBuf>> =
+                std::sync::Mutex::new(std::collections::BTreeSet::new());
+            let first = REPORTED
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(ws.root.clone());
+            if first {
+                eprintln!(
+                    "itero: {}: its own secrets cannot be read: {e:#}",
+                    ws.root.display()
+                );
+            }
+            None
+        }
+    }
 }
 
 /// A secret from the store. A store that cannot be read is reported once
@@ -102,7 +138,7 @@ pub fn dot_env(root: &std::path::Path, name: &str) -> Option<String> {
 
 /// The `$$` names a workspace uses: in its workflows' steps and
 /// conditions, and in its actions' and connectors' args. Sorted, once each.
-pub fn used(ws: &crate::workspace::Workspace) -> Result<Vec<String>> {
+pub fn used(ws: &Workspace) -> Result<Vec<String>> {
     fn walk(v: &serde_json::Value, out: &mut Vec<String>) {
         match v {
             serde_json::Value::Array(items) => items.iter().for_each(|i| walk(i, out)),
@@ -144,16 +180,19 @@ pub fn shadowing(
         .collect()
 }
 
-/// The names the workspace uses that are both a secret and an environment
-/// variable here; none with the store off. A store that cannot be read
-/// counts as holding none.
-pub fn shadowed(ws: &crate::workspace::Workspace) -> Result<Vec<String>> {
+/// The names the workspace uses that are both a secret (its own or the
+/// machine's) and an environment variable here; none with the store off. A
+/// store that cannot be read counts as holding none.
+pub fn shadowed(ws: &Workspace) -> Result<Vec<String>> {
     if store_off() {
         return Ok(vec![]);
     }
     Ok(shadowing(
         &used(ws)?,
-        |n| matches!(lookup(n), Ok(Some(_))),
+        |n| {
+            let kept = |key: &str| matches!(lookup(key), Ok(Some(_)));
+            kept(n) || own_key(ws, n).is_some_and(|key| kept(&key))
+        },
         |n| std::env::var_os(n).is_some(),
     ))
 }
@@ -192,25 +231,45 @@ fn save_names(mut names: Vec<String>) -> Result<()> {
 /// at a time, so the list takes no lock.
 pub fn set(name: &str, value: &str) -> Result<()> {
     ready(name)?;
-    entry(name)?
+    keep(name, value)
+}
+
+/// `set`, for the workspace with this id alone.
+pub fn set_for(id: &str, name: &str, value: &str) -> Result<()> {
+    ready(name)?;
+    keep(&key_for(id, name), value)
+}
+
+fn keep(key: &str, value: &str) -> Result<()> {
+    entry(key)?
         .set_password(value)
         .map_err(|e| anyhow!("the OS secret store: {e}"))?;
     let listed = names().and_then(|mut all| {
-        all.push(name.to_string());
+        all.push(key.to_string());
         save_names(all)
     });
-    listed.map_err(|e| anyhow!("{name} is kept, but not listed: {e:#}"))
+    listed.map_err(|e| anyhow!("{key} is kept, but not listed: {e:#}"))
 }
 
 /// Removes a secret from the store; false when it was not there.
 pub fn unset(name: &str) -> Result<bool> {
     ready(name)?;
-    let had = match entry(name)?.delete_credential() {
+    forget(name)
+}
+
+/// `unset`, for the workspace with this id alone.
+pub fn unset_for(id: &str, name: &str) -> Result<bool> {
+    ready(name)?;
+    forget(&key_for(id, name))
+}
+
+fn forget(key: &str) -> Result<bool> {
+    let had = match entry(key)?.delete_credential() {
         Ok(()) => true,
         Err(keyring::Error::NoEntry) => false,
         Err(e) => return Err(anyhow!("the OS secret store: {e}")),
     };
-    let all: Vec<String> = names()?.into_iter().filter(|n| n != name).collect();
+    let all: Vec<String> = names()?.into_iter().filter(|n| n != key).collect();
     save_names(all)?;
     Ok(had)
 }

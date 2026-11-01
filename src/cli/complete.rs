@@ -3,13 +3,36 @@
 //! now, not as a script generated once had them.
 use clap_complete::engine::{ArgValueCandidates, CompletionCandidate};
 
-/// The workspace the shell is in; none outside one.
+/// The workspace `--ws` names in the words being completed, else the one
+/// the shell is in; none outside one.
 fn workspace() -> Option<crate::workspace::Workspace> {
-    crate::workspace::find(&std::env::current_dir().ok()?).ok()
+    let words: Vec<String> = std::env::args().collect();
+    let named = words
+        .iter()
+        .enumerate()
+        .find_map(|(i, w)| match w.as_str() {
+            "--ws" => words.get(i + 1).cloned(),
+            w => w.strip_prefix("--ws=").map(str::to_string),
+        });
+    match named {
+        // its folder only: a TAB takes no lock on its journal
+        Some(name) => crate::engine::machine::folder(&super::workspace::listed(&name).ok()?).ok(),
+        None => crate::workspace::find(&std::env::current_dir().ok()?).ok(),
+    }
 }
 
 fn names(list: impl IntoIterator<Item = String>) -> Vec<CompletionCandidate> {
     list.into_iter().map(CompletionCandidate::new).collect()
+}
+
+/// The names on the machine's list.
+pub fn workspaces() -> ArgValueCandidates {
+    ArgValueCandidates::new(|| {
+        let list = crate::machine::list_path()
+            .and_then(|p| crate::machine::List::read(&p))
+            .unwrap_or_default();
+        names(list.workspaces.into_iter().map(|e| e.name))
+    })
 }
 
 pub fn workflows() -> ArgValueCandidates {

@@ -1,4 +1,4 @@
-//! `itero workflow` (`itero wf`): the workflows and their runs.
+//! `itero ws wf`: the workflows and their runs.
 use super::out::{ago, show, table, text};
 use crate::engine::journal::{Journal, Recorded, Run, subject};
 use crate::engine::{progress, steps};
@@ -101,7 +101,7 @@ pub fn list(ws: &Workspace, json: bool) -> Result<()> {
     })
 }
 
-/// Which runs `itero workflow runs` shows.
+/// Which runs `itero ws wf runs` shows.
 pub struct Filter {
     pub errors: bool,
     pub workflow: Option<String>,
@@ -134,7 +134,7 @@ pub fn runs(ws: &Workspace, f: &Filter, json: bool) -> Result<()> {
     if let Some(w) = &f.workflow
         && !ws.flows()?.iter().any(|(n, _)| n == w)
     {
-        bail!("no workflow {w}: itero workflow list lists them");
+        bail!("no workflow {w}: itero ws wf list lists them");
     }
     let apart = if f.all || f.workflow.is_some() {
         vec![]
@@ -206,7 +206,7 @@ pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
     let j = Journal::open(ws)?;
     let found = j.run_by(run)?;
     let Some(r) = found.first() else {
-        bail!("no run {run}: itero workflow runs lists them");
+        bail!("no run {run}: itero ws wf runs lists them");
     };
     if found.len() > 1 && !json {
         println!(

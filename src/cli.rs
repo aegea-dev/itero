@@ -1,6 +1,7 @@
 //! The command line.
 mod ai;
 mod complete;
+mod emit;
 mod kinds;
 mod out;
 mod top;
@@ -19,6 +20,26 @@ use clap::{Parser, Subcommand};
 pub struct Cli {
     #[command(subcommand)]
     pub cmd: Cmd,
+}
+
+/// An event to send, and how: `itero emit` and `itero ws emit`.
+#[derive(clap::Args)]
+pub struct EmitArgs {
+    /// Its type, two or more words joined by dots, like order.placed
+    #[arg(value_name = "TYPE")]
+    kind: String,
+    /// Its data, a JSON object
+    #[arg(value_name = "DATA")]
+    data: Option<String>,
+    /// Wait for the runs it starts to end, and print them as JSON (exit 1: one failed or broke; 2: time ran out)
+    #[arg(long)]
+    wait: bool,
+    /// With --wait: how long, like 30s or 5m
+    #[arg(long, default_value = "60s", requires = "wait")]
+    timeout: String,
+    /// Print what was sent as JSON (with --wait, the runs are JSON already)
+    #[arg(long, conflicts_with = "wait")]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -41,30 +62,15 @@ pub enum Cmd {
         #[arg(long)]
         no_serve: bool,
     },
-    /// Read every workflow, action and connector, before anything runs, and say what is wrong
-    Check {
-        #[arg(long)]
-        json: bool,
+    /// Moved: `itero ws check`
+    #[command(name = "check", hide = true, disable_help_flag = true)]
+    MovedCheck {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
     },
-    /// Send an event: it starts runs, and reaches the runs waiting for it
-    Emit {
-        /// Its type, two or more words joined by dots, like order.placed
-        #[arg(value_name = "TYPE")]
-        kind: String,
-        /// Its data, a JSON object
-        #[arg(value_name = "DATA")]
-        data: Option<String>,
-        /// Wait for the runs it starts to end, and print them as JSON (exit 1: one failed or broke; 2: time ran out)
-        #[arg(long)]
-        wait: bool,
-        /// With --wait: how long, like 30s or 5m
-        #[arg(long, default_value = "60s", requires = "wait")]
-        timeout: String,
-        /// Print its id, and what it starts, as JSON (with --wait, the runs are JSON already)
-        #[arg(long, conflicts_with = "wait")]
-        json: bool,
-    },
-    /// Keep a secret in the OS secret store, for $$NAME (asks for it, without echo)
+    /// Send an event to every workspace on the machine's list
+    Emit(EmitArgs),
+    /// Keep a secret in the OS secret store, for $$NAME in every workspace (asks for it, without echo)
     Secret {
         /// Its name: a letter or _, then letters, digits or _
         name: String,
@@ -72,36 +78,41 @@ pub enum Cmd {
         #[arg(long)]
         file: Option<std::path::PathBuf>,
     },
-    /// The workspace: its identity, meta and limits, and the daemon running it
+    /// The machine's daemon: its version, pid, port, workspaces, itero-ai and notifications
     Info {
         #[arg(long)]
         json: bool,
     },
-    /// Where a workflow, action or connector of this name is (#name: the action only)
-    Which {
-        name: String,
-        #[arg(long)]
-        json: bool,
+    /// Moved: `itero ws which`
+    #[command(name = "which", hide = true, disable_help_flag = true)]
+    MovedWhich {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
     },
-    /// The workflows and their runs
-    #[command(visible_alias = "wf")]
-    Workflow {
-        #[command(subcommand)]
-        cmd: WorkflowCmd,
+    /// Moved: `itero ws wf`
+    #[command(name = "workflow", alias = "wf", hide = true, disable_help_flag = true)]
+    MovedWorkflow {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
     },
-    /// The actions, the ones that break, and their repeat
-    Action {
-        #[command(subcommand)]
-        cmd: ActionCmd,
+    /// Moved: `itero ws ac`
+    #[command(name = "action", hide = true, disable_help_flag = true)]
+    MovedAction {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
     },
-    /// The connectors, and their args
-    Connector {
-        #[command(subcommand)]
-        cmd: ConnectorCmd,
+    /// Moved: `itero ws cn`
+    #[command(name = "connector", hide = true, disable_help_flag = true)]
+    MovedConnector {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
     },
-    /// The machine's workspaces, which one daemon runs
+    /// One workspace: its workflows, actions and connectors, and the machine's list
     #[command(visible_alias = "ws")]
     Workspace {
+        /// The workspace, by its name on the machine's list (itero ws list); else this folder's
+        #[arg(long, global = true, value_name = "NAME", add = complete::workspaces())]
+        ws: Option<String>,
         #[command(subcommand)]
         cmd: WorkspaceCmd,
     },
@@ -335,32 +346,6 @@ pub enum ActionRepeatCmd {
 }
 
 #[derive(Subcommand)]
-pub enum ActionArgsCmd {
-    /// Show an action's args
-    Get {
-        #[arg(add = complete::actions())]
-        name: String,
-        #[arg(long)]
-        json: bool,
-    },
-    /// Set an action's args: an object, or a list of objects read in order
-    Set {
-        #[arg(add = complete::actions())]
-        name: String,
-        /// The args, as JSON
-        #[arg(
-            value_name = "DATA",
-            required_unless_present = "file",
-            conflicts_with = "file"
-        )]
-        data: Option<String>,
-        /// Read them from this file
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
-    },
-}
-
-#[derive(Subcommand)]
 pub enum ConnectorArgsCmd {
     /// Show a connector's args
     Get {
@@ -390,6 +375,50 @@ pub enum ConnectorArgsCmd {
 pub enum WorkspaceCmd {
     /// Add this workspace to the machine's list: the machine's daemon runs it
     Add,
+    /// The workspace: its identity, meta and limits, and the daemon running it
+    Info {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read every workflow, action and connector, before anything runs, and say what is wrong
+    Check {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Where a workflow, action or connector of this name is (#name: the action only)
+    Which {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Send an event to this workspace: it starts runs, and reaches the runs waiting for it
+    Emit(EmitArgs),
+    /// Keep a secret for this workspace alone: its $$NAME finds it before the machine's (asks for it, without echo)
+    Secret {
+        /// Its name: a letter or _, then letters, digits or _
+        name: String,
+        /// Read it from this file (its last newline left out)
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+    /// The workflows and their runs
+    #[command(visible_alias = "wf")]
+    Workflow {
+        #[command(subcommand)]
+        cmd: WorkflowCmd,
+    },
+    /// The actions, the ones that break, and their repeat
+    #[command(visible_alias = "ac")]
+    Action {
+        #[command(subcommand)]
+        cmd: ActionCmd,
+    },
+    /// The connectors, and their args
+    #[command(visible_alias = "cn")]
+    Connector {
+        #[command(subcommand)]
+        cmd: ConnectorCmd,
+    },
     /// Take a workspace off the list (this one, or one by name); its folder stays
     Remove { name: Option<String> },
     /// The machine's workspaces: name, folder, state and last run
@@ -428,10 +457,58 @@ fn by_name(c: clap::Command) -> clap::Command {
     c.mut_subcommands(|s| by_name(s.display_order(0)))
 }
 
+/// Lists each command's subcommands with their aliases after the name,
+/// `action (ac)`, as clap does not; clap's `[aliases: ac]` stays after the
+/// text.
+fn with_aliases(mut c: clap::Command) -> clap::Command {
+    c.build();
+    let mut shown: Vec<&clap::Command> = c.get_subcommands().filter(|s| !s.is_hide_set()).collect();
+    // by name, as `by_name` orders them, clap's own `help` last
+    shown.sort_by_key(|s| (s.get_name() == "help", s.get_name().to_string()));
+    let subs: Vec<(String, String)> = shown
+        .into_iter()
+        .map(|s| {
+            let aliases: Vec<&str> = s.get_visible_aliases().collect();
+            let mut about = s.get_about().map(|a| a.to_string()).unwrap_or_default();
+            let name = if aliases.is_empty() {
+                s.get_name().to_string()
+            } else {
+                about = format!("{about} [aliases: {}]", aliases.join(", "));
+                format!("{} ({})", s.get_name(), aliases.join(", "))
+            };
+            (name, about)
+        })
+        .collect();
+    if subs.is_empty() {
+        return c;
+    }
+    let wide = subs
+        .iter()
+        .map(|(n, _)| n.chars().count())
+        .max()
+        .unwrap_or(0);
+    let list: Vec<String> = subs
+        .iter()
+        .map(|(n, a)| format!("  {n:<wide$}  {a}"))
+        .collect();
+    // {all-args} would list the commands again: the options alone
+    let template = format!(
+        "{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\nCommands:\n{}\n\nOptions:\n{{options}}{{after-help}}",
+        list.join("\n")
+    );
+    c.help_template(template).mut_subcommands(with_aliases)
+}
+
+/// A command that moved under `itero ws`: an error naming its new form.
+fn moved(new: &str, rest: &[String]) -> Result<()> {
+    let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
+    bail!("moved: itero ws {}", [&[new][..], &rest].concat().join(" "))
+}
+
 /// The command line, as parsed and as the shell completes it.
 fn command() -> clap::Command {
     use clap::CommandFactory;
-    by_name(Cli::command())
+    with_aliases(by_name(Cli::command()))
 }
 
 /// Runs the command line; returns the exit code.
@@ -714,142 +791,108 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
             }
         }
-        Cmd::Emit {
-            kind,
-            data,
-            wait,
-            timeout,
-            json,
-        } => {
-            use crate::engine::events::{self, Waited};
-            let ws = workspace()?;
-            let data = data
-                .map(|d| serde_json::from_str(&d).map_err(|_| anyhow!("the data is a JSON object")))
-                .transpose()?;
-            let now = crate::engine::daemon::stamp(chrono::Utc::now());
-            let fields = data
-                .as_ref()
-                .and_then(|d: &serde_json::Value| d.as_object().cloned())
-                .unwrap_or_default();
-            if wait {
-                let timeout = humantime::parse_duration(&timeout).map_err(|_| {
-                    anyhow!("--timeout: a duration is like 30s or 5m, not {timeout}")
-                })?;
-                // with no daemon nothing would answer: say so, sending nothing
-                if !daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)? {
-                    bail!(
-                        "no daemon is running: start itero daemon (or itero workspace add, with the machine's daemon), then send it again"
-                    );
-                }
-                let id = events::emit(&ws, &kind, data, &now)?;
-                nudge(&ws, &now);
-                let (answer, how) = events::wait_for(&ws, &id, timeout)?;
-                println!("{}", serde_json::to_string_pretty(&answer)?);
-                match how {
-                    Waited::Done => return Ok(()),
-                    Waited::Failed => std::process::exit(1),
-                    Waited::TimedOut => {
-                        eprintln!("timed out: not every run it started has ended");
-                        std::process::exit(2);
-                    }
-                }
-            }
-            let id = events::emit(&ws, &kind, data, &now)?;
-            nudge(&ws, &now);
-            let fate = crate::engine::events::fate(&ws, &kind, &fields)?;
-            let running = daemon_running(&ws, &crate::engine::journal::Journal::open(&ws)?)?;
-            let v = serde_json::json!({
-                "id": id,
-                "starts": fate.starts,
-                "waiting": fate.waiting,
-                "nearest": fate.nearest,
-                "daemon": { "running": running },
-            });
-            out::show(json, &v, |_| {
-                println!("{id}");
-                // what it will do, on stderr: stdout stays the id for scripts
-                if !fate.starts.is_empty() {
-                    eprintln!("starts: {}", fate.starts.join(", "));
-                }
-                if fate.waiting > 0 {
-                    eprintln!("may reach {} waiting run(s)", fate.waiting);
-                }
-                if fate.starts.is_empty() {
-                    match &fate.nearest {
-                        Some(n) => eprintln!("nothing starts on {kind}: did you mean {n}?"),
-                        None => eprintln!("nothing starts on {kind}"),
-                    }
-                }
-                if !running {
-                    eprintln!("no daemon is running: it waits for itero daemon");
-                }
-            })?;
-        }
-        Cmd::Workflow { cmd } => {
-            let ws = workspace()?;
-            match cmd {
-                WorkflowCmd::List { json } => workflow::list(&ws, json)?,
-                WorkflowCmd::Runs {
-                    run: Some(run),
-                    json,
-                    ..
-                } => workflow::run(&ws, &run, json)?,
-                WorkflowCmd::Runs {
-                    run: None,
-                    errors,
-                    workflow,
-                    action,
-                    limit,
-                    all,
-                    json,
-                } => workflow::runs(
-                    &ws,
-                    &workflow::Filter {
-                        errors,
-                        workflow,
-                        action,
-                        limit,
-                        all,
-                    },
-                    json,
-                )?,
-            }
-        }
-        Cmd::Action { cmd } => {
-            let ws = workspace()?;
-            match cmd {
-                ActionCmd::List { json } => kinds::actions(&ws, json)?,
-                ActionCmd::Errors {
-                    action,
-                    limit,
-                    json,
-                } => kinds::errors(&ws, action.as_deref(), limit, json)?,
-                ActionCmd::Repeat {
-                    cmd: ActionRepeatCmd::Get { name, json },
-                } => kinds::entry_get(&ws, kinds::Kind::Action, &name, "repeat", json)?,
-                ActionCmd::Repeat {
-                    cmd: ActionRepeatCmd::Set { name, data, file },
-                } => kinds::repeat_set(&ws, &name, data, file)?,
-            }
-        }
-        Cmd::Connector { cmd } => {
-            let ws = workspace()?;
-            match cmd {
-                ConnectorCmd::List { json } => kinds::connectors(&ws, json)?,
-                ConnectorCmd::Args {
-                    cmd: ConnectorArgsCmd::Get { name, json },
-                } => kinds::args_get(&ws, kinds::Kind::Connector, &name, json)?,
-                ConnectorCmd::Args {
-                    cmd: ConnectorArgsCmd::Set { name, data, file },
-                } => kinds::args_set(&ws, kinds::Kind::Connector, &name, data, file)?,
-            }
-        }
+        Cmd::Emit(args) => emit::all(args)?,
         Cmd::Completion { shell } => complete::script(shell, command),
-        Cmd::Workspace { cmd } => match cmd {
-            WorkspaceCmd::Add => workspace::add(&workspace()?)?,
-            WorkspaceCmd::Remove { name } => workspace::remove(name.as_deref())?,
-            WorkspaceCmd::List { json } => workspace::list(json)?,
-        },
+        Cmd::Workspace { ws, cmd } => {
+            let chosen = || workspace::chosen(ws.as_deref());
+            // these are about the list, or this folder: no other workspace
+            let none = |what: &str| -> Result<()> {
+                match &ws {
+                    Some(name) if what == "remove" => {
+                        bail!(
+                            "itero ws remove takes no --ws: itero ws remove {name} removes it, from any folder"
+                        )
+                    }
+                    Some(_) => {
+                        bail!("itero ws {what} takes no --ws: run it in the workspace's folder")
+                    }
+                    None => Ok(()),
+                }
+            };
+            match cmd {
+                WorkspaceCmd::Add => {
+                    none("add")?;
+                    workspace::add(&workspace()?)?
+                }
+                WorkspaceCmd::Remove { name } => {
+                    none("remove")?;
+                    workspace::remove(name.as_deref())?
+                }
+                WorkspaceCmd::List { json } => {
+                    none("list")?;
+                    workspace::list(json)?
+                }
+                WorkspaceCmd::Info { json } => top::info(&chosen()?, json)?,
+                WorkspaceCmd::Check { json } => top::check(&chosen()?, json)?,
+                WorkspaceCmd::Which { name, json } => top::which(&chosen()?, &name, json)?,
+                WorkspaceCmd::Emit(args) => emit::one(&chosen()?, args)?,
+                WorkspaceCmd::Secret { name, file } => top::secret(Some(&chosen()?), &name, file)?,
+                WorkspaceCmd::Workflow { cmd } => {
+                    let ws = chosen()?;
+                    match cmd {
+                        WorkflowCmd::List { json } => workflow::list(&ws, json)?,
+                        WorkflowCmd::Runs {
+                            run: Some(run),
+                            json,
+                            ..
+                        } => workflow::run(&ws, &run, json)?,
+                        WorkflowCmd::Runs {
+                            run: None,
+                            errors,
+                            workflow,
+                            action,
+                            limit,
+                            all,
+                            json,
+                        } => workflow::runs(
+                            &ws,
+                            &workflow::Filter {
+                                errors,
+                                workflow,
+                                action,
+                                limit,
+                                all,
+                            },
+                            json,
+                        )?,
+                    }
+                }
+                WorkspaceCmd::Action { cmd } => {
+                    let ws = chosen()?;
+                    match cmd {
+                        ActionCmd::List { json } => kinds::actions(&ws, json)?,
+                        ActionCmd::Errors {
+                            action,
+                            limit,
+                            json,
+                        } => kinds::errors(&ws, action.as_deref(), limit, json)?,
+                        ActionCmd::Repeat {
+                            cmd: ActionRepeatCmd::Get { name, json },
+                        } => kinds::entry_get(&ws, kinds::Kind::Action, &name, "repeat", json)?,
+                        ActionCmd::Repeat {
+                            cmd: ActionRepeatCmd::Set { name, data, file },
+                        } => kinds::repeat_set(&ws, &name, data, file)?,
+                    }
+                }
+                WorkspaceCmd::Connector { cmd } => {
+                    let ws = chosen()?;
+                    match cmd {
+                        ConnectorCmd::List { json } => kinds::connectors(&ws, json)?,
+                        ConnectorCmd::Args {
+                            cmd: ConnectorArgsCmd::Get { name, json },
+                        } => kinds::args_get(&ws, kinds::Kind::Connector, &name, json)?,
+                        ConnectorCmd::Args {
+                            cmd: ConnectorArgsCmd::Set { name, data, file },
+                        } => kinds::args_set(&ws, kinds::Kind::Connector, &name, data, file)?,
+                    }
+                }
+            }
+        }
+        Cmd::MovedCheck { rest } => moved("check", &rest)?,
+        Cmd::MovedWhich { rest } => moved("which", &rest)?,
+        Cmd::MovedWorkflow { rest } => moved("wf", &rest)?,
+        Cmd::MovedAction { rest } => moved("ac", &rest)?,
+        Cmd::MovedConnector { rest } => moved("cn", &rest)?,
         Cmd::Ai { cmd } => match cmd {
             AiCmd::Models { cmd } => match cmd {
                 ModelsCmd::List {
@@ -891,26 +934,8 @@ fn dispatch(cli: Cli) -> Result<()> {
             },
             AiCmd::Inspect { file, json } => ai::inspect(&file, json)?,
         },
-        Cmd::Secret { name, file } => {
-            crate::engine::secrets::ready(&name)?;
-            let value = match file {
-                Some(f) => {
-                    let t = std::fs::read_to_string(&f)
-                        .map_err(|e| anyhow!("cannot read {}: {e}", f.display()))?;
-                    let t = t.strip_suffix('\n').unwrap_or(&t);
-                    t.strip_suffix('\r').unwrap_or(t).to_string()
-                }
-                None => rpassword::prompt_password(format!("{name}: "))?,
-            };
-            if value.is_empty() {
-                bail!("{name}: an empty secret is not kept");
-            }
-            crate::engine::secrets::set(&name, &value)?;
-            println!("{name}: kept in the OS secret store");
-        }
-        Cmd::Check { json } => top::check(&workspace()?, json)?,
-        Cmd::Which { name, json } => top::which(&workspace()?, &name, json)?,
-        Cmd::Info { json } => top::info(&workspace()?, json)?,
+        Cmd::Secret { name, file } => top::secret(None, &name, file)?,
+        Cmd::Info { json } => top::machine_info(json)?,
         Cmd::Watch { path } => {
             let watch = crate::connectors::Watch::new(&path)?;
             // the daemon going away closes stdin: then the connector using

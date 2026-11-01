@@ -1,15 +1,15 @@
 ---
-title: workflow
+title: ws workflow
 description: Your workflows and their runs.
 ---
 
-`itero workflow` (or `itero wf`) shows your workflows and what they
+`itero ws wf` (`itero ws workflow` in full) shows your workflows and what they
 did. Use it to see which workflows you have, to look at their runs, and to
 find out why a run went wrong.
 
 ```sh
-itero wf list
-itero wf runs [<run>] [--errors] [--workflow W] [--action A] [--limit N] [--all]
+itero ws wf list
+itero ws wf runs [<run>] [--errors] [--workflow W] [--action A] [--limit N] [--all]
 ```
 
 Each one takes `--json`, to print JSON for scripts instead of a table.
@@ -21,7 +21,7 @@ and how the last one went. The last line says whether the daemon is running
 and how many events (messages) wait for it.
 
 ```
-$ itero wf list
+$ itero ws wf list
 greet   workflows/greet.json   on greet.someone                    runs 1   last: done 1s ago
 order   workflows/order.json   on order.placed                     runs 2   last: error 1s ago
 keep    built in               on itero.space.full, at 0 * * * *   runs 0   last: none           internal
@@ -40,7 +40,7 @@ what its step said last on stderr (its progress, see
 [Actions](/guides/actions/)).
 
 ```
-$ itero wf runs
+$ itero ws wf runs
 01a16fd5-46c1-77fa-88da-39c36126cd9c   sunny-moss    order   error   2026-10-24T21:33:30Z   2026-10-24T21:33:30Z   #send-mail: exit 1: smtp: connection refused
 01a16fd5-46c0-7738-98d2-f87b1211af19   sunny-lake    greet   done    2026-10-24T21:33:30Z   2026-10-24T21:33:30Z
 ```
@@ -53,7 +53,7 @@ run that went on as one run per item of a list, see
 |---|---|
 | `--errors` | only the runs that ended in error |
 | `--workflow W` | only workflow `W`'s runs |
-| `--action A` | only the runs that broke at action `A` (see also [`itero action errors`](/commands/action/#errors)) |
+| `--action A` | only the runs that broke at action `A` (see also [`itero ws ac errors`](/commands/action/#errors)) |
 | `--limit N` | at most `N` runs |
 | `--all` | the internal workflows' runs too |
 
@@ -65,7 +65,7 @@ without it, running or waiting, as `stopped` (a workflow under its own
 name; [How steps side by side wait](/guides/workflows/#how-steps-side-by-side-wait)).
 
 ```
-$ itero wf runs sunny-lake
+$ itero ws wf runs sunny-lake
 sunny-lake  01a16fd5-46c0-7738-98d2-f87b1211af19  greet  done
   2026-10-24T21:33:22Z  started  {"name":"Ayşe"}
   2026-10-24T21:33:22Z  #hello  done  "Merhaba, Ayşe!"
@@ -78,6 +78,6 @@ A name is two random words. Of two runs with one name it shows the newest,
 and says so; give the id for another. Ended runs are kept for `keep` (a
 day), then forgotten. See [The log, IDs and names](/guides/log/).
 
-`itero wf runs` shows what already ran. To find mistakes in your files
-before anything runs, use [`itero check`](/commands/check/).
+`itero ws wf runs` shows what already ran. To find mistakes in your files
+before anything runs, use [`itero ws check`](/commands/check/).
 

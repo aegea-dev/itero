@@ -7,6 +7,24 @@ use crate::workspace::Workspace;
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
 
+/// The workspace a `ws` command is about: the one named on the machine's
+/// list, else the folder's.
+pub fn chosen(name: Option<&str>) -> Result<Workspace> {
+    let Some(name) = name else {
+        return crate::workspace::find(&std::env::current_dir()?);
+    };
+    Ok(crate::engine::machine::open(&listed(name)?)?.0)
+}
+
+/// The entry on the machine's list with this name.
+pub fn listed(name: &str) -> Result<Entry> {
+    let list = List::read(&list_path()?)?;
+    match list.by_name(name) {
+        Some(e) => Ok(e.clone()),
+        None => bail!("no workspace {name} on this machine's list: itero ws list lists them"),
+    }
+}
+
 /// `itero workspace add`: this workspace on the list, under its journal's
 /// name; a name another listed workspace has is replaced in this one's
 /// journal. A folder already listed by its journal id (it moved) is
@@ -72,14 +90,9 @@ pub fn remove(name: Option<&str>) -> Result<()> {
 /// A listed workspace as it is now: `missing` when its folder is gone or
 /// holds another workspace, else `stopped` (no daemon runs it).
 fn state(e: &Entry) -> (Value, Value) {
-    let found = crate::workspace::find(&e.folder)
-        .ok()
-        .filter(|ws| ws.root == e.folder && ws.journal().is_file())
-        .and_then(|ws| Journal::open(&ws).ok())
-        .filter(|j| j.workspace().is_ok_and(|me| me.id == e.id));
-    match found {
-        None => (json!("missing"), Value::Null),
-        Some(j) => {
+    match crate::engine::machine::open(e) {
+        Err(_) => (json!("missing"), Value::Null),
+        Ok((_, j)) => {
             let last = j
                 .runs_page(None, None, &[], 1)
                 .ok()
