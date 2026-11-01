@@ -77,7 +77,7 @@ itero ai models remove unsloth/Qwen3.5-4B-GGUF:Q4_K_M
 - **`add`** downloads from Hugging Face: it shows the file, its size
   and licence first, resumes a broken download, and checks the file
   against Hugging Face's SHA-256. A licence other than MIT or Apache-2.0
-  is warned of.
+  is warned of. The first model added becomes the machine's for `#ai`.
 - **`remove`** takes a model out of use and keeps its file; `--delete`
   deletes the file too, only one `add` downloaded.
 

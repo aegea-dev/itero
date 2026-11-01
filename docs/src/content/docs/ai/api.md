@@ -59,10 +59,14 @@ The fields it takes:
 | `max_completion_tokens`, `max_tokens` | the longest answer, in tokens |
 | `temperature`, `top_p`, `seed`, `presence_penalty`, `frequency_penalty`, `stop` | as OpenAI's |
 | `top_k`, `min_p` | not OpenAI's, but llama.cpp's and vLLM's |
+| `context` | itero-ai's own: tokens for the prompt and the answer, 1,024 or more; 32,768 if not given |
 | `chat_template_kwargs` | `{ "enable_thinking": true }` lets a model that thinks think first |
 | `response_format` | `text`, `json_object`, or `json_schema` with a schema the answer must follow |
 | `stream` | `true` for the answer in pieces |
 | `stream_options`, `n` | taken; `n` can only be 1 |
+
+`#ai`'s [defaults](/ai/workflows/#values-a-step-leaves-out) are not the
+API's: a request gets what it says, and llama.cpp's own for the rest.
 
 **Anything else is refused, by name.** itero-ai never ignores a field it
 does not honour, so a tool cannot believe it got what it asked for:
@@ -101,6 +105,9 @@ thinks reasons first. Its reasoning comes apart from its answer, in
 "message": { "role": "assistant", "content": "\n\nNo",
              "reasoning_content": "Thinking Process:\n\n1.  **Analyze the Request:** ..." }
 ```
+
+A template may ignore `enable_thinking`. A `<think>` block that opens an
+answer comes as `reasoning_content` either way.
 
 ### Streaming
 
@@ -158,8 +165,12 @@ curl --unix-socket "$SOCKET" http://localhost/itero/inspect \
 ```json
 { "architecture": "qwen35", "basename": "Qwen3.5-4B", "bytes": 2740937888, "chat": true,
   "context": 262144, "licence": "apache-2.0", "maker": null, "params": "4B",
-  "quant": "Q4_K_M", "runs": true, "thinking": true }
+  "quant": "Q4_K_M", "runs": true, "sampling": null, "thinking": true, "thinking_off": true }
 ```
+
+`sampling` is what the file names (`general.sampling.*`), if it can run
+here. `thinking_off` says its chat template reads `enable_thinking`, so
+thinking can be turned off.
 
 `itero ai inspect` gives the same.
 

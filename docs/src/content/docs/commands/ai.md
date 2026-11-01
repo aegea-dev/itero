@@ -10,6 +10,8 @@ itero ai models list [WORD] [--sort COLUMN] [--reverse] [filters] [--all] [--jso
 itero ai models add <org>/<repo>[:<QUANT>] [--yes]
 itero ai models remove <org>/<repo>[:<QUANT>] [--delete]
 itero ai inspect <file.gguf> [--json]
+itero ai defaults [--json]
+itero ai defaults set '<json>'
 ```
 
 ## `models list`
@@ -62,6 +64,9 @@ checked against the SHA-256 Hugging Face publishes.
 A model that asks you to accept its terms needs a Hugging Face token:
 `itero secret HF_TOKEN`. `$HF_ENDPOINT` points at a mirror.
 
+The first model added becomes the machine's for `#ai`, and `add` says
+so; later ones leave it.
+
 ## `models remove`
 
 Takes a model out of use: steps naming it fail, saying so, and its file
@@ -72,3 +77,23 @@ stays. `add` takes it back. `--delete` deletes the file too, only one
 
 One GGUF file's header, without its weights: what it is, and whether
 this build of llama.cpp can run it.
+
+## `defaults`
+
+The values a [`#ai` step leaves out](/ai/workflows/#values-a-step-leaves-out):
+each one, and where it comes from.
+
+```sh
+itero ai defaults
+itero ai defaults set '{"model": "unsloth/Qwen3.5-4B-GGUF", "temperature": 0.3}'
+itero ai defaults set '{"temperature": null}'
+```
+
+`set` merges into what is there, and `null` takes a key out. Its keys are
+`#ai`'s own args: `model`, `thinking`, `temperature`, `top_p`, `top_k`,
+`min_p`, `presence_penalty`, `max_tokens`, `seed` and `context`. Their
+values follow the same rules as in a step; a model this machine does not
+have is warned of.
+
+They are this machine's, kept in `~/.local/state/itero/ai-defaults.json`,
+never in a workspace's config.
