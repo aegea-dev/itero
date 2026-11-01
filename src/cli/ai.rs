@@ -199,7 +199,7 @@ pub fn inspect(file: &Path, json: bool) -> Result<()> {
     let file =
         std::fs::canonicalize(file).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
     let own = crate::ai::socket_for(&here()?).with_extension("cli.sock");
-    let mut s = crate::ai::ensure_at(own, Duration::from_secs(30), |_| ())?;
+    let mut s = crate::ai::header_reader_at(own, Duration::from_secs(30))?;
     let answer = crate::net::unix_client(&s.socket, Duration::from_secs(60))?
         .post("http://itero-ai/itero/inspect")
         .json(&json!({ "path": file }))

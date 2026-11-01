@@ -171,6 +171,22 @@ pub fn ensure_at(
     idle: Duration,
     on_line: impl Fn(Value) + Send + 'static,
 ) -> Result<Started> {
+    start_at(socket, idle, on_line, true)
+}
+
+/// An itero-ai that only reads model files' headers, on its own socket:
+/// without the GPU, so it compiles no shaders and starts at once, however
+/// many others start. It answers no step, and loads no model.
+pub fn header_reader_at(socket: PathBuf, idle: Duration) -> Result<Started> {
+    start_at(socket, idle, |_| (), false)
+}
+
+fn start_at(
+    socket: PathBuf,
+    idle: Duration,
+    on_line: impl Fn(Value) + Send + 'static,
+    gpu: bool,
+) -> Result<Started> {
     let said = Arc::new(Mutex::new(String::new()));
     if answers(&socket) {
         return Ok(Started {
@@ -181,13 +197,18 @@ pub fn ensure_at(
     }
     own_dir(socket.parent().expect("a socket is in a folder"))?;
     let bin = binary()?;
-    let mut child = Command::new(&bin)
+    let mut command = Command::new(&bin);
+    command
         .env("ITERO_AI_SOCKET", &socket)
         .env("ITERO_AI_IDLE", idle.as_secs().to_string())
         .env("ITERO_AI_INDEX", index_path()?)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if !gpu {
+        command.env("GGML_METAL_DEVICES", "0");
+    }
+    let mut child = command
         .spawn()
         .with_context(|| format!("cannot start {}", bin.display()))?;
     let out = child.stdout.take().expect("piped");
