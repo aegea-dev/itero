@@ -186,3 +186,5 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
 - [`examples/terraform`](examples/terraform): a k3d cluster of 3 machines
   with a web app applied by OpenTofu, a guard on the plan, and the cluster
   deleted when a step fails.
+
+`itero` is developed by `Erhan Gundogan` with substantial help from AI coding assistants (Claude Code and OpenAI Codex).
