@@ -18,6 +18,19 @@ fn kinds(ws: &itero::workspace::Workspace) -> Vec<String> {
         .collect()
 }
 
+/// The data of the first event of `kind`.
+fn data(ws: &itero::workspace::Workspace, kind: &str) -> serde_json::Value {
+    Journal::open(ws)
+        .unwrap()
+        .events(None)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.event.kind == kind)
+        .unwrap_or_else(|| panic!("no {kind}"))
+        .event
+        .data
+}
+
 fn wait_for(ws: &itero::workspace::Workspace, kind: &str) {
     for _ in 0..100 {
         if kinds(ws).iter().any(|k| k == kind) {
@@ -43,6 +56,8 @@ fn started_once_used_again_and_after_a_bad_end_started_after_a_pause() {
         std::env::set_var("ITERO_AI_BIN", &bin);
         std::env::set_var("XDG_CACHE_HOME", d.path().join("önbellek"));
         std::env::remove_var("ITERO_AI_SOCKET");
+        // a start that takes a while, as compiling Metal's shaders does
+        std::env::set_var("ITERO_TEST_START_SECS", "1");
     }
     let root = d.path().join("çalışma");
     std::fs::create_dir(&root).unwrap();
@@ -54,6 +69,8 @@ fn started_once_used_again_and_after_a_bad_end_started_after_a_pause() {
     assert_eq!(sock, itero::ai::socket_for(&root));
     assert_eq!(k.socket(&ws).unwrap(), sock, "the one running is used");
     assert_eq!(kinds(&ws), vec!["itero.ai.started"]);
+    let took = data(&ws, "itero.ai.started")["seconds"].as_f64().unwrap();
+    assert!((1.0..30.0).contains(&took), "it took {took} s to answer");
     assert_eq!(k.health().unwrap().state, "running");
 
     // ended badly (killed): it is not started again before its pause. The

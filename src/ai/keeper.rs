@@ -117,8 +117,21 @@ impl Keeper {
                     json!({ "model": line["model"], "seconds": line["seconds"] }),
                 );
             }
-        })
-        .map_err(|e| format!("{e:#}"))?;
+        });
+        let started = match started {
+            Ok(started) => started,
+            Err(e) => {
+                drop(s);
+                let why = format!("{e:#}");
+                let mut data = json!({ "why": why });
+                // how long it ran, when one was started at all
+                if let Some(f) = e.downcast_ref::<super::StartFailed>() {
+                    data["seconds"] = json!(f.seconds);
+                }
+                self.tell(ws, events::AI_START_FAILED, data);
+                return Err(why);
+            }
+        };
         let socket = started.socket.clone();
         let Some(mut child) = started.child else {
             // one answering already, or a socket set by hand
@@ -132,7 +145,7 @@ impl Keeper {
         self.tell(
             ws,
             events::AI_STARTED,
-            json!({ "socket": socket.display().to_string() }),
+            json!({ "socket": socket.display().to_string(), "seconds": started.seconds }),
         );
         let ws = ws.clone();
         let said = started.said;
