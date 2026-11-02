@@ -68,14 +68,15 @@ loaded, and its recent `failures`.
 
 ## Its environment
 
-itero-ai has no commands and no flags: the daemon starts it with three
-environment variables, all needed.
+itero-ai has no commands and no flags: the daemon starts it with these
+environment variables, the first three needed.
 
 | Variable | Is |
 |---|---|
 | `ITERO_AI_SOCKET` | the Unix socket to answer on |
 | `ITERO_AI_IDLE` | seconds with nothing asked before it exits |
 | `ITERO_AI_INDEX` | the models list, `~/.cache/itero/models.json` |
+| `ITERO_AI_PARENT` | the process id of the itero that started it: itero-ai exits when that process is gone. Without it, the parent it has when it starts |
 | `ITERO_AI_LLAMA_LOG` | set to anything: llama.cpp's own log on stderr, for troubleshooting |
 
 To run one yourself, for another tool or to see what it says:
