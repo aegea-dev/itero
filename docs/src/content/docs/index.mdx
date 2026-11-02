@@ -103,6 +103,16 @@ A model is one more program to chain, used only where judgment is needed:
 
 A mail arrives; `#ai` asks a model to sum it up in one line, and
 `#notify` shows that line as a notification, under the sender's name.
+The model runs on your machine through [itero-ai](/ai/), installed
+apart from itero, with a model added:
+
+```sh
+brew install aegea-dev/tap/itero-ai
+itero ai models add unsloth/Qwen3.5-4B-GGUF
+```
+
+Or the step asks a model behind a [URL](/ai/workflows/#a-model-behind-a-url),
+such as OpenAI's.
 
 ## Why itero
 
