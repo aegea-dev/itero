@@ -17,6 +17,42 @@ fn workspace(d: &Path) -> itero::workspace::Workspace {
 }
 
 #[test]
+fn held_says_whether_a_daemon_runs_it_and_takes_nothing() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path());
+    let lock = d.path().join(".itero/daemon.lock");
+    assert!(!itero::engine::lock::held(&ws).unwrap());
+    assert!(!lock.exists(), "asking makes no file");
+    let first = itero::engine::lock::take(&ws, "sakin-nehir, pid 1").unwrap();
+    assert!(itero::engine::lock::held(&ws).unwrap());
+    // asking lets nothing go, and writes nothing
+    assert!(itero::engine::lock::take(&ws, "başka").is_err());
+    assert_eq!(
+        std::fs::read_to_string(&lock).unwrap(),
+        "sakin-nehir, pid 1"
+    );
+    drop(first);
+    assert!(!itero::engine::lock::held(&ws).unwrap());
+    // a daemon starting while a command asks (holding the lock shared
+    // for an instant, here 50 ms) still takes it, trying again
+    use std::os::fd::AsRawFd;
+    let asking = std::fs::File::open(&lock).unwrap();
+    // SAFETY: flock on a descriptor this test owns
+    assert_eq!(
+        unsafe { libc::flock(asking.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) },
+        0
+    );
+    let lets_go = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        drop(asking);
+    });
+    let t = Instant::now();
+    drop(itero::engine::lock::take(&ws, "başka").unwrap());
+    assert!(t.elapsed() >= Duration::from_millis(40), "it waited");
+    lets_go.join().unwrap();
+}
+
+#[test]
 fn a_second_lock_on_one_workspace_is_refused_naming_the_first() {
     let d = tempfile::tempdir().unwrap();
     let ws = workspace(d.path());

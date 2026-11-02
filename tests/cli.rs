@@ -768,6 +768,62 @@ fn emit_wait_answers_with_the_runs_end() {
 }
 
 #[test]
+fn a_daemon_without_its_api_is_running_all_the_same() {
+    let d = workspace();
+    let state = d.path().join("durum");
+    file(
+        d.path(),
+        "workflows/selam.json",
+        r##"{ "on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"] }"##,
+    );
+    file(
+        d.path(),
+        "actions/selamla",
+        "#!/bin/sh\necho '\"merhaba\"'\n",
+    );
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .args(args)
+            .current_dir(d.path())
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .env("XDG_STATE_HOME", &state)
+            .output()
+            .unwrap()
+    };
+    let _daemon = stop::Daemon(
+        std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .args(["daemon", "--no-serve"])
+            .current_dir(d.path())
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .env("XDG_STATE_HOME", &state)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    // it holds the workspace's lock once it writes who it is in it
+    let lock = d.path().join(".itero/daemon.lock");
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::fs::read_to_string(&lock)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        assert!(std::time::Instant::now() < end, "the daemon never started");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let o = run(&["ws", "emit", "kişi.geldi", "{}"]);
+    assert!(o.status.success(), "{o:?}");
+    assert!(!err(&o).contains("no daemon is running"), "{}", err(&o));
+    let o = run(&["ws", "emit", "--wait", "kişi.geldi", "{}"]);
+    assert_eq!(o.status.code(), Some(0), "{o:?}");
+    let answer: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(answer["runs"][0]["state"]["output"], "merhaba");
+    let o = run(&["ws", "wf", "list", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["daemon"]["running"], true, "{v}");
+}
+
+#[test]
 fn which_says_where_each_kind_of_one_name_is() {
     let d = workspace();
     file(

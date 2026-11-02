@@ -677,12 +677,10 @@ fn daemon_for(
     }))
 }
 
-/// Whether a daemon runs this workspace.
-fn daemon_running(
-    ws: &crate::workspace::Workspace,
-    j: &crate::engine::journal::Journal,
-) -> Result<bool> {
-    Ok(daemon_for(ws, j)?.is_some())
+/// Whether a daemon runs this workspace: one holds its lock, served or
+/// not (`--no-serve`).
+fn daemon_running(ws: &crate::workspace::Workspace) -> Result<bool> {
+    crate::engine::lock::held(ws).map_err(anyhow::Error::msg)
 }
 
 fn dispatch(cli: Cli) -> Result<()> {

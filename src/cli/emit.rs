@@ -46,7 +46,7 @@ pub fn one(ws: &Workspace, args: EmitArgs) -> Result<()> {
         .unwrap_or_default();
     if let Some(timeout) = wait(&args)? {
         // with no daemon nothing would answer: say so, sending nothing
-        if !super::daemon_running(ws, &crate::engine::journal::Journal::open(ws)?)? {
+        if !super::daemon_running(ws)? {
             bail!(
                 "no daemon is running: start itero daemon (or itero ws add, with the machine's daemon), then send it again"
             );
@@ -67,7 +67,7 @@ pub fn one(ws: &Workspace, args: EmitArgs) -> Result<()> {
     let id = events::emit(ws, kind, data, &now)?;
     super::nudge(ws, &now);
     let fate = events::fate(ws, kind, &fields)?;
-    let running = super::daemon_running(ws, &crate::engine::journal::Journal::open(ws)?)?;
+    let running = super::daemon_running(ws)?;
     let v = json!({
         "id": id,
         "starts": fate.starts,
@@ -113,7 +113,7 @@ pub fn all(args: EmitArgs) -> Result<()> {
                 .iter()
                 .map(|e| {
                     s.spawn(move || match machine::open(e) {
-                        Ok((ws, j)) => matches!(super::daemon_running(&ws, &j), Ok(false)),
+                        Ok((ws, _)) => matches!(super::daemon_running(&ws), Ok(false)),
                         Err(_) => false,
                     })
                 })
