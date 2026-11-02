@@ -229,6 +229,8 @@ fn a_url_step_gets_none_of_itero_ais_warnings() {
         { "#ai": { "args": { "url": "$event.url", "message": "c" } } }
     ]));
     assert!(ok && !out.contains("warning"), "{out}");
+    // a url known only in a run may be any host: remote, as written
+    assert!(out.contains("    remote: $event.url\n"), "{out}");
     // the machine's url: a step without one sends there, not to itero-ai
     let (ok, out) = check_with(
         ai(json!({ "message": "x" })),

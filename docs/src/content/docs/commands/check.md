@@ -44,7 +44,8 @@ check. See [Actions](/guides/actions/#when-something-it-needs-is-missing).
 Under `#ai`, a line for each of its steps says where it sends: `local:
 <model>` for itero-ai, `local: <url>` for a server on this machine
 (`localhost`, `127.0.0.1`, `[::1]`), `remote: <url>` for any other host,
-one on your own network too. A step with no `url` of its own sends where
+one on your own network too, and for a url known only in a run
+(`remote: $event.url`). A step with no `url` of its own sends where
 the machine's defaults say. See
 [A model behind a URL](/ai/workflows/#a-model-behind-a-url).
 
