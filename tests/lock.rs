@@ -17,6 +17,45 @@ fn workspace(d: &Path) -> itero::workspace::Workspace {
 }
 
 #[test]
+fn held_says_whether_a_daemon_runs_it_and_takes_nothing() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path());
+    let lock = d.path().join(".itero/daemon.lock");
+    assert!(!itero::engine::lock::held(&ws).unwrap());
+    assert!(!lock.exists(), "asking makes no file");
+    let first = itero::engine::lock::take(&ws, "sakin-nehir, pid 1").unwrap();
+    assert!(itero::engine::lock::held(&ws).unwrap());
+    // asking lets nothing go, and writes nothing
+    assert!(itero::engine::lock::take(&ws, "başka").is_err());
+    assert_eq!(
+        std::fs::read_to_string(&lock).unwrap(),
+        "sakin-nehir, pid 1"
+    );
+    drop(first);
+    assert!(!itero::engine::lock::held(&ws).unwrap());
+    // a daemon starting while commands ask still takes it
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let asking: Vec<_> = (0..4)
+        .map(|_| {
+            let (ws, done) = (ws.clone(), done.clone());
+            std::thread::spawn(move || {
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = itero::engine::lock::held(&ws);
+                }
+            })
+        })
+        .collect();
+    let taken = (0..500)
+        .map(|_| itero::engine::lock::take(&ws, "başka").map(drop))
+        .collect::<Result<Vec<_>, _>>();
+    done.store(true, std::sync::atomic::Ordering::Relaxed);
+    for a in asking {
+        a.join().unwrap();
+    }
+    taken.unwrap();
+}
+
+#[test]
 fn a_second_lock_on_one_workspace_is_refused_naming_the_first() {
     let d = tempfile::tempdir().unwrap();
     let ws = workspace(d.path());

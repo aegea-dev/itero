@@ -51,15 +51,53 @@ pub fn take_file(path: &Path, who: &str) -> Result<DaemonLock, Refused> {
     Ok(DaemonLock { _file: file })
 }
 
+fn path(ws: &Workspace) -> std::path::PathBuf {
+    ws.root.join(".itero").join("daemon.lock")
+}
+
 /// Locks `ws` for the daemon `who` (its name and pid), or says which
-/// daemon runs it already.
+/// daemon runs it already. A command asking whether a daemon runs it
+/// holds the lock for an instant ([`held`]): a lock still held after a
+/// short while is a daemon's.
 pub fn take(ws: &Workspace, who: &str) -> Result<DaemonLock, String> {
-    match take_file(&ws.root.join(".itero").join("daemon.lock"), who) {
+    let mut tries = 0;
+    let taken = loop {
+        match take_file(&path(ws), who) {
+            Err(Refused::Held(_)) if tries < 10 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            other => break other,
+        }
+    };
+    match taken {
         Ok(l) => Ok(l),
         Err(Refused::Held(by)) => Err(format!(
             "{}: this workspace is run by {by} already",
             ws.root.display()
         )),
         Err(Refused::Failed(why)) => Err(why),
+    }
+}
+
+/// Whether a daemon runs `ws`: it holds the workspace's lock, with or
+/// without its HTTP API. Asked by trying the lock and letting it go at
+/// once; the file is not made or written.
+pub fn held(ws: &Workspace) -> Result<bool, String> {
+    let p = path(ws);
+    let file = match File::open(&p) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("{}: {e}", p.display())),
+    };
+    // SAFETY: flock on a descriptor this function owns; closing it lets
+    // the lock go
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) } == 0 {
+        return Ok(false);
+    }
+    let e = std::io::Error::last_os_error();
+    match e.raw_os_error() {
+        Some(libc::EWOULDBLOCK) => Ok(true),
+        _ => Err(format!("{}: {e}", p.display())),
     }
 }

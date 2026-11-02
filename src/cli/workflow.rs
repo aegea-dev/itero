@@ -47,7 +47,7 @@ pub fn list(ws: &Workspace, json: bool) -> Result<()> {
     }
     let v = json!({
         "workflows": out,
-        "daemon": { "running": super::daemon_running(ws, &j)? },
+        "daemon": { "running": super::daemon_running(ws)? },
         "waiting": j.waiting_messages()?,
     });
     show(json, &v, |v| {
