@@ -311,6 +311,23 @@ Use its own command instead:
 
 # ---------------------------------------------------------------- main
 
+# An upgrade restarts the machine's service, so its daemon runs the new
+# itero: only when the service runs this itero ($1) and is running. On a
+# first install there is none; a service stopped by hand stays so.
+restart_service() {
+	case "$(uname)" in
+	Darwin) unit="$HOME/Library/LaunchAgents/dev.aegea.itero.daemon.plist" ;;
+	*) unit="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/aegea-itero.daemon.service" ;;
+	esac
+	[ -f "$unit" ] && grep -qF "$1" "$unit" || return 0
+	"$1" service status --json 2>/dev/null | grep -q '"service": "running"' || return 0
+	if "$1" service restart >/dev/null 2>&1; then
+		say "Restarted the service: its daemon runs the new itero"
+	else
+		warn "the service still runs the itero from before: run itero service restart"
+	fi
+}
+
 main() {
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -405,6 +422,7 @@ Check your network connection and try again."
 
 	check_on_path
 	check_shadowing "$DEST/itero"
+	restart_service "$DEST/itero"
 
 	say ""
 	say "Next:  mkdir my-workflows && cd my-workflows && echo '{}' > itero.config.json && itero daemon"
