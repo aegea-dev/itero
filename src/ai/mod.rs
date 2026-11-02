@@ -5,6 +5,7 @@ pub mod defaults;
 pub mod download;
 pub mod find;
 pub mod keeper;
+pub mod remote;
 pub mod step;
 
 use anyhow::{Context, Result, bail};

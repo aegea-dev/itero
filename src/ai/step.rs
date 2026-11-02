@@ -1,10 +1,11 @@
 //! The built-in `#ai`: asks the local model, through itero-ai on the socket
-//! the daemon gave the step, for a text or typed fields.
+//! the daemon gave the step, or a model behind a `url`, for a text or typed
+//! fields.
 use crate::engine::worker::{Failure, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::io::BufRead;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The args `#ai` reads.
 pub const ARGS: [&str; 15] = [
@@ -145,6 +146,18 @@ pub(super) fn body(model: &str, env: &BTreeMap<String, String>) -> Result<Value,
     if env.contains_key("text") {
         return Err(fail("it takes message, not text"));
     }
+    if let Some(url) = env.get("url") {
+        if !url.starts_with('$') {
+            super::remote::api(url)?;
+        }
+        if env.contains_key("context") {
+            return Err(fail(
+                "context is itero-ai's; a step with a url leaves it out",
+            ));
+        }
+    } else if env.contains_key("key") {
+        return Err(fail("key goes with a url"));
+    }
     let text = env
         .get("message")
         .ok_or_else(|| fail("it needs $message"))?;
@@ -233,7 +246,7 @@ pub fn check(args: &Value) -> Result<Seen, String> {
             let text = match v {
                 Value::String(s)
                     if s.starts_with('$')
-                        && !["model", "message", "system", "url"].contains(&k.as_str()) =>
+                        && !["model", "message", "system", "url", "key"].contains(&k.as_str()) =>
                 {
                     continue;
                 }
@@ -244,6 +257,9 @@ pub fn check(args: &Value) -> Result<Seen, String> {
         }
     }
     let thinking_false = env.get("thinking").is_some_and(|t| t == "false");
+    if env.contains_key("url") && !env.contains_key("model") {
+        return Err(fail("a step with a url names its model"));
+    }
     body(env.get("model").map_or("", String::as_str), &env)?;
     let model = match env.get("model") {
         None => Written::Not,
@@ -313,7 +329,27 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         .and_then(|p| itero_ai_index::Index::read(&p))
         .map_err(fail)?;
     super::defaults::fill(&mut env, &machine, &ix);
+    if let Some(url) = env.get("url").cloned() {
+        if let Some(n) = env
+            .get("key")
+            .and_then(|k| k.strip_prefix("$$"))
+            .map(String::from)
+        {
+            // a key from the machine's defaults: a $$NAME the step's
+            // binding did not see
+            let ws = crate::workspace::find(&r.root).map_err(fail)?;
+            let v = crate::engine::secrets::get_in(&ws, &n).ok_or_else(|| {
+                fail(format!(
+                    "{n} is not set: no secret, not in .env, no environment variable"
+                ))
+            })?;
+            env.insert("key".into(), v);
+        }
+        return super::remote::run(r, &env, &url, told);
+    }
     let body = request(&env)?;
+    let model = body["model"].as_str().unwrap_or("").to_string();
+    let started = Instant::now();
     let socket = r
         .env
         .get("ITERO_AI_SOCKET")
@@ -342,17 +378,18 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         }
         return Err(fail(why).into());
     }
-    let (mut content, mut thinking, mut n) = (String::new(), String::new(), 0u64);
-    for line in std::io::BufReader::new(resp).lines() {
-        let line = line.map_err(|e| fail(format!("reading the answer: {e}")))?;
-        let Some(data) = line.strip_prefix("data: ") else {
-            continue;
-        };
+    let (mut content, mut thinking, mut usage, mut n) =
+        (String::new(), String::new(), Value::Null, 0u64);
+    for data in sse(resp) {
+        let data = data?;
         if data == "[DONE]" {
             break;
         }
         let v: Value =
-            serde_json::from_str(data).map_err(|e| fail(format!("a piece of the answer: {e}")))?;
+            serde_json::from_str(&data).map_err(|e| fail(format!("a piece of the answer: {e}")))?;
+        if !v["usage"].is_null() {
+            usage = v["usage"].clone();
+        }
         if let Some(m) = v["error"]["message"].as_str() {
             return Err(fail(m).into());
         }
@@ -375,7 +412,69 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
     if !thinking.is_empty() {
         log_thinking(r, &thinking);
     }
+    log_answer(
+        r,
+        "itero-ai",
+        &model,
+        started.elapsed(),
+        &json!({ "model": model, "usage": usage,
+                 "choices": [{ "index": 0, "message": { "role": "assistant", "content": content } }] }),
+    );
     Ok(Outcome::Done(output(&r.env, &content)?))
+}
+
+/// The `data` of each server-sent event, as text: `data:` with or without
+/// its space, comment lines (`:` first) skipped, `\r\n` line ends taken.
+/// The lines of one event's data are joined by `\n`.
+pub(super) fn sse(resp: impl std::io::Read) -> impl Iterator<Item = Result<String, String>> {
+    let mut lines = std::io::BufReader::new(resp).lines();
+    let mut data: Vec<String> = vec![];
+    std::iter::from_fn(move || {
+        loop {
+            match lines.next() {
+                None if data.is_empty() => return None,
+                None => return Some(Ok(std::mem::take(&mut data).join("\n"))),
+                Some(Err(e)) => return Some(Err(fail(format!("reading the answer: {e}")))),
+                Some(Ok(l)) => {
+                    let l = l.strip_suffix('\r').unwrap_or(&l);
+                    if l.is_empty() {
+                        if !data.is_empty() {
+                            return Some(Ok(std::mem::take(&mut data).join("\n")));
+                        }
+                    } else if let Some(d) = l.strip_prefix("data:") {
+                        data.push(d.strip_prefix(' ').unwrap_or(d).to_string());
+                    }
+                    // ":" comments, "event:", "id:" and "retry:" lines: nothing to keep
+                }
+            }
+        }
+    })
+}
+
+/// Whether the step asks itero-ai: it has no url, and the machine's
+/// defaults give none.
+pub fn needs_itero_ai(env: &BTreeMap<String, String>) -> Result<bool, String> {
+    if env.contains_key("url") {
+        return Ok(false);
+    }
+    let machine = super::defaults::path()
+        .and_then(|p| super::defaults::read(&p))
+        .map_err(fail)?;
+    Ok(!machine.contains_key("url"))
+}
+
+/// Every call, as the server answered it, to the workspace's log.
+pub(super) fn log_answer(r: &StepRun, at: &str, model: &str, took: Duration, response: &Value) {
+    let Ok(ws) = crate::workspace::find(&r.root) else {
+        return;
+    };
+    if let Ok(id) = crate::engine::journal::Journal::open(&ws).and_then(|j| j.workspace()) {
+        crate::engine::log::Log::new(&ws, &id.id).write(
+            "ai.answer",
+            json!({ "workflow": r.workflow, "at": at, "model": model,
+                    "seconds": took.as_secs_f64(), "response": response }),
+        );
+    }
 }
 
 /// Tells the workspace a model is missing: the `models` workflow looks

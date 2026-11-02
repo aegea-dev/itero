@@ -1483,8 +1483,9 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
     };
     let (quiet, most) = ws.step_limits(&job.action).map_err(|e| format!("{e:#}"))?;
     let (mut env, input) = bind(ws, &run.runtime.state, &job)?;
-    // the built-in #ai talks to the itero-ai the daemon keeps
-    if file == Path::new(worker::AI) {
+    // the built-in #ai talks to the itero-ai the daemon keeps, unless a
+    // url names another server
+    if file == Path::new(worker::AI) && crate::ai::step::needs_itero_ai(&env)? {
         let socket = crate::ai::keeper::Keeper::global().socket(ws)?;
         env.insert("ITERO_AI_SOCKET".into(), socket.display().to_string());
     }
