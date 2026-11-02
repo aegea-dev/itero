@@ -217,3 +217,28 @@ fn check_says_where_each_ai_step_sends_and_refuses_a_bad_url() {
         assert!(!ok && out.contains(says), "{args}: {out}");
     }
 }
+
+#[test]
+fn a_url_step_gets_none_of_itero_ais_warnings() {
+    // its model is the server's, not this machine's; none is allowed
+    let (ok, out) = check(json!([
+        { "#ai": { "args": { "url": "https://api.openai.com/v1/chat/completions",
+                             "model": "gpt-x", "message": "a", "thinking": false } } },
+        { "#ai": { "args": { "url": "https://openrouter.ai/api/v1/chat/completions",
+                             "message": "b" } } },
+        { "#ai": { "args": { "url": "$event.url", "message": "c" } } }
+    ]));
+    assert!(ok && !out.contains("warning"), "{out}");
+    // the machine's url: a step without one sends there, not to itero-ai
+    let (ok, out) = check_with(
+        ai(json!({ "message": "x" })),
+        Some(json!({ "url": "https://openrouter.ai/api/v1/chat/completions" })),
+    );
+    assert!(ok && !out.contains("warning"), "{out}");
+    // a step of its own on itero-ai is still checked against this machine
+    let (ok, out) = check(ai(json!({ "model": "u/yok", "message": "x" })));
+    assert!(
+        ok && out.contains("no model u/yok on this machine"),
+        "{out}"
+    );
+}

@@ -223,6 +223,8 @@ pub enum Written {
 pub struct Seen {
     pub model: Written,
     pub thinking_false: bool,
+    /// It names a url: its model is that server's, not itero-ai's.
+    pub url: bool,
 }
 
 /// What `itero ws check` can say of an `#ai` step's args before a run: the
@@ -237,6 +239,7 @@ pub fn check(args: &Value) -> Result<Seen, String> {
             return Ok(Seen {
                 model: Written::Later,
                 thinking_false: false,
+                url: false,
             });
         }
     };
@@ -266,6 +269,7 @@ pub fn check(args: &Value) -> Result<Seen, String> {
     Ok(Seen {
         model,
         thinking_false,
+        url: env.contains_key("url"),
     })
 }
 
@@ -304,6 +308,11 @@ pub fn warnings(seen: &Seen) -> Vec<String> {
     let machine = super::defaults::path()
         .and_then(|p| super::defaults::read(&p))
         .unwrap_or_default();
+    // a step that sends to a url, its own or the machine's, never asks
+    // itero-ai: this machine's models say nothing of it
+    if seen.url || machine.contains_key("url") {
+        return vec![];
+    }
     let model = match &seen.model {
         Written::Later => return vec![],
         Written::Named(m) => m.clone(),
