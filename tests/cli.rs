@@ -651,33 +651,25 @@ fn emit_says_what_a_message_starts() {
     assert_eq!(j.events(Some("itero.app")).unwrap().len(), 3);
 }
 
-/// A daemon serving the workspace in `d`, killed however the test ends.
-struct Daemon(std::process::Child);
-
-impl Daemon {
-    fn start(d: &Path, port: u16) -> Daemon {
-        let child = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+/// A daemon serving the workspace in `d`, once it answers on `port`.
+fn serving(d: &Path, port: u16) -> stop::Daemon {
+    // held before the wait, so a daemon that never answers is stopped too
+    let daemon = stop::Daemon(
+        std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
             .arg("daemon")
             .current_dir(d)
             .env("ITERO_NO_SECRET_STORE", "1")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .unwrap();
-        // ready once it answers on its port
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
-            assert!(std::time::Instant::now() < end, "the daemon never answered");
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        Daemon(child)
+            .unwrap(),
+    );
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+        assert!(std::time::Instant::now() < end, "the daemon never answered");
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        stop::stop(&mut self.0);
-    }
+    daemon
 }
 
 #[test]
@@ -730,7 +722,7 @@ fn emit_wait_answers_with_the_runs_end() {
         "{o:?}"
     );
 
-    let _daemon = Daemon::start(d.path(), 8802);
+    let _daemon = serving(d.path(), 8802);
     let o = itero(
         d.path(),
         &["ws", "emit", "--wait", "kişi.geldi", r#"{"kim": "ayşe"}"#],
