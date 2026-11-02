@@ -153,3 +153,63 @@ fn an_arg_it_does_not_read_is_warned_of() {
         "{out}"
     );
 }
+
+#[test]
+fn check_says_where_each_ai_step_sends_and_refuses_a_bad_url() {
+    let (ok, out) = check(json!([
+        { "#ai": { "args": { "model": "u/var", "message": "a" } } },
+        { "#ai": { "args": { "url": "http://localhost:1234/v1/chat/completions",
+                             "model": "qwen", "message": "b" } } },
+        { "#ai": { "args": { "url": "https://api.openai.com/v1/responses",
+                             "key": "$$OPENAI_API_KEY", "model": "gpt-x", "message": "c" } } }
+    ]));
+    assert!(ok, "{out}");
+    assert!(out.contains("#ai  built in"), "{out}");
+    assert!(out.contains("    local: u/var\n"), "{out}");
+    assert!(
+        out.contains("    local: http://localhost:1234/v1/chat/completions\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("    remote: https://api.openai.com/v1/responses\n"),
+        "{out}"
+    );
+    // a url from the machine's defaults is where a step without one sends
+    let (ok, out) = check_with(
+        ai(json!({ "message": "x" })),
+        Some(
+            json!({ "url": "https://openrouter.ai/api/v1/chat/completions",
+                     "model": "openai/gpt-x" }),
+        ),
+    );
+    assert!(
+        ok && out.contains("    remote: https://openrouter.ai/api/v1/chat/completions\n"),
+        "{out}"
+    );
+    for (args, says) in [
+        (
+            json!({ "url": "https://api.openai.com/v1/models", "model": "m", "message": "x" }),
+            "url ends in /chat/completions or /responses",
+        ),
+        (
+            json!({ "url": "http://localhost:1234/v1/chat/completions", "model": "m",
+                    "message": "x", "context": 8192 }),
+            "context is itero-ai's",
+        ),
+        (
+            json!({ "url": "http://localhost:1234/v1/chat/completions", "message": "x" }),
+            "a step with a url names its model",
+        ),
+        (
+            json!({ "model": "u/var", "key": "$$OPENAI_API_KEY", "message": "x" }),
+            "key goes with a url",
+        ),
+        (
+            json!({ "model": "u/var", "text": "x" }),
+            "takes message, not text",
+        ),
+    ] {
+        let (ok, out) = check(ai(args.clone()));
+        assert!(!ok && out.contains(says), "{args}: {out}");
+    }
+}

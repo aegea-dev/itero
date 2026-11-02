@@ -272,6 +272,35 @@ pub fn check(args: &Value) -> Result<Seen, String> {
     })
 }
 
+/// Where an `#ai` step sends, for `itero ws check`: itero-ai and its
+/// model, or the url, local or remote. A `"$name"` is known only in a run.
+pub fn place(args: &Value, machine: &Map<String, Value>) -> String {
+    let items: Vec<&Map<String, Value>> = match args {
+        Value::Object(o) => vec![o],
+        Value::Array(a) => a.iter().filter_map(Value::as_object).collect(),
+        _ => vec![],
+    };
+    let get = |k: &str| {
+        items
+            .iter()
+            .find_map(|o| o.get(k))
+            .and_then(Value::as_str)
+            .map(String::from)
+    };
+    let from_machine = |k: &str| machine.get(k).and_then(Value::as_str).map(String::from);
+    match get("url").or_else(|| from_machine("url")) {
+        Some(u) if u.starts_with('$') => "where: known in a run".into(),
+        Some(u) if super::remote::is_local(&u) => format!("local: {u}"),
+        Some(u) => format!("remote: {u}"),
+        None => {
+            let model = get("model")
+                .or_else(|| from_machine("model"))
+                .unwrap_or_else(|| "no model".into());
+            format!("local: {model}")
+        }
+    }
+}
+
 /// What `itero ws check` warns of: only warnings, as another machine may
 /// have what this one does not.
 pub fn warnings(seen: &Seen) -> Vec<String> {
