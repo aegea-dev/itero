@@ -55,7 +55,7 @@ fails the step.
 |---|---|
 | `url` | a model behind this address, not itero-ai ([A model behind a URL](#a-model-behind-a-url)) |
 | `key` | the key that `url` needs, as a `$$NAME` |
-| `model` | the model: `<org>/<repo>`, with `:<quantization>` or without ([Models](/ai/models/)); without it, the machine's. With a `url`, the id that server expects |
+| `model` | the model: `<org>/<repo>`, with `:<quantization>` or without ([Models](/ai/models/)); without it, the machine's. With a `url`, the id that server expects, or none for its default |
 | `message` | what is asked; needed |
 | `system` | the system message: who the model is to be, and how to answer |
 | `fields` | names and their types, `text`, `number`, `integer`, `boolean` or `date`: the answer is an object of them |
@@ -116,7 +116,9 @@ The same through OpenRouter: `"url":
   needs none.
 - **`model`** is the id that server expects, as written: OpenAI's is
   `gpt-6-astra`, OpenRouter's carries the maker, `openai/gpt-6-astra`.
-  A step with a `url` names one.
+  Without one, none is sent and the server decides: OpenRouter answers
+  with your account's default model, OpenAI refuses. The `ai.answer`
+  log line shows the model that answered.
 
 `itero ai defaults set` takes `url`, `key` and `model` too, so a machine
 can send every `#ai` step to one server. A `key` or `model` from the
