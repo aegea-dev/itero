@@ -132,6 +132,20 @@ fn a_url_step_asks_the_model_behind_it() {
         assert_eq!(s.requests.lock().unwrap().len(), 1, "no retry");
     }
 
+    // no model: none is sent, and the server answers with its default
+    let s = serve_http(vec![Reply::Text("varsayılan".into())]);
+    let out = worker::run_step(&step(
+        &ws,
+        &[
+            ("url", &format!("{}/chat/completions", s.url)),
+            ("message", "x"),
+        ],
+    ))
+    .unwrap();
+    assert_eq!(out, Outcome::Done(json!("varsayılan")));
+    let (body, _) = s.requests.lock().unwrap()[0].clone();
+    assert!(body.get("model").is_none(), "{body}");
+
     // every call is an ai.answer line in the log, the whole response in it
     let log = std::fs::read_to_string(ws.join(".itero/itero.log")).unwrap();
     let answers: Vec<Value> = log
@@ -139,7 +153,8 @@ fn a_url_step_asks_the_model_behind_it() {
         .map(|l| serde_json::from_str(l).unwrap())
         .filter(|v: &Value| v["event"] == "ai.answer")
         .collect();
-    assert_eq!(answers.len(), 5, "{log}");
+    assert_eq!(answers.len(), 6, "{log}");
+    assert_eq!(answers[5]["model"], Value::Null, "none asked for");
     assert_eq!(
         answers[0]["response"]["usage"]["prompt_tokens_details"]["cached_tokens"],
         2

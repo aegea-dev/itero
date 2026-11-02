@@ -257,9 +257,6 @@ pub fn check(args: &Value) -> Result<Seen, String> {
         }
     }
     let thinking_false = env.get("thinking").is_some_and(|t| t == "false");
-    if env.contains_key("url") && !env.contains_key("model") {
-        return Err(fail("a step with a url names its model"));
-    }
     body(env.get("model").map_or("", String::as_str), &env)?;
     let model = match env.get("model") {
         None => Written::Not,
@@ -444,7 +441,7 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
     log_answer(
         r,
         "itero-ai",
-        &model,
+        Some(&model),
         started.elapsed(),
         &json!({ "model": model, "usage": usage,
                  "choices": [{ "index": 0, "message": { "role": "assistant", "content": content } }] }),
@@ -493,7 +490,13 @@ pub fn needs_itero_ai(env: &BTreeMap<String, String>) -> Result<bool, String> {
 }
 
 /// Every call, as the server answered it, to the workspace's log.
-pub(super) fn log_answer(r: &StepRun, at: &str, model: &str, took: Duration, response: &Value) {
+pub(super) fn log_answer(
+    r: &StepRun,
+    at: &str,
+    model: Option<&str>,
+    took: Duration,
+    response: &Value,
+) {
     let Ok(ws) = crate::workspace::find(&r.root) else {
         return;
     };

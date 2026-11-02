@@ -186,6 +186,14 @@ fn check_says_where_each_ai_step_sends_and_refuses_a_bad_url() {
         ok && out.contains("    remote: https://openrouter.ai/api/v1/chat/completions\n"),
         "{out}"
     );
+    // a url step without a model: the server picks its default
+    let (ok, out) = check(ai(
+        json!({ "url": "https://openrouter.ai/api/v1/chat/completions", "message": "x" }),
+    ));
+    assert!(
+        ok && out.contains("    remote: https://openrouter.ai/api/v1/chat/completions\n"),
+        "{out}"
+    );
     for (args, says) in [
         (
             json!({ "url": "https://api.openai.com/v1/models", "model": "m", "message": "x" }),
@@ -195,10 +203,6 @@ fn check_says_where_each_ai_step_sends_and_refuses_a_bad_url() {
             json!({ "url": "http://localhost:1234/v1/chat/completions", "model": "m",
                     "message": "x", "context": 8192 }),
             "context is itero-ai's",
-        ),
-        (
-            json!({ "url": "http://localhost:1234/v1/chat/completions", "message": "x" }),
-            "a step with a url names its model",
         ),
         (
             json!({ "model": "u/var", "key": "$$OPENAI_API_KEY", "message": "x" }),

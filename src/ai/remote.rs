@@ -55,10 +55,12 @@ pub struct Learned {
     pub no_stream: bool,
 }
 
-/// The request: only what the step and the machine's defaults set.
+/// The request: only what the step and the machine's defaults set. No
+/// model is no `model`: some servers answer with a default (OpenRouter
+/// its account's), others refuse, saying so.
 pub fn body(
     api: Api,
-    model: &str,
+    model: Option<&str>,
     env: &BTreeMap<String, String>,
     l: &Learned,
 ) -> Result<Value, String> {
@@ -77,16 +79,19 @@ pub fn body(
                 messages.push(json!({ "role": "system", "content": s }));
             }
             messages.push(json!({ "role": "user", "content": content }));
-            json!({ "model": model, "messages": messages })
+            json!({ "messages": messages })
         }
         Api::Responses => {
-            let mut r = json!({ "model": model, "input": content });
+            let mut r = json!({ "input": content });
             if let Some(s) = env.get("system") {
                 r["instructions"] = json!(s);
             }
             r
         }
     };
+    if let Some(m) = model {
+        r["model"] = json!(m);
+    }
     if let (Some(schema), false) = (schema(&shape), l.no_schema) {
         match api {
             Api::Chat => {
@@ -231,22 +236,28 @@ fn learned_all() -> Result<Map<String, Value>, String> {
     }
 }
 
+/// Where what was learned of `model` behind `url` is kept: the url and
+/// the model, or the url alone for its default.
+fn server(url: &str, model: Option<&str>) -> String {
+    match model {
+        Some(m) => format!("{url} {m}"),
+        None => url.to_string(),
+    }
+}
+
 /// What was learned of `model` behind `url`; nothing yet is nothing.
-pub fn learned(url: &str, model: &str) -> Result<Learned, String> {
+pub fn learned(url: &str, model: Option<&str>) -> Result<Learned, String> {
     Ok(learned_all()?
-        .get(&format!("{url} {model}"))
+        .get(&server(url, model))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default())
 }
 
 /// Keeps it in itero's state folder, the whole file written anew and
 /// renamed into place.
-pub fn learn(url: &str, model: &str, l: &Learned) -> Result<(), String> {
+pub fn learn(url: &str, model: Option<&str>, l: &Learned) -> Result<(), String> {
     let mut all = learned_all()?;
-    all.insert(
-        format!("{url} {model}"),
-        serde_json::to_value(l).map_err(fail)?,
-    );
+    all.insert(server(url, model), serde_json::to_value(l).map_err(fail)?);
     let p = learned_path()?;
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| fail(format!("{}: {e}", dir.display())))?;
@@ -299,9 +310,7 @@ pub fn run(
     told: &(dyn Fn(Option<&str>) + Sync),
 ) -> Result<Outcome, Failure> {
     let api = api(url)?;
-    let model = env
-        .get("model")
-        .ok_or_else(|| fail("a step with a url names its model"))?;
+    let model = env.get("model").map(String::as_str);
     let client = crate::net::client(Duration::from_secs(r.most.max(1))).map_err(fail)?;
     let mut l = learned(url, model)?;
     loop {
