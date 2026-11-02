@@ -36,7 +36,7 @@ EOF
 itero daemon
 ```
 
-Two small files and one command. [`examples/beacon`](examples/beacon) goes
+Two small files and one command. [`examples/beacon`][beacon] goes
 further: many sites and the disk's free space, told only when something
 changes (down, then back up).
 
@@ -44,22 +44,22 @@ changes (down, then back up).
 
 - **Tell me when a mail arrives, and only the important ones**: a connector
   for new mail and a notification; a model step to rate it decides which
-  you hear about. [`mail-alert`](examples/mail-alert), a model on this
-  machine in [`page-summary`](examples/page-summary)
+  you hear about. [`mail-alert`][mail-alert], a model on this
+  machine in [`page-summary`][page-summary]
 - **Process every file dropped in this folder**: a watched folder, one run
-  per burst of files. [`photos`](examples/photos)
+  per burst of files. [`photos`][photos]
 - **Wait for a payment, then ship**: a step that waits for a message that
-  comes later, minutes or days. [`order`](examples/order)
+  comes later, minutes or days. [`order`][order]
 - **Make the cluster, refuse a dangerous plan, roll back on failure**:
   terraform and kubectl chained, a guard step, and undo.
-  [`terraform`](examples/terraform)
+  [`terraform`][terraform]
 - **My app needs a job done and wants the result**: `itero ws emit --wait`
   answers with the run's state, or a callback when it ends.
-  [`languages`](examples/languages)
+  [`languages`][languages]
 - **Every morning, a summary of these pages**: a schedule, a fetch, a
-  model, a mail. [`page-digest`](examples/page-digest)
+  model, a mail. [`page-digest`][page-digest]
 - **Is everything still up?**: health checks, told when something changes.
-  [`beacon`](examples/beacon)
+  [`beacon`][beacon]
 
 ## Plain files in git: nothing lost, everything iterated
 
@@ -160,9 +160,9 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
 
 ## Examples
 
-- [`examples/beacon`](examples/beacon): sites and the disk's free space
+- [`examples/beacon`][beacon]: sites and the disk's free space
   checked on a schedule, with a notification when something changes.
-- [`examples/mail-alert`](examples/mail-alert): a notification for each
+- [`examples/mail-alert`][mail-alert]: a notification for each
   new mail in the local mailbox, as it arrives.
 - [`examples/mail-servers`](examples/mail-servers): new mail on an IMAP or
   POP3 server, checked every minute with curl.
@@ -171,18 +171,32 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
 - [`examples/notify-api`](examples/notify-api): an app on this machine
   asks for a notification over HTTP, with buttons, and gets the answer
   posted back when it is clicked (macOS).
-- [`examples/order`](examples/order): payment and stock side by side, the
+- [`examples/order`][order]: payment and stock side by side, the
   payment waiting for its provider, then shipping and a mail.
-- [`examples/page-digest`](examples/page-digest): a page, summarized by an
+- [`examples/page-digest`][page-digest]: a page, summarized by an
   AI assistant, by mail.
-- [`examples/page-summary`](examples/page-summary): a page sent in a
+- [`examples/page-summary`][page-summary]: a page sent in a
   message, summarized by a model on this machine (LM Studio), printed in
   the daemon's terminal.
-- [`examples/photos`](examples/photos): a thumbnail for each photo dropped
+- [`examples/photos`][photos]: a thumbnail for each photo dropped
   into a folder the daemon watches.
-- [`examples/languages`](examples/languages): actions in Python (uv), Node,
+- [`examples/languages`][languages]: actions in Python (uv), Node,
   Bun and Docker, each in its subfolder and bringing its own packages,
   answering `itero ws emit --wait`.
-- [`examples/terraform`](examples/terraform): a k3d cluster of 3 machines
+- [`examples/terraform`][terraform]: a k3d cluster of 3 machines
   with a web app applied by OpenTofu, a guard on the plan, and the cluster
   deleted when a step fails.
+
+## AI Usage
+
+`itero` is developed by [Erhan Gundogan] with substantial help from AI coding assistants (mostly Claude Code and OpenAI Codex).
+
+[Erhan Gundogan]: https://github.com/erhangundogan
+[beacon]: examples/beacon
+[languages]: examples/languages
+[mail-alert]: examples/mail-alert
+[order]: examples/order
+[page-digest]: examples/page-digest
+[page-summary]: examples/page-summary
+[photos]: examples/photos
+[terraform]: examples/terraform
