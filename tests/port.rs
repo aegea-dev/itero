@@ -5,8 +5,9 @@
 mod stop;
 use std::net::TcpListener;
 use std::path::Path;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
+use stop::Daemon;
 
 fn itero(dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_itero"))
@@ -18,21 +19,21 @@ fn itero(dir: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-fn daemon(dir: &Path) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_itero"))
-        .arg("daemon")
+fn command(dir: &Path) -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_itero"));
+    c.arg("daemon")
         .current_dir(dir)
         .env("ITERO_NO_SECRET_STORE", "1")
         .env("ITERO_NOTIFIER", "/usr/bin/true")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap()
+        .stderr(Stdio::piped());
+    c
 }
 
-fn stop(mut c: Child) {
-    stop::stop(&mut c);
+/// A daemon in `dir`, stopped when dropped.
+fn daemon(dir: &Path) -> Daemon {
+    Daemon(command(dir).spawn().unwrap())
 }
 
 fn until(what: &str, done: impl Fn() -> bool) {
@@ -65,13 +66,13 @@ fn without_a_port_the_os_gives_one_which_is_kept() {
     until("a port", || saved(d.path()).is_some());
     let port = saved(d.path()).unwrap();
     until("the daemon on its port", || answers(d.path(), port));
-    stop(first);
+    drop(first);
 
     // the next start asks for the same one
     let again = daemon(d.path());
     until("the daemon on the same port", || answers(d.path(), port));
     assert_eq!(saved(d.path()), Some(port));
-    stop(again);
+    drop(again);
 
     // taken meanwhile: another, kept, and the log says so
     let taken = TcpListener::bind(("127.0.0.1", port)).unwrap();
@@ -81,7 +82,7 @@ fn without_a_port_the_os_gives_one_which_is_kept() {
     });
     let new = saved(d.path()).unwrap();
     until("the daemon on the new port", || answers(d.path(), new));
-    stop(other);
+    drop(other);
     drop(taken);
     let log = std::fs::read_to_string(d.path().join(".itero/itero.log")).unwrap();
     assert!(log.contains(&format!("port {port} is taken")), "{log}");
@@ -111,7 +112,12 @@ fn a_set_port_that_is_taken_stops_the_daemon_before_it_runs_anything() {
         .status
         .success()
     );
-    let o = daemon(d.path()).wait_with_output().unwrap();
+    // it ends by itself: a guard would keep its output from being read
+    let o = command(d.path())
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap();
     assert!(!o.status.success(), "{o:?}");
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(

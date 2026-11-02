@@ -5,6 +5,8 @@
 //! `ITERO_GREENMAIL` these tests say so and pass: `make test` needs no
 //! Docker.
 #![cfg(unix)]
+#[path = "common/stop.rs"]
+mod stop;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -240,18 +242,21 @@ fn gmail_example(d: &Path, user: &str, host: &str) -> PathBuf {
     ws
 }
 
-/// `itero daemon` in `ws`, its notifications written to `log`.
-fn daemon(ws: &Path, log: &Path) -> std::process::Child {
-    std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-        .arg("daemon")
-        .current_dir(ws)
-        .env("ITERO_NOTIFY_LOG", log)
-        .env("ITERO_NO_SECRET_STORE", "1")
-        .env("GMAIL_PASS", "gizli-sifre")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .unwrap()
+/// `itero daemon` in `ws`, its notifications written to `log`; stopped
+/// when dropped.
+fn daemon(ws: &Path, log: &Path) -> stop::Daemon {
+    stop::Daemon(
+        std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .arg("daemon")
+            .current_dir(ws)
+            .env("ITERO_NOTIFY_LOG", log)
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .env("GMAIL_PASS", "gizli-sifre")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    )
 }
 
 /// Waits up to 20s for `done`.
@@ -282,15 +287,14 @@ fn gmail_tells_each_new_mail_as_it_arrives_and_none_twice() {
     let log = d.path().join("bildirim.log");
     let ws = gmail_example(d.path(), &user, &host);
     send(&host, &user, "Eski posta");
-    let mut first = daemon(&ws, &log);
+    let first = daemon(&ws, &log);
     let seen = ws.join(".itero/gmail.received.seen");
     until("the first start to note the inbox", || seen.exists());
     std::thread::sleep(std::time::Duration::from_secs(1)); // in IDLE
     send(&host, &user, "Sipariş geldi: çay ve şeker");
     until("the notification", || !shown(&log).is_empty());
     until("its run to end", || gmail_runs_ended(&ws) == 1);
-    first.kill().unwrap();
-    first.wait().unwrap();
+    drop(first);
     assert_eq!(
         shown(&log),
         "Gmail\tSipariş geldi: çay ve şeker\tsubtitle=gonderen@ornek.test\tsound=default\n",
@@ -298,13 +302,12 @@ fn gmail_tells_each_new_mail_as_it_arrives_and_none_twice() {
     );
     // a mail while nothing runs is told on the next start, once
     send(&host, &user, "Kahve molası");
-    let mut again = daemon(&ws, &log);
+    let again = daemon(&ws, &log);
     until("the mail sent while down", || {
         shown(&log).lines().count() == 2
     });
     std::thread::sleep(std::time::Duration::from_secs(1));
-    again.kill().unwrap();
-    again.wait().unwrap();
+    drop(again);
     assert_eq!(
         shown(&log).lines().last().unwrap(),
         "Gmail\tKahve molası\tsubtitle=gonderen@ornek.test\tsound=default"

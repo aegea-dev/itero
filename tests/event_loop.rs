@@ -7,19 +7,12 @@ use itero::engine::journal::{Journal, subject};
 use itero::engine::steps;
 use serde_json::Value;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use stop::Daemon;
 
 /// The built-in keep runs hourly: off, so that nothing is due.
 const KEEP_OFF: &str = r#"{"workflow": {"keep": {"off": true}, "models": {"off": true}}}"#;
-
-struct Daemon(Child);
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        stop::stop(&mut self.0);
-    }
-}
 
 fn itero(dir: &Path, args: &[&str]) {
     let out = Command::new(env!("CARGO_BIN_EXE_itero"))

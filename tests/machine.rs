@@ -7,17 +7,9 @@ mod stop;
 use itero::engine::journal::Journal;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-
-/// A daemon this test started, killed when the test ends.
-struct Daemon(Child);
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        stop::stop(&mut self.0);
-    }
-}
+use stop::Daemon;
 
 fn until(what: &str, f: impl Fn() -> bool) {
     assert!(within(20, f), "waited 20s for {what}");

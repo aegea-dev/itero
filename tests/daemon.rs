@@ -1348,15 +1348,6 @@ fn a_built_in_workflow_is_turned_off_by_its_entry() {
     assert!(!w.d.path().join(".itero/itero.log.1").exists());
 }
 
-/// A daemon process, killed however the test ends.
-struct Running(std::process::Child);
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        stop::stop(&mut self.0);
-    }
-}
-
 /// Waits up to 20 seconds for `ok`.
 fn soon(mut ok: impl FnMut() -> bool) -> bool {
     let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -1397,7 +1388,7 @@ fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
         json!({ "on": on, "steps": [{"#say": {"args": {"path": "$event.path", "kind": "$event.kind"}}}] })
     };
     w.flow("posta", on(vec![inbox.display().to_string()]));
-    let daemon = Running(
+    let daemon = stop::Daemon(
         std::process::Command::new(exe())
             .args(["daemon", "--no-serve"])
             .current_dir(&root)

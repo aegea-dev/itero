@@ -1,6 +1,8 @@
 //! One daemon per workspace's journal: whichever runs it holds a lock,
 //! and a second one is refused, naming the first.
 #![cfg(unix)]
+#[path = "common/stop.rs"]
+mod stop;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -50,7 +52,7 @@ fn a_foreground_daemon_refuses_a_workspace_already_run() {
             .spawn()
             .unwrap()
     };
-    let mut first = daemon();
+    let first = stop::Daemon(daemon());
     let end = Instant::now() + Duration::from_secs(15);
     while !d.path().join(".itero/port").exists() {
         assert!(Instant::now() < end, "the first daemon did not start");
@@ -63,12 +65,12 @@ fn a_foreground_daemon_refuses_a_workspace_already_run() {
     }
     let second = second.wait_with_output().unwrap();
     let said = String::from_utf8_lossy(&second.stderr);
-    let _ = first.kill();
-    let _ = first.wait();
+    let held_by = first.0.id();
+    drop(first);
     assert!(ended.is_some(), "a second daemon ran on the same workspace");
     assert!(!second.status.success(), "{said}");
     assert!(
-        said.contains("is run by") && said.contains(&format!("pid {}", first.id())),
+        said.contains("is run by") && said.contains(&format!("pid {held_by}")),
         "{said}"
     );
 }

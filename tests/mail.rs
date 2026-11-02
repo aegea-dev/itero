@@ -4,6 +4,7 @@
 #[path = "common/stop.rs"]
 mod stop;
 use std::path::{Path, PathBuf};
+use stop::Daemon;
 
 /// The example workspace, copied into `d`, with its mailbox at `mbox`.
 fn example(d: &Path, mbox: &Path) -> PathBuf {
@@ -53,15 +54,6 @@ fn wait_for(secs: u64, mut ok: impl FnMut() -> bool) -> bool {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     false
-}
-
-/// A daemon, killed when dropped.
-struct Daemon(std::process::Child);
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        stop::stop(&mut self.0);
-    }
 }
 
 #[test]

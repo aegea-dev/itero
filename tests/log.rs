@@ -191,14 +191,7 @@ fn a_daemon_says_when_it_starts_and_stops() {
         "connectors/kapı.çaldı",
         "#!/bin/sh\necho '{\"kim\": \"ayşe\"}'\n",
     );
-    /// Kills the daemon however the test ends.
-    struct Running(std::process::Child);
-    impl Drop for Running {
-        fn drop(&mut self) {
-            stop::stop(&mut self.0);
-        }
-    }
-    let mut daemon = Running(
+    let mut daemon = stop::Daemon(
         std::process::Command::new(exe())
             .args(["daemon", "--no-serve"])
             .current_dir(root)
