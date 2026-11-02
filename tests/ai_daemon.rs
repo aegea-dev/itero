@@ -14,7 +14,7 @@ const NOW: &str = "2026-10-29T10:00:00Z";
 fn an_ai_step_runs_in_a_workflow() {
     let d = tempfile::tempdir().unwrap();
     let sock = d.path().join("ai.sock");
-    let fake = fake_ai::serve(&sock, Some("\"acil\""));
+    let fake = fake_ai::serve(&sock, Some("acil"));
     // SAFETY: this binary's only test, before the daemon's threads
     unsafe { std::env::set_var("ITERO_AI_SOCKET", &sock) };
     let root = d.path().join("çalışma");
@@ -25,8 +25,8 @@ fn an_ai_step_runs_in_a_workflow() {
         json!({
             "on": [{ "event": "posta.geldi" }],
             "steps": [{ "#ai": { "args": {
-                "model": "unsloth/Qwen3.5-4B-GGUF", "text": "$event.konu",
-                "choose": ["acil", "sonra", "çöp"] } } }]
+                "model": "unsloth/Qwen3.5-4B-GGUF", "message": "$event.konu",
+                "system": "Answer acil, sonra or çöp." } } }]
         })
         .to_string(),
     )
@@ -52,7 +52,7 @@ fn an_ai_step_runs_in_a_workflow() {
     assert_eq!(runs[0].runtime.state["output"], json!("acil"));
     let req = &fake.requests.lock().unwrap()[0];
     assert!(
-        req["messages"][0]["content"]
+        req["messages"][1]["content"]
             .as_str()
             .unwrap()
             .starts_with("Sunucu çöktü!"),

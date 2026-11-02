@@ -1,5 +1,5 @@
 //! The built-in `#ai`: asks the local model, through itero-ai on the socket
-//! the daemon gave the step, for a text, one of a list, or typed fields.
+//! the daemon gave the step, for a text or typed fields.
 use crate::engine::worker::{Failure, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -7,11 +7,12 @@ use std::io::BufRead;
 use std::time::Duration;
 
 /// The args `#ai` reads.
-pub const ARGS: [&str; 14] = [
+pub const ARGS: [&str; 15] = [
+    "url",
+    "key",
     "model",
-    "text",
+    "message",
     "system",
-    "choose",
     "fields",
     "thinking",
     "temperature",
@@ -29,24 +30,13 @@ pub const FIELD_TYPES: [&str; 5] = ["text", "number", "integer", "boolean", "dat
 
 /// What the answer is to be.
 #[derive(Debug, PartialEq)]
-enum Shape {
+pub(super) enum Shape {
     Text,
-    Choose(Vec<String>),
     Fields(Vec<(String, String)>),
 }
 
-fn fail(why: impl std::fmt::Display) -> String {
+pub(super) fn fail(why: impl std::fmt::Display) -> String {
     format!("#ai: {why}")
-}
-
-/// The labels of `choose`, given as a list.
-fn labels(text: &str) -> Result<Vec<String>, String> {
-    let bad = || fail(format!("choose is a list of one label or more: {text}"));
-    let labels: Vec<String> = serde_json::from_str(text).map_err(|_| bad())?;
-    if labels.is_empty() || labels.iter().any(|l| l.trim().is_empty()) {
-        return Err(bad());
-    }
-    Ok(labels)
 }
 
 /// The names and types of `fields`, given as an object, in its order.
@@ -67,12 +57,15 @@ fn fields(text: &str) -> Result<Vec<(String, String)>, String> {
         .collect()
 }
 
-fn shape(env: &BTreeMap<String, String>) -> Result<Shape, String> {
-    match (env.get("choose"), env.get("fields")) {
-        (Some(_), Some(_)) => Err(fail("it takes choose or fields, not both")),
-        (Some(c), None) => Ok(Shape::Choose(labels(c)?)),
-        (None, Some(f)) => Ok(Shape::Fields(fields(f)?)),
-        (None, None) => Ok(Shape::Text),
+pub(super) fn shape(env: &BTreeMap<String, String>) -> Result<Shape, String> {
+    if env.contains_key("choose") {
+        return Err(fail(
+            "choose is gone: say the labels, and what each means, in system or message",
+        ));
+    }
+    match env.get("fields") {
+        Some(f) => Ok(Shape::Fields(fields(f)?)),
+        None => Ok(Shape::Text),
     }
 }
 
@@ -84,20 +77,27 @@ fn field_schema(t: &str) -> Value {
     }
 }
 
-/// How the answer's form is said in words: a small model held to a form
-/// by a grammar alone, without being told it, answers poorly.
-fn form_sentence(shape: &Shape) -> Option<String> {
+/// The JSON schema the answer is held to, if it has a form.
+pub(super) fn schema(shape: &Shape) -> Option<Value> {
     match shape {
         Shape::Text => None,
-        Shape::Choose(ls) => {
-            let quoted: Vec<String> = ls.iter().map(|l| format!("\"{l}\"")).collect();
-            let list = match quoted.split_last() {
-                Some((last, [])) => last.clone(),
-                Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
-                None => String::new(),
-            };
-            Some(format!("Answer as a JSON string: {list}."))
+        Shape::Fields(fs) => {
+            let props: Map<String, Value> = fs
+                .iter()
+                .map(|(n, t)| (n.clone(), field_schema(t)))
+                .collect();
+            let required: Vec<&String> = fs.iter().map(|(n, _)| n).collect();
+            Some(json!({ "type": "object", "properties": props,
+                         "required": required, "additionalProperties": false }))
         }
+    }
+}
+
+/// How the answer's form is said in words: a small model held to a form
+/// by a grammar alone, without being told it, answers poorly.
+pub(super) fn form_sentence(shape: &Shape) -> Option<String> {
+    match shape {
+        Shape::Text => None,
         Shape::Fields(fs) => {
             let parts: Vec<String> = fs
                 .iter()
@@ -120,7 +120,7 @@ fn form_sentence(shape: &Shape) -> Option<String> {
     }
 }
 
-fn number(env: &BTreeMap<String, String>, k: &str) -> Result<Option<Value>, String> {
+pub(super) fn number(env: &BTreeMap<String, String>, k: &str) -> Result<Option<Value>, String> {
     let Some(t) = env.get(k) else {
         return Ok(None);
     };
@@ -142,7 +142,12 @@ pub fn request(env: &BTreeMap<String, String>) -> Result<Value, String> {
 
 /// The request for `model`, by `#ai`'s rules on the args.
 pub(super) fn body(model: &str, env: &BTreeMap<String, String>) -> Result<Value, String> {
-    let text = env.get("text").ok_or_else(|| fail("it needs $text"))?;
+    if env.contains_key("text") {
+        return Err(fail("it takes message, not text"));
+    }
+    let text = env
+        .get("message")
+        .ok_or_else(|| fail("it needs $message"))?;
     let shape = shape(env)?;
     let mut messages = vec![];
     if let Some(system) = env.get("system") {
@@ -154,20 +159,7 @@ pub(super) fn body(model: &str, env: &BTreeMap<String, String>) -> Result<Value,
     };
     messages.push(json!({ "role": "user", "content": content }));
     let mut r = json!({ "model": model, "messages": messages, "stream": true });
-    let schema = match &shape {
-        Shape::Text => None,
-        Shape::Choose(ls) => Some(json!({ "type": "string", "enum": ls })),
-        Shape::Fields(fs) => {
-            let props: Map<String, Value> = fs
-                .iter()
-                .map(|(n, t)| (n.clone(), field_schema(t)))
-                .collect();
-            let required: Vec<&String> = fs.iter().map(|(n, _)| n).collect();
-            Some(json!({ "type": "object", "properties": props,
-                         "required": required, "additionalProperties": false }))
-        }
-    };
-    if let Some(schema) = schema {
+    if let Some(schema) = schema(&shape) {
         r["response_format"] =
             json!({ "type": "json_schema", "json_schema": { "name": "answer", "schema": schema } });
     }
@@ -240,7 +232,8 @@ pub fn check(args: &Value) -> Result<Seen, String> {
         for (k, v) in o {
             let text = match v {
                 Value::String(s)
-                    if s.starts_with('$') && !["model", "text", "system"].contains(&k.as_str()) =>
+                    if s.starts_with('$')
+                        && !["model", "message", "system", "url"].contains(&k.as_str()) =>
                 {
                     continue;
                 }
@@ -298,11 +291,11 @@ pub fn warnings(seen: &Seen) -> Vec<String> {
     }
 }
 
-/// The answer as `$output`: the text, the label, or the fields' object.
-fn output(env: &BTreeMap<String, String>, content: &str) -> Result<Value, String> {
+/// The answer as `$output`: the text, or the fields' object.
+pub(super) fn output(env: &BTreeMap<String, String>, content: &str) -> Result<Value, String> {
     match shape(env)? {
         Shape::Text => Ok(Value::String(content.trim().to_string())),
-        Shape::Choose(_) | Shape::Fields(_) => serde_json::from_str(content.trim()).map_err(|e| {
+        Shape::Fields(_) => serde_json::from_str(content.trim()).map_err(|e| {
             fail(format!(
                 "the model's answer is not the JSON asked for ({e}): {content}"
             ))
@@ -433,7 +426,7 @@ mod tests {
     fn context_is_sent_as_given_and_checked() {
         let r = request(&env(&[
             ("model", "u/k"),
-            ("text", "özetle"),
+            ("message", "özetle"),
             ("context", "16384"),
         ]))
         .unwrap();
@@ -442,14 +435,15 @@ mod tests {
             ("uzun", "context is a whole number"),
             ("100", "at least 1024"),
         ] {
-            let e = request(&env(&[("model", "u/k"), ("text", "x"), ("context", v)])).unwrap_err();
+            let e =
+                request(&env(&[("model", "u/k"), ("message", "x"), ("context", v)])).unwrap_err();
             assert!(e.contains(says), "{e}");
         }
     }
 
     #[test]
     fn a_step_without_a_model_says_how_to_give_one() {
-        let e = request(&env(&[("text", "x")])).unwrap_err();
+        let e = request(&env(&[("message", "x")])).unwrap_err();
         assert!(e.contains("itero ai defaults set"), "{e}");
     }
 
@@ -457,17 +451,7 @@ mod tests {
     fn the_form_is_said_in_words_too() {
         let r = request(&env(&[
             ("model", "u/k"),
-            ("text", "Bu posta ne?"),
-            ("choose", r#"["acil","sonra","çöp"]"#),
-        ]))
-        .unwrap();
-        assert_eq!(
-            r["messages"][0]["content"],
-            "Bu posta ne?\n\nAnswer as a JSON string: \"acil\", \"sonra\" or \"çöp\"."
-        );
-        let r = request(&env(&[
-            ("model", "u/k"),
-            ("text", "Fatura"),
+            ("message", "Fatura"),
             (
                 "fields",
                 r#"{"tutar":"number","son":"date","acil":"boolean"}"#,
@@ -478,7 +462,7 @@ mod tests {
             r["messages"][0]["content"],
             "Fatura\n\nAnswer as a JSON object: {\"tutar\": <number>, \"son\": \"<YYYY-MM-DD>\", \"acil\": <true or false>}."
         );
-        let r = request(&env(&[("model", "u/k"), ("text", "Özetle")])).unwrap();
+        let r = request(&env(&[("model", "u/k"), ("message", "Özetle")])).unwrap();
         assert_eq!(r["messages"][0]["content"], "Özetle");
         assert!(r.get("response_format").is_none());
     }

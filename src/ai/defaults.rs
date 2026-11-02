@@ -160,7 +160,7 @@ pub fn changed(
     }
     let mut env: BTreeMap<String, String> =
         new.iter().map(|(k, v)| (k.clone(), env_text(v))).collect();
-    env.insert("text".into(), "x".into());
+    env.insert("message".into(), "x".into());
     super::step::body(env.get("model").map_or("", String::as_str), &env)?;
     Ok(new)
 }
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn the_first_layer_that_has_a_value_wins() {
         let qwen = ix(vec![model("u/q", Some("Qwen3.5-4B"), None)]);
-        let mut e = env(&[("text", "özetle"), ("temperature", "0.1")]);
+        let mut e = env(&[("message", "özetle"), ("temperature", "0.1")]);
         fill(
             &mut e,
             &machine(json!({ "model": "u/q", "top_p": 0.5 })),
@@ -233,13 +233,13 @@ mod tests {
             min_p: None,
         };
         let q = ix(vec![model("u/q", Some("Qwen3.5-35B-A3B"), Some(file))]);
-        let mut e = env(&[("model", "u/q"), ("text", "x")]);
+        let mut e = env(&[("model", "u/q"), ("message", "x")]);
         fill(&mut e, &Map::new(), &q);
         assert_eq!(
             (e["temperature"].as_str(), e["presence_penalty"].as_str()),
             ("0.7", "1.5")
         );
-        let mut e = env(&[("model", "u/q"), ("text", "x"), ("thinking", "true")]);
+        let mut e = env(&[("model", "u/q"), ("message", "x"), ("thinking", "true")]);
         fill(&mut e, &Map::new(), &q);
         assert_eq!(e["temperature"], "1.0");
     }
@@ -256,11 +256,11 @@ mod tests {
             model("u/yalın", Some("Agents-A1"), None),
             model("u/ince", Some("Qwen3.8"), None),
         ]);
-        let mut e = env(&[("model", "u/gemma"), ("text", "x")]);
+        let mut e = env(&[("model", "u/gemma"), ("message", "x")]);
         fill(&mut e, &Map::new(), &m);
         assert_eq!(e["top_k"], "64");
         for repo in ["u/yalın", "u/ince", "u/yok"] {
-            let mut e = env(&[("model", repo), ("text", "x")]);
+            let mut e = env(&[("model", repo), ("message", "x")]);
             fill(&mut e, &Map::new(), &m);
             assert_eq!(e.len(), 2, "{repo}");
         }

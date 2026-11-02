@@ -102,7 +102,7 @@ impl Machine {
         std::fs::write(
             w.join("workflows/sor.json"),
             r##"{"on": [{"event": "soru.geldi"}],
-                 "steps": [{"#ai": {"args": {"model": "yok/Yok-GGUF", "text": "merhaba"}}}]}"##,
+                 "steps": [{"#ai": {"args": {"model": "yok/Yok-GGUF", "message": "merhaba"}}}]}"##,
         )
         .unwrap();
         w

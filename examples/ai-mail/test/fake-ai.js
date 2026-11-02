@@ -11,7 +11,7 @@ Bun.serve({
     const answer = readFileSync(process.env.ANSWER, "utf8").trim();
     const chunk = (delta, finish = null) =>
       `data: ${JSON.stringify({ object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
-    const body = chunk({ content: JSON.stringify(answer) }) + chunk({}, "stop") + "data: [DONE]\n\n";
+    const body = chunk({ content: answer }) + chunk({}, "stop") + "data: [DONE]\n\n";
     return new Response(body, { headers: { "content-type": "text/event-stream" } });
   },
 });

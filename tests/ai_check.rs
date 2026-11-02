@@ -70,32 +70,32 @@ fn ai(args: Value) -> Value {
 
 #[test]
 fn a_good_step_passes_and_a_missing_model_is_warned_of() {
-    let (ok, out) = check(ai(json!({ "model": "u/var", "text": "$output.body",
-                                     "choose": ["acil", "sonra"] })));
+    let (ok, out) = check(ai(json!({ "model": "u/var", "message": "$output.body",
+                                     "fields": { "acil": "boolean" } })));
     assert!(ok && !out.contains("warning"), "{out}");
-    let (ok, out) = check(ai(json!({ "model": "u/yok", "text": "x" })));
+    let (ok, out) = check(ai(json!({ "model": "u/yok", "message": "x" })));
     assert!(
         ok && out.contains("warning: posta: #ai: no model u/yok on this machine"),
         "{out}"
     );
     // a model given as a value is known only in a run
     let (ok, out) = check(ai(
-        json!({ "model": "$event.model", "text": "x", "fields": "$event.alanlar" }),
+        json!({ "model": "$event.model", "message": "x", "fields": "$event.alanlar" }),
     ));
     assert!(ok && !out.contains("warning"), "{out}");
 }
 
 #[test]
 fn a_step_without_a_model_is_warned_of_unless_the_machine_has_one() {
-    let (ok, out) = check(ai(json!({ "text": "x" })));
+    let (ok, out) = check(ai(json!({ "message": "x" })));
     assert!(ok && out.contains("warning: posta: #ai: no model"), "{out}");
     let (ok, out) = check_with(
-        ai(json!({ "text": "x" })),
+        ai(json!({ "message": "x" })),
         Some(json!({ "model": "u/var" })),
     );
     assert!(ok && !out.contains("warning"), "{out}");
     let (ok, out) = check_with(
-        ai(json!({ "text": "x" })),
+        ai(json!({ "message": "x" })),
         Some(json!({ "model": "u/yok" })),
     );
     assert!(
@@ -107,16 +107,16 @@ fn a_step_without_a_model_is_warned_of_unless_the_machine_has_one() {
 #[test]
 fn thinking_off_on_a_model_that_cannot_is_warned_of() {
     let (ok, out) = check(ai(
-        json!({ "model": "u/düşünen", "text": "x", "thinking": false }),
+        json!({ "model": "u/düşünen", "message": "x", "thinking": false }),
     ));
     assert!(ok && out.contains("cannot turn thinking off"), "{out}");
-    let (ok, out) = check(ai(json!({ "model": "u/düşünen", "text": "x" })));
+    let (ok, out) = check(ai(json!({ "model": "u/düşünen", "message": "x" })));
     assert!(
         ok && !out.contains("warning"),
         "says nothing, asks nothing: {out}"
     );
     let (ok, out) = check(ai(
-        json!({ "model": "u/var", "text": "x", "thinking": false }),
+        json!({ "model": "u/var", "message": "x", "thinking": false }),
     ));
     assert!(ok && !out.contains("warning"), "{out}");
 }
@@ -124,18 +124,18 @@ fn thinking_off_on_a_model_that_cannot_is_warned_of() {
 #[test]
 fn what_a_run_would_refuse_is_an_error() {
     for (args, says) in [
-        (json!({ "model": "u/var" }), "it needs $text"),
+        (json!({ "model": "u/var" }), "it needs $message"),
         (
-            json!({ "model": "u/var", "text": "x", "choose": [] }),
-            "choose is a list",
+            json!({ "model": "u/var", "text": "x" }),
+            "it takes message, not text",
         ),
         (
-            json!({ "model": "u/var", "text": "x", "fields": { "a": "renk" } }),
+            json!({ "model": "u/var", "message": "x", "choose": ["acil", "sonra"] }),
+            "choose is gone",
+        ),
+        (
+            json!({ "model": "u/var", "message": "x", "fields": { "a": "renk" } }),
             "not renk",
-        ),
-        (
-            json!({ "model": "u/var", "text": "x", "choose": ["a"], "fields": { "a": "text" } }),
-            "not both",
         ),
     ] {
         let (ok, out) = check(ai(args.clone()));
@@ -145,9 +145,11 @@ fn what_a_run_would_refuse_is_an_error() {
 
 #[test]
 fn an_arg_it_does_not_read_is_warned_of() {
-    let (ok, out) = check(ai(json!({ "model": "u/var", "text": "x", "renk": "mavi" })));
+    let (ok, out) = check(ai(
+        json!({ "model": "u/var", "message": "x", "renk": "mavi" }),
+    ));
     assert!(
-        ok && out.contains("#ai takes model, text,") && out.contains("not renk"),
+        ok && out.contains("#ai takes url, key, model, message,") && out.contains("not renk"),
         "{out}"
     );
 }
