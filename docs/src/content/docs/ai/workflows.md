@@ -112,7 +112,9 @@ The same through OpenRouter: `"url":
   `itero ws check`.
 - **`key`** is sent as `Authorization: Bearer <key>`. Write it as a
   `$$NAME`, a [secret](/guides/secrets/), so it is never in the
-  workflow's file. A server on your own machine, such as LM Studio,
+  workflow's file; `itero ws check` warns of a key written out that
+  looks like a token (20 characters or more, letters and digits mixed,
+  and not a UUID). A server on your own machine, such as LM Studio,
   needs none.
 - **`model`** is the id that server expects, as written: OpenAI's is
   `gpt-6-astra`, OpenRouter's carries the maker, `openai/gpt-6-astra`.

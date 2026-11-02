@@ -225,6 +225,29 @@ pub struct Seen {
     pub thinking_false: bool,
     /// It names a url: its model is that server's, not itero-ai's.
     pub url: bool,
+    /// Its key is written out, and looks like a token.
+    pub key_token: bool,
+}
+
+/// Whether a value is a UUID as written, 8-4-4-4-12 hex digits.
+fn is_uuid(v: &str) -> bool {
+    let parts: Vec<&str> = v.split('-').collect();
+    parts.len() == 5
+        && parts
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Whether a value looks like a token: 20 characters or more, no space,
+/// letters and digits mixed, as API keys are. No word is that long. A
+/// UUID is an id, not called a token.
+fn looks_like_token(v: &str) -> bool {
+    !is_uuid(v)
+        && v.chars().count() >= 20
+        && !v.chars().any(char::is_whitespace)
+        && v.chars().any(|c| c.is_ascii_alphabetic())
+        && v.chars().any(|c| c.is_ascii_digit())
 }
 
 /// What `itero ws check` can say of an `#ai` step's args before a run: the
@@ -240,6 +263,7 @@ pub fn check(args: &Value) -> Result<Seen, String> {
                 model: Written::Later,
                 thinking_false: false,
                 url: false,
+                key_token: false,
             });
         }
     };
@@ -270,6 +294,9 @@ pub fn check(args: &Value) -> Result<Seen, String> {
         model,
         thinking_false,
         url: env.contains_key("url"),
+        key_token: env
+            .get("key")
+            .is_some_and(|k| !k.starts_with('$') && looks_like_token(k)),
     })
 }
 
@@ -308,11 +335,21 @@ pub fn warnings(seen: &Seen) -> Vec<String> {
     let machine = super::defaults::path()
         .and_then(|p| super::defaults::read(&p))
         .unwrap_or_default();
+    let mut out = vec![];
+    if seen.key_token {
+        out.push(fail("key looks like a token: write it as a $$NAME"));
+    }
     // a step that sends to a url, its own or the machine's, never asks
     // itero-ai: this machine's models say nothing of it
-    if seen.url || machine.contains_key("url") {
-        return vec![];
+    if !seen.url && !machine.contains_key("url") {
+        out.extend(itero_ai_warnings(seen, &machine));
     }
+    out
+}
+
+/// What a step that asks itero-ai is warned of: a model this machine does
+/// not have, or one that cannot turn thinking off.
+fn itero_ai_warnings(seen: &Seen, machine: &Map<String, Value>) -> Vec<String> {
     let model = match &seen.model {
         Written::Later => return vec![],
         Written::Named(m) => m.clone(),
@@ -578,6 +615,21 @@ mod tests {
             let e =
                 request(&env(&[("model", "u/k"), ("message", "x"), ("context", v)])).unwrap_err();
             assert!(e.contains(says), "{e}");
+        }
+    }
+
+    #[test]
+    fn a_token_is_long_without_spaces_letters_and_digits_mixed() {
+        for (v, token) in [
+            ("sk-proj-4f9aB2cD8eF1gH3iJ5kL", true),
+            ("gsk_7Hq2Lm9Pz4Xc8Vb1Nk6Rt3Ys", true),
+            ("lm-studio", false),
+            ("anahtarsızçalışanbirsunucu", false),
+            ("bu anahtar 2026 yılında verildi", false),
+            ("0f8fad5b-d9cb-469f-a165-70867728950e", false),
+            ("0f8fad5bd9cb469fa16570867728950e", true),
+        ] {
+            assert_eq!(looks_like_token(v), token, "{v}");
         }
     }
 

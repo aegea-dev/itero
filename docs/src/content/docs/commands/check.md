@@ -60,7 +60,8 @@ event type of one word, an action or a workflow that is not there, an
 action that is not executable. Run it after every edit.
 
 A warning does not fail the check. It says what is likely a mix-up: a
-secret that is also an environment variable, or an arg `#notify` does not
+secret that is also an environment variable, an `#ai` key written out that
+looks like a token (write it as a `$$NAME`), or an arg `#notify` does not
 read (it takes `title`, `text`, `subtitle`, `sound`, `url`, `buttons`,
 `wait` and `data`):
 

@@ -244,3 +244,20 @@ fn a_url_step_gets_none_of_itero_ais_warnings() {
         "{out}"
     );
 }
+
+#[test]
+fn a_key_that_looks_like_a_token_is_warned_of() {
+    let url = "https://api.openai.com/v1/chat/completions";
+    let (ok, out) = check(ai(
+        json!({ "url": url, "key": "sk-proj-4f9aB2cD8eF1gH3iJ5kL", "message": "x" }),
+    ));
+    assert!(
+        ok && out.contains("warning: posta: #ai: key looks like a token: write it as a $$NAME"),
+        "{out}"
+    );
+    // a short word, a secret, a value of the run: nothing to say
+    for key in ["lm-studio", "$$OPENAI_API_KEY", "$event.anahtar"] {
+        let (ok, out) = check(ai(json!({ "url": url, "key": key, "message": "x" })));
+        assert!(ok && !out.contains("warning"), "{key}: {out}");
+    }
+}
