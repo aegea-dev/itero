@@ -59,7 +59,7 @@ fails the step.
 | `message` | what is asked; needed |
 | `system` | the system message: who the model is to be, and how to answer |
 | `fields` | names and their types, `text`, `number`, `integer`, `boolean` or `date`: the answer is an object of them |
-| `thinking` | `true` lets the model think first; its thinking goes to the log, not into `$output` |
+| `thinking` | `true` lets the model think first, its thinking to the log, not into `$output`; `false` asks it not to ([Thinking](#thinking)) |
 | `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`, `max_tokens`, `seed` | sampling, sent as given |
 | `context` | itero-ai's: tokens for the prompt and the answer together: 1,024 or more, up to what the model holds; 32,768 if not given |
 
@@ -159,6 +159,10 @@ Its thinking goes to the log, never into `$output`.
 some ignore it. Thinking written in `<think>` at the start of an answer
 is still kept out of `$output`, and `itero ws check` warns of a step
 that asks a model that cannot turn it off.
+
+With a `url`, `"thinking": false` asks for the lowest effort the model
+takes, and `"thinking": true` sends nothing
+([A model behind a URL](#a-model-behind-a-url)).
 
 ## While it answers
 
