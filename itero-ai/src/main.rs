@@ -38,16 +38,27 @@ fn main() {
             std::process::exit(2);
         }
     };
-    // started by itero: when that process is gone, so is the reason to run
-    // SAFETY: getppid has no preconditions and cannot fail
-    let parent = unsafe { libc::getppid() };
+    // started by itero: when that process is gone, so is the reason to run.
+    // itero names itself, so a parent gone before this line is seen too;
+    // run by hand, the parent is the one this process has now
+    let parent = match std::env::var("ITERO_AI_PARENT") {
+        Ok(p) => match p.parse::<libc::pid_t>() {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("itero-ai: ITERO_AI_PARENT is a process id, not {p}");
+                std::process::exit(2);
+            }
+        },
+        // SAFETY: getppid has no preconditions and cannot fail
+        Err(_) => unsafe { libc::getppid() },
+    };
     std::thread::spawn(move || {
         loop {
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            // SAFETY: as above
+            // SAFETY: getppid has no preconditions and cannot fail
             if unsafe { libc::getppid() } != parent {
                 stop();
             }
+            std::thread::sleep(std::time::Duration::from_secs(2));
         }
     });
     // for the tests: a start as long as compiling Metal's shaders can be

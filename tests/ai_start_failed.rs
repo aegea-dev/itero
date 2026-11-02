@@ -11,9 +11,14 @@ use std::os::unix::fs::PermissionsExt;
 fn a_start_that_ends_before_it_answers_is_told_with_its_seconds_and_why() {
     let d = tempfile::tempdir().unwrap();
     let bin = d.path().join("itero-ai");
+    let parent = d.path().join("üst");
     std::fs::write(
         &bin,
-        "#!/bin/sh\nsleep 1\necho 'itero-ai: model klasörü okunamadı' >&2\nexit 3\n",
+        format!(
+            "#!/bin/sh\necho \"$ITERO_AI_PARENT\" > '{}'\nsleep 1\n\
+             echo 'itero-ai: model klasörü okunamadı' >&2\nexit 3\n",
+            parent.display()
+        ),
     )
     .unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -44,4 +49,7 @@ fn a_start_that_ends_before_it_answers_is_told_with_its_seconds_and_why() {
     assert_eq!(data["why"].as_str(), Some(e.as_str()));
     let took = data["seconds"].as_f64().unwrap();
     assert!((1.0..30.0).contains(&took), "it ran {took} s");
+    // itero names itself, so itero-ai knows when it is gone
+    let named = std::fs::read_to_string(&parent).unwrap();
+    assert_eq!(named.trim(), std::process::id().to_string());
 }

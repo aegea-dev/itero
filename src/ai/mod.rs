@@ -262,6 +262,8 @@ fn start_at(
         .env("ITERO_AI_SOCKET", &socket)
         .env("ITERO_AI_IDLE", idle.as_secs().to_string())
         .env("ITERO_AI_INDEX", index_path()?)
+        // so it ends with this process, even one gone before it looks
+        .env("ITERO_AI_PARENT", std::process::id().to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

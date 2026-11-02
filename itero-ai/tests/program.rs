@@ -10,6 +10,7 @@ fn itero_ai(env: &[(&str, &std::ffi::OsStr)]) -> Command {
     c.env_remove("ITERO_AI_SOCKET")
         .env_remove("ITERO_AI_IDLE")
         .env_remove("ITERO_AI_INDEX")
+        .env_remove("ITERO_AI_PARENT")
         .envs(env.iter().copied());
     c
 }
@@ -24,6 +25,22 @@ fn without_its_environment_it_says_what_is_missing_and_exits_2() {
     assert_eq!(o.status.code(), Some(2), "{}", said(&o));
     assert!(said(&o).starts_with("itero-ai: "), "{}", said(&o));
     assert!(said(&o).contains("ITERO_AI_"), "{}", said(&o));
+}
+
+#[test]
+fn with_a_parent_that_is_not_a_process_id_it_exits_2() {
+    let d = tempfile::tempdir().unwrap();
+    let (sock, index) = (d.path().join("ç.sock"), d.path().join("models.json"));
+    let o = itero_ai(&[
+        ("ITERO_AI_SOCKET", sock.as_os_str()),
+        ("ITERO_AI_IDLE", std::ffi::OsStr::new("30")),
+        ("ITERO_AI_INDEX", index.as_os_str()),
+        ("ITERO_AI_PARENT", std::ffi::OsStr::new("üst")),
+    ])
+    .output()
+    .unwrap();
+    assert_eq!(o.status.code(), Some(2), "{}", said(&o));
+    assert!(said(&o).contains("ITERO_AI_PARENT"), "{}", said(&o));
 }
 
 #[test]
@@ -107,13 +124,33 @@ fn told_to_stop_while_it_starts_it_exits_at_once() {
 #[test]
 fn with_its_parent_gone_while_it_starts_it_exits_at_once() {
     let d = tempfile::tempdir().unwrap();
-    let (sock, index) = (d.path().join("ç.sock"), d.path().join("models.json"));
     // the shell lives long enough for itero-ai to see it as its parent
+    let pid = started_by_a_shell(
+        d.path(),
+        r#""$0" >/dev/null 2>&1 </dev/null & echo $!; sleep 1"#,
+    );
+    assert_gone(&pid);
+}
+
+#[test]
+fn with_its_parent_gone_before_it_starts_it_exits_at_once() {
+    let d = tempfile::tempdir().unwrap();
+    // the shell has exited before itero-ai runs: the subshell waits, then
+    // becomes itero-ai, whose parent is gone from its first instruction.
+    // It is named, as itero names itself.
+    let pid = started_by_a_shell(
+        d.path(),
+        r#"(sleep 0.5; ITERO_AI_PARENT=$$ exec "$0" >/dev/null 2>&1 </dev/null) & echo $!"#,
+    );
+    assert_gone(&pid);
+}
+
+/// The pid of an itero-ai held in its start, started in `d` by
+/// `sh -c script` with the program as `$0`.
+fn started_by_a_shell(d: &std::path::Path, script: &str) -> String {
+    let (sock, index) = (d.join("ç.sock"), d.join("models.json"));
     let o = Command::new("sh")
-        .args([
-            "-c",
-            r#""$0" >/dev/null 2>&1 </dev/null & echo $!; sleep 1"#,
-        ])
+        .args(["-c", script])
         .arg(env!("CARGO_BIN_EXE_itero-ai"))
         .env("ITERO_TEST_START_SECS", "60")
         .env("ITERO_AI_SOCKET", &sock)
@@ -121,10 +158,14 @@ fn with_its_parent_gone_while_it_starts_it_exits_at_once() {
         .env("ITERO_AI_INDEX", &index)
         .output()
         .unwrap();
-    let pid = String::from_utf8_lossy(&o.stdout).trim().to_string();
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
+/// `pid` ends within 10 seconds; else it is killed and the test fails.
+fn assert_gone(pid: &str) {
     let gone = || {
         let ps = Command::new("ps")
-            .args(["-o", "stat=", "-p", &pid])
+            .args(["-o", "stat=", "-p", pid])
             .output()
             .unwrap();
         // a zombie has ended too: its new parent has yet to reap it
