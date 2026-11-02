@@ -22,6 +22,11 @@ if ! HOME="$tmp/ev" ITERO_INSTALL_BASE_URL="file://$tmp/rel" \
 	fail "install"
 fi
 "$tmp/bin/itero" --version | grep -q itero || fail "the installed itero does not run"
+# no service in this HOME: a first install restarts nothing
+if grep -q "Restarted the service\|still runs the itero" "$tmp/out"; then
+	cat "$tmp/out"
+	fail "a first install touched a service"
+fi
 if [ "$(uname)" = Darwin ]; then
 	[ -x "$tmp/ev/Applications/Itero.app/Contents/MacOS/itero-notifier" ] || fail "no Itero.app"
 fi

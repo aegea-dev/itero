@@ -79,7 +79,10 @@ git pull && make install           # from source
 
 A daemon that is already running keeps the itero it started with: the
 new files change nothing until it starts again. If you run itero as a
-service ([Start at login](/guides/service/)), restart it:
+service ([Start at login](/guides/service/)), the install script restarts
+it for you, when it runs the itero it upgraded, and says so; a service you
+stopped stays stopped. After `brew upgrade` or `make install`, or when the
+script says it could not, restart it yourself:
 
 ```bash
 itero service restart

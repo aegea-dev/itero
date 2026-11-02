@@ -59,11 +59,13 @@ state.
 
 ## After an upgrade
 
+The install script restarts the service when it runs, so every
+workspace runs on the new itero. After `brew upgrade` or `make install`,
+or when the script says it could not:
+
 ```bash
 itero service restart
 ```
-
-runs every workspace on the new itero.
 
 ## Remove it
 

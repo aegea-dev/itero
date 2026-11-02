@@ -22,7 +22,7 @@ itero service uninstall
 | `status` | the service's state, and the daemon's health: its pid, its port, each workspace's passes and last error |
 | `start` | starts the installed service |
 | `stop` | stops it; it starts again at your next login |
-| `restart` | stops and starts it: after an upgrade, every workspace runs on the new itero |
+| `restart` | stops and starts it, so every workspace runs on the itero installed now; the install script does this on an upgrade |
 | `uninstall` | stops the service and removes it; the workspaces, their journals and logs stay |
 
 ```
