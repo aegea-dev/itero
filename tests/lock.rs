@@ -33,26 +33,23 @@ fn held_says_whether_a_daemon_runs_it_and_takes_nothing() {
     );
     drop(first);
     assert!(!itero::engine::lock::held(&ws).unwrap());
-    // a daemon starting while commands ask still takes it
-    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let asking: Vec<_> = (0..4)
-        .map(|_| {
-            let (ws, done) = (ws.clone(), done.clone());
-            std::thread::spawn(move || {
-                while !done.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = itero::engine::lock::held(&ws);
-                }
-            })
-        })
-        .collect();
-    let taken = (0..500)
-        .map(|_| itero::engine::lock::take(&ws, "başka").map(drop))
-        .collect::<Result<Vec<_>, _>>();
-    done.store(true, std::sync::atomic::Ordering::Relaxed);
-    for a in asking {
-        a.join().unwrap();
-    }
-    taken.unwrap();
+    // a daemon starting while a command asks (holding the lock shared
+    // for an instant, here 50 ms) still takes it, trying again
+    use std::os::fd::AsRawFd;
+    let asking = std::fs::File::open(&lock).unwrap();
+    // SAFETY: flock on a descriptor this test owns
+    assert_eq!(
+        unsafe { libc::flock(asking.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) },
+        0
+    );
+    let lets_go = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        drop(asking);
+    });
+    let t = Instant::now();
+    drop(itero::engine::lock::take(&ws, "başka").unwrap());
+    assert!(t.elapsed() >= Duration::from_millis(40), "it waited");
+    lets_go.join().unwrap();
 }
 
 #[test]
