@@ -46,8 +46,12 @@ pub const PATH_CHANGED: &str = "itero.path.changed";
 /// notification-clicked`. Itero's own, so nothing from outside fakes one.
 pub const NOTIFICATION_CLICKED: &str = "itero.notification.clicked";
 
-/// itero-ai, the local model's server, answers on its socket: `{"socket"}`.
+/// itero-ai, the local model's server, answers on its socket:
+/// `{"socket", "seconds"}`, how long it took from its start.
 pub const AI_STARTED: &str = "itero.ai.started";
+/// A start that never answered: `{"why", "seconds"}`, `seconds` when one
+/// was started (not when it waited for its turn, or could not be run).
+pub const AI_START_FAILED: &str = "itero.ai.start.failed";
 /// It exited idle: `{"after"}`, its idle seconds.
 pub const AI_STOPPED: &str = "itero.ai.stopped";
 /// It ended any other way: `{"exit", "why"}`, its last line on stderr.

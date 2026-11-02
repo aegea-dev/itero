@@ -16,6 +16,7 @@ description: "How itero-ai starts, idles and fails; its events, its environment,
   model's memory and exits. The next `#ai` step starts it again, in
   under a second. On a Mac a start may first compile Metal's shaders,
   about 15 seconds on an M1 Max; itero waits up to a minute for it.
+  `itero.ai.started` says how long each start took.
 - **Gone with the daemon.** When the daemon stops, so does its itero-ai.
 - **One start at a time.** itero-ai starts wait their turn, across every
   daemon of this user: starting together makes Metal compile again. A
@@ -43,7 +44,8 @@ on like any other ([The daemon's own workflows](/guides/maintenance/)):
 
 | Event | When | Fields |
 |---|---|---|
-| `itero.ai.started` | the daemon started it | `socket` |
+| `itero.ai.started` | the daemon started it | `socket`, `seconds` (from its start until it answered) |
+| `itero.ai.start.failed` | a start never answered: it ended first, or did not answer within a minute | `why`, `seconds` (how long it ran, when it ran) |
 | `itero.ai.stopped` | it exited after its idle time | `after` (seconds) |
 | `itero.ai.failed` | it ended any other way | `exit`, `why` |
 | `itero.ai.model.loaded` | it loaded a model | `model`, `seconds` |

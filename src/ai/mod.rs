@@ -134,7 +134,26 @@ pub struct Started {
     pub child: Option<Child>,
     /// The last line it wrote on stderr: why, when it ends badly.
     pub said: Arc<Mutex<String>>,
+    /// How long the one started now took to answer, from its start.
+    pub seconds: Option<f64>,
 }
+
+/// An itero-ai started that never answered: ended first, or did not
+/// answer in time.
+#[derive(Debug)]
+pub struct StartFailed {
+    /// How long it ran, from its start.
+    pub seconds: f64,
+    pub why: String,
+}
+
+impl std::fmt::Display for StartFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.why)
+    }
+}
+
+impl std::error::Error for StartFailed {}
 
 /// The workspace's itero-ai: the one answering on its socket, else one
 /// started now, which exits after `idle` with nothing asked. `on_line`
@@ -160,6 +179,7 @@ pub fn ensure_on(
             socket: s.into(),
             child: None,
             said: Arc::new(Mutex::new(String::new())),
+            seconds: None,
         });
     }
     ensure_at(socket, idle, on_line)
@@ -215,6 +235,7 @@ fn start_at(
             socket,
             child: None,
             said,
+            seconds: None,
         });
     }
     own_dir(socket.parent().expect("a socket is in a folder"))?;
@@ -228,6 +249,7 @@ fn start_at(
                 socket,
                 child: None,
                 said,
+                seconds: None,
             });
         }
         Some(turn)
@@ -273,23 +295,32 @@ fn start_at(
                 socket,
                 child: Some(child),
                 said,
+                seconds: Some(since.elapsed().as_secs_f64()),
             });
         }
         if let Some(status) = child.try_wait()? {
             // let the reader take its last line
             std::thread::sleep(Duration::from_millis(50));
             let why = said.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            bail!("itero-ai ended ({status}) before it answered: {why}");
+            return Err(StartFailed {
+                seconds: since.elapsed().as_secs_f64(),
+                why: format!("itero-ai ended ({status}) before it answered: {why}"),
+            }
+            .into());
         }
         std::thread::sleep(Duration::from_millis(50));
     }
     let _ = child.kill();
     let _ = child.wait();
     let why = said.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    bail!(
-        "itero-ai did not answer within {} s: {why}",
-        START.as_secs()
-    )
+    Err(StartFailed {
+        seconds: since.elapsed().as_secs_f64(),
+        why: format!(
+            "itero-ai did not answer within {} s: {why}",
+            START.as_secs()
+        ),
+    }
+    .into())
 }
 
 #[cfg(test)]
