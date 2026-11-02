@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "astro dev",
 		"start": "astro dev",
-		"build": "astro build --force && node scripts/check-local-assets.mjs",
+		"build": "astro build --force && node scripts/check-local-assets.mjs && node scripts/llms.mjs",
 		"test": "node --test scripts/*.test.mjs",
 		"preview": "astro preview",
 		"astro": "astro"
