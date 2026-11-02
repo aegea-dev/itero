@@ -100,5 +100,10 @@ line, where `ps` would show it. With curl:
 printf 'user = "%s:%s"\n' "$user" "$password" | curl -fsS -K - "imaps://$host/INBOX"
 ```
 
+A model's server takes its key the same way, as the `key` of an `#ai`
+step: `"key": "$$OPENAI_API_KEY"`
+([A model behind a URL](/ai/workflows/#a-model-behind-a-url)). itero
+sends it only to that step's `url`.
+
 `ITERO_NO_SECRET_STORE` set keeps itero away from the store: secrets then
 come from the environment only, as in tests and CI.

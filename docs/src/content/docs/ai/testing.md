@@ -28,7 +28,7 @@ Bun.serve({
     const chunk = (delta, finish = null) =>
       `data: ${JSON.stringify({ object: "chat.completion.chunk",
                                 choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
-    const body = chunk({ content: JSON.stringify(answer) }) + chunk({}, "stop") + "data: [DONE]\n\n";
+    const body = chunk({ content: answer }) + chunk({}, "stop") + "data: [DONE]\n\n";
     return new Response(body, { headers: { "content-type": "text/event-stream" } });
   },
 });
@@ -36,8 +36,7 @@ Bun.serve({
 
 The content is what the model would write:
 
-- for a plain `text` answer, the text;
-- for `choose`, a label as JSON: `"urgent"`, with its quotes;
+- for a plain answer, the text: `urgent`;
 - for `fields`, an object as JSON: `{"urgent": true, "amount": 1250}`.
 
 Run the stand-in in a process of its own: a test that waits on itero
@@ -56,7 +55,12 @@ process.env.ITERO_AI_SOCKET = socket;   // the daemon the test starts inherits i
 Then each test writes the answer it wants, sends the event, and checks
 what the workflow did. The stand-in can also keep each request it gets,
 so a test can check what the model was asked: the `model`, the
-`messages`, and the `response_format` that holds it to the labels.
+`messages`, and the `response_format` that holds it to its `fields`.
+
+A step with a [`url`](/ai/workflows/#a-model-behind-a-url) asks that
+address instead: in a test, give it the address of a stand-in on
+`127.0.0.1`, answering OpenAI's API the same way, never a real server
+or key.
 
 The [`ai-mail` example](https://github.com/aegea-dev/itero/tree/main/examples/ai-mail)
 does all of this: `test/fake-ai.js`, and `test/sort.test.js` with an

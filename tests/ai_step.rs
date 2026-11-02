@@ -34,7 +34,7 @@ fn a_plain_answer_is_the_output_and_the_thinking_is_not() {
     let out = worker::run_step(&step(
         d.path(),
         &sock,
-        &[("model", "u/küçük"), ("text", "özetle: uzun mektup")],
+        &[("model", "u/küçük"), ("message", "özetle: uzun mektup")],
     ))
     .unwrap();
     assert_eq!(out, Outcome::Done(json!("kısa özet")));
@@ -48,28 +48,6 @@ fn a_plain_answer_is_the_output_and_the_thinking_is_not() {
 }
 
 #[test]
-fn choose_is_a_schema_of_its_labels_and_the_output_the_label() {
-    let d = tempfile::tempdir().unwrap();
-    let sock = d.path().join("ai.sock");
-    let s = fake_ai::serve(&sock, Some("\"acil\""));
-    let out = worker::run_step(&step(
-        d.path(),
-        &sock,
-        &[
-            ("model", "u/k"),
-            ("text", "x"),
-            ("choose", r#"["acil","sonra"]"#),
-        ],
-    ))
-    .unwrap();
-    assert_eq!(out, Outcome::Done(json!("acil")));
-    assert_eq!(
-        s.requests.lock().unwrap()[0]["response_format"]["json_schema"]["schema"],
-        json!({ "type": "string", "enum": ["acil", "sonra"] })
-    );
-}
-
-#[test]
 fn fields_are_an_object_schema_and_the_output_the_object() {
     let d = tempfile::tempdir().unwrap();
     let sock = d.path().join("ai.sock");
@@ -79,7 +57,7 @@ fn fields_are_an_object_schema_and_the_output_the_object() {
         &sock,
         &[
             ("model", "u/k"),
-            ("text", "fatura"),
+            ("message", "fatura"),
             ("fields", r#"{"tutar":"number","son":"date"}"#),
             ("temperature", "0.7"),
             ("thinking", "true"),
@@ -108,34 +86,25 @@ fn what_is_wrong_is_said() {
     let sock = d.path().join("ai.sock");
     let _s = fake_ai::serve(&sock, Some("x"));
     for (env, says) in [
-        (vec![("model", "u/k")], "$text"),
+        (vec![("model", "u/k")], "$message"),
         (
-            vec![("model", "u/k"), ("text", "x"), ("choose", "[]")],
+            vec![("model", "u/k"), ("message", "x"), ("choose", "[]")],
             "choose",
         ),
         (
             vec![
                 ("model", "u/k"),
-                ("text", "x"),
+                ("message", "x"),
                 ("fields", r#"{"a":"renk"}"#),
             ],
             "renk",
         ),
         (
-            vec![
-                ("model", "u/k"),
-                ("text", "x"),
-                ("choose", r#"["a"]"#),
-                ("fields", r#"{"a":"text"}"#),
-            ],
-            "not both",
-        ),
-        (
-            vec![("model", "u/k"), ("text", "x"), ("temperature", "sıcak")],
+            vec![("model", "u/k"), ("message", "x"), ("temperature", "sıcak")],
             "temperature",
         ),
         (
-            vec![("model", "u/k"), ("text", "x"), ("thinking", "belki")],
+            vec![("model", "u/k"), ("message", "x"), ("thinking", "belki")],
             "thinking",
         ),
     ] {
@@ -152,9 +121,13 @@ fn a_missing_model_is_told_to_the_workspace() {
     std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
     let sock = d.path().join("ai.sock");
     let _s = fake_ai::serve(&sock, None);
-    let e = worker::run_step(&step(d.path(), &sock, &[("model", "u/yok"), ("text", "x")]))
-        .unwrap_err()
-        .to_string();
+    let e = worker::run_step(&step(
+        d.path(),
+        &sock,
+        &[("model", "u/yok"), ("message", "x")],
+    ))
+    .unwrap_err()
+    .to_string();
     assert!(e.contains("no model u/yok"), "{e}");
     assert!(e.contains("itero ai models list"), "{e}");
     let ws = itero::workspace::find(d.path()).unwrap();
@@ -169,4 +142,23 @@ fn a_missing_model_is_told_to_the_workspace() {
         kinds.contains(&"itero.ai.model.missing".to_string()),
         "{kinds:?}"
     );
+}
+
+#[test]
+fn text_and_choose_are_errors_naming_what_to_write() {
+    let d = tempfile::tempdir().unwrap();
+    let sock = d.path().join("ai.sock");
+    let _s = fake_ai::serve(&sock, Some("özet"));
+    let text = worker::run_step(&step(d.path(), &sock, &[("model", "u/k"), ("text", "x")]));
+    assert!(format!("{:?}", text.unwrap_err()).contains("takes message, not text"));
+    let choose = worker::run_step(&step(
+        d.path(),
+        &sock,
+        &[
+            ("model", "u/k"),
+            ("message", "x"),
+            ("choose", r#"["acil","sonra"]"#),
+        ],
+    ));
+    assert!(format!("{:?}", choose.unwrap_err()).contains("choose is gone"));
 }

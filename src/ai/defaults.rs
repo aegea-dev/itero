@@ -9,7 +9,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// What the machine may set: `#ai`'s args that are not the step's own work.
-pub const KEYS: [&str; 10] = [
+pub const KEYS: [&str; 12] = [
+    "url",
+    "key",
     "model",
     "thinking",
     "temperature",
@@ -97,10 +99,20 @@ fn env_text(v: &Value) -> String {
 /// Fills what a step left out. A model this machine does not have gives
 /// nothing: itero-ai says so when asked.
 pub fn fill(env: &mut BTreeMap<String, String>, machine: &Map<String, Value>, ix: &Index) {
+    // a step with its own url gives its own key and model: a key is never
+    // sent to a server it was not set for, a local name never to a remote one
+    let own_url = env.contains_key("url");
     for k in KEYS {
+        if own_url && ["url", "key", "model"].contains(&k) {
+            continue;
+        }
         if let (false, Some(v)) = (env.contains_key(k), machine.get(k)) {
             env.insert(k.to_string(), env_text(v));
         }
+    }
+    if env.contains_key("url") {
+        // the model's table and llama.cpp's values are itero-ai's
+        return;
     }
     let Some(e) = env
         .get("model")
@@ -160,7 +172,7 @@ pub fn changed(
     }
     let mut env: BTreeMap<String, String> =
         new.iter().map(|(k, v)| (k.clone(), env_text(v))).collect();
-    env.insert("text".into(), "x".into());
+    env.insert("message".into(), "x".into());
     super::step::body(env.get("model").map_or("", String::as_str), &env)?;
     Ok(new)
 }
@@ -211,7 +223,7 @@ mod tests {
     #[test]
     fn the_first_layer_that_has_a_value_wins() {
         let qwen = ix(vec![model("u/q", Some("Qwen3.5-4B"), None)]);
-        let mut e = env(&[("text", "özetle"), ("temperature", "0.1")]);
+        let mut e = env(&[("message", "özetle"), ("temperature", "0.1")]);
         fill(
             &mut e,
             &machine(json!({ "model": "u/q", "top_p": 0.5 })),
@@ -233,13 +245,13 @@ mod tests {
             min_p: None,
         };
         let q = ix(vec![model("u/q", Some("Qwen3.5-35B-A3B"), Some(file))]);
-        let mut e = env(&[("model", "u/q"), ("text", "x")]);
+        let mut e = env(&[("model", "u/q"), ("message", "x")]);
         fill(&mut e, &Map::new(), &q);
         assert_eq!(
             (e["temperature"].as_str(), e["presence_penalty"].as_str()),
             ("0.7", "1.5")
         );
-        let mut e = env(&[("model", "u/q"), ("text", "x"), ("thinking", "true")]);
+        let mut e = env(&[("model", "u/q"), ("message", "x"), ("thinking", "true")]);
         fill(&mut e, &Map::new(), &q);
         assert_eq!(e["temperature"], "1.0");
     }
@@ -256,11 +268,11 @@ mod tests {
             model("u/yalın", Some("Agents-A1"), None),
             model("u/ince", Some("Qwen3.8"), None),
         ]);
-        let mut e = env(&[("model", "u/gemma"), ("text", "x")]);
+        let mut e = env(&[("model", "u/gemma"), ("message", "x")]);
         fill(&mut e, &Map::new(), &m);
         assert_eq!(e["top_k"], "64");
         for repo in ["u/yalın", "u/ince", "u/yok"] {
-            let mut e = env(&[("model", repo), ("text", "x")]);
+            let mut e = env(&[("model", repo), ("message", "x")]);
             fill(&mut e, &Map::new(), &m);
             assert_eq!(e.len(), 2, "{repo}");
         }
@@ -282,6 +294,24 @@ mod tests {
             let e = changed(&old, &machine(bad)).unwrap_err();
             assert!(e.contains(says), "{e}");
         }
+    }
+
+    #[test]
+    fn a_key_and_model_go_only_with_their_url() {
+        let m = machine(json!({
+            "url": "https://bir.test/v1/chat/completions", "key": "$$BIR",
+            "model": "bir/model", "temperature": 0.3 }));
+        // the step's own url: its own key and model, the rest filled
+        let mut e = env(&[("url", "http://localhost:1234/v1/chat/completions")]);
+        fill(&mut e, &m, &ix(vec![]));
+        assert_eq!(e.get("key"), None);
+        assert_eq!(e.get("model"), None);
+        assert_eq!(e.get("temperature").map(String::as_str), Some("0.3"));
+        // no url of its own: the machine's url, key and model together
+        let mut e = env(&[("message", "x")]);
+        fill(&mut e, &m, &ix(vec![]));
+        assert_eq!(e.get("key").map(String::as_str), Some("$$BIR"));
+        assert_eq!(e.get("model").map(String::as_str), Some("bir/model"));
     }
 
     #[test]

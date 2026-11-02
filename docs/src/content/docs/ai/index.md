@@ -6,7 +6,10 @@ description: "A local model for itero: what it is, how it fits, installing it."
 **itero-ai** runs a language model on your own machine for itero. A
 workflow asks it through the built-in [`#ai`](/ai/workflows/) step: to
 sum up a mail, to sort it, to pull fields out of a text. Nothing leaves
-the machine: no account, no key, no cloud.
+the machine: no account, no key, no cloud. (An `#ai` step can also ask a
+model behind a [URL](/ai/workflows/#a-model-behind-a-url), such as
+OpenAI's; that step sends its text to that server, and `itero ws check`
+says so.)
 
 itero ships no model. You bring one: any model file in the GGUF format,
 the format llama.cpp and LM Studio use. itero advises
@@ -76,7 +79,7 @@ or its archive, `itero-ai-<version>-<target>.tar.gz`, from the
      "on": [{ "event": "sky.asked" }],
      "steps": [
        { "#ai": { "args": { "model": "unsloth/Qwen3.5-4B-GGUF",
-                            "text": "In one short sentence, under 15 words: why is the sky blue?" } } },
+                            "message": "In one short sentence, under 15 words: why is the sky blue?" } } },
        { "#notify": { "args": { "title": "Why is the sky blue?", "text": "$output" } } }
      ]
    }

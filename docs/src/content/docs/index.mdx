@@ -94,18 +94,26 @@ A model is one more program to chain, used only where judgment is needed:
 {
   "on": [{ "event": "mail.received" }],
   "steps": [
-    { "#ai": { "args": { "system": "Summarize this mail in one line, and rate it: important, normal or spam.",
-                         "text": "$event.subject\n\n$event.body" } } },
-    { "#notify": { "on": [{ "$output.rating": "important" }],
-                   "args": { "title": "$event.from", "text": "$output.summary" } } }
+    { "#ai": { "args": { "system": "Summarize this mail in one line.",
+                         "message": "$event.subject\n\n$event.body" } } },
+    { "#notify": { "args": { "title": "$event.from", "text": "$output" } } }
   ]
 }
 ```
 
-A mail arrives; `#ai`, a few lines of shell around `curl`, asks a model to
-read and rate it, and prints `{"summary": "...", "rating": "important"}`,
-its result. The rating decides the rest: you hear only about
-the important mails, and the spam and the ads pass quietly.
+A mail arrives; `#ai` asks a model to sum it up in one line, and
+`#notify` shows that line as a notification, under the sender's name.
+`#ai` takes [these args](/ai/workflows/#its-args).
+The model runs on your machine through [itero-ai](/ai/), installed
+apart from itero, with a model added:
+
+```sh
+brew install aegea-dev/tap/itero-ai
+itero ai models add unsloth/Qwen3.5-4B-GGUF
+```
+
+Or the step asks a model behind a [URL](/ai/workflows/#a-model-behind-a-url),
+such as OpenAI's.
 
 ## Why itero
 

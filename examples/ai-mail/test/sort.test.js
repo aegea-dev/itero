@@ -50,11 +50,11 @@ describe("ai-mail", () => {
     expect(run.status).toBe("done");
     expect(ws.output(run, "#ai")).toBe("urgent");
     expect(ws.read("bildirimler.log")).toBe("Urgent: Veritabanı çöktü\tfrom izleme\n");
-    // the model is asked with the mail, held to the three labels
+    // the model is asked with the mail, the three labels said in system
     const [req] = asked();
     expect(req.model).toBe("unsloth/Qwen3.5-4B-GGUF");
+    expect(req.messages[0].content).toContain("urgent (someone must act today)");
     expect(req.messages[1].content).toStartWith("From izleme, subject: Veritabanı çöktü");
-    expect(req.response_format.json_schema.schema.enum).toEqual(["urgent", "later", "spam"]);
   });
 
   it("keeps quiet about one for later", () => {

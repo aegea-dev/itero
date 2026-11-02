@@ -3,9 +3,8 @@
   "steps": [
     { "#ai": { "args": {
         "model": "unsloth/Qwen3.5-4B-GGUF",
-        "system": "You sort the mail of a small team that runs an online shop.",
-        "text": "From $event.from, subject: $event.subject\n\n$event.body",
-        "choose": ["urgent", "later", "spam"],
+        "system": "You sort the mail of a small team that runs an online shop. Answer with one word only: urgent (someone must act today), later (it can wait) or spam (nobody needs it).",
+        "message": "From $event.from, subject: $event.subject\n\n$event.body",
         "temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0, "presence_penalty": 1.5
     } } },
     { "#notify": { "on": [{ "$output": "urgent" }],

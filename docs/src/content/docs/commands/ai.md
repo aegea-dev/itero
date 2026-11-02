@@ -90,10 +90,18 @@ itero ai defaults set '{"temperature": null}'
 ```
 
 `set` merges into what is there, and `null` takes a key out. Its keys are
-`#ai`'s own args: `model`, `thinking`, `temperature`, `top_p`, `top_k`,
-`min_p`, `presence_penalty`, `max_tokens`, `seed` and `context`. Their
-values follow the same rules as in a step; a model this machine does not
-have is warned of.
+`#ai`'s own args: `url`, `key`, `model`, `thinking`, `temperature`,
+`top_p`, `top_k`, `min_p`, `presence_penalty`, `max_tokens`, `seed` and
+`context`. Their values follow the same rules as in a step; a model this
+machine does not have is warned of. A `key` or `model` set here goes only
+with the `url` set here: a step with a `url` of its own gives its own
+([A model behind a URL](/ai/workflows/#a-model-behind-a-url)). Write a
+`key` as a `$$NAME`:
+
+```sh
+itero ai defaults set '{"url": "https://openrouter.ai/api/v1/chat/completions",
+                        "key": "$$OPENROUTER_API_KEY", "model": "openai/gpt-6-astra"}'
+```
 
 They are this machine's, kept in `~/.local/state/itero/ai-defaults.json`,
 never in a workspace's config.

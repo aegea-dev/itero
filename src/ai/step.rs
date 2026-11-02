@@ -1,17 +1,19 @@
 //! The built-in `#ai`: asks the local model, through itero-ai on the socket
-//! the daemon gave the step, for a text, one of a list, or typed fields.
+//! the daemon gave the step, or a model behind a `url`, for a text or typed
+//! fields.
 use crate::engine::worker::{Failure, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::io::BufRead;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The args `#ai` reads.
-pub const ARGS: [&str; 14] = [
+pub const ARGS: [&str; 15] = [
+    "url",
+    "key",
     "model",
-    "text",
+    "message",
     "system",
-    "choose",
     "fields",
     "thinking",
     "temperature",
@@ -29,24 +31,13 @@ pub const FIELD_TYPES: [&str; 5] = ["text", "number", "integer", "boolean", "dat
 
 /// What the answer is to be.
 #[derive(Debug, PartialEq)]
-enum Shape {
+pub(super) enum Shape {
     Text,
-    Choose(Vec<String>),
     Fields(Vec<(String, String)>),
 }
 
-fn fail(why: impl std::fmt::Display) -> String {
+pub(super) fn fail(why: impl std::fmt::Display) -> String {
     format!("#ai: {why}")
-}
-
-/// The labels of `choose`, given as a list.
-fn labels(text: &str) -> Result<Vec<String>, String> {
-    let bad = || fail(format!("choose is a list of one label or more: {text}"));
-    let labels: Vec<String> = serde_json::from_str(text).map_err(|_| bad())?;
-    if labels.is_empty() || labels.iter().any(|l| l.trim().is_empty()) {
-        return Err(bad());
-    }
-    Ok(labels)
 }
 
 /// The names and types of `fields`, given as an object, in its order.
@@ -67,12 +58,15 @@ fn fields(text: &str) -> Result<Vec<(String, String)>, String> {
         .collect()
 }
 
-fn shape(env: &BTreeMap<String, String>) -> Result<Shape, String> {
-    match (env.get("choose"), env.get("fields")) {
-        (Some(_), Some(_)) => Err(fail("it takes choose or fields, not both")),
-        (Some(c), None) => Ok(Shape::Choose(labels(c)?)),
-        (None, Some(f)) => Ok(Shape::Fields(fields(f)?)),
-        (None, None) => Ok(Shape::Text),
+pub(super) fn shape(env: &BTreeMap<String, String>) -> Result<Shape, String> {
+    if env.contains_key("choose") {
+        return Err(fail(
+            "choose is gone: say the labels, and what each means, in system or message",
+        ));
+    }
+    match env.get("fields") {
+        Some(f) => Ok(Shape::Fields(fields(f)?)),
+        None => Ok(Shape::Text),
     }
 }
 
@@ -84,20 +78,27 @@ fn field_schema(t: &str) -> Value {
     }
 }
 
-/// How the answer's form is said in words: a small model held to a form
-/// by a grammar alone, without being told it, answers poorly.
-fn form_sentence(shape: &Shape) -> Option<String> {
+/// The JSON schema the answer is held to, if it has a form.
+pub(super) fn schema(shape: &Shape) -> Option<Value> {
     match shape {
         Shape::Text => None,
-        Shape::Choose(ls) => {
-            let quoted: Vec<String> = ls.iter().map(|l| format!("\"{l}\"")).collect();
-            let list = match quoted.split_last() {
-                Some((last, [])) => last.clone(),
-                Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
-                None => String::new(),
-            };
-            Some(format!("Answer as a JSON string: {list}."))
+        Shape::Fields(fs) => {
+            let props: Map<String, Value> = fs
+                .iter()
+                .map(|(n, t)| (n.clone(), field_schema(t)))
+                .collect();
+            let required: Vec<&String> = fs.iter().map(|(n, _)| n).collect();
+            Some(json!({ "type": "object", "properties": props,
+                         "required": required, "additionalProperties": false }))
         }
+    }
+}
+
+/// How the answer's form is said in words: a small model held to a form
+/// by a grammar alone, without being told it, answers poorly.
+pub(super) fn form_sentence(shape: &Shape) -> Option<String> {
+    match shape {
+        Shape::Text => None,
         Shape::Fields(fs) => {
             let parts: Vec<String> = fs
                 .iter()
@@ -120,7 +121,7 @@ fn form_sentence(shape: &Shape) -> Option<String> {
     }
 }
 
-fn number(env: &BTreeMap<String, String>, k: &str) -> Result<Option<Value>, String> {
+pub(super) fn number(env: &BTreeMap<String, String>, k: &str) -> Result<Option<Value>, String> {
     let Some(t) = env.get(k) else {
         return Ok(None);
     };
@@ -142,7 +143,24 @@ pub fn request(env: &BTreeMap<String, String>) -> Result<Value, String> {
 
 /// The request for `model`, by `#ai`'s rules on the args.
 pub(super) fn body(model: &str, env: &BTreeMap<String, String>) -> Result<Value, String> {
-    let text = env.get("text").ok_or_else(|| fail("it needs $text"))?;
+    if env.contains_key("text") {
+        return Err(fail("it takes message, not text"));
+    }
+    if let Some(url) = env.get("url") {
+        if !url.starts_with('$') {
+            super::remote::api(url)?;
+        }
+        if env.contains_key("context") {
+            return Err(fail(
+                "context is itero-ai's; a step with a url leaves it out",
+            ));
+        }
+    } else if env.contains_key("key") {
+        return Err(fail("key goes with a url"));
+    }
+    let text = env
+        .get("message")
+        .ok_or_else(|| fail("it needs $message"))?;
     let shape = shape(env)?;
     let mut messages = vec![];
     if let Some(system) = env.get("system") {
@@ -154,20 +172,7 @@ pub(super) fn body(model: &str, env: &BTreeMap<String, String>) -> Result<Value,
     };
     messages.push(json!({ "role": "user", "content": content }));
     let mut r = json!({ "model": model, "messages": messages, "stream": true });
-    let schema = match &shape {
-        Shape::Text => None,
-        Shape::Choose(ls) => Some(json!({ "type": "string", "enum": ls })),
-        Shape::Fields(fs) => {
-            let props: Map<String, Value> = fs
-                .iter()
-                .map(|(n, t)| (n.clone(), field_schema(t)))
-                .collect();
-            let required: Vec<&String> = fs.iter().map(|(n, _)| n).collect();
-            Some(json!({ "type": "object", "properties": props,
-                         "required": required, "additionalProperties": false }))
-        }
-    };
-    if let Some(schema) = schema {
+    if let Some(schema) = schema(&shape) {
         r["response_format"] =
             json!({ "type": "json_schema", "json_schema": { "name": "answer", "schema": schema } });
     }
@@ -218,6 +223,31 @@ pub enum Written {
 pub struct Seen {
     pub model: Written,
     pub thinking_false: bool,
+    /// It names a url: its model is that server's, not itero-ai's.
+    pub url: bool,
+    /// Its key is written out, and looks like a token.
+    pub key_token: bool,
+}
+
+/// Whether a value is a UUID as written, 8-4-4-4-12 hex digits.
+fn is_uuid(v: &str) -> bool {
+    let parts: Vec<&str> = v.split('-').collect();
+    parts.len() == 5
+        && parts
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Whether a value looks like a token: 20 characters or more, no space,
+/// letters and digits mixed, as API keys are. No word is that long. A
+/// UUID is an id, not called a token.
+fn looks_like_token(v: &str) -> bool {
+    !is_uuid(v)
+        && v.chars().count() >= 20
+        && !v.chars().any(char::is_whitespace)
+        && v.chars().any(|c| c.is_ascii_alphabetic())
+        && v.chars().any(|c| c.is_ascii_digit())
 }
 
 /// What `itero ws check` can say of an `#ai` step's args before a run: the
@@ -232,6 +262,8 @@ pub fn check(args: &Value) -> Result<Seen, String> {
             return Ok(Seen {
                 model: Written::Later,
                 thinking_false: false,
+                url: false,
+                key_token: false,
             });
         }
     };
@@ -240,7 +272,8 @@ pub fn check(args: &Value) -> Result<Seen, String> {
         for (k, v) in o {
             let text = match v {
                 Value::String(s)
-                    if s.starts_with('$') && !["model", "text", "system"].contains(&k.as_str()) =>
+                    if s.starts_with('$')
+                        && !["model", "message", "system", "url", "key"].contains(&k.as_str()) =>
                 {
                     continue;
                 }
@@ -260,7 +293,40 @@ pub fn check(args: &Value) -> Result<Seen, String> {
     Ok(Seen {
         model,
         thinking_false,
+        url: env.contains_key("url"),
+        key_token: env
+            .get("key")
+            .is_some_and(|k| !k.starts_with('$') && looks_like_token(k)),
     })
+}
+
+/// Where an `#ai` step sends, for `itero ws check`: itero-ai and its
+/// model, or the url, local or remote. A url known only in a run
+/// (`"$event.url"`) may be any host: remote.
+pub fn place(args: &Value, machine: &Map<String, Value>) -> String {
+    let items: Vec<&Map<String, Value>> = match args {
+        Value::Object(o) => vec![o],
+        Value::Array(a) => a.iter().filter_map(Value::as_object).collect(),
+        _ => vec![],
+    };
+    let get = |k: &str| {
+        items
+            .iter()
+            .find_map(|o| o.get(k))
+            .and_then(Value::as_str)
+            .map(String::from)
+    };
+    let from_machine = |k: &str| machine.get(k).and_then(Value::as_str).map(String::from);
+    match get("url").or_else(|| from_machine("url")) {
+        Some(u) if super::remote::is_local(&u) => format!("local: {u}"),
+        Some(u) => format!("remote: {u}"),
+        None => {
+            let model = get("model")
+                .or_else(|| from_machine("model"))
+                .unwrap_or_else(|| "no model".into());
+            format!("local: {model}")
+        }
+    }
 }
 
 /// What `itero ws check` warns of: only warnings, as another machine may
@@ -269,6 +335,21 @@ pub fn warnings(seen: &Seen) -> Vec<String> {
     let machine = super::defaults::path()
         .and_then(|p| super::defaults::read(&p))
         .unwrap_or_default();
+    let mut out = vec![];
+    if seen.key_token {
+        out.push(fail("key looks like a token: write it as a $$NAME"));
+    }
+    // a step that sends to a url, its own or the machine's, never asks
+    // itero-ai: this machine's models say nothing of it
+    if !seen.url && !machine.contains_key("url") {
+        out.extend(itero_ai_warnings(seen, &machine));
+    }
+    out
+}
+
+/// What a step that asks itero-ai is warned of: a model this machine does
+/// not have, or one that cannot turn thinking off.
+fn itero_ai_warnings(seen: &Seen, machine: &Map<String, Value>) -> Vec<String> {
     let model = match &seen.model {
         Written::Later => return vec![],
         Written::Named(m) => m.clone(),
@@ -298,11 +379,11 @@ pub fn warnings(seen: &Seen) -> Vec<String> {
     }
 }
 
-/// The answer as `$output`: the text, the label, or the fields' object.
-fn output(env: &BTreeMap<String, String>, content: &str) -> Result<Value, String> {
+/// The answer as `$output`: the text, or the fields' object.
+pub(super) fn output(env: &BTreeMap<String, String>, content: &str) -> Result<Value, String> {
     match shape(env)? {
         Shape::Text => Ok(Value::String(content.trim().to_string())),
-        Shape::Choose(_) | Shape::Fields(_) => serde_json::from_str(content.trim()).map_err(|e| {
+        Shape::Fields(_) => serde_json::from_str(content.trim()).map_err(|e| {
             fail(format!(
                 "the model's answer is not the JSON asked for ({e}): {content}"
             ))
@@ -320,7 +401,27 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         .and_then(|p| itero_ai_index::Index::read(&p))
         .map_err(fail)?;
     super::defaults::fill(&mut env, &machine, &ix);
+    if let Some(url) = env.get("url").cloned() {
+        if let Some(n) = env
+            .get("key")
+            .and_then(|k| k.strip_prefix("$$"))
+            .map(String::from)
+        {
+            // a key from the machine's defaults: a $$NAME the step's
+            // binding did not see
+            let ws = crate::workspace::find(&r.root).map_err(fail)?;
+            let v = crate::engine::secrets::get_in(&ws, &n).ok_or_else(|| {
+                fail(format!(
+                    "{n} is not set: no secret, not in .env, no environment variable"
+                ))
+            })?;
+            env.insert("key".into(), v);
+        }
+        return super::remote::run(r, &env, &url, told);
+    }
     let body = request(&env)?;
+    let model = body["model"].as_str().unwrap_or("").to_string();
+    let started = Instant::now();
     let socket = r
         .env
         .get("ITERO_AI_SOCKET")
@@ -349,17 +450,18 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         }
         return Err(fail(why).into());
     }
-    let (mut content, mut thinking, mut n) = (String::new(), String::new(), 0u64);
-    for line in std::io::BufReader::new(resp).lines() {
-        let line = line.map_err(|e| fail(format!("reading the answer: {e}")))?;
-        let Some(data) = line.strip_prefix("data: ") else {
-            continue;
-        };
+    let (mut content, mut thinking, mut usage, mut n) =
+        (String::new(), String::new(), Value::Null, 0u64);
+    for data in sse(resp) {
+        let data = data?;
         if data == "[DONE]" {
             break;
         }
         let v: Value =
-            serde_json::from_str(data).map_err(|e| fail(format!("a piece of the answer: {e}")))?;
+            serde_json::from_str(&data).map_err(|e| fail(format!("a piece of the answer: {e}")))?;
+        if !v["usage"].is_null() {
+            usage = v["usage"].clone();
+        }
         if let Some(m) = v["error"]["message"].as_str() {
             return Err(fail(m).into());
         }
@@ -382,7 +484,75 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
     if !thinking.is_empty() {
         log_thinking(r, &thinking);
     }
+    log_answer(
+        r,
+        "itero-ai",
+        Some(&model),
+        started.elapsed(),
+        &json!({ "model": model, "usage": usage,
+                 "choices": [{ "index": 0, "message": { "role": "assistant", "content": content } }] }),
+    );
     Ok(Outcome::Done(output(&r.env, &content)?))
+}
+
+/// The `data` of each server-sent event, as text: `data:` with or without
+/// its space, comment lines (`:` first) skipped, `\r\n` line ends taken.
+/// The lines of one event's data are joined by `\n`.
+pub(super) fn sse(resp: impl std::io::Read) -> impl Iterator<Item = Result<String, String>> {
+    let mut lines = std::io::BufReader::new(resp).lines();
+    let mut data: Vec<String> = vec![];
+    std::iter::from_fn(move || {
+        loop {
+            match lines.next() {
+                None if data.is_empty() => return None,
+                None => return Some(Ok(std::mem::take(&mut data).join("\n"))),
+                Some(Err(e)) => return Some(Err(fail(format!("reading the answer: {e}")))),
+                Some(Ok(l)) => {
+                    let l = l.strip_suffix('\r').unwrap_or(&l);
+                    if l.is_empty() {
+                        if !data.is_empty() {
+                            return Some(Ok(std::mem::take(&mut data).join("\n")));
+                        }
+                    } else if let Some(d) = l.strip_prefix("data:") {
+                        data.push(d.strip_prefix(' ').unwrap_or(d).to_string());
+                    }
+                    // ":" comments, "event:", "id:" and "retry:" lines: nothing to keep
+                }
+            }
+        }
+    })
+}
+
+/// Whether the step asks itero-ai: it has no url, and the machine's
+/// defaults give none.
+pub fn needs_itero_ai(env: &BTreeMap<String, String>) -> Result<bool, String> {
+    if env.contains_key("url") {
+        return Ok(false);
+    }
+    let machine = super::defaults::path()
+        .and_then(|p| super::defaults::read(&p))
+        .map_err(fail)?;
+    Ok(!machine.contains_key("url"))
+}
+
+/// Every call, as the server answered it, to the workspace's log.
+pub(super) fn log_answer(
+    r: &StepRun,
+    at: &str,
+    model: Option<&str>,
+    took: Duration,
+    response: &Value,
+) {
+    let Ok(ws) = crate::workspace::find(&r.root) else {
+        return;
+    };
+    if let Ok(id) = crate::engine::journal::Journal::open(&ws).and_then(|j| j.workspace()) {
+        crate::engine::log::Log::new(&ws, &id.id).write(
+            "ai.answer",
+            json!({ "workflow": r.workflow, "at": at, "model": model,
+                    "seconds": took.as_secs_f64(), "response": response }),
+        );
+    }
 }
 
 /// Tells the workspace a model is missing: the `models` workflow looks
@@ -433,7 +603,7 @@ mod tests {
     fn context_is_sent_as_given_and_checked() {
         let r = request(&env(&[
             ("model", "u/k"),
-            ("text", "özetle"),
+            ("message", "özetle"),
             ("context", "16384"),
         ]))
         .unwrap();
@@ -442,14 +612,30 @@ mod tests {
             ("uzun", "context is a whole number"),
             ("100", "at least 1024"),
         ] {
-            let e = request(&env(&[("model", "u/k"), ("text", "x"), ("context", v)])).unwrap_err();
+            let e =
+                request(&env(&[("model", "u/k"), ("message", "x"), ("context", v)])).unwrap_err();
             assert!(e.contains(says), "{e}");
         }
     }
 
     #[test]
+    fn a_token_is_long_without_spaces_letters_and_digits_mixed() {
+        for (v, token) in [
+            ("sk-proj-4f9aB2cD8eF1gH3iJ5kL", true),
+            ("gsk_7Hq2Lm9Pz4Xc8Vb1Nk6Rt3Ys", true),
+            ("lm-studio", false),
+            ("anahtarsızçalışanbirsunucu", false),
+            ("bu anahtar 2026 yılında verildi", false),
+            ("0f8fad5b-d9cb-469f-a165-70867728950e", false),
+            ("0f8fad5bd9cb469fa16570867728950e", true),
+        ] {
+            assert_eq!(looks_like_token(v), token, "{v}");
+        }
+    }
+
+    #[test]
     fn a_step_without_a_model_says_how_to_give_one() {
-        let e = request(&env(&[("text", "x")])).unwrap_err();
+        let e = request(&env(&[("message", "x")])).unwrap_err();
         assert!(e.contains("itero ai defaults set"), "{e}");
     }
 
@@ -457,17 +643,7 @@ mod tests {
     fn the_form_is_said_in_words_too() {
         let r = request(&env(&[
             ("model", "u/k"),
-            ("text", "Bu posta ne?"),
-            ("choose", r#"["acil","sonra","çöp"]"#),
-        ]))
-        .unwrap();
-        assert_eq!(
-            r["messages"][0]["content"],
-            "Bu posta ne?\n\nAnswer as a JSON string: \"acil\", \"sonra\" or \"çöp\"."
-        );
-        let r = request(&env(&[
-            ("model", "u/k"),
-            ("text", "Fatura"),
+            ("message", "Fatura"),
             (
                 "fields",
                 r#"{"tutar":"number","son":"date","acil":"boolean"}"#,
@@ -478,7 +654,7 @@ mod tests {
             r["messages"][0]["content"],
             "Fatura\n\nAnswer as a JSON object: {\"tutar\": <number>, \"son\": \"<YYYY-MM-DD>\", \"acil\": <true or false>}."
         );
-        let r = request(&env(&[("model", "u/k"), ("text", "Özetle")])).unwrap();
+        let r = request(&env(&[("model", "u/k"), ("message", "Özetle")])).unwrap();
         assert_eq!(r["messages"][0]["content"], "Özetle");
         assert!(r.get("response_format").is_none());
     }

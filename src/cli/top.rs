@@ -94,6 +94,10 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
     let files = ws.flow_files()?;
     // the PATH an action runs with
     let path = crate::connectors::supervise::path_with(&std::env::current_exe()?);
+    // where an #ai step without a url of its own sends
+    let machine = crate::ai::defaults::path()
+        .and_then(|p| crate::ai::defaults::read(&p))
+        .unwrap_or_default();
     let mut out = vec![];
     for (name, f) in &flows {
         let id = j.workflow_id(name, &now)?;
@@ -112,7 +116,16 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
                         if crate::engine::worker::BUILT_IN.contains(&a.as_str())
                             && version.is_none() =>
                     {
-                        uses.push(json!({ "action": a, "built_in": true }))
+                        let mut u = json!({ "action": a, "built_in": true });
+                        if a == crate::engine::worker::AI {
+                            let sends: Vec<String> = f
+                                .args_of(&a)
+                                .into_iter()
+                                .map(|x| crate::ai::step::place(x, &machine))
+                                .collect();
+                            u["sends"] = json!(sends);
+                        }
+                        uses.push(u)
                     }
                     Err(e) => bail!("{name}: {e:#}"),
                 },
@@ -233,6 +246,9 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
                     println!("  {wf}  workflow");
                 } else if u["built_in"] == true {
                     println!("  #{}  built in", text(&u["action"]));
+                    for p in u["sends"].as_array().into_iter().flatten() {
+                        println!("    {}", text(p));
+                    }
                 } else {
                     println!("  #{}  {}", text(&u["action"]), text(&u["file"]));
                     for n in u["notes"].as_array().into_iter().flatten() {
