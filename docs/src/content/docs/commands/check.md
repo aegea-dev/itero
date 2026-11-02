@@ -41,6 +41,19 @@ Under an action, it notes what the action needs and the `PATH` lacks:
 a command it runs (a hint: the script may guard it). Neither fails the
 check. See [Actions](/guides/actions/#when-something-it-needs-is-missing).
 
+Under `#ai`, a line for each of its steps says where it sends: `local:
+<model>` for itero-ai, `local: <url>` for a server on this machine
+(`localhost`, `127.0.0.1`, `[::1]`), `remote: <url>` for any other host,
+one on your own network too. A step with no `url` of its own sends where
+the machine's defaults say. See
+[A model behind a URL](/ai/workflows/#a-model-behind-a-url).
+
+```
+  #ai  built in
+    local: unsloth/Qwen3.5-4B-GGUF
+    remote: https://api.openai.com/v1/chat/completions
+```
+
 Anything wrong is an error naming the file: a key it does not know, a
 event type of one word, an action or a workflow that is not there, an
 action that is not executable. Run it after every edit.

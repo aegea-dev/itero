@@ -95,7 +95,8 @@ A model is one more program to chain, used only where judgment is needed:
   "on": [{ "event": "mail.received" }],
   "steps": [
     { "#ai": { "args": { "system": "Summarize this mail in one line, and rate it: important, normal or spam.",
-                         "text": "$event.subject\n\n$event.body" } } },
+                         "message": "$event.subject\n\n$event.body",
+                         "fields": { "summary": "text", "rating": "text" } } } },
     { "#notify": { "on": [{ "$output.rating": "important" }],
                    "args": { "title": "$event.from", "text": "$output.summary" } } }
   ]

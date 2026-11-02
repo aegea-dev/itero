@@ -64,7 +64,7 @@ it (`general.basename`), whoever uploaded it.
 "temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0, "presence_penalty": 0
 ```
 
-What a step sets goes in its `args`, beside `text`. Source:
+What a step sets goes in its `args`, beside `message`. Source:
 [Unsloth's Qwen3.5 guide](https://unsloth.ai/docs/models/qwen3.5), as of
 October 2026.
 
@@ -74,7 +74,7 @@ itero's own tests run Qwen3.5-4B (`make test-ai`). What they taught:
 
 - **Say the form.** Held to a form by a grammar alone, it answers
   poorly; told the form in words as well, it answers well. `#ai` adds
-  that sentence to `text` for `choose` and `fields`.
+  that sentence to `message` for `fields`.
 - **No temperature 0 for sorting.** At temperature 0, a mail it finds
   borderline goes to the label listed first: the same mail was `urgent`
   with `["urgent", "later", "spam"]` and `later` with `later` first.
