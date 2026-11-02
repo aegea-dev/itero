@@ -1,9 +1,10 @@
 //! `#ai` for a model behind a `url`: OpenAI's Chat Completions or
 //! Responses API, on this machine or another, streamed and read into one
-//! answer.
+//! answer. What a server refused for a model is kept, so the next request
+//! leaves it out.
 use super::step::{fail, form_sentence, number, output, schema, shape};
 use crate::engine::worker::{Failure, Outcome, StepRun};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -215,7 +216,82 @@ fn read_stream(
     Ok(whole)
 }
 
-/// Asks the model behind `url`, streamed.
+fn learned_path() -> Result<std::path::PathBuf, String> {
+    crate::machine::state_dir()
+        .map(|d| d.join("ai-servers.json"))
+        .map_err(fail)
+}
+
+fn learned_all() -> Result<Map<String, Value>, String> {
+    let p = learned_path()?;
+    match std::fs::read_to_string(&p) {
+        Ok(t) => serde_json::from_str(&t).map_err(|e| fail(format!("{}: {e}", p.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Map::new()),
+        Err(e) => Err(fail(format!("{}: {e}", p.display()))),
+    }
+}
+
+/// What was learned of `model` behind `url`; nothing yet is nothing.
+pub fn learned(url: &str, model: &str) -> Result<Learned, String> {
+    Ok(learned_all()?
+        .get(&format!("{url} {model}"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default())
+}
+
+/// Keeps it in itero's state folder, the whole file written anew and
+/// renamed into place.
+pub fn learn(url: &str, model: &str, l: &Learned) -> Result<(), String> {
+    let mut all = learned_all()?;
+    all.insert(
+        format!("{url} {model}"),
+        serde_json::to_value(l).map_err(fail)?,
+    );
+    let p = learned_path()?;
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| fail(format!("{}: {e}", dir.display())))?;
+    }
+    let new = p.with_extension("json.new");
+    std::fs::write(
+        &new,
+        serde_json::to_string_pretty(&all).map_err(fail)? + "\n",
+    )
+    .map_err(|e| fail(format!("{}: {e}", new.display())))?;
+    std::fs::rename(&new, &p).map_err(|e| fail(format!("{}: {e}", p.display())))
+}
+
+/// What a 400 refused, by its `error.param`: the form, the effort, or
+/// streaming.
+pub fn refused(v: &Value) -> Option<&'static str> {
+    match v["error"]["param"].as_str()? {
+        "response_format" | "text" | "text.format" => Some("schema"),
+        "reasoning_effort" | "reasoning" | "reasoning.effort" => Some("effort"),
+        "stream" | "stream_options" => Some("stream"),
+        _ => None,
+    }
+}
+
+/// `l` with what the refusal of `body` teaches, or `None` when it teaches
+/// nothing new (the request could not be sent any other way).
+fn taught(l: &Learned, body: &Value, what: Option<&str>) -> Option<Learned> {
+    let mut l = l.clone();
+    match what? {
+        "schema" if !l.no_schema => l.no_schema = true,
+        "stream" if !l.no_stream => l.no_stream = true,
+        "effort" => {
+            let sent = body["reasoning_effort"]
+                .as_str()
+                .or(body["reasoning"]["effort"].as_str())?;
+            l.efforts_refused.push(sent.to_string());
+        }
+        _ => return None,
+    }
+    Some(l)
+}
+
+/// Asks the model behind `url`, streamed. A request refused for its form,
+/// its effort or streaming is learned, and sent again at once without it:
+/// not a retry, as it could not have been answered.
 pub fn run(
     r: &StepRun,
     env: &BTreeMap<String, String>,
@@ -227,37 +303,46 @@ pub fn run(
         .get("model")
         .ok_or_else(|| fail("a step with a url names its model"))?;
     let client = crate::net::client(Duration::from_secs(r.most.max(1))).map_err(fail)?;
-    let l = Learned::default();
-    let mut body = body(api, model, env, &l)?;
-    if !l.no_stream {
-        body["stream"] = json!(true);
-        if api == Api::Chat {
-            body["stream_options"] = json!({ "include_usage": true });
+    let mut l = learned(url, model)?;
+    loop {
+        let mut body = body(api, model, env, &l)?;
+        if !l.no_stream {
+            body["stream"] = json!(true);
+            if api == Api::Chat {
+                body["stream_options"] = json!({ "include_usage": true });
+            }
         }
-    }
-    let started = Instant::now();
-    let mut req = client.post(url).json(&body);
-    if let Some(k) = env.get("key") {
-        req = req.bearer_auth(k);
-    }
-    let resp = req
-        .send()
-        .map_err(|e| fail(format!("{url} did not answer: {e}")))?;
-    let status = resp.status();
-    if !status.is_success() {
-        let v: Value = resp.json().unwrap_or_default();
+        let started = Instant::now();
+        let mut req = client.post(url).json(&body);
+        if let Some(k) = env.get("key") {
+            req = req.bearer_auth(k);
+        }
+        let resp = req
+            .send()
+            .map_err(|e| fail(format!("{url} did not answer: {e}")))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let v: Value = resp.json().unwrap_or_default();
+            super::step::log_answer(r, url, model, started.elapsed(), &v);
+            if status == reqwest::StatusCode::BAD_REQUEST
+                && let Some(new) = taught(&l, &body, refused(&v))
+            {
+                learn(url, model, &new)?;
+                l = new;
+                continue;
+            }
+            let why = v["error"]["message"].as_str().unwrap_or("no reason given");
+            return Err(fail(format!("{url} answered {status}: {why}")).into());
+        }
+        let v = if body["stream"] == true {
+            read_stream(api, resp, told)?
+        } else {
+            resp.json()
+                .map_err(|e| fail(format!("reading the answer: {e}")))?
+        };
         super::step::log_answer(r, url, model, started.elapsed(), &v);
-        let why = v["error"]["message"].as_str().unwrap_or("no reason given");
-        return Err(fail(format!("{url} answered {status}: {why}")).into());
+        return Ok(Outcome::Done(output(env, &answer_text(api, &v)?)?));
     }
-    let v = if body["stream"] == true {
-        read_stream(api, resp, told)?
-    } else {
-        resp.json()
-            .map_err(|e| fail(format!("reading the answer: {e}")))?
-    };
-    super::step::log_answer(r, url, model, started.elapsed(), &v);
-    Ok(Outcome::Done(output(env, &answer_text(api, &v)?)?))
 }
 
 #[cfg(test)]
