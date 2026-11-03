@@ -1389,9 +1389,11 @@ fn tell(log: &Log, who: &Who, r: &Recorded, answer: &StepAnswer) {
     match r.event.kind.as_str() {
         "run.started" => log.write(
             "run.started",
-            who.line(match &r.event.cause {
-                Some(m) => json!({ "message": m }),
-                None => json!({ "schedule": true }),
+            who.line(match (&who.run.parent, &r.event.cause) {
+                // a workflow used as a step: the run whose step started it
+                (Some(p), _) => json!({ "parent": p }),
+                (None, Some(m)) => json!({ "message": m }),
+                (None, None) => json!({ "schedule": true }),
             }),
         ),
         "action.finished" | "action.waiting" => log.write(

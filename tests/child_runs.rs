@@ -116,6 +116,14 @@ fn a_workflow_used_as_a_step_is_a_run_of_its_own_and_returns_its_success_list_s_
         parent.runtime.state["steps"].get("bak").is_none(),
         "its insides are its own"
     );
+    // the log says which run it is from
+    let started = w
+        .log()
+        .into_iter()
+        .find(|l| l["event"] == "run.started" && l["workflow"] == "stok")
+        .unwrap();
+    assert_eq!(started["parent"], json!(parent.id), "{started}");
+    assert!(started.get("message").is_none(), "{started}");
     // each run's end is told, the child's too
     let done: Vec<Value> = w
         .log()
