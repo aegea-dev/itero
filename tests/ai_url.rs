@@ -66,6 +66,10 @@ fn a_url_step_asks_the_model_behind_it() {
             { "role": "user", "content": "uzun mektup" }])
     );
     assert_eq!(body["stream"], true);
+    assert!(
+        body.get("store").is_none(),
+        "Chat Completions keeps none by default"
+    );
     assert_eq!(body["stream_options"], json!({ "include_usage": true }));
     for k in ["top_k", "min_p", "context", "chat_template_kwargs"] {
         assert!(body.get(k).is_none(), "{k} sent: {body}");
@@ -97,6 +101,8 @@ fn a_url_step_asks_the_model_behind_it() {
         "thinking true sends nothing"
     );
     assert_eq!(body["stream"], true);
+    // the server keeps no copy: itero logs its own (ai.answer)
+    assert_eq!(body["store"], false);
 
     // an answer not in the form fails the step
     let s = serve_http(vec![Reply::Text("on iki buçuk".into())]);
