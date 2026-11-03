@@ -129,8 +129,6 @@ pub enum Ended {
     },
     /// It went on as one run per args item.
     Split,
-    /// A workflow used as a step whose group ended without it.
-    Stopped,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -288,10 +286,11 @@ pub struct StepAnswer {
     /// `{"event": "step.skipped", "step": "#ship"}`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<Value>,
-    /// The paths (as in `StepJob::path`) of the actions and the workflows
-    /// used as steps a group stopped in this decision, running, waiting or
-    /// just started: their jobs and runs are to be ended, and their answers
-    /// are ignored from now on.
+    /// The paths (as in `StepJob::path`) of the actions a group stopped in
+    /// this decision, running, waiting or just started: their jobs are to
+    /// be ended, and their answers are ignored from now on. A workflow used
+    /// as a step is never among them: its run is its own and goes on to its
+    /// end, and what it returns reaches nothing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stopped: Vec<Vec<usize>>,
 }
@@ -351,24 +350,16 @@ pub fn first_state(event: Value, config: Map<String, Value>) -> Map<String, Valu
 }
 
 /// Where a run is, or how it ended, in a word: `running`, `waiting`,
-/// `done`, `failed`, `error`, `split` or `stopped`.
+/// `done`, `failed`, `error` or `split`.
 pub fn status(rt: &Runtime) -> &'static str {
     match &rt.ended {
         Some(Ended::Done) => "done",
         Some(Ended::Failed) => "failed",
         Some(Ended::Error { .. }) => "error",
         Some(Ended::Split) => "split",
-        Some(Ended::Stopped) => "stopped",
         None if is_waiting(rt) => "waiting",
         None => "running",
     }
-}
-
-/// A run stopped from outside: it ends `stopped` where it is, and nothing
-/// it is given from now on moves it.
-pub fn stop(rt: &mut Runtime) {
-    rt.at = None;
-    rt.ended = Some(Ended::Stopped);
 }
 
 /// Whether a step of the run waits for data (exited 75): the runs messages
@@ -1174,8 +1165,16 @@ impl Machine<'_> {
             };
             e.at = prune(node, &mut p, &mut |leaf, at| !runs(leaf, at), &mut gone);
             self.jobs.retain(|job| !gone.contains(&job.path));
-            self.children.retain(|c| !gone.contains(&c.path));
-            self.stopped.extend(gone);
+            // a workflow used as a step not yet started never starts
+            let unstarted: Vec<Vec<usize>> = self
+                .children
+                .iter()
+                .filter(|c| gone.contains(&c.path))
+                .map(|c| c.path.clone())
+                .collect();
+            self.children.retain(|c| !unstarted.contains(&c.path));
+            self.stopped
+                .extend(gone.into_iter().filter(|g| !unstarted.contains(g)));
             if e.at.is_none() {
                 e.outcome = Some(Outcome::Stopped);
                 self.stopped_note(&e.name);
@@ -1198,12 +1197,21 @@ impl Machine<'_> {
             let Some(mut node) = e.at.take() else {
                 continue;
             };
-            let mut gone = vec![];
+            let (mut gone, mut runs) = (vec![], vec![]);
             let mut p = at.to_vec();
             p.push(j);
-            leaves(&mut node, &mut p, &mut |_, leaf| gone.push(leaf.to_vec()));
+            leaves(&mut node, &mut p, &mut |leaf, path| {
+                if matches!(leaf, At::Child { .. }) {
+                    runs.push(path.to_vec());
+                } else {
+                    gone.push(path.to_vec());
+                }
+            });
             self.jobs.retain(|job| !gone.contains(&job.path));
-            self.children.retain(|c| !gone.contains(&c.path));
+            // a workflow used as a step is a run of its own: one running goes
+            // on to its end, its answer reaching nothing; one not yet started
+            // never starts
+            self.children.retain(|c| !runs.contains(&c.path));
             self.stopped.extend(gone);
             e.outcome = Some(Outcome::Stopped);
             self.stopped_note(&e.name);

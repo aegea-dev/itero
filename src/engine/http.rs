@@ -211,8 +211,7 @@ fn run_row(r: &super::journal::Run) -> Value {
 #[derive(serde::Deserialize)]
 struct RunsQuery {
     workflow: Option<String>,
-    /// `running`, `waiting`, `done`, `failed`, `error`, `split` or
-    /// `stopped`.
+    /// `running`, `waiting`, `done`, `failed`, `error` or `split`.
     status: Option<String>,
     limit: Option<usize>,
     /// The internal workflows' runs too.

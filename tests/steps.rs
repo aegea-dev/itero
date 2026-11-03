@@ -510,7 +510,7 @@ fn a_child_that_returned_from_its_error_list_ended_well_for_its_group() {
 }
 
 #[test]
-fn a_child_stopped_by_its_group_is_named_and_its_path_given() {
+fn a_child_its_group_ended_without_runs_on_and_its_end_reaches_nothing() {
     let mut r = Run::new(&[
         (
             "küme",
@@ -523,9 +523,9 @@ fn a_child_stopped_by_its_group_is_named_and_its_path_given() {
     assert_eq!(demleme.path, vec![0, 0, 1]);
     let a = r.done(&cay, json!({"içildi": true}));
     assert!(goes_on(&a));
-    assert_eq!(stopped(&a), vec!["demleme"]);
-    // its path, for the daemon to stop its run
-    assert_eq!(a.stopped, vec![demleme.path.clone()]);
+    assert_eq!(stopped(&a), vec!["demleme"], "the step waits no more");
+    // its run is its own: nothing stops it
+    assert!(a.stopped.is_empty(), "{:?}", a.stopped);
     // what it returns now reaches nothing
     assert!(
         r.ended(

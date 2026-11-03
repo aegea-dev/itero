@@ -310,7 +310,6 @@ fn a_run_started_by_a_step_keeps_its_parent_and_the_step() {
             path: vec![0, 1],
         }],
         stopped: vec![],
-        stopped_runs: vec![],
     })
     .unwrap();
     let runs = j.runs().unwrap();

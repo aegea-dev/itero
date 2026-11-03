@@ -447,7 +447,7 @@ fn a_waiting_step_and_a_workflow_that_lost_are_stopped_in_the_story_after_the_wi
         "actions/bekle",
         "#!/bin/sh\necho '{\"sipariş\": 1}'; exit 75\n",
     );
-    file(d.path(), "actions/su", "#!/bin/sh\nsleep 30\n");
+    file(d.path(), "actions/su", "#!/bin/sh\nsleep 3\n");
     file(
         d.path(),
         "actions/hızlı",
@@ -461,12 +461,12 @@ fn a_waiting_step_and_a_workflow_that_lost_are_stopped_in_the_story_after_the_wi
     ));
     let id = list.split_whitespace().next().unwrap();
     let story = out(&itero(d.path(), &["ws", "wf", "runs", id]));
-    // the workflow that lost is a run of its own, stopped
+    // the workflow that lost is a run of its own: it ran to its end
     let child = out(&itero(
         d.path(),
         &["ws", "wf", "runs", "--workflow", "demleme"],
     ));
-    assert!(child.contains("stopped"), "{child}");
+    assert!(child.contains(" done "), "{child}");
     let at = |says: &str| {
         story
             .find(says)

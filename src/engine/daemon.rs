@@ -1063,7 +1063,6 @@ fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Resul
         splits: vec![],
         children: vec![],
         stopped: vec![],
-        stopped_runs: vec![],
     })?;
     Ok(Delivered::Handled(vec![]))
 }
@@ -1251,21 +1250,7 @@ fn deliver(
     // saved as stopped with the answer: none of them runs again. A job it
     // stopped in the same decision it would have started was never given
     // out, so is not in the journal: nothing to stop.
-    let mut stopped = stopped_jobs(j, &id, &answer.stopped)?;
-    // the runs those steps started (workflows used as steps), and theirs,
-    // deepest first: each ends stopped where it is, its jobs with it
-    let gone = stopped_runs(j, &id, &answer.stopped)?;
-    let gone_ids: Vec<&str> = gone.iter().map(|r| r.id.as_str()).collect();
-    stopped.extend(
-        j.jobs()?
-            .into_iter()
-            .filter(|r| {
-                r.event.data["run"]
-                    .as_str()
-                    .is_some_and(|run| gone_ids.contains(&run))
-            })
-            .map(|r| r.seq),
-    );
+    let stopped = stopped_jobs(j, &id, &answer.stopped)?;
     // each step the answer stopped, as the workflow names it, for the run's
     // story
     let shown = answer
@@ -1303,47 +1288,10 @@ fn deliver(
             })
             .collect(),
         stopped: stopped.clone(),
-        stopped_runs: gone
-            .iter()
-            .map(|g| {
-                let mut rt = g.runtime.clone();
-                steps::stop(&mut rt);
-                (g.id.clone(), rt)
-            })
-            .collect(),
     })?;
     tell(log, &who, r, &answer);
-    for g in &gone {
-        let who = Who {
-            run: g,
-            internal: who.internal,
-        };
-        log.write("run.ended", who.line(json!({ "status": "stopped" })));
-    }
     super::die_at("answer");
     Ok(Delivered::Handled(stopped))
-}
-
-/// The runs under way that run `id`'s steps at `paths` started, and the
-/// runs theirs started, deepest first.
-fn stopped_runs(j: &Journal, id: &str, paths: &[Vec<usize>]) -> Result<Vec<journal::Run>> {
-    fn under(j: &Journal, run: journal::Run, out: &mut Vec<journal::Run>) -> Result<()> {
-        for c in j.children_of(&run.id)? {
-            under(j, c, out)?;
-        }
-        out.push(run);
-        Ok(())
-    }
-    let mut out = vec![];
-    if paths.is_empty() {
-        return Ok(out);
-    }
-    for c in j.children_of(id)? {
-        if c.parent_path.as_ref().is_some_and(|p| paths.contains(p)) {
-            under(j, c, &mut out)?;
-        }
-    }
-    Ok(out)
 }
 
 /// The jobs not yet handled, running or not, of run `id`'s actions at
@@ -1787,7 +1735,6 @@ fn save_result(
         splits: vec![],
         children: vec![],
         stopped: vec![],
-        stopped_runs: vec![],
     })
 }
 

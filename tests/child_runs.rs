@@ -52,7 +52,11 @@ impl Ws {
     }
 
     fn pass(&self) {
-        run_once(&self.ws, NOW.parse().unwrap(), exe()).unwrap();
+        self.pass_at(NOW);
+    }
+
+    fn pass_at(&self, now: &str) {
+        run_once(&self.ws, now.parse().unwrap(), exe()).unwrap();
     }
 
     fn runs(&self) -> Vec<Run> {
@@ -216,7 +220,7 @@ fn a_child_of_a_child_is_a_run_linked_to_its_own_parent() {
 }
 
 #[test]
-fn a_child_that_lost_a_race_is_stopped_with_its_own_children_deepest_first() {
+fn a_child_that_lost_a_race_runs_on_to_its_end_and_its_result_reaches_nothing() {
     let w = Ws::new();
     w.flow(
         "yarış",
@@ -225,22 +229,43 @@ fn a_child_that_lost_a_race_is_stopped_with_its_own_children_deepest_first() {
     );
     w.flow("stok", json!({ "steps": ["raf"] }));
     w.flow("raf", json!({ "steps": ["#yavaş"] }));
-    w.action("hızlı", "sleep 1; echo hızlı");
-    w.action("yavaş", "sleep 30; echo geç >> sonuç.log");
+    w.action("hızlı", "echo hızlı");
+    w.action("yavaş", "sleep 2; echo geç >> sonuç.log; echo geç");
     w.action("sonra", "echo sonra >> sonuç.log");
     w.emit("yarış.başladı", json!({}));
-    let began = std::time::Instant::now();
     w.pass();
-    assert!(began.elapsed().as_secs() < 20, "#yavaş was ended");
-    assert_eq!(w.read("sonuç.log"), "sonra\n", "{:#?}", w.log());
-    assert_eq!(steps::status(&w.run("yarış").runtime), "done");
-    assert_eq!(steps::status(&w.run("stok").runtime), "stopped");
-    assert_eq!(steps::status(&w.run("raf").runtime), "stopped");
-    let ended: Vec<Value> = w
-        .log()
-        .into_iter()
-        .filter(|l| l["event"] == "run.ended" && l["status"] == "stopped")
-        .map(|l| l["workflow"].clone())
-        .collect();
-    assert_eq!(ended, vec![json!("raf"), json!("stok")]);
+    // the parent went on without it; it and its own child ran to their end
+    assert_eq!(w.read("sonuç.log"), "sonra\ngeç\n", "{:#?}", w.log());
+    let top = w.run("yarış");
+    assert_eq!(steps::status(&top.runtime), "done");
+    assert_eq!(top.runtime.state["steps"].get("stok"), None);
+    assert_eq!(steps::status(&w.run("stok").runtime), "done");
+    assert_eq!(steps::status(&w.run("raf").runtime), "done");
+}
+
+#[test]
+fn a_parent_that_breaks_leaves_its_running_child_to_run_to_its_end() {
+    let w = Ws::new();
+    w.flow(
+        "küme",
+        json!({ "on": [{ "event": "küme.kur" }],
+                "steps": [["#kır", "stok"], "#sonra"],
+                "error": [{ "#rapor": { "args": { "why": "$output.why" } } }] }),
+    );
+    w.flow("stok", json!({ "steps": ["#yavaş"] }));
+    w.action("kır", "echo 'olmadı' >&2; exit 4");
+    w.action("yavaş", "sleep 2; echo bitti >> sonuç.log");
+    w.action("sonra", "echo sonra >> sonuç.log");
+    w.action("rapor", r#"echo "hata: $why" >> sonuç.log"#);
+    w.emit("küme.kur", json!({}));
+    w.pass();
+    // the group waits for the child to end, then breaks: the child is done
+    let log = w.read("sonuç.log");
+    assert!(
+        log.starts_with("bitti\nhata: exit 4"),
+        "{log} {:#?}",
+        w.log()
+    );
+    assert_eq!(steps::status(&w.run("küme").runtime), "error");
+    assert_eq!(steps::status(&w.run("stok").runtime), "done");
 }
