@@ -82,7 +82,7 @@ URL the app sends in the event's data
 
 `?workflow=<name>` keeps one workflow's runs; `?status=<status>` the runs
 with one status (`running`, `waiting`, `done`, `failed`, `error`,
-`split`, `stopped`); `?limit=N` (50 unless given) caps them. Internal
+`split`); `?limit=N` (50 unless given) caps them. Internal
 workflows' runs only with `?all=true`. `parent` is the id of the run
 whose step started it, for a workflow used as a step, else `null`.
 
