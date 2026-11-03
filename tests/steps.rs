@@ -12,7 +12,8 @@ const NOW: &str = "2026-10-21T10:00:00Z";
 struct Run {
     root: String,
     flows: BTreeMap<String, Value>,
-    repeat: BTreeMap<String, Value>,
+    /// Its workflow is on and within its from and until.
+    active: bool,
     defined: Vec<String>,
     /// It is a workflow used as a step: a run another run's step started.
     child: bool,
@@ -29,7 +30,7 @@ impl Run {
                 .iter()
                 .map(|(n, f)| (n.to_string(), f.clone()))
                 .collect(),
-            repeat: BTreeMap::new(),
+            active: true,
             defined: vec![],
             child: false,
             rt: Runtime::default(),
@@ -55,7 +56,7 @@ impl Run {
             now: self.now.clone(),
             workflow: self.root.clone(),
             flows: self.flows.clone(),
-            repeat: self.repeat.clone(),
+            active: self.active,
             config: Map::new(),
             defined: self.defined.clone(),
             child: self.child,
@@ -102,6 +103,10 @@ impl Run {
         d["path"] = json!(c.path);
         d["run"] = json!("çocuk-1");
         self.send("workflow.ended", d)
+    }
+
+    fn timer(&mut self, kind: &str) -> StepAnswer {
+        self.send("timer.fired", json!({ "kind": kind }))
     }
 
     fn message(&mut self, id: &str, data: Value) -> StepAnswer {
@@ -309,6 +314,7 @@ fn a_workflow_as_a_step_starts_a_run_of_its_own_and_waits_for_it() {
             path: vec![0, 1],
             workflow: "stok".into(),
             event: serde_json::from_value(json!({"depo": "İzmir", "adet": 2})).unwrap(),
+            seed: Map::new(),
         }]
     );
     let stok = a.children[0].clone();
@@ -451,18 +457,6 @@ fn a_child_that_broke_is_no_error_for_its_parent() {
     assert_eq!(names(&a), vec!["hepsini-sil"]);
     let a = r.done(&a.jobs[0], json!({}));
     assert_eq!(names(&a), vec!["hata"]);
-}
-
-#[test]
-fn a_run_started_by_a_step_cannot_split() {
-    let mut r = Run::child(&[("çoklu", json!({"steps": ["#yaz"]}))]);
-    r.repeat
-        .insert("yaz".into(), json!([{"dosya": "bir"}, {"dosya": "iki"}]));
-    let e = r.try_send("run.started", json!({})).unwrap_err();
-    assert!(
-        e.contains("#yaz") && e.contains("workflow used as a step"),
-        "{e}"
-    );
 }
 
 #[test]
@@ -886,34 +880,6 @@ fn success_false_runs_failure_otherwise_success() {
 }
 
 #[test]
-fn repeat_runs_the_rest_once_per_item() {
-    let flow =
-        json!({"steps": [{"#imap-check": {"args": {"host": "imap.örnek.test"}}}, "#notify"]});
-    let mut r = Run::new(&[("posta", flow.clone())]);
-    r.repeat.insert(
-        "imap-check".into(),
-        json!([{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]),
-    );
-    let a = r.start(json!({"saat": 9}));
-    assert!(a.jobs.is_empty());
-    assert_eq!(a.split.len(), 2);
-    assert_eq!(r.rt.ended, Some(Ended::Split));
-    for (child, user) in a.split.iter().zip(["ayşe@örnek.test", "can@örnek.test"]) {
-        let mut c = Run::new(&[("posta", flow.clone())]);
-        c.repeat = r.repeat.clone();
-        c.rt = child.clone();
-        let a = c.start(Value::Null);
-        assert_eq!(names(&a), vec!["imap-check"]);
-        assert_eq!(a.jobs[0].item, Some(json!({"user": user})));
-        assert_eq!(a.jobs[0].data["host"], "imap.örnek.test");
-        assert_eq!(c.rt.state["event"]["saat"], 9);
-        let a = c.done(&a.jobs[0], json!({"text": "1 yeni"}));
-        assert_eq!(names(&a), vec!["notify"]);
-        assert_eq!(a.jobs[0].item, None, "the item is imap-check's");
-    }
-}
-
-#[test]
 fn runtimes_go_through_json() {
     let mut r = Run::new(&[
         ("a", json!({"steps": [["#bir", "iki"]]})),
@@ -960,7 +926,6 @@ fn a_run_written_before_output_is_read_and_goes_on() {
             action: "uygula".into(),
             version: None,
             data: Map::new(),
-            item: None,
             waiting_since: None,
             event: None,
         },
@@ -1544,7 +1509,6 @@ fn a_group_is_read_from_a_run_written_before_groups_said_how_to_wait() {
         action: "şeker".into(),
         version: None,
         data: Map::new(),
-        item: None,
         waiting_since: None,
         event: None,
     };
@@ -1654,9 +1618,7 @@ fn an_action_s_list_of_args_is_one_set_of_values_not_a_repeat() {
         ]}),
     )]);
     let a = r.start(json!({}));
-    assert!(a.split.is_empty());
     assert_eq!(names(&a), vec!["imap-check"]);
-    assert_eq!(a.jobs[0].item, None);
     assert_eq!(
         Value::Object(a.jobs[0].data.clone()),
         json!({"host": "imap.örnek.test", "user": "ayşe@örnek.test"})
@@ -1678,4 +1640,191 @@ fn the_name_alone_reads_the_first_of_its_number() {
     assert_eq!(names(&a), vec!["topla"]);
     assert_eq!(a.jobs[0].data["ilk"], json!({"değer": 3}));
     assert_eq!(a.jobs[0].data["ikinci"], json!(4));
+}
+
+#[test]
+fn a_repeated_step_runs_round_after_round_each_with_the_last_one_s_results() {
+    let mut r = Run::new(&[(
+        "sayaç",
+        json!({"steps": [
+            {"#say": {"args": {"n": "$count", "önceki": "$output"}, "repeat": 3}},
+            {"#son": {"args": {"son": "$output", "n": "$count"}}}
+        ]}),
+    )]);
+    let a = r.start(json!({"başla": 1}));
+    assert_eq!(a.jobs[0].data["n"], 1);
+    let a = r.done(&a.jobs[0], json!({"sayı": 10}));
+    // round 2 at once: the last round's $output, its $count
+    assert_eq!(names(&a), vec!["say"]);
+    assert_eq!(a.jobs[0].data["n"], 2);
+    assert_eq!(a.jobs[0].data["önceki"], json!({"sayı": 10}));
+    assert_eq!(r.rt.state["steps"]["say"], json!({"sayı": 10}));
+    let a = r.done(&a.jobs[0], json!({"sayı": 20}));
+    assert_eq!(a.jobs[0].data["n"], 3);
+    let a = r.done(&a.jobs[0], json!({"sayı": 30}));
+    // three rounds: the step's result is the last one's; $count is the
+    // repeated step's alone
+    assert_eq!(names(&a), vec!["son"]);
+    assert_eq!(a.jobs[0].data["son"], json!({"sayı": 30}));
+    assert_eq!(a.jobs[0].data["n"], Value::Null);
+    assert_eq!(r.rt.state["event"], json!({"başla": 1}));
+}
+
+#[test]
+fn a_round_that_breaks_or_fails_stops_the_repeat() {
+    let flow = json!({"steps": [{"#say": {"repeat": 5}}, "#son"], "error": ["#hata"]});
+    let mut r = Run::new(&[("sayaç", flow.clone())]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"sayı": 1}));
+    let a = r.failed(&a.jobs[0], "exit 1: olmadı");
+    assert_eq!(names(&a), vec!["hata"], "the run breaks as at any step");
+    let mut r = Run::new(&[("sayaç", flow)]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"success": false, "neden": "boş"}));
+    // a failure: no more rounds; the run goes on with that round's result
+    assert_eq!(names(&a), vec!["son"]);
+    assert_eq!(r.rt.state["output"]["neden"], "boş");
+}
+
+#[test]
+fn a_repeat_read_from_a_value_dates_and_true() {
+    // as many rounds as $output.count says, read as the first starts
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": ["#kaç", {"#say": {"repeat": "$output.count"}}, "#son"]}),
+    )]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"count": 2}));
+    let a = r.done(&a.jobs[0], json!({"count": 9}));
+    assert_eq!(names(&a), vec!["say"]);
+    let a = r.done(&a.jobs[0], json!({}));
+    assert_eq!(names(&a), vec!["son"]);
+    // a value that is no count breaks the step
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": ["#kaç", {"#say": {"repeat": "$output.count"}}], "error": ["#hata"]}),
+    )]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"count": "çok"}));
+    assert_eq!(names(&a), vec!["hata"]);
+    assert!(
+        r.rt.why.as_deref().unwrap().contains("repeat"),
+        "{:?}",
+        r.rt.why
+    );
+    // until a date: round after round while it is not past
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [{"#say": {"repeat": "<= 2026-10-21"}}, "#son"]}),
+    )]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({}));
+    assert_eq!(names(&a), vec!["say"]);
+    r.now = "2026-10-22T00:00:00Z".into();
+    assert_eq!(names(&r.done(&a.jobs[0], json!({}))), vec!["son"]);
+    // after a date: one round only while it is not yet
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [{"#say": {"repeat": "> 2026-10-21"}}, "#son"]}),
+    )]);
+    let a = r.start(json!({}));
+    assert_eq!(names(&r.done(&a.jobs[0], json!({}))), vec!["son"]);
+    // true: until the workflow is turned off
+    let mut r = Run::new(&[("a", json!({"steps": [{"#say": {"repeat": true}}, "#son"]}))]);
+    let mut a = r.start(json!({}));
+    for _ in 0..4 {
+        a = r.done(&a.jobs[0], json!({}));
+        assert_eq!(names(&a), vec!["say"]);
+    }
+    r.active = false;
+    assert_eq!(names(&r.done(&a.jobs[0], json!({}))), vec!["son"]);
+}
+
+#[test]
+fn a_cron_repeat_waits_for_each_time_its_line_names() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [{"#say": {"repeat": "0 * * * *"}}, "#son"]}),
+    )]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"n": 1}));
+    // no round now: a timer for the next time
+    assert!(a.jobs.is_empty());
+    assert_eq!(a.timers.len(), 1, "{:?}", a.timers);
+    assert_eq!(a.timers[0].data["kind"], "round");
+    assert!(a.timers[0].at.as_str() > NOW, "{:?}", a.timers);
+    r.now = a.timers[0].at.clone();
+    let a = r.timer("round");
+    assert_eq!(names(&a), vec!["say"]);
+    assert_eq!(r.rt.state["count"], 2);
+}
+
+#[test]
+fn a_repeated_workflow_step_is_a_run_per_round_seeded_with_the_last_one() {
+    let mut r = Run::new(&[
+        (
+            "ana",
+            json!({"steps": [{"alt": {"args": {"k": "$event.k"}, "repeat": 2}}, "#son"]}),
+        ),
+        ("alt", json!({"steps": ["#iş"]})),
+    ]);
+    let a = r.start(json!({"k": "ç"}));
+    let c = a.children[0].clone();
+    assert_eq!(Value::Object(c.event.clone()), json!({"k": "ç"}));
+    assert_eq!(Value::Object(c.seed.clone()), json!({"count": 1}));
+    let back = json!({"output": {"n": 1}, "steps": {"iş": {"n": 1}}, "status": "done"});
+    let a = r.ended(&c, back);
+    // round 2: a new run, its state seeded with round 1's
+    let c = a.children[0].clone();
+    assert_eq!(
+        Value::Object(c.seed.clone()),
+        json!({"count": 2, "output": {"n": 1}, "steps": {"iş": {"n": 1}}})
+    );
+    let a = r.ended(
+        &c,
+        json!({"output": {"n": 2}, "steps": {}, "status": "done"}),
+    );
+    assert_eq!(names(&a), vec!["son"]);
+    assert_eq!(r.rt.state["output"], json!({"n": 2}));
+    // a round that ended in error stops it
+    let mut r = Run::new(&[
+        ("ana", json!({"steps": [{"alt": {"repeat": 5}}, "#son"]})),
+        ("alt", json!({"steps": ["#iş"]})),
+    ]);
+    let a = r.start(json!({}));
+    let a = r.ended(
+        &a.children[0],
+        json!({"output": {"why": "x"}, "steps": {}, "status": "error"}),
+    );
+    assert_eq!(names(&a), vec!["son"]);
+}
+
+#[test]
+fn a_repeated_workflow_starts_its_next_round_as_a_run_with_its_results() {
+    let flow =
+        json!({"repeat": 2, "steps": [{"#iş": {"args": {"n": "$count", "önceki": "$output"}}}]});
+    let mut r = Run::new(&[("tur", flow.clone())]);
+    let a = r.start(json!({"k": 1}));
+    assert_eq!(a.jobs[0].data["n"], 1);
+    let a = r.done(&a.jobs[0], json!({"n": 1}));
+    assert_eq!(r.rt.ended, Some(Ended::Done));
+    let next = a.next_round.clone().expect("a second round");
+    assert_eq!(
+        Value::Object(next.state.clone()),
+        json!({"event": {"k": 1}, "output": {"n": 1}, "steps": {"iş": {"n": 1}}, "count": 2})
+    );
+    // the second round: its state as seeded
+    let mut r2 = Run::new(&[("tur", flow.clone())]);
+    r2.rt = next;
+    let a = r2.start(json!({"k": 1}));
+    assert_eq!(a.jobs[0].data["n"], 2);
+    assert_eq!(a.jobs[0].data["önceki"], json!({"n": 1}));
+    let a = r2.done(&a.jobs[0], json!({"n": 2}));
+    assert!(a.next_round.is_none(), "two rounds");
+    // a round that failed starts none
+    let mut r = Run::new(&[("tur", flow)]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"success": false}));
+    assert_eq!(r.rt.ended, Some(Ended::Failed));
+    assert!(a.next_round.is_none());
 }

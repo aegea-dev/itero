@@ -155,13 +155,6 @@ pub fn used(ws: &Workspace) -> Result<Vec<String>> {
             walk(&serde_json::Value::Object(e.args.clone()), &mut out);
         }
     }
-    for e in ws.entries("action")?.values() {
-        for key in ["args", "repeat"] {
-            if let Some(v) = e.get(key) {
-                walk(v, &mut out);
-            }
-        }
-    }
     out.sort();
     out.dedup();
     Ok(out)

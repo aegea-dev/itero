@@ -104,6 +104,68 @@ fn a_connector_s_args_are_checked_each_problem_told() {
 }
 
 #[test]
+fn repeat_reads_on_a_step_and_on_a_workflow() {
+    use flow::Repeat;
+    let at = |v: Value| -> Option<Repeat> {
+        let f = flow::read(&json!({ "steps": [{ "#yaz": { "repeat": v } }] })).unwrap();
+        let Step::One { repeat, .. } = &f.steps[0] else {
+            panic!()
+        };
+        repeat.clone()
+    };
+    assert_eq!(at(json!(true)), Some(Repeat::Always));
+    assert_eq!(at(json!(3)), Some(Repeat::Times(3)));
+    assert_eq!(
+        at(json!("$output.count")),
+        Some(Repeat::TimesOf("output.count".into()))
+    );
+    assert_eq!(
+        at(json!("<= 2026-12-31")),
+        Some(Repeat::Until("2027-01-01T00:00:00Z".parse().unwrap()))
+    );
+    assert_eq!(
+        at(json!("> 2026-12-31")),
+        Some(Repeat::After("2027-01-01T00:00:00Z".parse().unwrap()))
+    );
+    assert_eq!(
+        at(json!("0 9 * * *")),
+        Some(Repeat::Cron("0 9 * * *".into()))
+    );
+    let f = flow::read(&json!({ "repeat": 2, "steps": ["#yaz"] })).unwrap();
+    assert_eq!(f.repeat, Some(Repeat::Times(2)));
+    // $count is a value now
+    let f =
+        flow::read(&json!({ "steps": [{ "#yaz": { "args": { "n": "$count" }, "repeat": 2 } }] }));
+    assert!(f.is_ok(), "{f:?}");
+}
+
+#[test]
+fn a_repeat_that_cannot_be_read_says_why_each_at_its_step() {
+    let v = json!({ "repeat": "0 9 * * *", "steps": [
+        { "#a": { "repeat": 0 } },
+        { "#b": { "repeat": false } },
+        { "#c": { "repeat": "her gün" } },
+        { "#d": { "repeat": "$yok" } },
+        [{ "#e": { "repeat": 2 } }, "#f"]
+    ] });
+    let ps = flow::read(&v).unwrap_err();
+    let told: Vec<(&str, &str)> = ps
+        .iter()
+        .map(|p| (p.at.as_str(), p.message.as_str()))
+        .collect();
+    assert_eq!(told.len(), 6, "{told:#?}");
+    assert_eq!(told[0].0, "repeat");
+    assert!(told[0].1.contains("schedule is in on"), "{told:#?}");
+    assert_eq!(told[1].0, "steps/#a");
+    assert_eq!(told[2].0, "steps/#b");
+    assert_eq!(told[3].0, "steps/#c");
+    assert!(told[3].1.contains("repeat"), "{told:#?}");
+    assert_eq!(told[4].0, "steps/#d");
+    assert_eq!(told[5].0, "steps/all/#e");
+    assert!(told[5].1.contains("side by side"), "{told:#?}");
+}
+
+#[test]
 fn conditions_hold_on_exact_values_present_names_and_defined_secrets() {
     let f = flow::parse(
         r##"{ "on": [{ "has": ["$event.order", "$$API"] }],
@@ -189,7 +251,8 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
             on: None,
             undo: None,
             undo_args: json!({}),
-            label: "order-process".into()
+            label: "order-process".into(),
+            repeat: None,
         }
     );
     let Step::One { name, .. } = &f.steps[2] else {
@@ -209,6 +272,7 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
         undo,
         undo_args,
         label,
+        ..
     } = &f.steps[3]
     else {
         panic!()
@@ -300,7 +364,7 @@ fn mistakes_are_named() {
         // a step's values go under args
         (
             r##"{ "steps": [{ "#a": { "carrier": "PTT Kargo" } }] }"##,
-            "\"carrier\" is not one of args, on, undo:",
+            "\"carrier\" is not one of args, on, undo, repeat:",
         ),
         (
             r##"{ "steps": [{ "#a": { "args": 3 } }] }"##,

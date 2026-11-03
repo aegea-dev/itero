@@ -11,10 +11,7 @@ fn the_names_a_workspace_uses_come_from_workflows_and_args() {
         std::fs::create_dir_all(f.parent().unwrap()).unwrap();
         std::fs::write(f, text).unwrap();
     };
-    write(
-        "itero.config.json",
-        r#"{"action": {"gönder": {"args": [{"parola": "$$POSTA_PAROLA"}], "repeat": [{"jeton": "$$POSTA_JETON"}]}}}"#,
-    );
+    write("itero.config.json", "{}");
     write(
         "workflows/kapı.json",
         r##"{ "on": [{ "event": "kapı.çal" }, { "has": "$$KAPI_VAR" },
@@ -24,13 +21,7 @@ fn the_names_a_workspace_uses_come_from_workflows_and_args() {
     let ws = itero::workspace::find(d.path()).unwrap();
     assert_eq!(
         used(&ws).unwrap(),
-        [
-            "KAPI_ANAHTARI",
-            "KAPI_VAR",
-            "POSTA_JETON",
-            "POSTA_KULLANICI",
-            "POSTA_PAROLA"
-        ]
+        ["KAPI_ANAHTARI", "KAPI_VAR", "POSTA_KULLANICI"]
     );
 }
 

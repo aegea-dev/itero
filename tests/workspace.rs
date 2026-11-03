@@ -555,36 +555,21 @@ fn the_daemon_watches_the_manifest_and_each_workflow_folder_and_file() {
 }
 
 #[test]
-fn repeat_is_a_list_of_objects() {
+fn an_actions_entry_holds_no_repeat() {
     let d = tempfile::tempdir().unwrap();
     let ws = simple(d.path());
     write(
         d.path(),
         "itero.config.json",
         r##"{ "action": {
-              "posta": { "args": { "host": "imap.örnek.test" },
-                         "repeat": [ { "user": "ayşe@örnek.test" }, { "user": "can@örnek.test" } ] },
-              "sade": { "args": [ { "a": 1 }, { "b": 2 } ] } } }"##,
+              "posta": { "repeat": [ { "user": "ayşe@örnek.test" } ] },
+              "sade": { "description": "Tekrar yok" } } }"##,
     );
-    assert_eq!(
-        ws.repeat("posta").unwrap(),
-        Some(serde_json::json!([{ "user": "ayşe@örnek.test" }, { "user": "can@örnek.test" }]))
+    ws.no_repeat("sade").unwrap();
+    let e = format!("{:#}", ws.no_repeat("posta").unwrap_err());
+    assert!(
+        e.contains("action.posta.repeat is gone")
+            && e.contains(r##"{ "#posta": { "repeat": ... } }"##),
+        "{e}"
     );
-    assert_eq!(ws.repeat("sade").unwrap(), None);
-    for (repeat, says) in [
-        ("[]", "a list of one or more objects"),
-        ("[1]", "a list of one or more objects"),
-        (r#"{"user": "a"}"#, "a list of one or more objects"),
-    ] {
-        write(
-            d.path(),
-            "itero.config.json",
-            &format!(r#"{{"action": {{"bir": {{"repeat": {repeat}}}}}}}"#),
-        );
-        let e = format!("{:#}", ws.repeat("bir").unwrap_err());
-        assert!(
-            e.contains("action.bir.repeat") && e.contains(says),
-            "{repeat}: {e}"
-        );
-    }
 }

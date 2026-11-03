@@ -65,6 +65,9 @@ fn check_manifest(ws: &Workspace, workflows: &[String]) -> Result<Vec<Problem>> 
         if let Err(why) = ws.no_args(&name) {
             wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
         }
+        if let Err(why) = ws.no_repeat(&name) {
+            wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
+        }
         if let Err(why) = ws.step_limits(&name) {
             wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
         }

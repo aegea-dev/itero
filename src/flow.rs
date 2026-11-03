@@ -20,8 +20,68 @@ pub struct Flow {
     pub error: Vec<Step>,
     /// How long a run may wait for data; `None` is `WAIT`.
     pub timeout: Option<Duration>,
+    /// Its runs go on as rounds: when one ends, the next starts with its
+    /// results.
+    pub repeat: Option<Repeat>,
     /// What it is: its entry in itero.config.json, not its file.
     pub meta: Meta,
+}
+
+/// How long a step or a workflow goes on in rounds, each started as soon
+/// as the one before ended, with its results. A round that ends in an
+/// error or a failure stops it, and so does the workflow being turned off
+/// or being out of its `from`/`until`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Repeat {
+    /// `true`: until one of those stops it.
+    Always,
+    /// `3`: that many rounds.
+    Times(u64),
+    /// `"$output.count"`: that many, read as the first round starts (the
+    /// value's path, `output.count`).
+    TimesOf(String),
+    /// `"<= 2026-12-31"`: while it is still before this, the day's end.
+    Until(DateTime<Utc>),
+    /// `"> 2026-12-31"`: while it is past this, the day's end.
+    After(DateTime<Utc>),
+    /// A cron line: a round at each time it names (a step's only).
+    Cron(String),
+}
+
+/// A `repeat` as written, on a step or (`workflow`) on a workflow.
+fn repeat(v: &Value, workflow: bool) -> Result<Repeat, String> {
+    const FORMS: &str = "true, a number of rounds, \"$output.count\", \"<= 2026-12-31\", \"> 2026-12-31\" or a cron line";
+    match v {
+        Value::Bool(true) => Ok(Repeat::Always),
+        Value::Number(n) => match n.as_u64() {
+            Some(n) if n > 0 => Ok(Repeat::Times(n)),
+            _ => Err(format!("repeat {v}: a number of rounds is 1 or more")),
+        },
+        Value::String(s) => {
+            let s = s.trim();
+            if let Some(d) = s.strip_prefix("<=") {
+                return moment("repeat", &Value::String(d.trim().into()), true).map(Repeat::Until);
+            }
+            if let Some(d) = s.strip_prefix('>') {
+                return moment("repeat", &Value::String(d.trim().into()), true).map(Repeat::After);
+            }
+            if let Some(p) = s.strip_prefix('$').filter(|p| !p.starts_with('$')) {
+                return value_path(p, s)
+                    .map(Repeat::TimesOf)
+                    .map_err(|e| e.replacen("on:", "repeat:", 1));
+            }
+            if crate::engine::schedule::check(s).is_ok() {
+                if workflow {
+                    return Err(format!(
+                        "repeat \"{s}\": a workflow's schedule is in on ({{\"schedule\": \"{s}\"}}); its repeat is {FORMS}"
+                    ));
+                }
+                return Ok(Repeat::Cron(s.into()));
+            }
+            Err(format!("repeat \"{s}\" is not one of {FORMS}"))
+        }
+        _ => Err(format!("repeat {v} is not one of {FORMS}")),
+    }
 }
 
 /// What a person says about a workflow: a few keys itero knows, and any
@@ -172,6 +232,9 @@ impl Listen {
     }
 }
 
+/// A step is read once, when its workflow is: its size costs nothing, and
+/// boxing its fields would cost an allocation each for no gain.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
     /// An action or a workflow, with its args, when it runs, and what
@@ -189,6 +252,8 @@ pub enum Step {
         /// name is in the file more than once (counted over the whole
         /// file), a workflow's name.
         label: String,
+        /// It runs in rounds, each with the one before's results.
+        repeat: Option<Repeat>,
     },
     /// Actions and workflows that run side by side; the next step waits as
     /// the group says.
@@ -350,10 +415,14 @@ pub fn read(v: &Value) -> Result<Flow, Vec<Problem>> {
                 Ok(t) => f.timeout = Some(t),
                 Err(e) => ps.push(Problem::new("timeout", e)),
             },
+            "repeat" => match repeat(v, true) {
+                Ok(r) => f.repeat = Some(r),
+                Err(e) => ps.push(Problem::new("repeat", e)),
+            },
             other => ps.push(Problem::new(
                 "",
                 format!(
-                    "unknown key \"{other}\": a workflow has meta, on, steps, success, failure, error and timeout"
+                    "unknown key \"{other}\": a workflow has meta, on, steps, success, failure, error, timeout and repeat"
                 ),
             )),
         }
@@ -389,7 +458,7 @@ pub fn step_key(label: &str) -> String {
 /// Where a value comes from: `$event` (the event that started the run),
 /// `$output` (the step before), `$steps.<name>` (any step by its name),
 /// `$config` (the manifest).
-pub const ROOTS: [&str; 4] = ["event", "output", "steps", "config"];
+pub const ROOTS: [&str; 5] = ["event", "output", "steps", "config", "count"];
 
 /// Whether `on`'s conditions hold over a run's state, `defined` telling
 /// which environment variables and secrets are. Its messages and
@@ -1088,6 +1157,7 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
                 on: None,
                 undo: None,
                 undo_args: Value::Object(Map::new()),
+                repeat: None,
             })
         }
         Value::Array(items) => Ok(Step::Side(Group {
@@ -1105,6 +1175,7 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
                 on: w.on.map(Box::new),
                 undo: w.undo,
                 undo_args: w.undo_args,
+                repeat: w.repeat,
             })
         }
         _ => Err(one(format!(
@@ -1257,6 +1328,7 @@ struct Written {
     on: Option<On>,
     undo: Option<Name>,
     undo_args: Value,
+    repeat: Option<Repeat>,
 }
 
 fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
@@ -1355,6 +1427,16 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             empty()
         }),
     };
+    let rounds = match fields.remove("repeat") {
+        None => None,
+        Some(v) => repeat(&v, false).map_or_else(
+            |e| {
+                ps.push(Problem::new("", e));
+                None
+            },
+            Some,
+        ),
+    };
     if fields.remove("strict").is_some() {
         ps.push(Problem::new(
             "",
@@ -1364,7 +1446,9 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
     for other in fields.keys() {
         ps.push(Problem::new(
             "",
-            format!("\"{other}\" is not one of args, on, undo: a step's values go under args"),
+            format!(
+                "\"{other}\" is not one of args, on, undo, repeat: a step's values go under args"
+            ),
         ));
     }
     match step_name {
@@ -1374,6 +1458,7 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             on: when,
             undo,
             undo_args,
+            repeat: rounds,
         }),
         _ => Err(ps),
     }
@@ -1392,6 +1477,12 @@ fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, Vec<Problem>
                     return Err(vec![Problem::new(
                         "undo",
                         "undo is for a step of a list, not one side by side",
+                    )]);
+                }
+                if w.repeat.is_some() {
+                    return Err(vec![Problem::new(
+                        "",
+                        "repeat is for a step of a list, not one side by side: put the step in a workflow of its own, repeated, used here by its name",
                     )]);
                 }
                 let label = w.name.label();

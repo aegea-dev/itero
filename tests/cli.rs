@@ -23,11 +23,6 @@ fn err(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).to_string()
 }
 
-/// The workspace's manifest, read.
-fn manifest(d: &Path) -> serde_json::Value {
-    serde_json::from_str(&std::fs::read_to_string(d.join("itero.config.json")).unwrap()).unwrap()
-}
-
 #[test]
 fn action_args_and_workflow_settings_are_gone() {
     let d = workspace();
@@ -36,6 +31,7 @@ fn action_args_and_workflow_settings_are_gone() {
         &["ws", "ac", "args", "get", "kargola"][..],
         &["ws", "wf", "config", "get", "kargola"],
         &["ws", "cn", "args", "get", "kargola"],
+        &["ws", "ac", "repeat", "get", "kargola"],
     ] {
         let o = itero(d.path(), args);
         assert!(
@@ -74,6 +70,19 @@ fn check_refuses_values_in_the_manifest() {
     let o = itero(d.path(), &["ws", "check"]);
     assert!(
         !o.status.success() && err(&o).contains("settings are gone"),
+        "{o:?}"
+    );
+    // an action's repeat: onto the step
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"action": {"kargola": {"repeat": [{"firma": "PTT Kargo"}]}}}"#,
+    );
+    let o = itero(d.path(), &["ws", "check"]);
+    assert!(
+        !o.status.success()
+            && err(&o).contains("repeat is gone")
+            && err(&o).contains("/actions/kargola)"),
         "{o:?}"
     );
     // a connector's args: into each on entry that listens
@@ -1280,39 +1289,6 @@ fn check_warns_of_an_arg_notify_does_not_take() {
         r##"{"on": [{"event": "fiyat.soruldu"}], "steps": [{"#notify": {"args": {"title": "Fiyat", "text": "$output"}}}]}"##,
     );
     assert!(!err(&itero(d.path(), &["ws", "check"])).contains("#notify takes"));
-}
-
-#[test]
-fn repeat_is_set_and_shown_for_an_action() {
-    let d = workspace();
-    file(d.path(), "actions/imap-check", "#!/bin/sh\n");
-    let o = itero(
-        d.path(),
-        &[
-            "ws",
-            "ac",
-            "repeat",
-            "set",
-            "imap-check",
-            r#"[{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]"#,
-        ],
-    );
-    assert!(o.status.success(), "{}", err(&o));
-    assert_eq!(
-        manifest(d.path())["action"]["imap-check"]["repeat"],
-        serde_json::json!([{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}])
-    );
-    let o = itero(d.path(), &["ws", "ac", "repeat", "get", "imap-check"]);
-    assert!(out(&o).contains("can@örnek.test"), "{}", out(&o));
-    for bad in [r#"{"user": "a"}"#, "[]", "[1]"] {
-        let o = itero(d.path(), &["ws", "ac", "repeat", "set", "imap-check", bad]);
-        assert!(!o.status.success(), "{bad}");
-        assert!(
-            err(&o).contains("repeat is a list of one or more objects"),
-            "{bad}: {}",
-            err(&o)
-        );
-    }
 }
 
 #[cfg(target_os = "macos")]

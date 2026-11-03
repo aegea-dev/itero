@@ -63,9 +63,11 @@ fn secrets_are_kept_listed_read_and_removed() {
     secrets::set("ORTAM_SIRRI", "kasadan").unwrap();
     assert_eq!(secrets::get("ORTAM_SIRRI").as_deref(), Some("kasadan"));
     let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
+    std::fs::create_dir(d.path().join("workflows")).unwrap();
     std::fs::write(
-        d.path().join("itero.config.json"),
-        r#"{"action": {"gönder": {"args": {"a": "$$ORTAM_SIRRI", "b": "$$PAROLA"}}}}"#,
+        d.path().join("workflows/gönder.json"),
+        r##"{"steps": [{"#gönder": {"args": {"a": "$$ORTAM_SIRRI", "b": "$$PAROLA"}}}]}"##,
     )
     .unwrap();
     let ws = itero::workspace::find(d.path()).unwrap();
@@ -144,9 +146,10 @@ fn secrets_are_kept_listed_read_and_removed() {
     assert!(secrets::set_for(&bir.id().unwrap(), "ad-soyad", "x").is_err());
     // the warning sees a workspace's own secret too
     secrets::set_for(&bir.id().unwrap(), "ORTAM_SIRRI", "kendi").unwrap();
+    std::fs::create_dir_all(bir.root.join("workflows")).unwrap();
     std::fs::write(
-        bir.root.join("itero.config.json"),
-        r#"{"action": {"gönder": {"args": {"a": "$$ORTAM_SIRRI"}}}}"#,
+        bir.root.join("workflows/gönder.json"),
+        r##"{"steps": [{"#gönder": {"args": {"a": "$$ORTAM_SIRRI"}}}]}"##,
     )
     .unwrap();
     let bir_used = itero::workspace::find(&bir.root).unwrap();

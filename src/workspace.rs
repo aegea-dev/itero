@@ -630,26 +630,6 @@ impl Workspace {
         }
     }
 
-    /// Sets `key` of the `kind` entry `name` to `v` in the manifest,
-    /// keeping the rest as it was, written through a temporary file; the
-    /// manifest's path.
-    pub fn write_entry(&self, kind: &str, name: &str, key: &str, v: Value) -> Result<PathBuf> {
-        let path = self.root.join(MANIFEST);
-        let mut m = self.manifest()?;
-        let Value::Object(all) = m.entry(kind).or_insert_with(|| Value::Object(Map::new())) else {
-            bail!("{}: {kind} is an object", path.display());
-        };
-        let Value::Object(e) = all.entry(name).or_insert_with(|| Value::Object(Map::new())) else {
-            bail!("{}: {kind}.{name} is an object", path.display());
-        };
-        e.insert(key.into(), v);
-        write_through(
-            &path,
-            &(serde_json::to_string_pretty(&Value::Object(m))? + "\n"),
-        )?;
-        Ok(path)
-    }
-
     /// Where the daemon keeps the port the OS gave it.
     fn port_file(&self) -> PathBuf {
         self.root.join(".itero").join("port")
@@ -775,22 +755,15 @@ impl Workspace {
         Ok(())
     }
 
-    /// An action's repeat, `action.<name>.repeat` in the manifest: a list
-    /// of one or more objects; its step runs once per item, each item's
-    /// values on top of its args. None when its entry has none.
-    pub fn repeat(&self, action: &str) -> Result<Option<Value>> {
-        let Some(v) = self.entry_key("action", action, "repeat")? else {
-            return Ok(None);
-        };
-        match &v {
-            Value::Array(items) if !items.is_empty() && items.iter().all(Value::is_object) => {
-                Ok(Some(v))
-            }
-            _ => bail!(
-                "{}: action.{action}.repeat is a list of one or more objects, each one run's values",
+    /// An action's entry holds no repeat: it goes on the step.
+    pub fn no_repeat(&self, action: &str) -> Result<()> {
+        if self.entry_key("action", action, "repeat")?.is_some() {
+            bail!(
+                "{}: action.{action}.repeat is gone: repeat goes on the step: {{ \"#{action}\": {{ \"repeat\": ... }} }}",
                 self.root.join(MANIFEST).display()
-            ),
+            );
         }
+        Ok(())
     }
 
     /// How long a step of the action may print nothing, and run at most:

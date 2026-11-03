@@ -91,40 +91,30 @@ fn a_secret_starts_nothing_until_defined_and_reaches_the_action_alone() {
 }
 
 #[test]
-fn an_action_gets_its_steps_args_with_its_repeat_item_on_top_and_a_waited_event() {
+fn an_action_gets_its_steps_args_and_a_waited_event() {
     use itero::engine::steps::StepJob;
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
     let ws = itero::workspace::find(d.path()).unwrap();
-    let state = json!({"event": {"bölge": "tr"}})
-        .as_object()
-        .unwrap()
-        .clone();
-    let job = |item: Option<serde_json::Value>, event: Option<serde_json::Value>| StepJob {
+    let job = |event: Option<serde_json::Value>| StepJob {
         path: vec![0],
         action: "imap-check".into(),
         version: None,
-        data: json!({"host": "imap.örnek.test"})
+        data: json!({"host": "imap.örnek.test", "user": "ayşe@örnek.test"})
             .as_object()
             .unwrap()
             .clone(),
-        item,
         waiting_since: None,
         event,
     };
-    let item = json!({"user": "ayşe@örnek.test", "host": "başka", "etiket": "$event.bölge posta"});
-    let (env, input) = itero::engine::daemon::bind(&ws, &state, &job(Some(item), None)).unwrap();
-    assert_eq!(env["host"], "başka", "the item on top of the step's args");
+    let (env, input) = itero::engine::daemon::bind(&ws, &job(None)).unwrap();
+    assert_eq!(env["host"], "imap.örnek.test");
     assert_eq!(env["user"], "ayşe@örnek.test");
-    assert_eq!(env["etiket"], "tr posta");
-    assert_eq!(input["args"]["host"], "başka");
+    assert_eq!(input["args"]["host"], "imap.örnek.test");
     assert!(input.get("event").is_none() && !env.contains_key("event"));
-    // nothing else of the run reaches it
-    assert!(!env.contains_key("bölge"));
     // run again after waiting: the event that came, as $event and on stdin
     let came = json!({"order": 7, "amount": 25});
-    let (env, input) =
-        itero::engine::daemon::bind(&ws, &state, &job(None, Some(came.clone()))).unwrap();
+    let (env, input) = itero::engine::daemon::bind(&ws, &job(Some(came.clone()))).unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&env["event"]).unwrap(),
         came
