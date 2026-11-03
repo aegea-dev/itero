@@ -221,6 +221,25 @@ pub fn runs(ws: &Workspace, f: &Filter, json: bool) -> Result<()> {
     })
 }
 
+/// Asks a run to stop: the daemon running the workspace stops it now, or
+/// the next to start does.
+pub fn stop(ws: &Workspace, run: &str, json: bool) -> Result<()> {
+    use crate::engine::events::{StopAsked, stop_run};
+    let now = crate::engine::daemon::stamp(chrono::Utc::now());
+    match stop_run(ws, run, &now)? {
+        StopAsked::Asked { name, daemon } => {
+            show(json, &json!({ "stopping": name, "daemon": daemon }), |_| {
+                println!("stopping {name}");
+                if !daemon {
+                    eprintln!("no daemon is running: the next to start stops it");
+                }
+            })
+        }
+        StopAsked::Ended { name, status } => bail!("{name} has ended: {status}"),
+        StopAsked::Missing => bail!("no run {run}: itero ws wf runs lists them"),
+    }
+}
+
 /// One run, by id or name: how it started, each step and how it went, the
 /// events it took, and its state.
 pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
@@ -263,6 +282,7 @@ pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
             let line = match s["what"].as_str().unwrap_or("") {
                 "started" => format!("started  {}", s["data"]),
                 "timed out" => "waited too long".to_string(),
+                "stopped by command" => "stopped by command".to_string(),
                 "stopped" => format!("{}  stopped", text(&s["step"])),
                 "event" => format!("event {}  {}", text(&s["type"]), s["data"]),
                 "running" => format!("{}  running  {}", text(&s["step"]), text(&s["data"])),
@@ -321,6 +341,7 @@ fn story(j: &Journal, r: &Run) -> Result<Value> {
             "action.failed" => json!({ "what": "error", "step": step(), "data": d["error"] }),
             // a step whose group ended without it, as the workflow names it
             "step.stopped" => json!({ "what": "stopped", "step": d["step"] }),
+            "run.stop" => json!({ "what": "stopped by command" }),
             // a workflow used as a step ended: how, what it returned, and
             // its run by name
             "workflow.ended" => {

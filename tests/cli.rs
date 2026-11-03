@@ -628,6 +628,50 @@ fn an_event_not_yet_handled_is_listed_and_cancelled() {
 }
 
 #[test]
+fn a_run_is_stopped_by_command_and_its_story_says_so() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/bekleyen.json",
+        r##"{ "on": [{ "event": "bekle.başla" }], "steps": ["#bekle"] }"##,
+    );
+    file(
+        d.path(),
+        "actions/bekle",
+        "#!/bin/sh\necho '{\"sipariş\": 1}'; exit 75\n",
+    );
+    itero(d.path(), &["ws", "emit", "bekle.başla", "{}"]);
+    itero(d.path(), &["daemon", "--once"]);
+    let runs: serde_json::Value =
+        serde_json::from_str(&out(&itero(d.path(), &["ws", "wf", "runs", "--json"]))).unwrap();
+    let name = runs[0]["name"].as_str().unwrap().to_string();
+    let o = itero(d.path(), &["ws", "wf", "stop", &name]);
+    assert!(o.status.success(), "{}", err(&o));
+    assert_eq!(out(&o).trim(), format!("stopping {name}"));
+    assert!(err(&o).contains("no daemon is running"), "{}", err(&o));
+    itero(d.path(), &["daemon", "--once"]);
+    let list = out(&itero(d.path(), &["ws", "wf", "runs"]));
+    assert!(list.contains(" stopped "), "{list}");
+    let story = out(&itero(d.path(), &["ws", "wf", "runs", &name]));
+    assert!(
+        story.contains("stopped by command") && story.contains("ended stopped"),
+        "{story}"
+    );
+    let o = itero(d.path(), &["ws", "wf", "stop", &name]);
+    assert!(
+        !o.status.success() && err(&o).contains(&format!("{name} has ended: stopped")),
+        "{}",
+        err(&o)
+    );
+    let o = itero(d.path(), &["ws", "wf", "stop", "yok-yok"]);
+    assert!(
+        !o.status.success() && err(&o).contains("no run yok-yok"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
 fn a_step_that_breaks_undoes_those_before_it_and_the_story_says_so() {
     let d = workspace();
     file(

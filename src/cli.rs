@@ -292,6 +292,14 @@ pub enum WorkflowCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Stop a run where it is: its running steps killed, no undo, no error list
+    Stop {
+        /// The run, by id or name
+        #[arg(add = complete::runs())]
+        run: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -828,6 +836,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                             },
                             json,
                         )?,
+                        WorkflowCmd::Stop { run, json } => workflow::stop(&ws, &run, json)?,
                     }
                 }
                 WorkspaceCmd::Action { cmd } => {

@@ -49,6 +49,7 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16) -> Router {
         .route("/events/{id}", delete(cancel_event))
         .route("/runs", get(runs))
         .route("/runs/{id}", get(run))
+        .route("/runs/{id}/stop", post(stop_run))
         .route("/workflows", get(workflows))
         .layer(middleware::from_fn_with_state(s.clone(), local_only))
         .with_state(s)
@@ -129,6 +130,27 @@ struct EventQuery {
 
 /// The longest an answer is waited for, in seconds.
 const MAX_WAIT: u64 = 600;
+
+/// Asks a run to stop: 202; 409 when it has ended, 404 when there is none.
+async fn stop_run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Reply, Reply> {
+    let wake = s.engine.wake.clone();
+    let asked = blocking(&s, move |ws| {
+        let now = super::daemon::stamp(chrono::Utc::now());
+        match super::events::stop_run(ws, &id, &now).map_err(internal)? {
+            super::events::StopAsked::Asked { name, .. } => Ok(json!({ "stopping": name })),
+            super::events::StopAsked::Ended { name, status } => Err(fail(
+                StatusCode::CONFLICT,
+                format!("{name} has ended: {status}"),
+            )),
+            super::events::StopAsked::Missing => {
+                Err(fail(StatusCode::NOT_FOUND, format!("no run {id}")))
+            }
+        }
+    })
+    .await?;
+    let _ = wake.send(());
+    Ok((StatusCode::ACCEPTED, asked))
+}
 
 /// The events for the workspace no daemon has handled yet.
 async fn queued(State(s): State<Shared>) -> Result<Json<Value>, Reply> {

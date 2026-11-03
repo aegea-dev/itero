@@ -87,6 +87,50 @@ pub fn nudge(ws: &Workspace, now: &str) -> std::io::Result<()> {
     std::fs::write(ws.wake_file(), now)
 }
 
+/// What asking a run to stop did.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StopAsked {
+    /// Asked: the daemon running the workspace stops it now, or (`daemon`
+    /// false) the next to start does.
+    Asked { name: String, daemon: bool },
+    /// It has ended already, so.
+    Ended { name: String, status: String },
+    /// No run has that id or name.
+    Missing,
+}
+
+/// Asks run `run` (an id or a name; of two with one name, the newest) to
+/// stop: a `run.stop` event on it, which the daemon handles in order with
+/// the run's others, and a nudge to a running daemon.
+pub fn stop_run(ws: &Workspace, run: &str, now: &str) -> anyhow::Result<StopAsked> {
+    let j = Journal::open(ws)?;
+    let Some(r) = j.run_by(run)?.into_iter().next() else {
+        return Ok(StopAsked::Missing);
+    };
+    if r.runtime.ended.is_some() {
+        return Ok(StopAsked::Ended {
+            name: r.name,
+            status: super::steps::status(&r.runtime).into(),
+        });
+    }
+    j.publish(&Envelope::new(
+        "outside",
+        "run.stop",
+        &journal::subject(&r.id),
+        now,
+        None,
+        Value::Object(Map::new()),
+    ))?;
+    let daemon = super::lock::held(ws).map_err(anyhow::Error::msg)?;
+    if daemon {
+        nudge(ws, now)?;
+    }
+    Ok(StopAsked::Asked {
+        name: r.name,
+        daemon,
+    })
+}
+
 /// One of the daemon's own messages, for the workspace.
 pub fn own(kind: &str, data: Value, now: &str) -> Envelope {
     debug_assert!(kind.starts_with(OWN));

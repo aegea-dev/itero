@@ -62,6 +62,9 @@ pub enum Cancelled {
     Missing,
 }
 
+/// The note on a job whose run was stopped by command.
+pub const JOB_RUN_STOPPED: &str = "stopped: its run was stopped";
+
 /// The note on a job whose step was stopped (its group ended without it):
 /// handled, never run again, and its answer, if any, not saved.
 pub const JOB_STOPPED: &str = "stopped: its group ended without it";
@@ -319,8 +322,10 @@ pub struct Handled<'a> {
     /// Runs its steps start, each linked to this run (`run` names it).
     pub children: Vec<Child<'a>>,
     /// Jobs (by `seq`) whose steps this answer stopped: handled, noted
-    /// `JOB_STOPPED`, so none runs again.
+    /// `stopped_why`, so none runs again.
     pub stopped: Vec<i64>,
+    /// Why they were: `JOB_STOPPED` (a group), `JOB_RUN_STOPPED` (the run).
+    pub stopped_why: &'a str,
 }
 
 pub struct Journal {
@@ -949,7 +954,7 @@ impl Journal {
         for seq in &h.stopped {
             tx.execute(
                 "UPDATE events SET handled = ?2, note = ?3 WHERE seq = ?1 AND handled IS NULL",
-                params![seq, now, JOB_STOPPED],
+                params![seq, now, h.stopped_why],
             )?;
         }
         for e in &h.events {
