@@ -36,6 +36,32 @@ const MIGRATIONS: [&str; 3] = [
 /// while it ran.
 const STOPPED: &str = "the daemon stopped while it ran";
 
+/// The note on an event cancelled before any daemon handled it.
+pub const CANCELLED: &str = "cancelled by command";
+
+/// An event for the workspace no daemon has handled yet.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Queued {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub time: String,
+    pub data: Value,
+}
+
+/// What cancelling an event did.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Cancelled {
+    Done,
+    /// A daemon had handled it: what it noted, and the runs it started.
+    Handled {
+        note: Option<String>,
+        started: Vec<String>,
+    },
+    /// No event of the workspace has that id.
+    Missing,
+}
+
 /// The note on a job whose step was stopped (its group ended without it):
 /// handled, never run again, and its answer, if any, not saved.
 pub const JOB_STOPPED: &str = "stopped: its group ended without it";
@@ -761,6 +787,17 @@ impl Journal {
         let tx = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let note = (starts.is_empty() && waiting.is_empty())
+            .then_some("no workflow starts on it, and no run waits for it");
+        // handled first: one cancelled (or handled) since it was read starts
+        // nothing
+        let marked = tx.execute(
+            "UPDATE events SET handled = ?2, note = ?3 WHERE seq = ?1 AND handled IS NULL",
+            params![r.seq, at, note],
+        )?;
+        if marked == 0 {
+            return Ok(vec![]);
+        }
         let mut started = vec![];
         for s in starts {
             let pin = pin(&tx, &s.workflow, &s.flows)?;
@@ -769,14 +806,66 @@ impl Journal {
         for id in waiting {
             publish(&tx, &copy(&r.event, id, at))?;
         }
-        let note = (starts.is_empty() && waiting.is_empty())
-            .then_some("no workflow starts on it, and no run waits for it");
-        tx.execute(
-            "UPDATE events SET handled = ?2, note = ?3 WHERE seq = ?1 AND handled IS NULL",
-            params![r.seq, at, note],
-        )?;
         tx.commit()?;
         Ok(started)
+    }
+
+    /// The events for the workspace no daemon has handled yet, oldest
+    /// first: those held back for room under `limits.runs`, or waiting for
+    /// a daemon.
+    pub fn queued(&self) -> Result<Vec<Queued>> {
+        let mut s = self.db.prepare(
+            "SELECT id, type, time, data FROM events
+             WHERE subject = 'itero.app' AND handled IS NULL ORDER BY seq",
+        )?;
+        let rows = s
+            .query_map([], |r| {
+                let data: String = r.get(3)?;
+                Ok(Queued {
+                    id: r.get(0)?,
+                    kind: r.get(1)?,
+                    time: r.get(2)?,
+                    data: serde_json::from_str(&data).unwrap_or(Value::Null),
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Cancels an event for the workspace that no daemon has handled yet:
+    /// handled now, starting and reaching nothing, noted `CANCELLED`. One
+    /// transaction, so a daemon routing it at once does one or the other.
+    pub fn cancel(&mut self, id: &str, at: &str) -> Result<Cancelled> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let found: Option<(Option<String>, Option<String>)> = tx
+            .query_row(
+                "SELECT handled, note FROM events WHERE id = ?1 AND subject = 'itero.app'",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let out = match found {
+            None => Cancelled::Missing,
+            Some((Some(_), note)) => {
+                let mut s =
+                    tx.prepare("SELECT id FROM runs WHERE message = ?1 ORDER BY started, id")?;
+                let started = s
+                    .query_map(params![id], |r| r.get(0))?
+                    .collect::<rusqlite::Result<_>>()?;
+                Cancelled::Handled { note, started }
+            }
+            Some((None, _)) => {
+                tx.execute(
+                    "UPDATE events SET handled = ?2, note = ?3 WHERE id = ?1 AND handled IS NULL",
+                    params![id, at, CANCELLED],
+                )?;
+                Cancelled::Done
+            }
+        };
+        tx.commit()?;
+        Ok(out)
     }
 
     /// When a schedule (`<workflow>#<cron>`) last started a run, or was
