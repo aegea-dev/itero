@@ -47,7 +47,7 @@ impl Running {
     ) -> Result<Running> {
         let me = super::journal::Journal::open(&ws)?.workspace()?;
         let log = Log::new(&ws, &me.id);
-        let connectors = ws.connector_files()?;
+        let connectors = crate::connectors::copies(&ws)?;
         let d = daemon::Daemon::current();
         log.write(
             "daemon.started",
@@ -91,7 +91,8 @@ impl Running {
             })?
         };
         let mut threads = vec![];
-        for (kind, file) in connectors {
+        {
+            // one thread runs the connectors' copies, as the workflows ask
             let (ws, exe, engine, log, stop) = (
                 ws.clone(),
                 exe.to_path_buf(),
@@ -99,23 +100,8 @@ impl Running {
                 log.clone(),
                 stop.clone(),
             );
-            let wake = engine.wake.clone();
             threads.push(std::thread::spawn(move || {
-                let connector = crate::connectors::supervise::Connector {
-                    kind: &kind,
-                    file: &file,
-                };
-                let policy = crate::connectors::supervise::Policy::default();
-                crate::connectors::supervise::run(
-                    &ws,
-                    &exe,
-                    &connector,
-                    &policy,
-                    &wake,
-                    &engine.health,
-                    &log,
-                    &stop,
-                );
+                run_copies(&ws, &exe, connectors, &engine, &log, &stop)
             }));
         }
         {
@@ -307,4 +293,92 @@ fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
         .map(|s| s.to_string())
         .or_else(|| p.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "a panic".into())
+}
+
+/// How often the copies the workflows ask for are worked out again.
+const RECOPY: Duration = Duration::from_secs(2);
+
+/// Runs the connectors' copies (`first` to begin with), each in a thread
+/// of its own, until `stop`: every `RECOPY` the copies are worked out
+/// again from the workflows, a copy no longer asked for is stopped, a new
+/// one started, and one unchanged runs on.
+fn run_copies(
+    ws: &Workspace,
+    exe: &Path,
+    first: Vec<crate::connectors::Copy>,
+    engine: &Arc<Engine>,
+    log: &Log,
+    stop: &Arc<Stop>,
+) {
+    type Runs = Vec<(crate::connectors::Copy, Arc<Stop>, JoinHandle<()>)>;
+    let start = |copy: crate::connectors::Copy, runs: &mut Runs| {
+        let mine = stop.under();
+        let (ws, exe, engine, log, s) = (
+            ws.clone(),
+            exe.to_path_buf(),
+            engine.clone(),
+            log.clone(),
+            mine.clone(),
+        );
+        let c = copy.clone();
+        let t = std::thread::spawn(move || {
+            let policy = crate::connectors::supervise::Policy::default();
+            let wake = engine.wake.clone();
+            crate::connectors::supervise::run(
+                &ws,
+                &exe,
+                &c,
+                &policy,
+                &wake,
+                &engine.health,
+                &log,
+                &s,
+            );
+        });
+        runs.push((copy, mine, t));
+    };
+    let mut runs: Runs = vec![];
+    for c in first {
+        start(c, &mut runs);
+    }
+    let mut told: Option<String> = None;
+    while !stop.sleep(RECOPY) {
+        let want = match crate::connectors::copies(ws) {
+            Ok(w) => {
+                told = None;
+                w
+            }
+            Err(e) => {
+                // said once, until it changes
+                let why = format!("the connectors cannot be worked out: {e:#}");
+                if told.as_ref() != Some(&why) {
+                    log.write("error", json!({ "why": why }));
+                    told = Some(why);
+                }
+                continue;
+            }
+        };
+        let (keep, gone): (Runs, Runs) = runs.into_iter().partition(|(c, ..)| want.contains(c));
+        for (c, s, t) in gone {
+            s.set();
+            let _ = t.join();
+            stop.forget(&s);
+            engine
+                .health
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .connectors
+                .remove(&c.name());
+        }
+        runs = keep;
+        for c in want {
+            if !runs.iter().any(|(r, ..)| *r == c) {
+                start(c, &mut runs);
+            }
+        }
+    }
+    for (_, s, t) in runs {
+        s.set();
+        let _ = t.join();
+    }
 }

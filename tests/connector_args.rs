@@ -2,7 +2,8 @@
 //! variables for the connector, `$$NAME` from the secret store or the
 //! environment. Its own test binary: it sets environment variables.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
-use itero::connectors::supervise::{self, Connector, Policy};
+use itero::connectors::Copy;
+use itero::connectors::supervise::{self, Policy};
 use itero::engine::daemon::Health;
 use itero::engine::journal::Journal;
 use std::sync::Mutex;
@@ -34,10 +35,7 @@ fn run_it(ws: &itero::workspace::Workspace) -> String {
         give_up_after: 1,
         window: Duration::from_secs(60),
     };
-    let connector = Connector {
-        kind: &kind,
-        file: &file,
-    };
+    let connector = Copy::plain(&kind, file.clone());
     supervise::run(
         ws,
         exe,

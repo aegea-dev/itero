@@ -1452,12 +1452,19 @@ pub fn connector_args(ws: &Workspace, connector: &str) -> Result<Map<String, Val
     Ok(args)
 }
 
-/// A connector's environment: its args, `$$NAME` the secret's (or the
+/// A connector's environment: the args its copy is given (over those its
+/// manifest entry still gives), `$$NAME` the secret's (or the
 /// environment variable's).
-pub fn connector_env(ws: &Workspace, connector: &str) -> Result<BTreeMap<String, String>, String> {
+pub fn connector_env(
+    ws: &Workspace,
+    connector: &str,
+    given: &Map<String, Value>,
+) -> Result<BTreeMap<String, String>, String> {
     let none = Map::new();
     let mut values = Map::new();
-    for (k, v) in connector_args(ws, connector)? {
+    let mut args = connector_args(ws, connector)?;
+    args.extend(given.clone());
+    for (k, v) in args {
         let v = resolve(ws, &v, &none)
             .map_err(|why| format!("connector.{connector}.args.{k}: {why}"))?;
         values.insert(k, v);
