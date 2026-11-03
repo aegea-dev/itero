@@ -55,9 +55,29 @@ the machine's defaults say. See
     remote: https://api.openai.com/v1/chat/completions
 ```
 
-Anything wrong is an error naming the file: a key it does not know, a
-event type of one word, an action or a workflow that is not there, an
-action that is not executable. Run it after every edit.
+It reports every problem in every file in one run, not only the first: a
+key it does not know, an event type of one word, an action or a workflow
+that is not there, an action that is not executable, a manifest entry that
+is wrong. Each is its message, then where it is, as an
+[address](/reference/concepts/#addresses); then how many, and the check
+fails (exit 1), printing nothing else:
+
+```
+$ itero ws check
+error: it takes message, not text (home/workflow/posta/steps/#ai)
+error: no action ship in the actions folders (home/workflow/order/steps/#ship)
+error: not JSON: expected `,` or `}` at line 7 column 3 (home/workflow/report)
+warning: key looks like a token: write it as a $$NAME (home/workflow/sort/steps/#ai/2)
+3 errors, 1 warning
+```
+
+Two things stop it inside one file: JSON that does not parse (nothing past
+the error can be read), and a value of the wrong shape, like `steps` that
+is not a list (nothing inside it is checked, so one mistake is told once).
+Run it after every edit.
+
+`--json` gives the same as `errors` and `warnings`, each a `message` and
+its address `at`, beside what it could read.
 
 A warning does not fail the check. It says what is likely a mix-up: a
 secret that is also an environment variable, an `#ai` key written out that
@@ -66,5 +86,5 @@ read (it takes `title`, `text`, `subtitle`, `sound`, `url`, `buttons`,
 `wait` and `data`):
 
 ```
-warning: price: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Price
+warning: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Price (home/workflow/price/steps/#notify)
 ```
