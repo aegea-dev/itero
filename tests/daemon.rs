@@ -1736,3 +1736,50 @@ fn a_path_whose_folder_comes_later_is_watched_once_it_is_there() {
     woken.recv_timeout(secs(5)).expect("the file came");
     assert!(path_messages(&ws) >= 1);
 }
+
+#[test]
+fn an_event_from_a_connector_s_copy_starts_only_the_workflows_that_asked_for_its_args() {
+    let w = Ws::new();
+    w.action("yaz", r#"echo "$ad" >> başlayan.txt"#);
+    for (name, on) in [
+        (
+            "satış",
+            json!([{ "event": "kutu.geldi", "args": { "KUTU": "satış" } }]),
+        ),
+        (
+            "destek",
+            json!([{ "event": "kutu.geldi", "args": { "KUTU": "destek" } }]),
+        ),
+        ("hepsi", json!([{ "event": "kutu.geldi" }])),
+    ] {
+        w.flow(
+            name,
+            json!({ "on": on, "steps": [{ "#yaz": { "args": { "ad": name } } }] }),
+        );
+    }
+    let j = Journal::open(&w.ws).unwrap();
+    let from = |source: &str| {
+        j.publish(&itero::engine::journal::Envelope::new(
+            source,
+            "kutu.geldi",
+            "itero.app",
+            NOW,
+            None,
+            json!({}),
+        ))
+        .unwrap();
+    };
+    from(r#"connector/kutu.geldi?{"KUTU":"satış"}"#);
+    w.pass(NOW);
+    assert_eq!(w.read("başlayan.txt"), "satış\n");
+    // the copy with no args: the entry with none
+    from("connector/kutu.geldi");
+    w.pass(NOW);
+    assert_eq!(w.read("başlayan.txt"), "satış\nhepsi\n");
+    // no copy sent it (ws emit, the API): every entry of its type
+    w.emit("kutu.geldi", json!({}));
+    w.pass(NOW);
+    let mut got: Vec<String> = w.read("başlayan.txt").lines().map(String::from).collect();
+    got.sort();
+    assert_eq!(got, ["destek", "hepsi", "hepsi", "satış", "satış"]);
+}

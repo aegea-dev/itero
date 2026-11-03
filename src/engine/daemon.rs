@@ -953,7 +953,12 @@ fn route(
     for (name, f) in &flows.read {
         // a run's state starts with the message's data, its `$event`
         let first = steps::first_state(Value::Object(data.clone()), flows.config.clone());
-        if !(f.on.events.iter().any(|e| e.kind == r.event.kind) || names_it(f))
+        if !(f
+            .on
+            .events
+            .iter()
+            .any(|e| e.takes(&r.event.kind, &r.event.source))
+            || names_it(f))
             || !flow::active(&f.meta, now)
             || !flow::holds(&f.on, &first, &|n: &str| defined(ws, n))
             || (on_a_run && data.get("workflow") == Some(&json!(name)))

@@ -147,6 +147,20 @@ impl Listen {
         }
     }
 
+    /// Whether an event of `kind` from `source` is for this entry: one a
+    /// connector's copy sent (`connector/<type>?<args>`) only when the copy
+    /// has this entry's args; one no copy sent (`itero ws emit`, the API)
+    /// whatever the args.
+    pub fn takes(&self, kind: &str, source: &str) -> bool {
+        if self.kind != kind {
+            return false;
+        }
+        match source.strip_prefix("connector/") {
+            Some(copy) => copy.split_once('?').map_or("", |(_, key)| key) == self.key(),
+            None => true,
+        }
+    }
+
     /// The args as written, as JSON with its keys sorted, `""` for none:
     /// what tells one copy of a connector from another.
     pub fn key(&self) -> String {
