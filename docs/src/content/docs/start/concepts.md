@@ -51,7 +51,8 @@ random words (`misty-lake`). Its steps read the event that started it
 name (`$steps.<name>`); each action gets only the args its step gives it.
 A step that is not ready yet (exit 75) makes the run **wait** until an
 event for it arrives. A run ends as `done`, `failed` (the last step says
-`"success": false`) or `error` (something broke).
+`"success": false`), `error` (something broke) or `stopped` (stopped by
+command).
 
 **The daemon** runs the workspace, one per workspace. When something
 happens (an event arrives, a schedule comes due, a watched path changes,

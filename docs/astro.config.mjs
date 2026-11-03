@@ -69,6 +69,7 @@ export default defineConfig({
 								{ label: 'workflow (wf) ●', slug: 'commands/workflow' },
 								{ label: 'action (ac) ■', slug: 'commands/action' },
 								{ label: 'connector (cn) ▲', slug: 'commands/connector' },
+								{ label: 'event (ev)', slug: 'commands/event' },
 								{ label: 'check', slug: 'commands/check' },
 								{ label: 'which', slug: 'commands/which' },
 							],

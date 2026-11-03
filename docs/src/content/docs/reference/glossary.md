@@ -70,8 +70,8 @@ Each change starts a run.
 
 One go through a workflow, started by an event, a schedule or a watched
 path. It has an id (a UUIDv7) and a name (`misty-lake`), and keeps the
-version of its workflows it started with. It ends as `done`, `failed` or
-`error`. A workflow used as a step is a run of its own, linked to the run
+version of its workflows it started with. It ends as `done`, `failed`,
+`error`, or `stopped` when stopped by command. A workflow used as a step is a run of its own, linked to the run
 whose step started it; a repeated workflow's next round is a run too.
 
 ### event

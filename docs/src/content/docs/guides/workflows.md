@@ -364,6 +364,10 @@ no other list runs. A run ending in error or failed also sends
 `itero.run.error` or `itero.run.failed`, for workflows that watch over
 others ([The daemon's own workflows](/guides/maintenance/)).
 
+A run can also be stopped by a person,
+[`itero ws wf stop`](/commands/workflow/#stop): it ends `stopped` where it
+is, its running step killed, with no undo and no list at the end.
+
 ## A workflow used as a step
 
 A workflow is the same however it starts. Used as a step, it is a run of
@@ -381,7 +385,7 @@ run ends, then goes on with what it returned:
 
 What it returned is the step's `$output`, and, with its `$steps` and how
 it ended, kept by its name: `$steps.<workflow>` is `{ "output", "steps",
-"status" }`, `status` being `done`, `failed` or `error`.
+"status" }`, `status` being `done`, `failed`, `error` or `stopped`.
 
 A run that broke undoes its own finished steps first, then runs its
 `error` list. A workflow used as a step that broke or failed is no error
