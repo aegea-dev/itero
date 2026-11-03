@@ -400,4 +400,63 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Daemon)
 
 \* 1. An event is handled at most once.
 HandledOnce == \A j \in DOMAIN ev : ev[j].marks <= 1
+
+\* 2. A cancelled message starts no run and reaches none.
+CancelledReachesNone ==
+    \A j \in DOMAIN ev : ev[j].note = "cancelled" =>
+        /\ \A r \in DOMAIN runs : runs[r].msg /= j
+        /\ \A k \in DOMAIN ev : ~(ev[k].type = "message" /\ ev[k].msg = j)
+
+\* 3. A run that ended never changes again.
+EndedStays == [][\A r \in DOMAIN runs : runs[r].ended /= "" => runs'[r] = runs[r]]_vars
+
+\* 4. A job runs at most MAX_RUNS times; a stopped job's result never
+\* reaches its run.
+JobRunsBounded == \A j \in DOMAIN ev : ev[j].tries <= MaxRuns
+StoppedSaysNothing ==
+    \A j \in DOMAIN ev :
+        ev[j].type \in {"action.finished", "action.failed", "action.waiting"}
+            => ev[ev[j].cause].note \notin {"stopped", "run stopped"}
+
+\* 5. At most one copy of a job runs at a time.
+OneCopy == running \cap orphans = {}
+
+\* 6. A message starts runs only while fewer than Limit are under way.
+LimitKept == ~overLimit
+
+\* 7. A run takes each message at most once.
+TakenOnce == ~twice
+
+\* 8. A run's events reach its manager in the order they were written.
+InOrder ==
+    \A j, k \in DOMAIN ev :
+        (j < k /\ ev[j].subj = ev[k].subj /\ ev[j].subj > 0 /\ ev[k].handled) => ev[j].handled
+
+\* 9. A parent gets one workflow.ended per child step.
+OneEnd ==
+    \A j, k \in DOMAIN ev :
+        (j /= k /\ ev[j].type = "workflow.ended" /\ ev[k].type = "workflow.ended"
+         /\ ev[j].subj = ev[k].subj) => ev[j].path /= ev[k].path
+
+\* 10. An ended run has no timers.
+EndedNoTimer == \A r \in timers : runs[r].ended = ""
+
+\* 11. Every event is handled.
+AllHandled == <>[](\A j \in DOMAIN ev : ev[j].handled)
+
+\* 12. Every child's end reaches its parent, unless the parent has ended.
+LastRound(c) == ~(runs[c].ended = "done" /\ runs[c].round < Flows[runs[c].wf].rounds)
+ChildrenReport ==
+    <>[](\A c \in DOMAIN runs :
+            (runs[c].parent /= 0 /\ runs[c].ended /= "" /\ LastRound(c))
+                => \/ \E j \in DOMAIN ev : ev[j].type = "workflow.ended" /\ ev[j].run = c
+                   \/ runs[runs[c].parent].ended /= "")
+
+\* 13. Every run ends, or waits.
+RunsEnd == <>[](\A r \in DOMAIN runs : runs[r].ended /= "" \/ runs[r].waiting)
+
+\* 14. A run whose chain started on itero.run.done says nothing when done.
+NoChain ==
+    \A j \in DOMAIN ev :
+        ev[j].type = "itero.run.done" => runs[ev[j].run].origin /= "itero.run.done"
 =============================================================================
