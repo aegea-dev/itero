@@ -64,10 +64,10 @@ fails (exit 1), printing nothing else:
 
 ```
 $ itero ws check
-error: it needs $message (home/workflow/posta/steps/#ai)
-error: no action ship in the actions folders (home/workflow/order/steps/#ship)
-error: not JSON: expected `,` or `}` at line 7 column 3 (home/workflow/report)
-warning: key looks like a token: write it as a $$NAME (home/workflow/sort/steps/#ai/2)
+error: it needs $message (home/workflows/posta/steps/#ai)
+error: no action ship in the actions folders (home/workflows/order/steps/#ship)
+error: not JSON: expected `,` or `}` at line 7 column 3 (home/workflows/report)
+warning: key looks like a token: write it as a $$NAME (home/workflows/sort/steps/#ai/2)
 3 errors, 1 warning
 ```
 
@@ -86,5 +86,5 @@ read (it takes `title`, `text`, `subtitle`, `sound`, `url`, `buttons`,
 `wait` and `data`):
 
 ```
-warning: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Price (home/workflow/price/steps/#notify)
+warning: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Price (home/workflows/price/steps/#notify)
 ```
