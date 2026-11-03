@@ -10,6 +10,19 @@ use std::path::{Path, PathBuf};
 /// Workflows read, by name (their file names).
 pub type Flows = Vec<(String, crate::flow::Flow)>;
 
+/// Workflows as their files' JSON, by name.
+type Values = BTreeMap<String, Value>;
+
+/// What reading every workflow found: those that could be read, the
+/// problems of the rest, and every file that is JSON as written (with
+/// the built-in ones), so its steps can be checked even when the
+/// workflow as a whole cannot be read.
+pub struct ReadFlows {
+    pub flows: Flows,
+    pub problems: Vec<Problem>,
+    pub written: BTreeMap<String, Value>,
+}
+
 /// The workspace's manifest: what it is, how it runs, and what its
 /// workflows, actions and connectors are.
 pub const MANIFEST: &str = "itero.config.json";
@@ -451,7 +464,14 @@ impl Workspace {
     /// `workflow/<name>/...`. An error only for what is not the workflows'
     /// own (a folder that cannot be listed).
     pub fn read_flow_values(&self) -> Result<(BTreeMap<String, Value>, Vec<Problem>)> {
-        let (mut out, mut problems) = (BTreeMap::new(), vec![]);
+        let (values, problems, _) = self.read_flow_files()?;
+        Ok((values, problems))
+    }
+
+    /// As `read_flow_values`, and every file that is JSON as written, by
+    /// name, whatever else is wrong with it.
+    fn read_flow_files(&self) -> Result<(Values, Vec<Problem>, Values)> {
+        let (mut out, mut problems, mut written) = (BTreeMap::new(), vec![], BTreeMap::new());
         for (name, f) in self.flow_files()? {
             let at = format!("workflow/{name}");
             let text = match std::fs::read_to_string(&f) {
@@ -472,6 +492,7 @@ impl Workspace {
                     continue;
                 }
             };
+            written.insert(name.clone(), v.clone());
             if v.get("meta").is_some() {
                 problems.push(Problem::new(
                     at,
@@ -493,8 +514,10 @@ impl Workspace {
             if self.machine && name == "models" {
                 continue;
             }
-            if !out.contains_key(name) {
-                out.insert(name.to_string(), serde_json::from_str(text)?);
+            if !out.contains_key(name) && !written.contains_key(name) {
+                let v: Value = serde_json::from_str(text)?;
+                written.insert(name.to_string(), v.clone());
+                out.insert(name.to_string(), v);
             }
         }
         let entries = self.entries("workflow")?;
@@ -513,23 +536,23 @@ impl Workspace {
                 ),
             ));
         }
-        Ok((out, problems))
+        Ok((out, problems, written))
     }
 
     /// Every workflow, read, by name (its file name).
     pub fn flows(&self) -> Result<Flows> {
-        let (flows, problems) = self.read_flows()?;
-        if !problems.is_empty() {
-            bail!("{}", crate::flow::told(&problems));
+        let read = self.read_flows()?;
+        if !read.problems.is_empty() {
+            bail!("{}", crate::flow::told(&read.problems));
         }
-        Ok(flows)
+        Ok(read.flows)
     }
 
     /// Every workflow that can be read, by name, and the problems of the
     /// rest, each at its address (`workflow/posta/steps/#ai`).
-    pub fn read_flows(&self) -> Result<(Flows, Vec<Problem>)> {
+    pub fn read_flows(&self) -> Result<ReadFlows> {
         let entries = self.entries("workflow")?;
-        let (values, mut problems) = self.read_flow_values()?;
+        let (values, mut problems, written) = self.read_flow_files()?;
         let mut flows = vec![];
         for (n, v) in values {
             match self.flow_with_entry(&n, &v, &entries) {
@@ -537,7 +560,11 @@ impl Workspace {
                 Err(ps) => problems.extend(ps),
             }
         }
-        Ok((flows, problems))
+        Ok(ReadFlows {
+            flows,
+            problems,
+            written,
+        })
     }
 
     /// The workflow `name`, its file read as `v`, with its entry in the

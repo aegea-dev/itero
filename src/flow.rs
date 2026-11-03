@@ -856,6 +856,60 @@ pub fn step_labels(items: &[Value]) -> Vec<String> {
     numbered(items.iter().map(raw_label).collect())
 }
 
+/// Every step and undo of a workflow as written, with its address
+/// (`steps/#ai/2`, `steps/all/#b`, `steps/#ship/undo`), what it runs and
+/// its args: each step that can be read, even when others in the file
+/// cannot, so each is checked on its own.
+pub fn addressed(v: &Value) -> Vec<(String, Name, Value)> {
+    let mut out = vec![];
+    for key in ["steps", "success", "failure", "error"] {
+        let Some(items) = v.get(key).and_then(Value::as_array) else {
+            continue;
+        };
+        for (item, label) in items.iter().zip(step_labels(items)) {
+            if label.is_empty() {
+                continue;
+            }
+            let at = format!("{key}/{label}");
+            let members = match item {
+                Value::Array(ms) => Some(ms),
+                Value::Object(m) if is_group(m) => WAITS
+                    .iter()
+                    .find_map(|w| m.get(*w))
+                    .and_then(Value::as_array),
+                _ => None,
+            };
+            if let Some(ms) = members {
+                for (m, l) in ms.iter().zip(step_labels(ms)) {
+                    let read = match m {
+                        Value::String(s) => name(s).ok().map(|n| (n, Value::Object(Map::new()))),
+                        Value::Object(o) if !is_group(o) => {
+                            written(o).ok().map(|w| (w.name, w.args))
+                        }
+                        _ => None,
+                    };
+                    if let Some((n, args)) = read.filter(|_| !l.is_empty()) {
+                        out.push((format!("{at}/{l}"), n, args));
+                    }
+                }
+            } else if let Ok(Step::One {
+                name,
+                args,
+                undo,
+                undo_args,
+                ..
+            }) = step(item)
+            {
+                out.push((at.clone(), name, args));
+                if let Some(u) = undo {
+                    out.push((format!("{at}/undo"), u, undo_args));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// A name as a step writes it: `#ai`, `#ai@2`, `günlük`.
 fn written_label(n: &Name) -> String {
     match n {
@@ -1534,42 +1588,6 @@ impl Flow {
             }
         }
         ps
-    }
-
-    /// Every step and undo with its address in the workflow
-    /// (`steps/#ai/2`, `steps/all/#b`, `steps/#ship/undo`), what it runs
-    /// and its args.
-    pub fn addressed(&self) -> Vec<(String, &Name, &Value)> {
-        let mut out = vec![];
-        for (key, list) in self.lists() {
-            for (s, label) in list.iter().zip(parsed_labels(list)) {
-                match s {
-                    Step::One {
-                        name,
-                        args,
-                        undo,
-                        undo_args,
-                        ..
-                    } => {
-                        let at = format!("{key}/{label}");
-                        if let Some(u) = undo {
-                            out.push((at.clone(), name, args));
-                            out.push((format!("{at}/undo"), u, undo_args));
-                        } else {
-                            out.push((at, name, args));
-                        }
-                    }
-                    Step::Side(g) => {
-                        let names =
-                            numbered(g.members.iter().map(|m| written_label(&m.name)).collect());
-                        for (m, n) in g.members.iter().zip(names) {
-                            out.push((format!("{key}/{label}/{n}"), &m.name, &m.args));
-                        }
-                    }
-                }
-            }
-        }
-        out
     }
 
     /// Its lists of steps by their keys in the file.

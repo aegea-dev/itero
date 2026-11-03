@@ -105,12 +105,13 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
             notes.push(format!("no folder {}", dir.display()));
         }
     }
-    let (mut flows, read) = ws.read_flows()?;
+    let read = ws.read_flows()?;
+    let mut flows = read.flows;
     let files = ws.flow_files()?;
     let mut named: Vec<String> = files.keys().cloned().collect();
-    named.extend(flows.iter().map(|(n, _)| n.clone()));
+    named.extend(read.written.keys().cloned());
     let mut errors = check_manifest(ws, &named)?;
-    errors.extend(read);
+    errors.extend(read.problems);
     // the internal ones last, apart
     flows.sort_by_key(|(_, f)| f.meta.internal);
     let j = Journal::open(ws)?;
@@ -137,9 +138,10 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
     ];
     // #ai's own messages name it: the address says the step
     let ai = |m: String| m.strip_prefix("#ai: ").map(String::from).unwrap_or(m);
-    let mut out = vec![];
-    for (name, f) in &flows {
-        for (at, step, args) in f.addressed() {
+    // every step that can be read, in every file, whatever else is wrong
+    for (name, v) in &read.written {
+        for (at, step, args) in crate::flow::addressed(v) {
+            let (step, args) = (&step, &args);
             let at = format!("workflow/{name}/{at}");
             match step {
                 Name::Action { name: a, version } => {
@@ -184,6 +186,9 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
                 }
             }
         }
+    }
+    let mut out = vec![];
+    for (name, f) in &flows {
         let id = j.workflow_id(name, &now)?;
         let m = &f.meta;
         let runs = j.runs_page(Some(name), None, &[], usize::MAX)?;

@@ -28,7 +28,8 @@ fn every_workflow_that_can_be_read_is_and_the_rest_are_told() {
         r##"{ "steps": ["#notify"], "renk": 1, "timeout": "uzun" }"##,
     );
     let ws = itero::workspace::find(d.path()).unwrap();
-    let (flows, ps) = ws.read_flows().unwrap();
+    let read = ws.read_flows().unwrap();
+    let (flows, ps) = (read.flows, read.problems);
     assert!(flows.iter().any(|(n, _)| n == "iyi"));
     assert!(
         !flows
@@ -127,4 +128,41 @@ fn ws_check_reports_every_problem_then_counts_them() {
             .any(|w| w["at"] == at.as_str()),
         "{v}"
     );
+}
+
+#[test]
+fn the_steps_of_a_workflow_with_mistakes_are_checked_too() {
+    let d = tempfile::tempdir().unwrap();
+    file(d.path(), "itero.config.json", "{}");
+    file(d.path(), "actions/depo", "#!/bin/sh\n");
+    file(
+        d.path(),
+        "workflows/posta.json",
+        r##"{ "on": [{ "event": "posta.geldi" }], "renk": 1, "steps": [
+        { "#ai": { "args": { "model": "u/k" } } },
+        ["#depo", "#yok", { "#depo": { "argz": 1 } }],
+        "#kargola",
+        { "#depo": { "undo": "#iptal" } } ], "error": [7] }"##,
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let f = d.path().join("actions/depo");
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let o = ws_check(d.path(), false);
+    let err = String::from_utf8_lossy(&o.stderr);
+    for at in [
+        "/workflow/posta)",
+        "/workflow/posta/steps/#ai)",
+        "/workflow/posta/steps/all/#yok)",
+        "/workflow/posta/steps/all/#depo/2)",
+        "/workflow/posta/steps/#kargola)",
+        "/workflow/posta/steps/#depo/undo)",
+        "/workflow/posta/error)",
+    ] {
+        assert!(err.contains(at), "{at}\n{err}");
+    }
+    assert!(err.contains("it needs $message ("), "{err}");
+    assert!(err.contains("7 errors"), "{err}");
 }
