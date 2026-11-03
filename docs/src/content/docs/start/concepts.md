@@ -36,7 +36,8 @@ looked into. [`itero ws which`](/commands/which/) says where a name is.
 **An action** (`#check-payment`) is a small program. It gets its step's
 args as environment variables, prints its result, and its exit code says
 how it went. The next step has that result as `$output`; any later step
-reads it as `$steps.check-payment`. **A workflow** can be a step too.
+reads it as `$steps.check-payment`. **A workflow** can be a step too: a
+run of its own, whose result is the step's.
 
 **An event** (a message) has a type, two or more words joined by dots
 (`order.placed`), and data. Apps send them with `itero ws emit` or `POST

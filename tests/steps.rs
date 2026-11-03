@@ -1,6 +1,8 @@
 //! The manager over steps: one decision per event, JSON in, JSON out.
 use itero::engine::Event;
-use itero::engine::steps::{self, Ended, Phase, Runtime, StepAnswer, StepInput, StepJob};
+use itero::engine::steps::{
+    self, Ended, Phase, Runtime, StepAnswer, StepChild, StepInput, StepJob,
+};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
@@ -12,6 +14,8 @@ struct Run {
     flows: BTreeMap<String, Value>,
     repeat: BTreeMap<String, Value>,
     defined: Vec<String>,
+    /// It is a workflow used as a step: a run another run's step started.
+    child: bool,
     rt: Runtime,
     now: String,
     seq: usize,
@@ -27,13 +31,25 @@ impl Run {
                 .collect(),
             repeat: BTreeMap::new(),
             defined: vec![],
+            child: false,
             rt: Runtime::default(),
             now: NOW.into(),
             seq: 0,
         }
     }
 
+    /// A run of `flows[0]` that another run's step started.
+    fn child(flows: &[(&str, Value)]) -> Run {
+        let mut r = Run::new(flows);
+        r.child = true;
+        r
+    }
+
     fn send(&mut self, kind: &str, data: Value) -> StepAnswer {
+        self.try_send(kind, data).unwrap()
+    }
+
+    fn try_send(&mut self, kind: &str, data: Value) -> Result<StepAnswer, String> {
         self.seq += 1;
         let input = StepInput {
             now: self.now.clone(),
@@ -42,6 +58,7 @@ impl Run {
             repeat: self.repeat.clone(),
             config: Map::new(),
             defined: self.defined.clone(),
+            child: self.child,
             runtime: self.rt.clone(),
             event: Event {
                 id: format!("olay-{}", self.seq),
@@ -49,9 +66,9 @@ impl Run {
                 data,
             },
         };
-        let a = steps::decide(&input).unwrap();
+        let a = steps::decide(&input)?;
         self.rt = a.runtime.clone();
-        a
+        Ok(a)
     }
 
     /// Starts the run as the daemon does: the message's data is its
@@ -78,6 +95,15 @@ impl Run {
         self.send("action.failed", json!({"path": job.path, "error": error}))
     }
 
+    /// The run its step at `c.path` started ended, and returned what
+    /// `steps::returned` gives.
+    fn ended(&mut self, c: &StepChild, returned: Value) -> StepAnswer {
+        let mut d = returned;
+        d["path"] = json!(c.path);
+        d["run"] = json!("çocuk-1");
+        self.send("workflow.ended", d)
+    }
+
     fn message(&mut self, id: &str, data: Value) -> StepAnswer {
         self.send(
             "message",
@@ -88,6 +114,14 @@ impl Run {
 
 fn names(a: &StepAnswer) -> Vec<String> {
     a.jobs.iter().map(|j| j.action.clone()).collect()
+}
+
+/// The runs an answer starts: each workflow and its `$event`.
+fn children(a: &StepAnswer) -> Vec<(String, Value)> {
+    a.children
+        .iter()
+        .map(|c| (c.workflow.clone(), Value::Object(c.event.clone())))
+        .collect()
 }
 
 fn state(r: &Run) -> Value {
@@ -252,7 +286,187 @@ fn a_plain_value_side_by_side_is_kept_under_its_step_s_name() {
 }
 
 #[test]
-fn a_workflow_side_by_side_runs_its_steps_beside_the_action() {
+fn a_workflow_as_a_step_starts_a_run_of_its_own_and_waits_for_it() {
+    let mut r = Run::new(&[
+        (
+            "sipariş",
+            json!({"steps": [
+                "#öde",
+                {"stok": {"args": {"depo": "İzmir", "adet": "$output.adet"}}},
+                {"#ship": {"args": {"n": "$output", "durum": "$steps.stok.status",
+                                     "raf": "$steps.stok.steps.ayır.ayrıldı"}}}
+            ]}),
+        ),
+        ("stok", json!({"steps": ["#depo-bak", "#ayır"]})),
+    ]);
+    let a = r.start(json!({"order": 43}));
+    let a = r.done(&a.jobs[0], json!({"adet": 2}));
+    // no job of stok's: a run of its own, its $event the args given
+    assert!(a.jobs.is_empty());
+    assert_eq!(
+        a.children,
+        vec![StepChild {
+            path: vec![0, 1],
+            workflow: "stok".into(),
+            event: serde_json::from_value(json!({"depo": "İzmir", "adet": 2})).unwrap(),
+        }]
+    );
+    let stok = a.children[0].clone();
+    assert_eq!(r.rt.ended, None, "it waits for its child");
+    assert!(!steps::is_waiting(&r.rt), "running, not waiting for data");
+    // the child's answer for another step, or before its own, is not this
+    let wrong = StepChild {
+        path: vec![0, 2],
+        ..stok.clone()
+    };
+    assert!(r.ended(&wrong, json!({"output": 1})).jobs.is_empty());
+    // what it returned: its $output for the next step, and kept by its name
+    let a = r.ended(
+        &stok,
+        json!({"output": {"ayrıldı": true}, "steps": {"depo-bak": "A-3", "ayır": {"ayrıldı": true}},
+               "status": "done"}),
+    );
+    assert_eq!(names(&a), vec!["ship"]);
+    assert_eq!(r.rt.state["output"], json!({"ayrıldı": true}));
+    assert_eq!(a.jobs[0].data["n"], json!({"ayrıldı": true}));
+    assert_eq!(a.jobs[0].data["durum"], "done");
+    assert_eq!(a.jobs[0].data["raf"], true);
+    assert_eq!(
+        r.rt.state["steps"]["stok"],
+        json!({"output": {"ayrıldı": true}, "steps": {"depo-bak": "A-3", "ayır": {"ayrıldı": true}},
+               "status": "done"})
+    );
+    // a second answer for it reaches nothing
+    let ship = a.jobs[0].clone();
+    assert!(r.ended(&stok, json!({"output": 2})).jobs.is_empty());
+    assert_eq!(names(&r.done(&ship, json!({}))), Vec::<String>::new());
+    assert_eq!(r.rt.ended, Some(Ended::Done));
+}
+
+#[test]
+fn a_run_started_by_a_step_is_its_own_workflow_with_its_end_lists() {
+    let stok = json!({"steps": [{"#depo-bak": {"args": {"depo": "$event.depo"}}}, "#ayır"],
+                      "success": [{"#bildir": {"args": {"raf": "$steps.depo-bak"}}}]});
+    let mut r = Run::child(&[("stok", stok)]);
+    let a = r.start(json!({"depo": "İzmir"}));
+    assert_eq!(a.jobs[0].data["depo"], "İzmir", "its $event: its args");
+    let a = r.done(&a.jobs[0], json!("A-3"));
+    let a = r.done(&a.jobs[0], json!({"ayrıldı": true}));
+    // its own success list runs
+    assert_eq!(names(&a), vec!["bildir"]);
+    assert_eq!(a.jobs[0].data["raf"], "A-3");
+    r.done(&a.jobs[0], json!({"bildirildi": true}));
+    assert_eq!(r.rt.ended, Some(Ended::Done));
+    // rule 1: the success list's result, and its steps
+    assert_eq!(
+        steps::returned(&r.rt),
+        json!({"output": {"bildirildi": true},
+               "steps": {"depo-bak": "A-3", "ayır": {"ayrıldı": true}, "bildir": {"bildirildi": true}},
+               "status": "done"})
+    );
+    // without lists: its last step's
+    let mut r = Run::child(&[("stok", json!({"steps": ["#depo-bak"]}))]);
+    let a = r.start(json!({}));
+    r.done(&a.jobs[0], json!("A-3"));
+    assert_eq!(steps::returned(&r.rt)["output"], "A-3");
+    assert_eq!(steps::returned(&r.rt)["status"], "done");
+}
+
+#[test]
+fn a_child_that_broke_undoes_its_steps_then_runs_its_error_list() {
+    let altyapı = json!({"steps": [{"#ağ-kur": {"undo": "#ağ-sil"}}, "#disk-kur"],
+                         "error": [{"#rapor": {"args": {"neden": "$output.why"}}}]});
+    let mut r = Run::child(&[("altyapı", altyapı)]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"ağ": "n-1"}));
+    let a = r.failed(&a.jobs[0], "exit 1: disk yok");
+    // its undo first, then its error list
+    assert_eq!(names(&a), vec!["ağ-sil"]);
+    let a = r.done(&a.jobs[0], json!({}));
+    assert_eq!(names(&a), vec!["rapor"]);
+    assert_eq!(a.jobs[0].data["neden"], "exit 1: disk yok");
+    r.done(&a.jobs[0], json!({"bildirildi": "ekip"}));
+    assert!(matches!(r.rt.ended, Some(Ended::Error { .. })));
+    // rule 2: the error list's result, and its steps
+    let back = steps::returned(&r.rt);
+    assert_eq!(back["output"], json!({"bildirildi": "ekip"}));
+    assert_eq!(back["status"], "error");
+    assert_eq!(back["steps"]["ağ-kur"], json!({"ağ": "n-1"}));
+
+    // with no error list: its $output says why, its steps what they gave
+    let mut r = Run::child(&[("altyapı", json!({"steps": ["#ağ-kur", "#disk-kur"]}))]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"ağ": "n-1"}));
+    r.failed(&a.jobs[0], "exit 1: disk yok");
+    let back = steps::returned(&r.rt);
+    assert_eq!(back["status"], "error");
+    assert_eq!(back["output"]["why"], "exit 1: disk yok");
+    assert_eq!(back["output"]["failed_step"], "#disk-kur");
+    assert_eq!(back["steps"], json!({"ağ-kur": {"ağ": "n-1"}}));
+}
+
+#[test]
+fn a_child_that_failed_returns_its_failure_list_s_result_or_its_last_step_s() {
+    let kontrol = |failure: Value| json!({"steps": ["#kontrol"], "failure": failure});
+    let mut r = Run::child(&[("denetim", kontrol(json!(["#uyar"])))]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"success": false, "eksik": 3}));
+    assert_eq!(names(&a), vec!["uyar"]);
+    r.done(&a.jobs[0], json!({"uyarıldı": true}));
+    assert_eq!(r.rt.ended, Some(Ended::Failed));
+    assert_eq!(steps::returned(&r.rt)["output"], json!({"uyarıldı": true}));
+    assert_eq!(steps::returned(&r.rt)["status"], "failed");
+    let mut r = Run::child(&[("denetim", kontrol(json!([])))]);
+    let a = r.start(json!({}));
+    r.done(&a.jobs[0], json!({"success": false, "eksik": 3}));
+    assert_eq!(
+        steps::returned(&r.rt)["output"],
+        json!({"success": false, "eksik": 3})
+    );
+}
+
+#[test]
+fn a_child_that_broke_is_no_error_for_its_parent() {
+    let mut r = Run::new(&[
+        (
+            "kurulum",
+            json!({"steps": [{"altyapı": {"undo": "#hepsini-sil"}}, "#dene"],
+                   "error": ["#hata"]}),
+        ),
+        ("altyapı", json!({"steps": ["#ağ-kur"]})),
+    ]);
+    let a = r.start(json!({}));
+    let a = r.ended(
+        &a.children[0],
+        json!({"output": {"why": "exit 1", "failed_step": "#ağ-kur", "undo_failed": []},
+               "steps": {}, "status": "error"}),
+    );
+    // the parent goes on with what its child returned
+    assert_eq!(names(&a), vec!["dene"]);
+    assert_eq!(r.rt.state["output"]["why"], "exit 1");
+    assert_eq!(r.rt.state["steps"]["altyapı"]["status"], "error");
+    // the parent breaking later undoes its own step only: the child's
+    // insides are the child's
+    let a = r.failed(&a.jobs[0], "exit 1");
+    assert_eq!(names(&a), vec!["hepsini-sil"]);
+    let a = r.done(&a.jobs[0], json!({}));
+    assert_eq!(names(&a), vec!["hata"]);
+}
+
+#[test]
+fn a_run_started_by_a_step_cannot_split() {
+    let mut r = Run::child(&[("çoklu", json!({"steps": ["#yaz"]}))]);
+    r.repeat
+        .insert("yaz".into(), json!([{"dosya": "bir"}, {"dosya": "iki"}]));
+    let e = r.try_send("run.started", json!({})).unwrap_err();
+    assert!(
+        e.contains("#yaz") && e.contains("workflow used as a step"),
+        "{e}"
+    );
+}
+
+#[test]
+fn a_workflow_side_by_side_is_a_run_beside_the_action() {
     let mut r = Run::new(&[
         (
             "sipariş",
@@ -261,50 +475,104 @@ fn a_workflow_side_by_side_runs_its_steps_beside_the_action() {
         ("stok", json!({"steps": ["#depo-bak", "#ayır"]})),
     ]);
     let a = r.start(json!({"order": 43}));
-    assert_eq!(names(&a), vec!["check-payment", "depo-bak"]);
-    let (pay, depo) = (a.jobs[0].clone(), a.jobs[1].clone());
-    let a = r.done(&depo, json!({"raf": "A-3"}));
-    assert_eq!(names(&a), vec!["ayır"]);
-    let ayir = a.jobs[0].clone();
-    let a = r.done(&pay, json!({"paid": true}));
-    assert!(a.jobs.is_empty(), "stok is not done yet");
-    let a = r.done(&ayir, json!({"stock": true}));
+    assert_eq!(names(&a), vec!["check-payment"]);
+    assert_eq!(children(&a), vec![("stok".into(), json!({}))]);
+    assert_eq!(a.children[0].path, vec![0, 0, 1]);
+    let (pay, stok) = (a.jobs[0].clone(), a.children[0].clone());
+    assert!(r.done(&pay, json!({"paid": true})).jobs.is_empty());
+    let a = r.ended(
+        &stok,
+        json!({"output": {"stock": true}, "steps": {}, "status": "done"}),
+    );
     assert_eq!(names(&a), vec!["ship"]);
-    // the workflow's result is its last step's
     assert_eq!(r.rt.state["output"], json!({"paid": true, "stock": true}));
+    assert_eq!(r.rt.state["steps"]["stok"]["status"], "done");
 }
 
 #[test]
-fn a_workflow_as_a_step_takes_args_and_gives_its_last_step_s_output() {
+fn a_child_that_returned_from_its_error_list_ended_well_for_its_group() {
     let mut r = Run::new(&[
         (
-            "sipariş",
-            json!({"steps": [{"stok": {"args": {"depo": "İzmir"}}}, {"#ship": {"args": {"n": "$steps.stok"}}}]}),
+            "küme",
+            json!({"steps": [["#çay", "demleme"], "#sonra"], "error": ["#hata"]}),
         ),
-        (
-            "stok",
-            json!({"steps": [
-                {"#depo-bak": {"args": {"depo": "$event.depo"}}},
-                {"#ayır": {"args": {"raf": "$steps.depo-bak"}}}
-            ]}),
-        ),
+        ("demleme", json!({"steps": ["#su"], "error": ["#rapor"]})),
     ]);
-    let a = r.start(json!({"order": 43}));
-    assert_eq!(names(&a), vec!["depo-bak"]);
-    // inside it, $event is the args its caller gave
-    assert_eq!(a.jobs[0].data["depo"], "İzmir");
-    assert_eq!(r.rt.state["event"], json!({"order": 43}));
-    let a = r.done(&a.jobs[0], json!("A-3"));
-    assert_eq!(names(&a), vec!["ayır"]);
-    // its own steps by name, apart from its caller's
-    assert_eq!(a.jobs[0].data["raf"], "A-3");
-    assert!(r.rt.state.get("steps").is_none());
-    let a = r.done(&a.jobs[0], json!({"ayrıldı": true}));
-    assert_eq!(names(&a), vec!["ship"]);
-    assert_eq!(r.rt.state["output"], json!({"ayrıldı": true}));
-    // the caller keeps its result by the workflow's name
-    assert_eq!(a.jobs[0].data["n"], json!({"ayrıldı": true}));
-    assert!(r.rt.state["steps"].get("depo-bak").is_none());
+    let a = r.start(json!({}));
+    let (cay, demleme) = (a.jobs[0].clone(), a.children[0].clone());
+    assert!(r.done(&cay, json!({"sıcak": 1})).jobs.is_empty());
+    let a = r.ended(
+        &demleme,
+        json!({"output": {"rapor": "su yok"}, "steps": {}, "status": "error"}),
+    );
+    assert_eq!(names(&a), vec!["sonra"], "not broken");
+    assert_eq!(r.rt.state["output"], json!({"sıcak": 1, "rapor": "su yok"}));
+}
+
+#[test]
+fn a_child_stopped_by_its_group_is_named_and_its_path_given() {
+    let mut r = Run::new(&[
+        (
+            "küme",
+            json!({"steps": [{"race": ["#çay", "demleme"]}, "#sonra"]}),
+        ),
+        ("demleme", json!({"steps": ["#su"]})),
+    ]);
+    let a = r.start(json!({}));
+    let (cay, demleme) = (a.jobs[0].clone(), a.children[0].clone());
+    assert_eq!(demleme.path, vec![0, 0, 1]);
+    let a = r.done(&cay, json!({"içildi": true}));
+    assert!(goes_on(&a));
+    assert_eq!(stopped(&a), vec!["demleme"]);
+    // its path, for the daemon to stop its run
+    assert_eq!(a.stopped, vec![demleme.path.clone()]);
+    // what it returns now reaches nothing
+    assert!(
+        r.ended(
+            &demleme,
+            json!({"output": {}, "steps": {}, "status": "done"})
+        )
+        .jobs
+        .is_empty()
+    );
+    // a group that ends in the decision that would start it starts no run
+    let mut r = Run::new(&[
+        (
+            "küme",
+            json!({"steps": [{"race": ["demleme", {"#çay": {"args": "$event.yok"}}]}, "#sonra"],
+                   "error": ["#hata"]}),
+        ),
+        ("demleme", json!({"steps": ["#su"]})),
+    ]);
+    let a = r.start(json!({}));
+    assert!(a.children.is_empty(), "{:?}", a.children);
+    assert_eq!(names(&a), vec!["hata"]);
+}
+
+#[test]
+fn a_group_that_broke_lets_its_running_child_run_to_its_end() {
+    let mut r = Run::new(&[
+        (
+            "küme",
+            json!({"steps": [["#çay", "#şeker", "demleme"], "#sonra"], "error": ["#hata"]}),
+        ),
+        ("demleme", json!({"steps": ["#su"]})),
+    ]);
+    let a = r.start(json!({}));
+    let (cay, seker, demleme) = (a.jobs[0].clone(), a.jobs[1].clone(), a.children[0].clone());
+    r.waiting(&cay, json!({"sipariş": 7}));
+    let a = r.failed(&seker, "exit 1: şeker yok");
+    // the waiting step waits no more; the child runs on
+    assert_eq!(stopped(&a), vec!["#çay"]);
+    assert_eq!(a.stopped, vec![cay.path.clone()]);
+    assert_eq!(r.rt.ended, None);
+    // it ends: the group breaks
+    let a = r.ended(
+        &demleme,
+        json!({"output": {"sıcak": true}, "steps": {}, "status": "done"}),
+    );
+    assert!(breaks(&a), "{:?}", names(&a));
+    assert_eq!(r.rt.failed_step.as_deref(), Some("#şeker"));
 }
 
 #[test]
@@ -329,9 +597,19 @@ fn a_step_runs_only_when_its_on_holds() {
     ]);
     let a = r.start(json!({"order": 43}));
     let a = r.done(&a.jobs[0], json!({"paid": false, "stock": true}));
-    assert_eq!(names(&a), vec!["remind-payment"]);
+    // işle's on holds over its $event, the args it is given
+    assert_eq!(
+        children(&a),
+        vec![("işle".into(), json!({"paid": false, "stock": true}))]
+    );
+    let mut işle = Run::child(&[("işle", r.flows["işle"].clone())]);
+    let b = işle.start(json!({"paid": false, "stock": true}));
+    assert_eq!(names(&b), vec!["remind-payment"]);
     // $$API is not defined: #bildir is skipped
-    let a = r.done(&a.jobs[0], json!({}));
+    let a = r.ended(
+        &a.children[0],
+        json!({"output": {}, "steps": {}, "status": "done"}),
+    );
     assert_eq!(names(&a), vec!["bitir"]);
 
     // a workflow whose on does not hold is skipped as a whole
@@ -561,36 +839,6 @@ fn a_failure_is_no_error_and_undoes_nothing() {
 }
 
 #[test]
-fn a_workflow_as_a_step_has_its_steps_undone_and_its_own_undo() {
-    let mut r = Run::new(&[
-        (
-            "kurulum",
-            json!({"steps": [{ "altyapı": { "undo": "#hepsini-sil" } }, "#dene"]}),
-        ),
-        (
-            "altyapı",
-            json!({"steps": [{ "#ağ-kur": { "undo": "#ağ-sil" } }, "#disk-kur"]}),
-        ),
-    ]);
-    let a = r.start(json!({"ad": "deneme"}));
-    let a = r.done(&a.jobs[0], json!({}));
-    let a = r.done(&a.jobs[0], json!({}));
-    assert_eq!(names(&a), vec!["dene"]);
-    let a = r.failed(&a.jobs[0], "exit 1");
-    assert_eq!(names(&a), vec!["hepsini-sil"]);
-    let a = r.done(&a.jobs[0], json!({}));
-    assert_eq!(names(&a), vec!["ağ-sil"]);
-    let a = r.done(&a.jobs[0], json!({}));
-    assert!(a.jobs.is_empty());
-    assert_eq!(
-        r.rt.ended,
-        Some(Ended::Error {
-            why: "exit 1".into()
-        })
-    );
-}
-
-#[test]
 fn success_false_runs_failure_otherwise_success() {
     let flow = json!({"steps": ["#remind-stock"], "success": ["#teşekkür"], "failure": ["#log"]});
     let mut r = Run::new(&[("sipariş", flow.clone())]);
@@ -811,34 +1059,6 @@ fn all_breaks_when_a_step_broke_once_the_others_ran_to_their_end() {
             assert!(a.stopped.is_empty() && stopped(&a).is_empty(), "{i}");
         }
     }
-}
-
-#[test]
-fn all_that_breaks_stops_a_waiting_step_and_a_workflow_goes_no_further() {
-    let mut r = Run::new(&[
-        (
-            "küme",
-            json!({"steps": [["#çay", "#şeker", "demleme"], "#sonra"], "error": ["#hata"]}),
-        ),
-        ("demleme", json!({"steps": ["#su", "#yaprak"]})),
-    ]);
-    let a = r.start(json!({}));
-    assert_eq!(names(&a), vec!["çay", "şeker", "su"]);
-    let (cay, seker, su) = (a.jobs[0].clone(), a.jobs[1].clone(), a.jobs[2].clone());
-    r.waiting(&cay, json!({"sipariş": 7}));
-    let a = r.failed(&seker, "exit 1: şeker yok");
-    assert!(a.jobs.is_empty());
-    // the waiting step waits no more; #su still runs
-    assert_eq!(stopped(&a), vec!["#çay"]);
-    assert_eq!(sorted(&a), vec![cay.path.clone()]);
-    assert!(a.timers.is_empty(), "nothing waits now");
-    assert_eq!(r.rt.ended, None);
-    assert!(r.message("m1", json!({"sipariş": 7})).jobs.is_empty());
-    // #su ends: its workflow goes no further, and the group breaks
-    let a = r.done(&su, json!({"sıcak": true}));
-    assert!(breaks(&a), "{:?}", names(&a));
-    assert_eq!(r.rt.failed_step.as_deref(), Some("#şeker"));
-    assert_eq!(r.rt.state["output"]["failed_step"], "#şeker");
 }
 
 #[test]
@@ -1178,31 +1398,6 @@ fn a_step_that_waited_too_long_is_a_step_that_broke() {
     assert!(out["why"]["çay"].as_str().unwrap().contains("2h"));
 }
 
-#[test]
-fn a_workflow_stopped_by_a_race_stops_all_its_actions() {
-    let mut r = Run::new(&[
-        (
-            "küme",
-            json!({"steps": [{"race": ["#çay", "demleme"]}, "#sonra"]}),
-        ),
-        ("demleme", json!({"steps": [["#su", "#yaprak"], "#bekle"]})),
-    ]);
-    let a = r.start(json!({}));
-    assert_eq!(names(&a), vec!["çay", "su", "yaprak"]);
-    let jobs = a.jobs.clone();
-    assert_eq!(jobs[1].path, vec![0, 0, 1, 0, 0]);
-    let a = r.done(&jobs[0], json!({"içildi": true}));
-    assert!(goes_on(&a));
-    assert_eq!(stopped(&a), vec!["demleme"], "one note for the workflow");
-    assert_eq!(sorted(&a), vec![jobs[1].path.clone(), jobs[2].path.clone()]);
-    assert_eq!(
-        r.rt.state["output"],
-        json!({"içildi": true, "winner": "çay"})
-    );
-    // what the workflow's actions print now reaches nothing
-    assert!(r.done(&jobs[1], json!({})).jobs.is_empty());
-}
-
 /// A run of `group`, then `#sonra`, where `önbellek` and `arşiv` are
 /// workflows whose `on` does not hold; a break goes to `#hata`.
 fn atlanan(group: Value) -> (Run, StepAnswer) {
@@ -1276,98 +1471,38 @@ fn a_group_that_ends_while_a_step_broke_says_which_and_why() {
 }
 
 #[test]
-fn a_workflow_that_breaks_inside_a_group_is_a_step_of_the_group_that_broke() {
-    let mut r = Run::new(&[
-        (
-            "küme",
-            json!({"steps": [{"settled": ["#çay", "demleme"]}, "#sonra"], "error": ["#hata"]}),
-        ),
-        ("demleme", json!({"steps": ["#su", "#yaprak"]})),
-    ]);
-    let a = r.start(json!({}));
-    let (cay, su) = (a.jobs[0].clone(), a.jobs[1].clone());
-    assert!(r.done(&cay, basar(0)).jobs.is_empty());
-    let a = r.done(&su, json!({}));
-    assert_eq!(names(&a), vec!["yaprak"]);
-    let a = r.failed(&a.jobs[0], "exit 1: yaprak yok");
-    assert!(goes_on(&a));
+fn a_group_in_a_workflow_used_as_a_step_is_its_run_s_own() {
+    let iç = json!({"steps": [{"any": ["#şeker", "#ılık"]}, "#karıştır"]});
+    // the child's run decides its own group
+    let mut c = Run::child(&[("iç", iç.clone())]);
+    let j = c.start(json!({})).jobs;
     assert_eq!(
-        r.rt.state["output"],
-        json!({"sıcak": 0, "failed": ["demleme"],
-               "why": {"demleme": "exit 1: yaprak yok"}})
+        names(&c.failed(&j[0], "exit 1: şeker")),
+        Vec::<String>::new()
     );
-    // without settled, the step that broke is named, not the workflow
+    let a = c.done(&j[1], basar(2));
+    assert_eq!(names(&a), vec!["karıştır"], "the any ended with #ılık");
+    c.done(&a.jobs[0], json!({"karışık": true}));
+    assert_eq!(c.rt.ended, Some(Ended::Done));
+    // every step of it broke: the child broke, which its parent's group
+    // reads as what it returned
+    let mut c = Run::child(&[("iç", iç.clone())]);
+    let j = c.start(json!({})).jobs;
+    c.failed(&j[0], "exit 1: şeker");
+    c.failed(&j[1], "exit 2: ılık");
+    let back = steps::returned(&c.rt);
+    assert_eq!(back["status"], "error");
     let mut r = Run::new(&[
         (
             "küme",
-            json!({"steps": [["#çay", "demleme"], "#sonra"], "error": ["#hata"]}),
+            json!({"steps": [{"all": ["#çay", "iç"]}, "#sonra"], "error": ["#hata"]}),
         ),
-        ("demleme", json!({"steps": ["#su", "#yaprak"]})),
+        ("iç", iç),
     ]);
     let a = r.start(json!({}));
-    let (cay, su) = (a.jobs[0].clone(), a.jobs[1].clone());
-    let a = r.done(&su, json!({}));
-    let a = r.failed(&a.jobs[0], "exit 1: yaprak yok");
-    assert!(a.jobs.is_empty() && a.stopped.is_empty(), "#çay runs on");
-    let a = r.done(&cay, basar(0));
-    assert!(breaks(&a));
-    assert_eq!(r.rt.failed_step.as_deref(), Some("#yaprak"));
-}
-
-#[test]
-fn a_group_in_a_group_decides_for_its_own_steps() {
-    let flows = || {
-        [
-            (
-                "küme",
-                json!({"steps": [{"all": ["#çay", "iç"]}, "#sonra"], "error": ["#hata"]}),
-            ),
-            (
-                "iç",
-                json!({"steps": [{"any": ["#şeker", "#ılık"]}, "#karıştır"]}),
-            ),
-        ]
-    };
-    let mut r = Run::new(&flows());
-    let a = r.start(json!({}));
-    assert_eq!(names(&a), vec!["çay", "şeker", "ılık"]);
-    let j = a.jobs.clone();
-    let a = r.failed(&j[1], "exit 1: şeker");
-    assert!(a.jobs.is_empty());
-    let a = r.done(&j[2], basar(2));
-    assert_eq!(
-        names(&a),
-        vec!["karıştır"],
-        "the inner any ended with #ılık"
-    );
-    let a = r.done(&a.jobs[0], json!({"karışık": true}));
-    assert!(a.jobs.is_empty());
-    let a = r.done(&j[0], basar(0));
-    assert!(goes_on(&a));
-    // the inner any broke: every step of it did; the outer all breaks
-    // once #çay has ended
-    let mut r = Run::new(&flows());
-    let j = r.start(json!({})).jobs;
-    r.failed(&j[1], "exit 1: şeker");
-    let a = r.failed(&j[2], "exit 2: ılık");
-    assert!(a.jobs.is_empty() && a.stopped.is_empty());
-    let a = r.done(&j[0], basar(0));
-    assert!(breaks(&a));
-    assert_eq!(r.rt.failed_step.as_deref(), Some("#şeker"));
-    // and a race around a group still breaking stops what runs in it
-    let mut r = Run::new(&[
-        (
-            "küme",
-            json!({"steps": [{"race": ["iç", "#hızlı"]}, "#sonra"], "error": ["#hata"]}),
-        ),
-        ("iç", json!({"steps": [["#çay", "#şeker"]]})),
-    ]);
-    let j = r.start(json!({})).jobs;
-    assert_eq!(names(&r.failed(&j[0], "exit 1: çay")), Vec::<String>::new());
-    let a = r.done(&j[2], json!({"hız": 1}));
-    assert!(goes_on(&a));
-    assert_eq!(stopped(&a), vec!["iç"]);
-    assert_eq!(sorted(&a), vec![j[1].path.clone()]);
+    let (cay, child) = (a.jobs[0].clone(), a.children[0].clone());
+    assert!(r.ended(&child, back).jobs.is_empty());
+    assert_eq!(names(&r.done(&cay, basar(0))), vec!["sonra"]);
 }
 
 #[test]

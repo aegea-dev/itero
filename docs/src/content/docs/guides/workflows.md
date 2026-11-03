@@ -92,7 +92,7 @@ These are from the `examples/` folder, each a workspace you can run.
   ],
   "failure": [
     { "#send-mail": { "args": { "email": "$event.email", "order": "$event.order" } } },
-    { "#log-result": { "args": { "order": "$event.order", "why": "$steps.order-process.why" } } }
+    { "#log-result": { "args": { "order": "$event.order", "why": "$steps.order-process.output.why" } } }
   ],
   "error": [
     { "#log-result": { "args": { "order": "$event.order", "failed_step": "$output.failed_step",
@@ -105,9 +105,11 @@ These are from the `examples/` folder, each a workspace you can run.
   `POST /events`).
 - `#check-payment` and `#check-stock` run side by side, each given the
   order from the event; the next step waits for both.
-- `order-process` is another workflow, used as a step: it ships, reminds
-  or cancels ([below](#what-it-does-steps)), given what the two checks
-  printed, read by their names: `$steps.check-payment.paid`.
+- `order-process` is another workflow, used as a step: a run of its own
+  that ships, reminds or cancels ([below](#what-it-does-steps)), given
+  what the two checks printed, read by their names:
+  `$steps.check-payment.paid`. What it returns is the next step's
+  `$output` ([A workflow used as a step](#a-workflow-used-as-a-step)).
 - At the end, `success`, `failure` or `error` runs, by how it went
   ([How it ended](#how-it-ended-success-failure-error)), and mails the
   customer.
@@ -179,8 +181,9 @@ Steps run in order. A step is:
 
 - **an action**, `"#check-payment"`: an executable in `actions/`. `#name`
   is its latest version, `#name@0.2` a pinned one.
-- **a workflow**, `"order-process"`: its steps run there; its `$event` is
-  the args its step gives. Its result is its last step's.
+- **a workflow**, `"order-process"`: a run of its own, whose `$event` is
+  the args its step gives. The step's result is what it returns
+  ([A workflow used as a step](#a-workflow-used-as-a-step)).
 - **a list**, `["#check-payment", "stock-check"]`: those run side by side,
   actions or workflows, and the next step waits for all of them.
 - **an object**: a name with its args, and when it runs:
@@ -244,8 +247,10 @@ it as it was.
 ### `$steps`: every step by its name
 
 Every step's result is kept for the rest of the run, under its name:
-`#count-files` is read as `$steps.count-files`, a workflow `daily` used
-as a step as `$steps.daily`.
+`#count-files` is read as `$steps.count-files`. A workflow `daily` used
+as a step is kept as all it returned: `$steps.daily.output`,
+`$steps.daily.steps.<name>` and `$steps.daily.status`
+([A workflow used as a step](#a-workflow-used-as-a-step)).
 
 ```json
 { "steps": [
@@ -354,8 +359,49 @@ steps that finished are undone ([Undo](#undo-taking-steps-back)). The run ends a
 `failed` or `error`; if one of these steps breaks, it ends as `error` and
 no other list runs. A run ending in error or failed also sends
 `itero.run.error` or `itero.run.failed`, for workflows that watch over
-others ([The daemon's own workflows](/guides/maintenance/)). A workflow used as a step has no end lists of its own:
-the run's own workflow has them.
+others ([The daemon's own workflows](/guides/maintenance/)).
+
+## A workflow used as a step
+
+A workflow is the same however it starts. Used as a step, it is a run of
+its own, linked to the run whose step started it: its own id and name,
+its `$event` (the args its step gives), its `$steps`, its end lists, its
+undos, its `timeout` and its steps that wait. The step waits until that
+run ends, then goes on with what it returned:
+
+- With a `success` list, once it ended well: that list's result.
+- With an `error` or `failure` list, once it broke or failed: that
+  list's result.
+- Without the list for how it ended: its last step's result, or, when it
+  broke, why (`why`, `failed_step`, `undo_failed`, as an `error` list
+  starts with).
+
+What it returned is the step's `$output`, and, with its `$steps` and how
+it ended, kept by its name: `$steps.<workflow>` is `{ "output", "steps",
+"status" }`, `status` being `done`, `failed` or `error`.
+
+A run that broke undoes its own finished steps first, then runs its
+`error` list. A workflow used as a step that broke or failed is no error
+for its parent: the parent reads what came back and does with it what it
+wants, by its `status`:
+
+```json
+{ "steps": [
+    "infrastructure",
+    { "#notify": { "on": [{ "$steps.infrastructure.status": "error" }],
+                   "args": { "title": "Setup", "text": "$output.why" } } }
+] }
+```
+
+Parent and child stay apart: the parent never sees the child's steps
+but through what it returned, and the child's undos are its own. The
+parent's undo of the step (`{ "infrastructure": { "undo": "#teardown" } }`)
+is the parent's, run when the parent breaks later.
+
+`itero ws wf runs` lists the child's run under its own workflow,
+`from <parent run>`; the parent's story shows it at its step:
+`infrastructure  done  {...}  run misty-lake`
+([`itero ws wf runs`](/commands/workflow/#runs)).
 
 ## Posting a result
 
@@ -445,8 +491,11 @@ This is `examples/terraform`'s `cluster` workflow.
   after it).
 - Only steps that finished are undone: a step that broke half way cleans
   up after itself, or the `error` list does.
-- A workflow used as a step can have an undo, and its own steps can too:
-  each finished step counts.
+- A workflow used as a step is a run of its own: its steps' undos run
+  when it breaks, before its own `error` list. The step that uses it can
+  have an undo too, the parent's, run when the parent breaks; the child's
+  steps are not undone then
+  ([A workflow used as a step](#a-workflow-used-as-a-step)).
 - An undo that breaks is noted in the log (`undo.failed`) and in the
   `error` list's `$output.undo_failed`, a list of `"#step: why"` lines,
   so it can say what may be left; the others still run, and the run ends
@@ -549,14 +598,15 @@ all have.
 When a group ends or breaks before all its steps have (`race`, `any`,
 `some`), the others are stopped: a running one's process is ended, a
 waiting one waits no more, and the run's story shows them `stopped` (a
-workflow by its own name). itero undoes nothing for them; to clean up
-after them, write the next step to do it.
+workflow by its own name; its run ends `stopped`, with the runs it
+started). itero undoes nothing for them; to clean up after them, write
+the next step to do it.
 
 `all` and `settled` wait for every step, even once one broke them: the
 steps still running run to their end, then the group breaks (and the run
 takes its undos and its `error` list). What those steps print is not
-kept, a workflow among them goes on to no next step, and a step waiting
-for an event waits no more, shown `stopped`.
+kept, a workflow among them runs to its end, and a step waiting for an
+event waits no more, shown `stopped`.
 
 A workflow in a group whose `on` does not hold did not run, and nor does
 a step side by side whose own `on` does not hold: it is out of the group,

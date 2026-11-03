@@ -38,7 +38,7 @@ each item's values on top of its step's args. Each run has its own copy
 of the state for the rest of the run: the run that reaches the step ends
 as `split`, and one run per item goes on from there, through the rest of
 the steps and the end lists, each on its own; they never join. A step
-side by side cannot repeat.
+side by side cannot repeat, nor can a step of a workflow used as a step.
 
 ## A connector's args
 

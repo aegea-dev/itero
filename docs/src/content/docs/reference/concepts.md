@@ -61,7 +61,7 @@ Each has parts of its own, listed under it.
 - `on`: what starts it (an event, a schedule, a path) and conditions
   (`has`, `$event.x` values).
 - `steps`: actions (`#name`), built-ins (`#notify`, `#ai`), other
-  workflows.
+  workflows (each a run of its own, returning its result).
 - Steps side by side: a list waits for all; `race`, `any`, `some`,
   `settled`, `fail` say how else.
 - Values by where they come from: `$event` (what started the run),

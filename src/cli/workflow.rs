@@ -120,6 +120,7 @@ fn row(r: &Run) -> Value {
         "status": status,
         "started": r.started,
         "ended": r.ended,
+        "parent": r.parent,
     });
     if status == "error" {
         v["failed_step"] = json!(r.runtime.failed_step);
@@ -172,6 +173,16 @@ pub fn runs(ws: &Workspace, f: &Filter, json: bool) -> Result<()> {
         .filter(|r| step.as_ref().is_none_or(|s| r["failed_step"] == s.as_str()))
         .take(f.limit.unwrap_or(usize::MAX))
         .collect();
+    // a workflow used as a step: the name of the run it is from
+    let mut from = std::collections::BTreeMap::new();
+    for r in &rows {
+        if let Some(p) = r["parent"].as_str()
+            && !from.contains_key(p)
+        {
+            let name = j.run(p)?.map_or_else(|| p.to_string(), |p| p.name);
+            from.insert(p.to_string(), name);
+        }
+    }
     show(json, &Value::Array(rows), |v| {
         let rows: Vec<Vec<String>> = v
             .as_array()
@@ -186,6 +197,9 @@ pub fn runs(ws: &Workspace, f: &Filter, json: bool) -> Result<()> {
                     text(&r["started"]),
                     r["ended"].as_str().unwrap_or("-").to_string(),
                 ];
+                if let Some(name) = r["parent"].as_str().and_then(|p| from.get(p)) {
+                    cells.push(format!("from {name}"));
+                }
                 if r["status"] == "error" {
                     cells.push(format!("{}: {}", text(&r["failed_step"]), text(&r["why"])));
                 }
@@ -215,6 +229,11 @@ pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
         );
     }
     let mut v = story(&j, r)?;
+    // a workflow used as a step: the run it is from
+    let from = match &r.parent {
+        Some(p) => Some(j.run(p)?.map_or_else(|| p.clone(), |p| p.name)),
+        None => None,
+    };
     // the steps running now, and what each said last
     if v["status"] == "running" {
         for p in progress::of_run(&ws.root, &r.id) {
@@ -225,11 +244,13 @@ pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
     }
     show(json, &v, |v| {
         println!(
-            "{}  {}  {}  {}",
+            "{}  {}  {}  {}{}",
             text(&v["name"]),
             text(&v["id"]),
             text(&v["workflow"]),
-            text(&v["status"])
+            text(&v["status"]),
+            from.as_ref()
+                .map_or(String::new(), |n| format!("  from {n}"))
         );
         for s in v["steps"].as_array().into_iter().flatten() {
             let line = match s["what"].as_str().unwrap_or("") {
@@ -239,6 +260,11 @@ pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
                 "event" => format!("event {}  {}", text(&s["type"]), s["data"]),
                 "running" => format!("{}  running  {}", text(&s["step"]), text(&s["data"])),
                 what => format!("{}  {what}  {}", text(&s["step"]), s["data"]),
+            };
+            // a workflow used as a step: its run
+            let line = match s["run"].as_str() {
+                Some(run) => format!("{line}  run {run}"),
+                None => line,
             };
             println!("  {}  {line}", text(&s["time"]));
         }
@@ -288,6 +314,17 @@ fn story(j: &Journal, r: &Run) -> Result<Value> {
             "action.failed" => json!({ "what": "error", "step": step(), "data": d["error"] }),
             // a step whose group ended without it, as the workflow names it
             "step.stopped" => json!({ "what": "stopped", "step": d["step"] }),
+            // a workflow used as a step ended: how, what it returned, and
+            // its run by name
+            "workflow.ended" => {
+                let child = d["run"].as_str().map(|id| j.run(id)).transpose()?.flatten();
+                json!({
+                    "what": d["status"],
+                    "step": child.as_ref().map(|c| c.workflow.clone()),
+                    "data": d["output"],
+                    "run": child.map(|c| c.name),
+                })
+            }
             "timer.fired" => json!({ "what": "timed out" }),
             // an event is copied to every waiting run: show those it took
             "message" if r.runtime.taken.iter().any(|t| d["id"] == t.as_str()) => {
@@ -308,6 +345,7 @@ fn story(j: &Journal, r: &Run) -> Result<Value> {
         "status": steps::status(&r.runtime),
         "started": r.started,
         "ended": r.ended,
+        "parent": r.parent,
         "steps": steps_,
         "state": Value::Object(r.runtime.state.clone()),
     }))

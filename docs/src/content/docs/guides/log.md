@@ -22,14 +22,14 @@ workflow is [internal](/guides/maintenance/).
 | `daemon.started` | every field of the workspace and the daemon |
 | `daemon.stopped` | |
 | `message` | `message`, `type`, `data`, and what it did: `started` and `reached` (runs), or `nothing` |
-| `run.started` | `message`, or `schedule` |
+| `run.started` | `message`, `schedule`, or `parent` (the run whose step started it) |
 | `step.started` | `step` |
 | `step.done`, `step.waiting` | `step`, `output` |
 | `step.failed` | `step`, `why` |
 | `step.skipped` | `step`, `why` (its `on` did not hold) |
 | `undo.failed` | `step`, `why`: an [undo](/guides/workflows/#undo-taking-steps-back) that broke; the other undos still run |
 | `run.note` | `note`: what the run did with an event or a timer |
-| `run.ended` | `status` (`done`, `failed`, `error`, `split`), `why` |
+| `run.ended` | `status` (`done`, `failed`, `error`, `split`, `stopped`), `why` |
 | `run.skipped` | a schedule came due and the workflow's `on` did not hold |
 | `connector.started`, `connector.ended`, `connector.gave-up` | `connector`, `why` |
 | `paths.watched` | `paths`: every path watched now |

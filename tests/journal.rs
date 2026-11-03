@@ -1,4 +1,4 @@
-use itero::engine::journal::{Envelope, Journal, SCHEMA_VERSION, Start};
+use itero::engine::journal::{Child, Envelope, Handled, Journal, SCHEMA_VERSION, Start};
 use serde_json::{Value, json};
 
 const NOW: &str = "2026-10-21T10:00:00Z";
@@ -84,6 +84,12 @@ fn a_journal_from_itero_0_4_to_0_8_keeps_what_it_held() {
             !columns.contains(&"reply".to_string()),
             "{table}: {columns:?}"
         );
+        if table == "runs" {
+            // and a run's parent, empty for the runs it held
+            for c in ["parent", "parent_path"] {
+                assert!(columns.contains(&c.to_string()), "{c}: {columns:?}");
+            }
+        }
     }
     // opening again changes nothing
     assert_eq!(Journal::open(&ws).unwrap().events(None).unwrap().len(), 1);
@@ -271,6 +277,56 @@ fn a_day_after_they_end_runs_and_their_messages_are_forgotten() {
         .collect();
     // the old one goes; the newer one may still be wanted by the run under way
     assert_eq!(messages, vec!["m-yeni"]);
+}
+
+#[test]
+fn a_run_started_by_a_step_keeps_its_parent_and_the_step() {
+    let d = tempfile::tempdir().unwrap();
+    let mut j = Journal::open(&ws(d.path())).unwrap();
+    let flows = json!({
+        "sipariş": {"on": [{ "event": "order.placed" }], "steps": ["#öde", "günlük"]},
+        "günlük": {"steps": ["#yaz"]}
+    });
+    let parent = j
+        .start_run(&start("sipariş", flows.clone()), NOW, None)
+        .unwrap();
+    let rt = j.run(&parent).unwrap().unwrap().runtime;
+    let started = j.next(&[]).unwrap().unwrap();
+    let pinned = serde_json::from_value(flows).unwrap();
+    let input = json!({"gün": "salı"});
+    j.handle(Handled {
+        seq: started.seq,
+        at: NOW,
+        error: None,
+        run: Some((&parent, &rt, false)),
+        timers: None,
+        events: vec![],
+        shown: vec![],
+        splits: vec![],
+        children: vec![Child {
+            workflow: "günlük",
+            flows: &pinned,
+            input: &input,
+            path: vec![0, 1],
+        }],
+        stopped: vec![],
+        stopped_runs: vec![],
+    })
+    .unwrap();
+    let runs = j.runs().unwrap();
+    assert_eq!(runs.len(), 2);
+    let child = runs.iter().find(|r| r.workflow == "günlük").unwrap();
+    assert_eq!(child.parent.as_deref(), Some(parent.as_str()));
+    assert_eq!(child.parent_path, Some(vec![0, 1]));
+    assert_eq!(child.input, input, "its $event: the step's args");
+    let (name, flows) = j.pinned(&child.pin).unwrap().unwrap();
+    assert_eq!(name, "günlük", "pinned as its own workflow");
+    assert_eq!(flows, pinned, "with the versions its parent runs");
+    let first = j.events(Some(&format!("itero.run.{}", child.id))).unwrap();
+    assert_eq!(first[0].event.kind, "run.started");
+    assert_eq!(first[0].event.data, input);
+    let p = runs.iter().find(|r| r.id == parent).unwrap();
+    assert_eq!((p.parent.as_deref(), p.parent_path.as_ref()), (None, None));
 }
 
 fn two_words(name: &str) -> bool {

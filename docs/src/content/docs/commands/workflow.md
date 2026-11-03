@@ -45,9 +45,12 @@ $ itero ws wf runs
 01a16fd5-46c0-7738-98d2-f87b1211af19   sunny-lake    greet   done    2026-10-24T21:33:30Z   2026-10-24T21:33:30Z
 ```
 
-A status is `running`, `waiting`, `done`, `failed`, `error` or `split` (a
+A status is `running`, `waiting`, `done`, `failed`, `error`, `split` (a
 run that went on as one run per item of a list, see
-[Repeat](/guides/secrets/#repeat)).
+[Repeat](/guides/secrets/#repeat)) or `stopped` (a workflow used as a
+step whose group ended without it). The run of a workflow used as a step
+ends its line with `from <parent run>`; `--json` gives `parent`, that
+run's id.
 
 | Option | Shows |
 |---|---|
@@ -63,6 +66,10 @@ and `steps`. A step still running
 is shown as `running`, with what it said last; one whose group ended
 without it, running or waiting, as `stopped` (a workflow under its own
 name; [How steps side by side wait](/guides/workflows/#how-steps-side-by-side-wait)).
+A workflow used as a step shows at its step how it ended, what it
+returned and its run's name (`stok  done  3  run misty-lake`); that run's
+story starts with `from <parent run>`
+([A workflow used as a step](/guides/workflows/#a-workflow-used-as-a-step)).
 
 ```
 $ itero ws wf runs sunny-lake

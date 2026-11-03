@@ -82,12 +82,13 @@ URL the app sends in the event's data
 
 `?workflow=<name>` keeps one workflow's runs; `?status=<status>` the runs
 with one status (`running`, `waiting`, `done`, `failed`, `error`,
-`split`); `?limit=N` (50 unless given) caps them. Internal workflows'
-runs only with `?all=true`.
+`split`, `stopped`); `?limit=N` (50 unless given) caps them. Internal
+workflows' runs only with `?all=true`. `parent` is the id of the run
+whose step started it, for a workflow used as a step, else `null`.
 
 ```json
 [ { "id": "...", "name": "misty-lake", "workflow": "order", "status": "waiting",
-    "started": "...", "ended": null } ]
+    "started": "...", "ended": null, "parent": null } ]
 ```
 
 ## GET /runs/\{id or name\}
