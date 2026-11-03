@@ -124,7 +124,11 @@ impl Phase {
 pub enum Ended {
     Done,
     Failed,
-    Error { why: String },
+    Error {
+        why: String,
+    },
+    /// Stopped by command, where it was: no undo, no error list.
+    Stopped,
 }
 
 /// A round of a repeat: its number, from 1, and how many there are when
@@ -363,12 +367,13 @@ pub fn first_state(event: Value, config: Map<String, Value>) -> Map<String, Valu
 }
 
 /// Where a run is, or how it ended, in a word: `running`, `waiting`,
-/// `done`, `failed` or `error`.
+/// `done`, `failed`, `error` or `stopped`.
 pub fn status(rt: &Runtime) -> &'static str {
     match &rt.ended {
         Some(Ended::Done) => "done",
         Some(Ended::Failed) => "failed",
         Some(Ended::Error { .. }) => "error",
+        Some(Ended::Stopped) => "stopped",
         None if is_waiting(rt) => "waiting",
         None => "running",
     }
@@ -547,6 +552,10 @@ impl Machine<'_> {
                 self.failed(&path(d)?, why)
             }
             "message" => self.message(d),
+            "run.stop" => {
+                self.stop_run();
+                Ok(())
+            }
             "timer.fired" => self.timer(d),
             other => {
                 self.log.push(format!("{other} ignored"));
@@ -1456,6 +1465,25 @@ impl Machine<'_> {
                 self.stopped_note(&e.name);
             }
         }
+    }
+
+    /// Stopped by command: every action it runs or waits on ends (their
+    /// jobs are ended), nothing more starts, and it ends `stopped` where it
+    /// is. A workflow used as a step runs on: a run of its own.
+    fn stop_run(&mut self) {
+        let mut gone = vec![];
+        if let Some(at) = self.rt.at.as_mut() {
+            leaves(at, &mut vec![self.rt.phase.index()], &mut |leaf, p| {
+                if matches!(leaf, At::Action { .. }) {
+                    gone.push(p.to_vec());
+                }
+            });
+        }
+        self.stopped.extend(gone);
+        self.jobs.clear();
+        self.children.clear();
+        self.notes.push(json!({"event": "run.stopped"}));
+        self.end(Ended::Stopped);
     }
 
     /// Notes that the group's entry `name` was stopped.
