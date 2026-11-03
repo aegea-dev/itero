@@ -51,13 +51,12 @@ is in its entry in
 | `args` | what its action gets, and nothing else: an object, a list of objects read in order (an item with exactly `title` and `text` gives the arg `title` names its text, as text), or a value that is one (`"$output"`) |
 | `on` | when it runs, conditions only; otherwise it is skipped |
 | `undo` | what takes it back when a later step breaks: `"#name"`, or `{"#name": {"args": {...}}}`; given this step's result as `$output` |
-| `as` | its name for `$steps`, `"eu"`, read as `$steps.eu`; in a group, `#eu` for an action's step |
 
 | A value | Is |
 |---|---|
 | `$event`, `$event.order` | the event that started the run |
 | `$output`, `$output.total` | the step before's result; in the `error` list's first step, `why`, `failed_step`, `undo_failed` |
-| `$steps.fetch-rates`, `$steps.fetch-rates.price` | an earlier step's result, by its name or `as` |
+| `$steps.fetch-rates`, `$steps.fetch-rates.price` | an earlier step's result, by its name; `$steps.fetch-rates/2` for the second of that name in the file |
 | `$config`, `$config.description` | `itero.config.json`, read-only |
 | `$$NAME` | a secret, a value in `.env`, or an environment variable; a whole value only |
 
@@ -81,9 +80,9 @@ what to write. `output` and `event` are no arg's names; `strict` is gone
 | `fail` | when it breaks instead: `"any"`, `"all"`, `"never"`, a step's name, or a list of names |
 
 An object has one of the five keys, with two or more steps, each a name
-or an object with `args`, `on` and `as` (not `undo`), each known
-by one name in the group (its `as`, else its name), and its result kept
-as `$steps.<name>`. `$output.failed` and `$output.why` name the steps that broke and why,
+or an object with `args` and `on` (not `undo`), each known by its name
+(with its number when the name is in the file more than once,
+`#ask-mirror/2`), and its result kept as `$steps.<name>`. `$output.failed` and `$output.why` name the steps that broke and why,
 whenever one did (always with `settled` and `"fail": "never"`). The steps
 that lose are stopped, never undone. A group of `all` or `settled` that
 breaks waits for its running steps to end first. See

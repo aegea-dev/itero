@@ -88,7 +88,8 @@ JSON when it is JSON. Each step's result takes its place.
 ### steps
 
 `$steps.<name>`: an earlier step's result, by its name (`#fetch-rates` is
-`$steps.fetch-rates`) or its `as`.
+`$steps.fetch-rates`), with its number when that name is in the file more
+than once (`$steps.fetch-rates/2`).
 
 ### state
 

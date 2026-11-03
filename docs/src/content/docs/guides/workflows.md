@@ -193,8 +193,7 @@ Steps run in order. A step is:
   `on` holds conditions only: an event, a schedule or a path starts a
   workflow, never a step. `args` are the values its action gets
   ([below](#args-what-a-step-gives-its-action)), `undo` names what takes
-  it back ([Undo](#undo-taking-steps-back)), and `as` names it for
-  `$steps` ([below](#steps-every-step-by-its-name)). It has no other keys.
+  it back ([Undo](#undo-taking-steps-back)). It has no other keys.
 
 So branches are steps with conditions. `order-process` picks one of four,
 by the args its caller gave it, its `$event`:
@@ -261,10 +260,11 @@ as a step as `$steps.daily`.
 is given its folder; `#notify` comes after `#archive`, whose result is
 now `$output`, and reads the count by the step's name.
 
-- `as` gives a step another name: one action twice, `"as": "eu"` and
-  `"as": "us"`, is read as `$steps.eu` and `$steps.us`. Two steps with
-  one name are fine until a `$steps.<name>` reads it: then `itero ws check`
-  asks for an `as`.
+- One action (or workflow) used more than once in a workflow is told
+  apart by its number: `$steps.ask-mirror/1`, `$steps.ask-mirror/2`,
+  counted over the whole file (`steps`, then `success`, `failure`,
+  `error`; a step side by side where it stands). The name alone is the
+  first: `$steps.ask-mirror` is `$steps.ask-mirror/1`.
 - `$steps.x` naming no step of the workflow is an error of `itero ws check`.
 - A step that has not run (yet, or at all) gives nothing: `null`, or
   empty inside text.
@@ -579,20 +579,20 @@ used as a step.
 ### A step side by side, with its args
 
 A step in a group, or in a list side by side, may be written as an object,
-as a step in `steps` is: with `args`, `on` and `as` (not `undo`). To ask
-one action twice side by side, give each step `as`, a name of its own:
+as a step in `steps` is: with `args` and `on` (not `undo`). One action
+asked twice side by side is told apart by its number, counted over the
+whole file as for `$steps`:
 
 ```json
 { "any": [
-    { "#ask-mirror": { "args": { "url": "http://127.0.0.1:9/price" }, "as": "mirror-1" } },
-    { "#ask-mirror": { "args": { "url": "http://127.0.0.1:8765/price" }, "as": "mirror-2" } }
-] }
+    { "#ask-mirror": { "args": { "url": "http://127.0.0.1:9/price" } } },
+    { "#ask-mirror": { "args": { "url": "http://127.0.0.1:8765/price" } } }
+], "fail": "#ask-mirror/2" }
 ```
 
-The group knows a step by its `as`, or else by its name: `"fail"` and
-`"names"` write it as names are (`#mirror-1` for an action's step, the
-name alone for a workflow's); `$steps.mirror-2` and `$output.winner`
-without the `#`. Two steps the group would know by one name are an error
-that says to give each `as`.
+`"fail"` and `"names"` write a step as names are, with its number
+(`#ask-mirror/2` for an action's step, the name alone for a workflow's);
+`$steps.ask-mirror/2` and `$output.winner` (`"ask-mirror/2"`) without
+the `#`.
 
 All keys: [Workflow files](/reference/workflow-file/).

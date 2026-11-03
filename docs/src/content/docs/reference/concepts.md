@@ -66,7 +66,7 @@ Each has parts of its own, listed under it.
   `settled`, `fail` say how else.
 - Values by where they come from: `$event` (what started the run),
   `$output` (the step before), `$steps.<name>` (any earlier step, by its
-  name or `as`), `$config` (the manifest), `$$NAME` (a secret, `.env`, the
+  name, `/2` for the second of that name), `$config` (the manifest), `$$NAME` (a secret, `.env`, the
   environment).
 - Can wait for an event (a step exits 75), with a `timeout`.
 - `undo` for steps that finished (with args when needed); `success`,
