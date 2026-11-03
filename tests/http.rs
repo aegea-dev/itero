@@ -197,6 +197,31 @@ async fn a_run_started_by_a_step_names_its_parent() {
     assert_eq!(one["parent"], top[0]["id"]);
 }
 
+#[tokio::test]
+async fn events_not_yet_handled_are_listed_and_cancelled() {
+    let d = tempfile::tempdir().unwrap();
+    let (app, _w) = app(d.path());
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let id = itero::engine::events::emit(&ws, "kayıt.geldi", None, "2026-10-15T14:00:00Z").unwrap();
+    let (code, q) = send(&app, get("/events")).await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(q[0]["id"], id);
+    let del = |id: &str| {
+        Request::delete(format!("/events/{id}"))
+            .header("host", "127.0.0.1:8790")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (code, v) = send(&app, del(&id)).await;
+    assert_eq!(
+        (code, v["cancelled"].as_str()),
+        (StatusCode::OK, Some(id.as_str()))
+    );
+    assert_eq!(send(&app, del(&id)).await.0, StatusCode::CONFLICT);
+    assert_eq!(send(&app, del("yok")).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(send(&app, get("/events")).await.1, json!([]));
+}
+
 fn post(path: &str, body: &str) -> Request<Body> {
     Request::post(path)
         .header("host", "127.0.0.1:8790")

@@ -2,6 +2,7 @@
 mod ai;
 mod complete;
 mod emit;
+mod event;
 mod kinds;
 mod out;
 mod top;
@@ -314,6 +315,23 @@ pub enum ActionCmd {
 }
 
 #[derive(Subcommand)]
+pub enum EventCmd {
+    /// The events for the workspace no daemon has handled yet, oldest first
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Take back an event no daemon has handled yet: it starts and reaches nothing
+    Cancel {
+        /// Its id, as itero ws emit printed it
+        #[arg(add = complete::queued())]
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum ConnectorCmd {
     /// Each connector, once for each set of args the workflows give it
     List {
@@ -365,6 +383,12 @@ pub enum WorkspaceCmd {
         cmd: ActionCmd,
     },
     /// The connectors, and their args
+    /// The events no daemon has handled yet, and cancelling one
+    #[command(visible_alias = "ev")]
+    Event {
+        #[command(subcommand)]
+        cmd: EventCmd,
+    },
     #[command(visible_alias = "cn")]
     Connector {
         #[command(subcommand)]
@@ -815,6 +839,13 @@ fn dispatch(cli: Cli) -> Result<()> {
                             limit,
                             json,
                         } => kinds::errors(&ws, action.as_deref(), limit, json)?,
+                    }
+                }
+                WorkspaceCmd::Event { cmd } => {
+                    let ws = chosen()?;
+                    match cmd {
+                        EventCmd::List { json } => event::list(&ws, json)?,
+                        EventCmd::Cancel { id, json } => event::cancel(&ws, &id, json)?,
                     }
                 }
                 WorkspaceCmd::Connector { cmd } => {

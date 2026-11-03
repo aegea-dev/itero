@@ -66,6 +66,15 @@ pub fn actions() -> ArgValueCandidates {
     })
 }
 
+/// The ids of the events no daemon has handled yet.
+pub fn queued() -> ArgValueCandidates {
+    ArgValueCandidates::new(|| {
+        workspace()
+            .map(|ws| names(super::event::ids(&ws)))
+            .unwrap_or_default()
+    })
+}
+
 /// The newest runs' names, the ones a person types.
 pub fn runs() -> ArgValueCandidates {
     ArgValueCandidates::new(|| {
