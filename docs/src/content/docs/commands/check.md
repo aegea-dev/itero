@@ -64,7 +64,7 @@ fails (exit 1), printing nothing else:
 
 ```
 $ itero ws check
-error: it takes message, not text (home/workflow/posta/steps/#ai)
+error: it needs $message (home/workflow/posta/steps/#ai)
 error: no action ship in the actions folders (home/workflow/order/steps/#ship)
 error: not JSON: expected `,` or `}` at line 7 column 3 (home/workflow/report)
 warning: key looks like a token: write it as a $$NAME (home/workflow/sort/steps/#ai/2)
