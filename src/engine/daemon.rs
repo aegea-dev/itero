@@ -285,7 +285,7 @@ pub fn expand(root: &Path, path: &str) -> Result<PathBuf, String> {
         let name = &after[..n];
         let v = std::env::var(name)
             .ok()
-            .filter(|_| env_name(name))
+            .filter(|_| flow::env_name(name))
             .ok_or_else(|| format!("{path}: no environment variable {name}"))?;
         out.push_str(&v);
         rest = &after[n..];
@@ -953,7 +953,7 @@ fn route(
     for (name, f) in &flows.read {
         // a run's state starts with the message's data, its `$event`
         let first = steps::first_state(Value::Object(data.clone()), flows.config.clone());
-        if !(f.on.events.contains(&r.event.kind) || names_it(f))
+        if !(f.on.events.iter().any(|e| e.kind == r.event.kind) || names_it(f))
             || !flow::active(&f.meta, now)
             || !flow::holds(&f.on, &first, &|n: &str| defined(ws, n))
             || (on_a_run && data.get("workflow") == Some(&json!(name)))
@@ -1386,15 +1386,6 @@ fn tell(log: &Log, who: &Who, r: &Recorded, answer: &StepAnswer) {
     }
 }
 
-/// Whether a name can be an environment variable: a letter or `_`, then
-/// letters, digits or `_`.
-fn env_name(n: &str) -> bool {
-    let mut cs = n.chars();
-    cs.next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 /// A value of an action's args: `"$name"` is the state's, `"$$NAME"`
 /// the secret's (or the environment variable's); anything else itself.
 fn resolve(ws: &Workspace, v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
@@ -1451,7 +1442,7 @@ pub fn connector_args(ws: &Workspace, connector: &str) -> Result<Map<String, Val
         .unwrap_or_default();
     for (k, v) in &args {
         let at = format!("connector.{connector}.args.{k}");
-        if !env_name(k) {
+        if !flow::env_name(k) {
             return Err(format!("{at}: not a name an environment variable can have"));
         }
         if let Some(n) = flow::names_in(v).first().or(flow::unknown_in(v).first()) {
@@ -1480,7 +1471,7 @@ pub fn connector_env(ws: &Workspace, connector: &str) -> Result<BTreeMap<String,
 fn to_env(values: Map<String, Value>) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     for (k, v) in values {
-        if !env_name(&k) {
+        if !flow::env_name(&k) {
             continue;
         }
         let text = match &v {

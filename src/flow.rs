@@ -5,6 +5,7 @@ use crate::problem::Problem;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// How long a run may wait for data unless its workflow says.
@@ -111,8 +112,9 @@ fn moment(key: &str, v: &Value, end: bool) -> Result<DateTime<Utc>, String> {
 /// hold.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct On {
-    /// `{"event": "order.placed"}`: message types.
-    pub events: Vec<String>,
+    /// `{"event": "order.placed"}`: message types, each with the args its
+    /// connector is given (`"args": {...}`), none when it has none.
+    pub events: Vec<Listen>,
     /// `{"schedule": "0 9 * * *"}`: cron lines.
     pub schedules: Vec<String>,
     /// `{"path": "/var/mail/$$USER"}`: files or folders, as written.
@@ -123,6 +125,37 @@ pub struct On {
     /// `{"$event.paid": true}`: values that must be exactly these, by path
     /// (`event.paid`).
     pub equal: Map<String, Value>,
+}
+
+/// An event `on` listens for, and the args the connector that sends it is
+/// given: one copy of a connector runs for each different set.
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+pub struct Listen {
+    #[serde(rename = "event")]
+    pub kind: String,
+    /// As written: values, or `$$NAME`s looked up when the connector starts.
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub args: Map<String, Value>,
+}
+
+impl Listen {
+    /// An event with no args.
+    pub fn of(kind: &str) -> Listen {
+        Listen {
+            kind: kind.into(),
+            args: Map::new(),
+        }
+    }
+
+    /// The args as written, as JSON with its keys sorted, `""` for none:
+    /// what tells one copy of a connector from another.
+    pub fn key(&self) -> String {
+        if self.args.is_empty() {
+            return String::new();
+        }
+        let sorted: BTreeMap<&String, &Value> = self.args.iter().collect();
+        serde_json::to_string(&sorted).unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -694,8 +727,8 @@ fn on(v: &Value) -> Result<On, Vec<Problem>> {
     let mut o = On::default();
     let mut ps = vec![];
     for (i, item) in items.iter().enumerate() {
-        if let Err(e) = on_entry(item, &mut o) {
-            ps.push(Problem::new((i + 1).to_string(), e));
+        if let Err(es) = on_entry(item, &mut o) {
+            ps.extend(es.into_iter().map(|e| Problem::new((i + 1).to_string(), e)));
         }
     }
     if ps.is_empty() { Ok(o) } else { Err(ps) }
@@ -703,14 +736,83 @@ fn on(v: &Value) -> Result<On, Vec<Problem>> {
 
 const ON_FORMS: &str = "{\"event\": ...}, {\"schedule\": ...}, {\"path\": ...}, {\"$event.x\": value} or {\"has\": ...}";
 
-/// One entry of `on`, into `o`.
-fn on_entry(item: &Value, o: &mut On) -> Result<(), String> {
-    {
-        let Value::Object(m) = item else {
-            return Err(format!(
-                "on: {item} is not an object; an entry is {ON_FORMS}"
+/// One entry of `on`, into `o`: every problem it has.
+fn on_entry(item: &Value, o: &mut On) -> Result<(), Vec<String>> {
+    let Value::Object(m) = item else {
+        return Err(vec![format!(
+            "on: {item} is not an object; an entry is {ON_FORMS}"
+        )]);
+    };
+    if let Some(args) = m.get("args") {
+        if !m.contains_key("event") {
+            return Err(vec![format!(
+                "on: {item}: args go with an event: they are its connector's ({{\"event\": \"mail.received\", \"args\": {{...}}}})"
+            )]);
+        }
+        let kind = m["event"].as_str().unwrap_or("");
+        if m.len() > 2 {
+            return Err(vec![format!(
+                "on: {item} says more than one thing: an event (with its args), a schedule or a path is an entry of its own"
+            )]);
+        }
+        if !is_message_type(kind) {
+            return Err(vec![format!(
+                "on: event {} is not a message type (two or more words joined by .)",
+                m["event"]
+            )]);
+        }
+        let args = connector_args(args)?;
+        o.events.push(Listen {
+            kind: kind.into(),
+            args,
+        });
+        return Ok(());
+    }
+    on_condition(item, m, o).map_err(|e| vec![e])
+}
+
+/// A connector's args in an `on` entry: names an environment variable may
+/// have (the connector gets them so), values as written or `$$NAME`; a
+/// connector has no run, so no `$name` of one. Every problem, each told.
+fn connector_args(v: &Value) -> Result<Map<String, Value>, Vec<String>> {
+    let Value::Object(args) = v else {
+        return Err(vec![format!(
+            "on: args is an object: {{\"NAME\": value}}, not {v}"
+        )]);
+    };
+    let mut ps = vec![];
+    for (k, v) in args {
+        if !env_name(k) {
+            ps.push(format!(
+                "on: args \"{k}\" is not a name an environment variable can have"
             ));
-        };
+        }
+        if let Some(n) = names_in(v).first().or(unknown_in(v).first()) {
+            ps.push(format!(
+                "on: args \"{k}\": a connector has no run, so no ${n}; write the value or a $$NAME"
+            ));
+        }
+    }
+    if ps.is_empty() {
+        Ok(args.clone())
+    } else {
+        Err(ps)
+    }
+}
+
+/// A name an environment variable can have: a letter or `_`, then
+/// letters, digits or `_`.
+pub fn env_name(n: &str) -> bool {
+    let mut cs = n.chars();
+    cs.next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// An `on` entry with no args: an event, a schedule, a path, or
+/// conditions.
+fn on_condition(item: &Value, m: &Map<String, Value>, o: &mut On) -> Result<(), String> {
+    {
         let trigger = ["event", "schedule", "path"]
             .iter()
             .any(|k| m.contains_key(*k));
@@ -728,7 +830,7 @@ fn on_entry(item: &Value, o: &mut On) -> Result<(), String> {
                             "on: event {v} is not a message type (two or more words joined by .)"
                         ));
                     }
-                    o.events.push(s.to_string());
+                    o.events.push(Listen::of(s));
                 }
                 "schedule" => {
                     let s = v.as_str().ok_or("on: a schedule is a cron line, as text")?;

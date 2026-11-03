@@ -37,7 +37,7 @@ fn on_entries_say_what_they_are() {
             "steps": ["#onayla"] }"##,
     )
     .unwrap();
-    assert_eq!(f.on.events, vec!["sipariş.alındı"]);
+    assert_eq!(f.on.events, vec![flow::Listen::of("sipariş.alındı")]);
     assert_eq!(f.on.schedules, vec!["0 9 * * *"]);
     assert_eq!(f.on.paths, vec!["/var/mail/$$USER"]);
     assert_eq!(
@@ -48,6 +48,59 @@ fn on_entries_say_what_they_are() {
     assert!(flow::starts(&f.on));
     let g = flow::parse(r##"{ "on": [{ "has": "$event.order" }], "steps": ["#ship"] }"##).unwrap();
     assert!(!flow::starts(&g.on), "conditions alone start nothing");
+}
+
+#[test]
+fn an_event_entry_may_give_its_connector_args() {
+    let f = flow::parse(
+        r##"{ "on": [
+              { "event": "posta.geldi", "args": { "KUTU": "satış", "PAROLA": "$$POSTA_PAROLA" } },
+              { "event": "posta.geldi", "args": { "PAROLA": "$$POSTA_PAROLA", "KUTU": "destek" } },
+              { "event": "sipariş.alındı" }
+            ],
+            "steps": ["#oku"] }"##,
+    )
+    .unwrap();
+    assert_eq!(f.on.events.len(), 3);
+    assert_eq!(f.on.events[0].kind, "posta.geldi");
+    assert_eq!(f.on.events[0].args["KUTU"], "satış");
+    assert_eq!(f.on.events[2].args, Map::new());
+    // the args as written, keys sorted: what tells two copies apart
+    assert_eq!(
+        f.on.events[1].key(),
+        r#"{"KUTU":"destek","PAROLA":"$$POSTA_PAROLA"}"#
+    );
+    assert_eq!(f.on.events[2].key(), "");
+}
+
+#[test]
+fn a_connector_s_args_are_checked_each_problem_told() {
+    let v = json!({ "on": [
+        { "schedule": "0 9 * * *", "args": { "A": 1 } },
+        { "event": "posta.geldi", "args": { "kutu adı": "satış", "N": "$output.n", "M": "$$TAMAM" } },
+        { "event": "posta.geldi", "args": "satış" },
+        { "event": "posta.geldi", "argz": {} }
+    ], "steps": ["#oku"] });
+    let ps = flow::read(&v).unwrap_err();
+    let told: Vec<(&str, &str)> = ps
+        .iter()
+        .map(|p| (p.at.as_str(), p.message.as_str()))
+        .collect();
+    assert_eq!(told.len(), 5, "{told:#?}");
+    assert_eq!(told[0].0, "on/1");
+    assert!(told[0].1.contains("args go with an event"), "{told:#?}");
+    assert_eq!((told[1].0, told[2].0), ("on/2", "on/2"));
+    assert!(
+        told[1].1.contains("\"kutu adı\"") && told[1].1.contains("environment variable"),
+        "{told:#?}"
+    );
+    assert!(
+        told[2].1.contains("\"N\"") && told[2].1.contains("no run"),
+        "{told:#?}"
+    );
+    assert_eq!(told[3].0, "on/3");
+    assert!(told[3].1.contains("args is an object"), "{told:#?}");
+    assert_eq!(told[4].0, "on/4");
 }
 
 #[test]

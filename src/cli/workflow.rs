@@ -17,7 +17,14 @@ pub fn list(ws: &Workspace, json: bool) -> Result<()> {
     let mut out = vec![];
     for (name, f) in &flows {
         let on = &f.on;
-        let mut starts: Vec<String> = on.events.iter().map(|e| format!("on {e}")).collect();
+        let mut starts: Vec<String> = on
+            .events
+            .iter()
+            .map(|e| match e.args.is_empty() {
+                true => format!("on {}", e.kind),
+                false => format!("on {} {}", e.kind, e.key()),
+            })
+            .collect();
         starts.extend(on.schedules.iter().map(|s| format!("at {s}")));
         starts.extend(on.paths.iter().map(|p| format!("path {p}")));
         let mut notes = vec![];

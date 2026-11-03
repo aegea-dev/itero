@@ -110,7 +110,7 @@ pub fn fate(ws: &Workspace, kind: &str, data: &Map<String, Value>) -> anyhow::Re
     let starts = flows
         .iter()
         .filter(|(_, f)| {
-            f.on.events.iter().any(|e| e == kind)
+            f.on.events.iter().any(|e| e.kind == kind)
                 && crate::flow::active(&f.meta, now)
                 && crate::flow::holds(
                     &f.on,
@@ -133,7 +133,7 @@ pub fn fate(ws: &Workspace, kind: &str, data: &Map<String, Value>) -> anyhow::Re
         flows
             .iter()
             .flat_map(|(_, f)| f.on.events.iter())
-            .map(|e| (distance(e, kind), e))
+            .map(|e| (distance(&e.kind, kind), &e.kind))
             .filter(|(d, _)| (1..=3).contains(d))
             .min()
             .map(|(_, e)| e.clone())
