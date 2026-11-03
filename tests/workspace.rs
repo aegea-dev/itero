@@ -178,33 +178,24 @@ fn an_action_entry_holds_no_args() {
 }
 
 #[test]
-fn a_connectors_args_are_an_object() {
+fn a_connectors_entry_holds_no_args() {
     let d = tempfile::tempdir().unwrap();
     let ws = simple(d.path());
-    assert_eq!(ws.connector_args("posta.geldi").unwrap(), None);
+    ws.no_connector_args("posta.geldi").unwrap();
     write(
         d.path(),
         "itero.config.json",
         r#"{ "connector": {
-              "posta.geldi": { "args": { "user": "ayşe@örnek.test", "password": "$$POSTA_ŞİFRE" } },
+              "posta.geldi": { "args": { "user": "ayşe@örnek.test" } },
               "sade.olay": { "description": "Args yok" } } }"#,
     );
-    let a = ws.connector_args("posta.geldi").unwrap().unwrap();
-    assert_eq!(a["user"], "ayşe@örnek.test");
-    assert_eq!(ws.connector_args("sade.olay").unwrap(), None);
-    for args in [r#"[{"user": "can@örnek.test"}]"#, r#""çay""#] {
-        write(
-            d.path(),
-            "itero.config.json",
-            &format!(r#"{{"connector": {{"posta.geldi": {{"args": {args}}}}}}}"#),
-        );
-        let e = format!("{:#}", ws.connector_args("posta.geldi").unwrap_err());
-        assert!(
-            e.contains("connector.posta.geldi.args are an object")
-                && e.contains("itero.config.json"),
-            "{args}: {e}"
-        );
-    }
+    ws.no_connector_args("sade.olay").unwrap();
+    let e = format!("{:#}", ws.no_connector_args("posta.geldi").unwrap_err());
+    assert!(
+        e.contains("connector.posta.geldi.args are gone")
+            && e.contains(r#"{ "event": "posta.geldi", "args": {...} }"#),
+        "{e}"
+    );
 }
 
 #[test]

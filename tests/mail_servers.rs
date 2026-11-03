@@ -233,12 +233,17 @@ fn gmail_example(d: &Path, user: &str, host: &str) -> PathBuf {
         serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     m["port"] = free.local_addr().unwrap().port().into();
-    let args = &mut m["connector"]["gmail.received"]["args"];
+    std::fs::write(&file, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    // the connector's args, in the workflow's on entry
+    let file = ws.join("workflows/gmail.json");
+    let mut f: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let args = &mut f["on"][0]["args"];
     args["host"] = host.into();
     args["port"] = IMAP.into();
     args["tls"] = false.into();
     args["user"] = user.into();
-    std::fs::write(&file, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    std::fs::write(&file, serde_json::to_string_pretty(&f).unwrap()).unwrap();
     ws
 }
 

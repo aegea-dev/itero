@@ -58,16 +58,17 @@ pub fn actions(ws: &Workspace, json: bool) -> Result<()> {
     })
 }
 
-/// Each connector: the type of the events it sends, its file, and whether
-/// it has args.
+/// Each connector, once for each set of args the workflows give it: the
+/// type of the events it sends, its file, and those args.
 pub fn connectors(ws: &Workspace, json: bool) -> Result<()> {
-    let entries = ws.entries("connector")?;
-    let out: Vec<Value> = ws
-        .connector_files()?
+    let out: Vec<Value> = crate::connectors::copies(ws)?
         .into_iter()
-        .map(|(kind, f)| {
-            let args = entries.get(&kind).is_some_and(|e| e.get("args").is_some());
-            json!({ "type": kind, "file": ws.shown(&f), "args": args })
+        .map(|c| {
+            let mut v = json!({ "type": c.listen.kind, "file": ws.shown(&c.file) });
+            if !c.listen.args.is_empty() {
+                v["args"] = Value::Object(c.listen.args.clone());
+            }
+            v
         })
         .collect();
     show(json, &Value::Array(out), |v| {
@@ -76,11 +77,15 @@ pub fn connectors(ws: &Workspace, json: bool) -> Result<()> {
             .into_iter()
             .flatten()
             .map(|c| {
-                vec![
-                    text(&c["type"]),
-                    text(&c["file"]),
-                    if c["args"] == true { "args" } else { "" }.into(),
-                ]
+                let args = match &c["args"] {
+                    Value::Object(a) => crate::flow::Listen {
+                        kind: String::new(),
+                        args: a.clone(),
+                    }
+                    .key(),
+                    _ => String::new(),
+                };
+                vec![text(&c["type"]), text(&c["file"]), args]
             })
             .collect();
         table(&rows);
@@ -180,14 +185,12 @@ pub fn errors(ws: &Workspace, action: Option<&str>, limit: usize, json: bool) ->
 #[derive(Clone, Copy)]
 pub enum Kind {
     Action,
-    Connector,
 }
 
 impl Kind {
     fn key(self) -> &'static str {
         match self {
             Kind::Action => "action",
-            Kind::Connector => "connector",
         }
     }
 
@@ -195,7 +198,6 @@ impl Kind {
     fn has(self, ws: &Workspace, name: &str) -> Result<bool> {
         Ok(match self {
             Kind::Action => ws.action_file(name, None).is_ok() || BUILT_IN.contains(&name),
-            Kind::Connector => ws.connector_files()?.iter().any(|(n, _)| n == name),
         })
     }
 
@@ -209,11 +211,6 @@ impl Kind {
         }
         Ok(())
     }
-}
-
-/// An action's or a connector's args, as `itero.config.json` has them.
-pub fn args_get(ws: &Workspace, kind: Kind, name: &str, json: bool) -> Result<()> {
-    entry_get(ws, kind, name, "args", json)
 }
 
 /// One key of an action's or a connector's entry (`args`, `repeat`), as
@@ -254,36 +251,6 @@ pub fn repeat_set(
         _ => return Err(wrong()),
     }
     let f = ws.write_entry(Kind::Action.key(), name, "repeat", v)?;
-    println!("{}", f.display());
-    Ok(())
-}
-
-/// Sets an action's args (an object, or a list of objects read in order,
-/// as a step's) or a connector's (an object: a connector runs once).
-pub fn args_set(
-    ws: &Workspace,
-    kind: Kind,
-    name: &str,
-    data: Option<String>,
-    file: Option<std::path::PathBuf>,
-) -> Result<()> {
-    let name = name.trim_start_matches('#');
-    kind.known(ws, name)?;
-    let v: Value = serde_json::from_str(&given(data, file)?).map_err(|_| match kind {
-        Kind::Action => anyhow::anyhow!("args are an object, or a list of objects, as JSON"),
-        Kind::Connector => anyhow::anyhow!("a connector's args are an object, as JSON"),
-    })?;
-    match (kind, &v) {
-        (_, Value::Object(_)) => {}
-        (Kind::Action, Value::Array(items)) if items.iter().all(Value::is_object) => {
-            crate::flow::read_args(&v).map_err(|why| anyhow::anyhow!("{why}"))?;
-        }
-        (Kind::Action, _) => bail!("args are an object, or a list of objects, as JSON"),
-        (Kind::Connector, _) => {
-            bail!("a connector's args are an object, as JSON: a connector runs once")
-        }
-    }
-    let f = ws.write_entry(kind.key(), name, "args", v)?;
     println!("{}", f.display());
     Ok(())
 }

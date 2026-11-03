@@ -320,15 +320,10 @@ pub enum ActionCmd {
 
 #[derive(Subcommand)]
 pub enum ConnectorCmd {
-    /// Each connector, its file and whether it has args
+    /// Each connector, once for each set of args the workflows give it
     List {
         #[arg(long)]
         json: bool,
-    },
-    /// A connector's args: the data it starts with
-    Args {
-        #[command(subcommand)]
-        cmd: ConnectorArgsCmd,
     },
 }
 
@@ -346,32 +341,6 @@ pub enum ActionRepeatCmd {
         #[arg(add = complete::actions())]
         name: String,
         /// The items, as JSON
-        #[arg(
-            value_name = "DATA",
-            required_unless_present = "file",
-            conflicts_with = "file"
-        )]
-        data: Option<String>,
-        /// Read them from this file
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ConnectorArgsCmd {
-    /// Show a connector's args
-    Get {
-        #[arg(add = complete::connectors())]
-        name: String,
-        #[arg(long)]
-        json: bool,
-    },
-    /// Set a connector's args: an object
-    Set {
-        #[arg(add = complete::connectors())]
-        name: String,
-        /// The args, as JSON
         #[arg(
             value_name = "DATA",
             required_unless_present = "file",
@@ -889,12 +858,6 @@ fn dispatch(cli: Cli) -> Result<()> {
                     let ws = chosen()?;
                     match cmd {
                         ConnectorCmd::List { json } => kinds::connectors(&ws, json)?,
-                        ConnectorCmd::Args {
-                            cmd: ConnectorArgsCmd::Get { name, json },
-                        } => kinds::args_get(&ws, kinds::Kind::Connector, &name, json)?,
-                        ConnectorCmd::Args {
-                            cmd: ConnectorArgsCmd::Set { name, data, file },
-                        } => kinds::args_set(&ws, kinds::Kind::Connector, &name, data, file)?,
                     }
                 }
             }

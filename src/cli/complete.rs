@@ -66,18 +66,6 @@ pub fn actions() -> ArgValueCandidates {
     })
 }
 
-pub fn connectors() -> ArgValueCandidates {
-    ArgValueCandidates::new(|| {
-        names(
-            workspace()
-                .and_then(|ws| ws.connector_files().ok())
-                .into_iter()
-                .flatten()
-                .map(|(n, _)| n),
-        )
-    })
-}
-
 /// The newest runs' names, the ones a person types.
 pub fn runs() -> ArgValueCandidates {
     ArgValueCandidates::new(|| {

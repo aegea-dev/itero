@@ -1437,42 +1437,19 @@ pub fn bind(ws: &Workspace, state: &Map<String, Value>, job: &StepJob) -> Result
     Ok((to_env(values), input))
 }
 
-/// A connector's args (`connector.<name>.args`), each one an environment
-/// variable: a name no environment variable can have is an error, and so
-/// is a `"$name"`, as a connector has no run state.
-pub fn connector_args(ws: &Workspace, connector: &str) -> Result<Map<String, Value>, String> {
-    let args = ws
-        .connector_args(connector)
-        .map_err(|e| format!("{e:#}"))?
-        .unwrap_or_default();
-    for (k, v) in &args {
-        let at = format!("connector.{connector}.args.{k}");
-        if !flow::env_name(k) {
-            return Err(format!("{at}: not a name an environment variable can have"));
-        }
-        if let Some(n) = flow::names_in(v).first().or(flow::unknown_in(v).first()) {
-            return Err(format!("{at}: a connector has no run state for ${n}"));
-        }
-    }
-    Ok(args)
-}
-
-/// A connector's environment: the args its copy is given (over those its
-/// manifest entry still gives), `$$NAME` the secret's (or the
-/// environment variable's).
+/// A connector's environment: the args its copy is given (an `on` entry's,
+/// checked when the workflow was read), `$$NAME` the secret's, `.env`'s or
+/// the environment variable's.
 pub fn connector_env(
     ws: &Workspace,
     connector: &str,
-    given: &Map<String, Value>,
+    args: &Map<String, Value>,
 ) -> Result<BTreeMap<String, String>, String> {
     let none = Map::new();
     let mut values = Map::new();
-    let mut args = connector_args(ws, connector)?;
-    args.extend(given.clone());
     for (k, v) in args {
-        let v = resolve(ws, &v, &none)
-            .map_err(|why| format!("connector.{connector}.args.{k}: {why}"))?;
-        values.insert(k, v);
+        let v = resolve(ws, v, &none).map_err(|why| format!("{connector} args {k}: {why}"))?;
+        values.insert(k.clone(), v);
     }
     Ok(to_env(values))
 }

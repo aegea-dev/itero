@@ -835,17 +835,16 @@ impl Workspace {
         ))
     }
 
-    /// A connector's args, `connector.<name>.args` in the manifest: an object (a
-    /// connector runs once). None when its entry has none.
-    pub fn connector_args(&self, connector: &str) -> Result<Option<Map<String, Value>>> {
-        match self.entry_key("connector", connector, "args")? {
-            None => Ok(None),
-            Some(Value::Object(o)) => Ok(Some(o)),
-            Some(_) => bail!(
-                "{}: connector.{connector}.args are an object",
+    /// A connector's entry holds no args: they are written in the `on`
+    /// entry of each workflow that listens.
+    pub fn no_connector_args(&self, connector: &str) -> Result<()> {
+        if self.entry_key("connector", connector, "args")?.is_some() {
+            bail!(
+                "{}: connector.{connector}.args are gone: write them in the on entry of each workflow that listens: {{ \"event\": \"{connector}\", \"args\": {{...}} }}",
                 self.root.join(MANIFEST).display()
-            ),
+            );
         }
+        Ok(())
     }
 
     /// `<kind>.<name>.<key>` in the manifest, as written; `null` is none.

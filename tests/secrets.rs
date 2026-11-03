@@ -13,12 +13,12 @@ fn the_names_a_workspace_uses_come_from_workflows_and_args() {
     };
     write(
         "itero.config.json",
-        r#"{"action": {"gönder": {"args": [{"parola": "$$POSTA_PAROLA"}], "repeat": [{"jeton": "$$POSTA_JETON"}]}},
-            "connector": {"posta.geldi": {"args": {"kullanıcı": {"ad": "$$POSTA_KULLANICI"}}}}}"#,
+        r#"{"action": {"gönder": {"args": [{"parola": "$$POSTA_PAROLA"}], "repeat": [{"jeton": "$$POSTA_JETON"}]}}}"#,
     );
     write(
         "workflows/kapı.json",
-        r##"{ "on": [{ "event": "kapı.çal" }, { "has": "$$KAPI_VAR" }],
+        r##"{ "on": [{ "event": "kapı.çal" }, { "has": "$$KAPI_VAR" },
+                     { "event": "posta.geldi", "args": { "KULLANICI": "$$POSTA_KULLANICI" } }],
               "steps": [{ "#aç": { "args": { "anahtar": "$$KAPI_ANAHTARI" } } }] }"##,
     );
     let ws = itero::workspace::find(d.path()).unwrap();
