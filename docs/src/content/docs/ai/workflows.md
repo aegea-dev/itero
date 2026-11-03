@@ -137,6 +137,10 @@ as for itero-ai. `"thinking": false` asks for the lowest effort the
 model takes (`none`, else `minimal`, else `low`); `"thinking": true`
 sends nothing, and the model thinks as it does by default.
 
+A Responses request says `"store": false`, so the server keeps no copy
+of it (OpenAI keeps one 30 days otherwise); itero's own is the
+`ai.answer` line in the log.
+
 **What a server refuses** it is not asked again: when a server answers
 400 naming the schema, the effort or streaming, itero keeps that for
 the url and model (in `ai-servers.json`, in itero's state folder) and
