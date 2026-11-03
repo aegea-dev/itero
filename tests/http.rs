@@ -157,6 +157,43 @@ async fn runs_and_workflows_can_be_read() {
     assert_eq!(named("keep")["internal"], true, "built in");
 }
 
+#[tokio::test]
+async fn a_run_started_by_a_step_names_its_parent() {
+    let d = tempfile::tempdir().unwrap();
+    let (app, _w) = app(d.path());
+    std::fs::create_dir_all(d.path().join("workflows")).unwrap();
+    std::fs::create_dir_all(d.path().join("actions")).unwrap();
+    std::fs::write(
+        d.path().join("workflows/sipariş.json"),
+        r##"{ "on": [{ "event": "say.bir" }], "steps": ["stok"] }"##,
+    )
+    .unwrap();
+    std::fs::write(
+        d.path().join("workflows/stok.json"),
+        r##"{ "steps": ["#yaz"] }"##,
+    )
+    .unwrap();
+    let action = d.path().join("actions/yaz");
+    std::fs::write(&action, "#!/bin/sh\necho çay\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&action, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let now = "2026-10-15T14:00:00Z";
+    itero::engine::events::emit(&ws, "say.bir", None, now).unwrap();
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
+    itero::engine::daemon::run_once(&ws, now.parse().unwrap(), exe).unwrap();
+    let (_, top) = send(&app, get("/runs?workflow=sipariş")).await;
+    let (_, child) = send(&app, get("/runs?workflow=stok")).await;
+    assert_eq!(top[0]["parent"], Value::Null);
+    assert_eq!(child[0]["parent"], top[0]["id"], "{child}");
+    let id = child[0]["id"].as_str().unwrap();
+    let (_, one) = send(&app, get(&format!("/runs/{id}"))).await;
+    assert_eq!(one["parent"], top[0]["id"]);
+}
+
 fn post(path: &str, body: &str) -> Request<Body> {
     Request::post(path)
         .header("host", "127.0.0.1:8790")

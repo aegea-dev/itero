@@ -203,13 +203,16 @@ fn run_row(r: &super::journal::Run) -> Value {
         "status": super::steps::status(&r.runtime),
         "started": r.started,
         "ended": r.ended,
+        // the run whose step started it: a workflow used as a step
+        "parent": r.parent,
     })
 }
 
 #[derive(serde::Deserialize)]
 struct RunsQuery {
     workflow: Option<String>,
-    /// `running`, `waiting`, `done`, `failed`, `error` or `split`.
+    /// `running`, `waiting`, `done`, `failed`, `error`, `split` or
+    /// `stopped`.
     status: Option<String>,
     limit: Option<usize>,
     /// The internal workflows' runs too.

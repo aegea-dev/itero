@@ -479,6 +479,62 @@ fn a_waiting_step_and_a_workflow_that_lost_are_stopped_in_the_story_after_the_wi
 }
 
 #[test]
+fn a_workflow_used_as_a_step_is_listed_from_its_parent_and_named_in_its_story() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/sipariş.json",
+        r##"{ "on": [{ "event": "sipariş.geldi" }], "steps": ["stok", "#son"] }"##,
+    );
+    file(
+        d.path(),
+        "workflows/stok.json",
+        r##"{ "steps": ["#say"] }"##,
+    );
+    file(
+        d.path(),
+        "actions/say",
+        "#!/bin/sh
+echo 3
+",
+    );
+    file(
+        d.path(),
+        "actions/son",
+        "#!/bin/sh
+echo tamam
+",
+    );
+    itero(d.path(), &["ws", "emit", "sipariş.geldi", "{}"]);
+    itero(d.path(), &["daemon", "--once"]);
+    let json_of = |args: &[&str]| -> serde_json::Value {
+        serde_json::from_str(&out(&itero(d.path(), args))).unwrap()
+    };
+    let parent = json_of(&["ws", "wf", "runs", "--workflow", "sipariş", "--json"]);
+    let child = json_of(&["ws", "wf", "runs", "--workflow", "stok", "--json"]);
+    let (pid, pname) = (
+        parent[0]["id"].as_str().unwrap(),
+        parent[0]["name"].as_str().unwrap(),
+    );
+    assert_eq!(child[0]["parent"], pid, "{child}");
+    assert_eq!(parent[0]["parent"], serde_json::Value::Null);
+    // the list says which run it is from
+    let list = out(&itero(d.path(), &["ws", "wf", "runs"]));
+    let line = list.lines().find(|l| l.contains(" stok ")).unwrap();
+    assert!(line.contains(&format!("from {pname}")), "{list}");
+    // the parent's story names the run at its step
+    let cname = child[0]["name"].as_str().unwrap();
+    let story = out(&itero(d.path(), &["ws", "wf", "runs", pid]));
+    assert!(
+        story.contains(&format!("stok  done  3  run {cname}")),
+        "{story}"
+    );
+    // and the child's, the run it is from
+    let story = out(&itero(d.path(), &["ws", "wf", "runs", cname]));
+    assert!(story.contains(&format!("from {pname}")), "{story}");
+}
+
+#[test]
 fn a_step_that_breaks_undoes_those_before_it_and_the_story_says_so() {
     let d = workspace();
     file(
