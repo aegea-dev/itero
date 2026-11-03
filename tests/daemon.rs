@@ -1401,7 +1401,9 @@ fn threads(pid: u32) -> usize {
 
 #[test]
 fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
-    let w = Ws::new();
+    // the built-in workflows off: models runs on the hour, and a run of it
+    // would add its worker's threads to the count below
+    let w = Ws::with(KEEP_OFF);
     let root = w.d.path().to_path_buf();
     let inbox = root.join("gelen kutusu");
     w.action("say", "echo \"$path $kind\" >> görülen.txt");
