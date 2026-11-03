@@ -913,36 +913,57 @@ fn a_value_too_big_for_the_environment_is_on_stdin_only() {
 }
 
 #[test]
-fn repeat_runs_the_rest_once_per_item_on_top_of_the_args() {
+fn a_repeated_step_and_a_repeated_workflow_run_in_rounds() {
+    let ws = Ws::new();
+    ws.flow(
+        "sayaç",
+        json!({"on": [{ "event": "say.başla" }], "steps": [
+            {"#yaz": {"args": {"n": "$count", "onceki": "$output.n"}, "repeat": 3}}
+        ]}),
+    );
+    ws.action(
+        "yaz",
+        r#"echo "$n:$onceki" >> sayılar.log; echo "{\"n\": $n}""#,
+    );
+    ws.flow(
+        "tur",
+        json!({"on": [{ "event": "tur.başla" }], "repeat": 2, "steps": [
+            {"#tur-yaz": {"args": {"n": "$count", "onceki": "$output.n", "k": "$event.k"}}}
+        ]}),
+    );
+    ws.action(
+        "tur-yaz",
+        r#"echo "$k $n:$onceki" >> turlar.log; echo "{\"n\": $n}""#,
+    );
+    ws.emit("say.başla", json!({}));
+    ws.pass(NOW);
+    assert_eq!(ws.read("sayılar.log"), "1:\n2:1\n3:2\n");
+    assert_eq!(ws.statuses(), vec!["done"]);
+    ws.emit("tur.başla", json!({"k": "ç"}));
+    ws.pass(NOW);
+    // two runs, the second seeded with the first's $output and its $event
+    assert_eq!(ws.read("turlar.log"), "ç 1:\nç 2:1\n");
+    assert_eq!(ws.statuses(), vec!["done", "done", "done"]);
+}
+
+#[test]
+fn an_actions_repeat_in_the_manifest_is_refused_where_it_goes() {
     let ws = Ws::new();
     ws.flow(
         "posta",
-        json!({"on": [{ "event": "posta.bak" }], "steps": [
-            {"#kutu": {"args": {"host": "imap.örnek.test", "user": "kimse"}}},
-            {"#yaz": {"args": "$output"}}
-        ]}),
+        json!({"on": [{ "event": "posta.bak" }], "steps": ["#kutu"]}),
     );
-    ws.entry(
-        "kutu",
-        "repeat",
-        json!([{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]),
-    );
-    ws.action("kutu", r#"echo "{\"kutu\": \"$user@$host\"}""#);
-    ws.action("yaz", r#"echo "$kutu" >> kutular.log"#);
+    ws.entry("kutu", "repeat", json!([{"user": "ayşe@örnek.test"}]));
+    ws.action("kutu", "echo bak");
     ws.emit("posta.bak", json!({}));
     ws.pass(NOW);
-    let mut got: Vec<String> = ws.read("kutular.log").lines().map(str::to_string).collect();
-    got.sort();
-    assert_eq!(
-        got,
-        vec![
-            "ayşe@örnek.test@imap.örnek.test",
-            "can@örnek.test@imap.örnek.test"
-        ]
-    );
-    let mut st = ws.statuses();
-    st.sort();
-    assert_eq!(st, vec!["done", "done", "split"]);
+    let why = ws
+        .log()
+        .into_iter()
+        .find(|l| l["event"] == "error")
+        .map(|l| l["why"].to_string())
+        .unwrap_or_default();
+    assert!(why.contains("repeat goes on the step"), "{why}");
 }
 
 #[test]
@@ -1380,7 +1401,9 @@ fn threads(pid: u32) -> usize {
 
 #[test]
 fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
-    let w = Ws::new();
+    // the built-in workflows off: models runs on the hour, and a run of it
+    // would add its worker's threads to the count below
+    let w = Ws::with(KEEP_OFF);
     let root = w.d.path().to_path_buf();
     let inbox = root.join("gelen kutusu");
     w.action("say", "echo \"$path $kind\" >> görülen.txt");
@@ -1735,4 +1758,51 @@ fn a_path_whose_folder_comes_later_is_watched_once_it_is_there() {
     ws.write("sonra/gelecek/rapor.txt", "geldi");
     woken.recv_timeout(secs(5)).expect("the file came");
     assert!(path_messages(&ws) >= 1);
+}
+
+#[test]
+fn an_event_from_a_connector_s_copy_starts_only_the_workflows_that_asked_for_its_args() {
+    let w = Ws::new();
+    w.action("yaz", r#"echo "$ad" >> başlayan.txt"#);
+    for (name, on) in [
+        (
+            "satış",
+            json!([{ "event": "kutu.geldi", "args": { "KUTU": "satış" } }]),
+        ),
+        (
+            "destek",
+            json!([{ "event": "kutu.geldi", "args": { "KUTU": "destek" } }]),
+        ),
+        ("hepsi", json!([{ "event": "kutu.geldi" }])),
+    ] {
+        w.flow(
+            name,
+            json!({ "on": on, "steps": [{ "#yaz": { "args": { "ad": name } } }] }),
+        );
+    }
+    let j = Journal::open(&w.ws).unwrap();
+    let from = |source: &str| {
+        j.publish(&itero::engine::journal::Envelope::new(
+            source,
+            "kutu.geldi",
+            "itero.app",
+            NOW,
+            None,
+            json!({}),
+        ))
+        .unwrap();
+    };
+    from(r#"connector/kutu.geldi?{"KUTU":"satış"}"#);
+    w.pass(NOW);
+    assert_eq!(w.read("başlayan.txt"), "satış\n");
+    // the copy with no args: the entry with none
+    from("connector/kutu.geldi");
+    w.pass(NOW);
+    assert_eq!(w.read("başlayan.txt"), "satış\nhepsi\n");
+    // no copy sent it (ws emit, the API): every entry of its type
+    w.emit("kutu.geldi", json!({}));
+    w.pass(NOW);
+    let mut got: Vec<String> = w.read("başlayan.txt").lines().map(String::from).collect();
+    got.sort();
+    assert_eq!(got, ["destek", "hepsi", "hepsi", "satış", "satış"]);
 }

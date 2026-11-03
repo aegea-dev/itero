@@ -8,7 +8,7 @@ use crate::workspace::Workspace;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
 /// The journal's schema version, kept in its `meta` table.
@@ -231,15 +231,18 @@ impl Start {
     }
 }
 
-/// A run split from another: its own copy of the runtime, from the same
-/// place.
-pub struct Split<'a> {
+/// A repeated workflow's next round: a new run of the same version, its
+/// runtime seeded with the round before's results.
+pub struct NextRound<'a> {
     pub workflow: &'a str,
     pub pin: &'a str,
     pub runtime: &'a Runtime,
     pub input: &'a Value,
-    /// The message of the run it splits from.
+    /// The message of the round before.
     pub message: Option<&'a str>,
+    /// The round before's parent and step, when it is a workflow used as
+    /// a step: the last round answers that step.
+    pub parent: Option<(&'a str, &'a [usize])>,
 }
 
 /// A run a step of another starts: a workflow used as a step. Its
@@ -249,6 +252,8 @@ pub struct Child<'a> {
     pub workflow: &'a str,
     pub flows: &'a BTreeMap<String, Value>,
     pub input: &'a Value,
+    /// Its first state beside `$event` (a repeated step's round).
+    pub seed: &'a Map<String, Value>,
     /// The step's path in the parent's position.
     pub path: Vec<usize>,
 }
@@ -283,8 +288,8 @@ pub struct Handled<'a> {
     /// Events about a run that only its story shows (a step stopped): saved
     /// handled, so no manager is given them.
     pub shown: Vec<Envelope>,
-    /// Runs split from this one.
-    pub splits: Vec<Split<'a>>,
+    /// A repeated workflow's next round, started by this answer.
+    pub next_round: Option<NextRound<'a>>,
     /// Runs its steps start, each linked to this run (`run` names it).
     pub children: Vec<Child<'a>>,
     /// Jobs (by `seq`) whose steps this answer stopped: handled, noted
@@ -868,18 +873,18 @@ impl Journal {
                 params![e.id, now],
             )?;
         }
-        for s in &h.splits {
+        if let Some(n) = &h.next_round {
             insert_run(
                 &tx,
                 NewRun {
-                    workflow: s.workflow,
-                    pin: s.pin,
-                    rt: s.runtime,
-                    input: s.input,
+                    workflow: n.workflow,
+                    pin: n.pin,
+                    rt: n.runtime,
+                    input: n.input,
                     now,
                     cause: None,
-                    message: s.message,
-                    parent: None,
+                    message: n.message,
+                    parent: n.parent,
                 },
             )?;
         }
@@ -894,12 +899,16 @@ impl Journal {
             )?;
             for c in &h.children {
                 let pin = pin(&tx, c.workflow, c.flows)?;
+                let rt = Runtime {
+                    state: c.seed.clone(),
+                    ..Runtime::default()
+                };
                 insert_run(
                     &tx,
                     NewRun {
                         workflow: c.workflow,
                         pin: &pin,
-                        rt: &Runtime::default(),
+                        rt: &rt,
                         input: c.input,
                         now,
                         cause: Some(&cause),

@@ -57,12 +57,15 @@ fn check_manifest(ws: &Workspace, workflows: &[String]) -> Result<Vec<Problem>> 
         .collect();
     let connectors: Vec<String> = ws.connector_files()?.into_iter().map(|(n, _)| n).collect();
     for name in ws.entries("connector")?.keys() {
-        if let Err(why) = crate::engine::daemon::connector_args(ws, name) {
-            wrong.push(entry_problem(ws, "connector", name, &why));
+        if let Err(why) = ws.no_connector_args(name) {
+            wrong.push(entry_problem(ws, "connector", name, &format!("{why:#}")));
         }
     }
     for (name, _) in ws.entries("action")? {
         if let Err(why) = ws.no_args(&name) {
+            wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
+        }
+        if let Err(why) = ws.no_repeat(&name) {
             wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
         }
         if let Err(why) = ws.step_limits(&name) {

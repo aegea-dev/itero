@@ -5,6 +5,7 @@ use crate::problem::Problem;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// How long a run may wait for data unless its workflow says.
@@ -19,8 +20,68 @@ pub struct Flow {
     pub error: Vec<Step>,
     /// How long a run may wait for data; `None` is `WAIT`.
     pub timeout: Option<Duration>,
+    /// Its runs go on as rounds: when one ends, the next starts with its
+    /// results.
+    pub repeat: Option<Repeat>,
     /// What it is: its entry in itero.config.json, not its file.
     pub meta: Meta,
+}
+
+/// How long a step or a workflow goes on in rounds, each started as soon
+/// as the one before ended, with its results. A round that ends in an
+/// error or a failure stops it, and so does the workflow being turned off
+/// or being out of its `from`/`until`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Repeat {
+    /// `true`: until one of those stops it.
+    Always,
+    /// `3`: that many rounds.
+    Times(u64),
+    /// `"$output.count"`: that many, read as the first round starts (the
+    /// value's path, `output.count`).
+    TimesOf(String),
+    /// `"<= 2026-12-31"`: while it is still before this, the day's end.
+    Until(DateTime<Utc>),
+    /// `"> 2026-12-31"`: while it is past this, the day's end.
+    After(DateTime<Utc>),
+    /// A cron line: a round at each time it names (a step's only).
+    Cron(String),
+}
+
+/// A `repeat` as written, on a step or (`workflow`) on a workflow.
+fn repeat(v: &Value, workflow: bool) -> Result<Repeat, String> {
+    const FORMS: &str = "true, a number of rounds, \"$output.count\", \"<= 2026-12-31\", \"> 2026-12-31\" or a cron line";
+    match v {
+        Value::Bool(true) => Ok(Repeat::Always),
+        Value::Number(n) => match n.as_u64() {
+            Some(n) if n > 0 => Ok(Repeat::Times(n)),
+            _ => Err(format!("repeat {v}: a number of rounds is 1 or more")),
+        },
+        Value::String(s) => {
+            let s = s.trim();
+            if let Some(d) = s.strip_prefix("<=") {
+                return moment("repeat", &Value::String(d.trim().into()), true).map(Repeat::Until);
+            }
+            if let Some(d) = s.strip_prefix('>') {
+                return moment("repeat", &Value::String(d.trim().into()), true).map(Repeat::After);
+            }
+            if let Some(p) = s.strip_prefix('$').filter(|p| !p.starts_with('$')) {
+                return value_path(p, s)
+                    .map(Repeat::TimesOf)
+                    .map_err(|e| e.replacen("on:", "repeat:", 1));
+            }
+            if crate::engine::schedule::check(s).is_ok() {
+                if workflow {
+                    return Err(format!(
+                        "repeat \"{s}\": a workflow's schedule is in on ({{\"schedule\": \"{s}\"}}); its repeat is {FORMS}"
+                    ));
+                }
+                return Ok(Repeat::Cron(s.into()));
+            }
+            Err(format!("repeat \"{s}\" is not one of {FORMS}"))
+        }
+        _ => Err(format!("repeat {v} is not one of {FORMS}")),
+    }
 }
 
 /// What a person says about a workflow: a few keys itero knows, and any
@@ -111,8 +172,9 @@ fn moment(key: &str, v: &Value, end: bool) -> Result<DateTime<Utc>, String> {
 /// hold.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct On {
-    /// `{"event": "order.placed"}`: message types.
-    pub events: Vec<String>,
+    /// `{"event": "order.placed"}`: message types, each with the args its
+    /// connector is given (`"args": {...}`), none when it has none.
+    pub events: Vec<Listen>,
     /// `{"schedule": "0 9 * * *"}`: cron lines.
     pub schedules: Vec<String>,
     /// `{"path": "/var/mail/$$USER"}`: files or folders, as written.
@@ -125,6 +187,54 @@ pub struct On {
     pub equal: Map<String, Value>,
 }
 
+/// An event `on` listens for, and the args the connector that sends it is
+/// given: one copy of a connector runs for each different set.
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+pub struct Listen {
+    #[serde(rename = "event")]
+    pub kind: String,
+    /// As written: values, or `$$NAME`s looked up when the connector starts.
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub args: Map<String, Value>,
+}
+
+impl Listen {
+    /// An event with no args.
+    pub fn of(kind: &str) -> Listen {
+        Listen {
+            kind: kind.into(),
+            args: Map::new(),
+        }
+    }
+
+    /// Whether an event of `kind` from `source` is for this entry: one a
+    /// connector's copy sent (`connector/<type>?<args>`) only when the copy
+    /// has this entry's args; one no copy sent (`itero ws emit`, the API)
+    /// whatever the args.
+    pub fn takes(&self, kind: &str, source: &str) -> bool {
+        if self.kind != kind {
+            return false;
+        }
+        match source.strip_prefix("connector/") {
+            Some(copy) => copy.split_once('?').map_or("", |(_, key)| key) == self.key(),
+            None => true,
+        }
+    }
+
+    /// The args as written, as JSON with its keys sorted, `""` for none:
+    /// what tells one copy of a connector from another.
+    pub fn key(&self) -> String {
+        if self.args.is_empty() {
+            return String::new();
+        }
+        let sorted: BTreeMap<&String, &Value> = self.args.iter().collect();
+        serde_json::to_string(&sorted).unwrap_or_default()
+    }
+}
+
+/// A step is read once, when its workflow is: its size costs nothing, and
+/// boxing its fields would cost an allocation each for no gain.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
     /// An action or a workflow, with its args, when it runs, and what
@@ -142,6 +252,8 @@ pub enum Step {
         /// name is in the file more than once (counted over the whole
         /// file), a workflow's name.
         label: String,
+        /// It runs in rounds, each with the one before's results.
+        repeat: Option<Repeat>,
     },
     /// Actions and workflows that run side by side; the next step waits as
     /// the group says.
@@ -303,10 +415,14 @@ pub fn read(v: &Value) -> Result<Flow, Vec<Problem>> {
                 Ok(t) => f.timeout = Some(t),
                 Err(e) => ps.push(Problem::new("timeout", e)),
             },
+            "repeat" => match repeat(v, true) {
+                Ok(r) => f.repeat = Some(r),
+                Err(e) => ps.push(Problem::new("repeat", e)),
+            },
             other => ps.push(Problem::new(
                 "",
                 format!(
-                    "unknown key \"{other}\": a workflow has meta, on, steps, success, failure, error and timeout"
+                    "unknown key \"{other}\": a workflow has meta, on, steps, success, failure, error, timeout and repeat"
                 ),
             )),
         }
@@ -342,7 +458,7 @@ pub fn step_key(label: &str) -> String {
 /// Where a value comes from: `$event` (the event that started the run),
 /// `$output` (the step before), `$steps.<name>` (any step by its name),
 /// `$config` (the manifest).
-pub const ROOTS: [&str; 4] = ["event", "output", "steps", "config"];
+pub const ROOTS: [&str; 5] = ["event", "output", "steps", "config", "count"];
 
 /// Whether `on`'s conditions hold over a run's state, `defined` telling
 /// which environment variables and secrets are. Its messages and
@@ -694,8 +810,8 @@ fn on(v: &Value) -> Result<On, Vec<Problem>> {
     let mut o = On::default();
     let mut ps = vec![];
     for (i, item) in items.iter().enumerate() {
-        if let Err(e) = on_entry(item, &mut o) {
-            ps.push(Problem::new((i + 1).to_string(), e));
+        if let Err(es) = on_entry(item, &mut o) {
+            ps.extend(es.into_iter().map(|e| Problem::new((i + 1).to_string(), e)));
         }
     }
     if ps.is_empty() { Ok(o) } else { Err(ps) }
@@ -703,14 +819,83 @@ fn on(v: &Value) -> Result<On, Vec<Problem>> {
 
 const ON_FORMS: &str = "{\"event\": ...}, {\"schedule\": ...}, {\"path\": ...}, {\"$event.x\": value} or {\"has\": ...}";
 
-/// One entry of `on`, into `o`.
-fn on_entry(item: &Value, o: &mut On) -> Result<(), String> {
-    {
-        let Value::Object(m) = item else {
-            return Err(format!(
-                "on: {item} is not an object; an entry is {ON_FORMS}"
+/// One entry of `on`, into `o`: every problem it has.
+fn on_entry(item: &Value, o: &mut On) -> Result<(), Vec<String>> {
+    let Value::Object(m) = item else {
+        return Err(vec![format!(
+            "on: {item} is not an object; an entry is {ON_FORMS}"
+        )]);
+    };
+    if let Some(args) = m.get("args") {
+        if !m.contains_key("event") {
+            return Err(vec![format!(
+                "on: {item}: args go with an event: they are its connector's ({{\"event\": \"mail.received\", \"args\": {{...}}}})"
+            )]);
+        }
+        let kind = m["event"].as_str().unwrap_or("");
+        if m.len() > 2 {
+            return Err(vec![format!(
+                "on: {item} says more than one thing: an event (with its args), a schedule or a path is an entry of its own"
+            )]);
+        }
+        if !is_message_type(kind) {
+            return Err(vec![format!(
+                "on: event {} is not a message type (two or more words joined by .)",
+                m["event"]
+            )]);
+        }
+        let args = connector_args(args)?;
+        o.events.push(Listen {
+            kind: kind.into(),
+            args,
+        });
+        return Ok(());
+    }
+    on_condition(item, m, o).map_err(|e| vec![e])
+}
+
+/// A connector's args in an `on` entry: names an environment variable may
+/// have (the connector gets them so), values as written or `$$NAME`; a
+/// connector has no run, so no `$name` of one. Every problem, each told.
+fn connector_args(v: &Value) -> Result<Map<String, Value>, Vec<String>> {
+    let Value::Object(args) = v else {
+        return Err(vec![format!(
+            "on: args is an object: {{\"NAME\": value}}, not {v}"
+        )]);
+    };
+    let mut ps = vec![];
+    for (k, v) in args {
+        if !env_name(k) {
+            ps.push(format!(
+                "on: args \"{k}\" is not a name an environment variable can have"
             ));
-        };
+        }
+        if let Some(n) = names_in(v).first().or(unknown_in(v).first()) {
+            ps.push(format!(
+                "on: args \"{k}\": a connector has no run, so no ${n}; write the value or a $$NAME"
+            ));
+        }
+    }
+    if ps.is_empty() {
+        Ok(args.clone())
+    } else {
+        Err(ps)
+    }
+}
+
+/// A name an environment variable can have: a letter or `_`, then
+/// letters, digits or `_`.
+pub fn env_name(n: &str) -> bool {
+    let mut cs = n.chars();
+    cs.next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// An `on` entry with no args: an event, a schedule, a path, or
+/// conditions.
+fn on_condition(item: &Value, m: &Map<String, Value>, o: &mut On) -> Result<(), String> {
+    {
         let trigger = ["event", "schedule", "path"]
             .iter()
             .any(|k| m.contains_key(*k));
@@ -728,7 +913,7 @@ fn on_entry(item: &Value, o: &mut On) -> Result<(), String> {
                             "on: event {v} is not a message type (two or more words joined by .)"
                         ));
                     }
-                    o.events.push(s.to_string());
+                    o.events.push(Listen::of(s));
                 }
                 "schedule" => {
                     let s = v.as_str().ok_or("on: a schedule is a cron line, as text")?;
@@ -972,6 +1157,7 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
                 on: None,
                 undo: None,
                 undo_args: Value::Object(Map::new()),
+                repeat: None,
             })
         }
         Value::Array(items) => Ok(Step::Side(Group {
@@ -989,6 +1175,7 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
                 on: w.on.map(Box::new),
                 undo: w.undo,
                 undo_args: w.undo_args,
+                repeat: w.repeat,
             })
         }
         _ => Err(one(format!(
@@ -1141,6 +1328,7 @@ struct Written {
     on: Option<On>,
     undo: Option<Name>,
     undo_args: Value,
+    repeat: Option<Repeat>,
 }
 
 fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
@@ -1239,6 +1427,16 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             empty()
         }),
     };
+    let rounds = match fields.remove("repeat") {
+        None => None,
+        Some(v) => repeat(&v, false).map_or_else(
+            |e| {
+                ps.push(Problem::new("", e));
+                None
+            },
+            Some,
+        ),
+    };
     if fields.remove("strict").is_some() {
         ps.push(Problem::new(
             "",
@@ -1248,7 +1446,9 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
     for other in fields.keys() {
         ps.push(Problem::new(
             "",
-            format!("\"{other}\" is not one of args, on, undo: a step's values go under args"),
+            format!(
+                "\"{other}\" is not one of args, on, undo, repeat: a step's values go under args"
+            ),
         ));
     }
     match step_name {
@@ -1258,6 +1458,7 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             on: when,
             undo,
             undo_args,
+            repeat: rounds,
         }),
         _ => Err(ps),
     }
@@ -1276,6 +1477,12 @@ fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, Vec<Problem>
                     return Err(vec![Problem::new(
                         "undo",
                         "undo is for a step of a list, not one side by side",
+                    )]);
+                }
+                if w.repeat.is_some() {
+                    return Err(vec![Problem::new(
+                        "",
+                        "repeat is for a step of a list, not one side by side: put the step in a workflow of its own, repeated, used here by its name",
                     )]);
                 }
                 let label = w.name.label();

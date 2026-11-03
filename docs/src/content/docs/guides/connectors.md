@@ -31,14 +31,33 @@ exec itero watch "$HOME/notes.txt"
 ```
 
 It runs in the workspace, with the daemon's `itero` first on its `PATH`
-and its args (`connector.<name>.args` in `itero.config.json`, set with
-[`itero ws cn args set`](/commands/connector/#args)) as environment
-variables, secrets among them:
-[A connector's args](/guides/secrets/#a-connectors-args). Its stdin closes
-when the daemon goes; its stderr goes to the daemon's stderr. The daemon
-starts it again when it ends, waiting longer each time, and gives up on one
-that keeps ending (`itero.connector.gave-up`); the log and `/health` show
-each connector.
+and its args as environment variables, secrets among them. Its args are
+given by the workflows that listen to it, in their `on` entry beside its
+event: [A connector's args](/guides/secrets/#a-connectors-args). Its stdin
+closes when the daemon goes; its stderr goes to the daemon's stderr. The
+daemon starts it again when it ends, waiting longer each time, and gives
+up on one that keeps ending (`itero.connector.gave-up`); the log and
+`/health` show each connector.
+
+### One connector, many sets of args
+
+Workflows may give one connector different args, to watch two mailboxes
+with one connector file:
+
+```json
+{ "on": [{ "event": "mail.received", "args": { "MAILBOX": "sales" } },
+         { "event": "mail.received", "args": { "MAILBOX": "support" } }] }
+```
+
+The daemon runs the connector once for each different set of args the
+workflows give it (the args as written, so `$$NAME`s are compared by
+name). Workflows giving the same set share that copy, and an event from a
+copy starts only the workflows whose `on` entry gave its args; a
+connector no entry gives args runs once with none. An event no connector
+sent (`itero ws emit`, `POST /events`) starts every workflow listening for
+its type, whatever its entries' args. When a workflow changes its args,
+the copy no workflow asks for any longer is stopped and the new one
+started, within two seconds. `itero ws cn list` shows each copy.
 
 A connector that keeps its own "last seen" sends one event per new thing,
 so each run has its own: `examples/mail-alert` prints one line per new

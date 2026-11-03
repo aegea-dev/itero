@@ -10,7 +10,7 @@
 //! phase, so a late answer from a branch already left behind is recognised
 //! and ignored.
 use super::{Event, Timer};
-use crate::flow::{self, Fail, Flow, Name, Need, On, Step, Wait};
+use crate::flow::{self, Fail, Flow, Name, Need, On, Repeat, Step, Wait};
 use chrono::{DateTime, FixedOffset, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -28,9 +28,9 @@ pub struct Runtime {
     pub phase: Phase,
     #[serde(default)]
     pub state: Map<String, Value>,
-    /// After a split: the args item this run is for, and whose it is.
+    /// A repeated workflow's run: which round it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub item: Option<Item>,
+    pub round: Option<Round>,
     /// Messages already taken, by id: one given twice counts once.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub taken: Vec<String>,
@@ -124,17 +124,16 @@ impl Phase {
 pub enum Ended {
     Done,
     Failed,
-    Error {
-        why: String,
-    },
-    /// It went on as one run per args item.
-    Split,
+    Error { why: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Item {
-    pub action: String,
-    pub value: Value,
+/// A round of a repeat: its number, from 1, and how many there are when
+/// `repeat` read them from a value (`"$output.count"`) as the first began.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Round {
+    pub count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub of: Option<u64>,
 }
 
 /// A node of a run's position.
@@ -145,6 +144,16 @@ pub enum At {
     Flow {
         workflow: String,
         step: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        inner: Option<Box<At>>,
+    },
+    /// A repeated step: its round, and the step's node in this round; none
+    /// while a cron repeat waits for its next time (`next`).
+    Round {
+        #[serde(flatten)]
+        round: Round,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         inner: Option<Box<At>>,
     },
@@ -247,10 +256,10 @@ pub struct StepInput {
     /// The run's pinned workflows by name, as JSON: its own and those it
     /// uses as steps.
     pub flows: BTreeMap<String, Value>,
-    /// The repeat of the actions they use, from the manifest: a step of
-    /// one runs once per item.
-    #[serde(default)]
-    pub repeat: BTreeMap<String, Value>,
+    /// The run's workflow is on and within its `from` and `until`: a
+    /// repeat goes on only while it is.
+    #[serde(default = "yes")]
+    pub active: bool,
     /// The `$$` names that are defined.
     #[serde(default)]
     pub defined: Vec<String>,
@@ -274,10 +283,9 @@ pub struct StepAnswer {
     /// Runs to start now: the workflows used as steps reached.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<StepChild>,
-    /// New runs, one per args item, each going on from where this one
-    /// split.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub split: Vec<Runtime>,
+    /// A repeated workflow's next round: a new run, as seeded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_round: Option<Runtime>,
     /// The run's timers from now on.
     pub timers: Vec<Timer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -306,9 +314,6 @@ pub struct StepJob {
     /// The step's data in the workflow.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub data: Map<String, Value>,
-    /// The args item, after a split.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub item: Option<Value>,
     /// Since when it has been waiting, when it runs again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_since: Option<String>,
@@ -327,6 +332,14 @@ pub struct StepChild {
     /// The step's args: its `$event`.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub event: Map<String, Value>,
+    /// Its first state beside `$event`: a repeated step's `$count`, and,
+    /// after the first round, the round before's `$output` and `$steps`.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub seed: Map<String, Value>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// What a run that ended returns, to the step that started it: its
@@ -350,13 +363,12 @@ pub fn first_state(event: Value, config: Map<String, Value>) -> Map<String, Valu
 }
 
 /// Where a run is, or how it ended, in a word: `running`, `waiting`,
-/// `done`, `failed`, `error` or `split`.
+/// `done`, `failed` or `error`.
 pub fn status(rt: &Runtime) -> &'static str {
     match &rt.ended {
         Some(Ended::Done) => "done",
         Some(Ended::Failed) => "failed",
         Some(Ended::Error { .. }) => "error",
-        Some(Ended::Split) => "split",
         None if is_waiting(rt) => "waiting",
         None => "running",
     }
@@ -396,7 +408,7 @@ pub fn decide(input: &StepInput) -> Result<StepAnswer, String> {
         jobs: vec![],
         children: vec![],
         kept: None,
-        split: None,
+        seed: Map::new(),
         broke: None,
         log: vec![],
         notes: vec![],
@@ -408,25 +420,17 @@ pub fn decide(input: &StepInput) -> Result<StepAnswer, String> {
     } else {
         m.handle()?;
     }
-    let mut split = vec![];
-    if let Some((action, items)) = m.split.take() {
-        for value in items {
-            let mut child = m.rt.clone();
-            child.item = Some(Item {
-                action: action.clone(),
-                value,
-            });
-            split.push(child);
-        }
-        m.jobs.clear();
-        m.end(Ended::Split);
-    }
+    // a repeated workflow's run that ended well: its next round
+    let next_round = match (&input.runtime.ended, &m.rt.ended) {
+        (None, Some(Ended::Done)) => m.next_round(),
+        _ => None,
+    };
     let timers = m.timers();
     Ok(StepAnswer {
         runtime: m.rt,
         jobs: m.jobs,
         children: m.children,
-        split,
+        next_round,
         timers,
         log: m.log,
         notes: m.notes,
@@ -444,8 +448,9 @@ struct Machine<'a> {
     /// What a workflow used as a step returned, kept by its name in place
     /// of its `$output` once its step is recorded.
     kept: Option<Value>,
-    /// An action with a list of args was reached: its name and the items.
-    split: Option<(String, Vec<Value>)>,
+    /// The first state of the next workflow used as a step, beside its
+    /// `$event`: a repeated step's round.
+    seed: Map<String, Value>,
     /// A step that could not start, and why: the run breaks there once the
     /// event is handled.
     broke: Option<(String, String)>,
@@ -513,18 +518,25 @@ impl Machine<'_> {
         let d = &self.i.event.data;
         match self.i.event.kind.as_str() {
             "run.started" if self.rt.at.is_none() => {
-                // its `$event`: the message's data
-                self.rt.state = Map::new();
+                // its `$event`: the message's data, beside what it was
+                // seeded with (a round's, a repeated step's)
                 self.rt.state.insert("event".into(), d.clone());
                 self.rt.phase = Phase::Steps;
+                if let Err(why) = self.first_round() {
+                    self.broke = Some((why, self.i.workflow.clone()));
+                    return Ok(());
+                }
                 self.begin()
             }
-            // a run split from another: its position is there already
             "run.started" => {
-                self.resume();
+                self.log
+                    .push("run.started ignored: the run has begun".into());
                 Ok(())
             }
             "action.finished" => self.finished(&path(d)?, &output(d)),
+            "timer.fired" if d.get("kind").and_then(Value::as_str) == Some("round") => {
+                self.round_due()
+            }
             "workflow.ended" => self.child_ended(&path(d)?, d),
             "action.waiting" => self.waiting(&path(d)?, &output(d)),
             "action.failed" => {
@@ -663,6 +675,7 @@ impl Machine<'_> {
                         on: None,
                         undo: None,
                         undo_args: Value::Object(Map::new()),
+                        repeat: None,
                     })
                 })
                 .collect::<Result<_, String>>()?,
@@ -709,6 +722,28 @@ impl Machine<'_> {
     fn start_step(&mut self, step: &Step, path: &mut Vec<usize>) -> Result<Option<At>, String> {
         match step {
             Step::One {
+                repeat: Some(r),
+                label,
+                ..
+            } => {
+                // its first round: how many there are, when a value says
+                let of = match r {
+                    Repeat::TimesOf(p) => match self.count_of(p) {
+                        Ok(0) => {
+                            self.skipped(label);
+                            return Ok(None);
+                        }
+                        Ok(n) => Some(n),
+                        Err(why) => {
+                            self.broke = Some((why, label.clone()));
+                            return Ok(None);
+                        }
+                    },
+                    _ => None,
+                };
+                self.round(step, Round { count: 1, of }, path)
+            }
+            Step::One {
                 name,
                 args,
                 on,
@@ -729,7 +764,7 @@ impl Machine<'_> {
                         return Ok(None);
                     }
                 };
-                self.start_name(name, &data, path, false)
+                self.start_name(name, &data, path)
             }
             Step::Side(group) => {
                 let mut entries: Vec<Entry> = vec![];
@@ -740,7 +775,7 @@ impl Machine<'_> {
                         None
                     } else {
                         match self.args(&m.args) {
-                            Ok(data) => self.start_name(&m.name, &data, path, true)?,
+                            Ok(data) => self.start_name(&m.name, &data, path)?,
                             Err(why) => {
                                 // it cannot start: that step of the group breaks
                                 self.broke = Some((why, m.label.clone()));
@@ -773,7 +808,7 @@ impl Machine<'_> {
                 Ok(
                     match self.settle(group.wait.clone(), group.fail.clone(), entries, path) {
                         Adv::Going(at) => Some(at),
-                        Adv::Done => None,
+                        Adv::Done | Adv::RoundDone { .. } => None,
                         Adv::Broke { step, why } => {
                             self.broke = Some((why, step));
                             None
@@ -784,12 +819,248 @@ impl Machine<'_> {
         }
     }
 
+    /// A round of a repeated step: `$count` set, and, for a workflow used as
+    /// a step, its run seeded with the round before's results; the step's
+    /// node in it.
+    fn round(
+        &mut self,
+        step: &Step,
+        round: Round,
+        path: &mut Vec<usize>,
+    ) -> Result<Option<At>, String> {
+        let Step::One { label, name, .. } = step else {
+            return Ok(None);
+        };
+        self.rt.state.insert("count".into(), round.count.into());
+        if matches!(name, Name::Workflow(_)) {
+            let mut seed = Map::new();
+            seed.insert("count".into(), round.count.into());
+            if round.count > 1 {
+                let back =
+                    flow::lookup(&self.rt.state, &format!("steps.{}", flow::step_key(label)));
+                seed.insert(
+                    "output".into(),
+                    self.rt.state.get("output").cloned().unwrap_or_default(),
+                );
+                seed.insert(
+                    "steps".into(),
+                    back.and_then(|b| b.get("steps"))
+                        .cloned()
+                        .unwrap_or_else(|| json!({})),
+                );
+            }
+            self.seed = seed;
+        }
+        let mut once = step.clone();
+        if let Step::One { repeat, .. } = &mut once {
+            *repeat = None;
+        }
+        let node = self.start_step(&once, path)?;
+        self.seed = Map::new();
+        Ok(match node {
+            Some(n) => Some(At::Round {
+                round,
+                next: None,
+                inner: Some(Box::new(n)),
+            }),
+            None => {
+                self.rt.state.remove("count");
+                None
+            }
+        })
+    }
+
+    /// A value read as a number of rounds (`repeat: "$output.count"`).
+    fn count_of(&self, p: &str) -> Result<u64, String> {
+        match flow::lookup(&self.view(), p) {
+            Some(v) if v.as_u64().is_some() => Ok(v.as_u64().unwrap_or_default()),
+            v => Err(format!(
+                "repeat: ${p} is {}, not a number of rounds",
+                v.map_or("not there".to_string(), Value::to_string)
+            )),
+        }
+    }
+
+    /// Whether a repeat goes on after round `round` ended well.
+    fn goes_on(&self, r: &Repeat, round: Round) -> bool {
+        let now = self.now.with_timezone(&Utc);
+        self.i.active
+            && match r {
+                Repeat::Always | Repeat::Cron(_) => true,
+                Repeat::Times(n) => round.count < *n,
+                Repeat::TimesOf(_) => round.of.is_some_and(|n| round.count < n),
+                Repeat::Until(t) => now < *t,
+                Repeat::After(t) => now >= *t,
+            }
+    }
+
+    /// A repeated workflow's run, as it starts: its round (the first unless
+    /// it was seeded with one), `$count` set.
+    fn first_round(&mut self) -> Result<(), String> {
+        let Some(r) = self.flows[&self.i.workflow].repeat.clone() else {
+            return Ok(());
+        };
+        let round = match self.rt.round {
+            Some(round) => round,
+            None => Round {
+                count: 1,
+                of: match &r {
+                    Repeat::TimesOf(p) => Some(self.count_of(p)?),
+                    _ => None,
+                },
+            },
+        };
+        self.rt.round = Some(round);
+        self.rt.state.insert("count".into(), round.count.into());
+        Ok(())
+    }
+
+    /// A repeated workflow's run that ended well: the next round, a new
+    /// run seeded with this one's `$event`, `$output` and `$steps`, unless
+    /// the repeat is over.
+    fn next_round(&self) -> Option<Runtime> {
+        let r = self.flows[&self.i.workflow].repeat.as_ref()?;
+        let round = self.rt.round?;
+        if !self.goes_on(r, round) {
+            return None;
+        }
+        let mut state = Map::new();
+        for key in ["event", "output", "steps"] {
+            if let Some(v) = self.rt.state.get(key) {
+                state.insert(key.into(), v.clone());
+            }
+        }
+        state.insert("count".into(), (round.count + 1).into());
+        Some(Runtime {
+            state,
+            round: Some(Round {
+                count: round.count + 1,
+                of: round.of,
+            }),
+            ..Runtime::default()
+        })
+    }
+
+    /// The round of a repeated step that ended: the next one, now or at its
+    /// cron line's next time, or the step is done.
+    fn after_round(
+        &mut self,
+        workflow: &str,
+        step: usize,
+        prefix: Vec<usize>,
+        round: Round,
+        status: Option<Value>,
+    ) -> Result<Adv, String> {
+        let Some(s) = self.list(workflow)?.get(step).cloned() else {
+            return self.step_done(workflow, step, prefix);
+        };
+        let Step::One {
+            repeat: Some(r), ..
+        } = &s
+        else {
+            return self.step_done(workflow, step, prefix);
+        };
+        let r = r.clone();
+        // a round that failed (its result says "success": false, or a
+        // workflow's ended failed or in error) stops the repeat
+        let failed = flow::lookup(&self.rt.state, "output.success") == Some(&Value::Bool(false))
+            || status.is_some_and(|st| st != "done");
+        if failed || !self.goes_on(&r, round) {
+            self.rt.state.remove("count");
+            return self.step_done(workflow, step, prefix);
+        }
+        let next = Round {
+            count: round.count + 1,
+            of: round.of,
+        };
+        if let Repeat::Cron(line) = &r {
+            let at = crate::engine::schedule::next(line, self.now.with_timezone(&Utc))?;
+            return Ok(Adv::Going(At::Flow {
+                workflow: workflow.into(),
+                step,
+                inner: Some(Box::new(At::Round {
+                    round,
+                    next: Some(stamp(at.fixed_offset())),
+                    inner: None,
+                })),
+            }));
+        }
+        self.next_round_of(workflow, step, prefix, &s, next)
+    }
+
+    /// Starts round `round` of the repeated step `s`: the step's node, or
+    /// the step done when it does not run (its `on` no longer holds).
+    fn next_round_of(
+        &mut self,
+        workflow: &str,
+        step: usize,
+        prefix: Vec<usize>,
+        s: &Step,
+        round: Round,
+    ) -> Result<Adv, String> {
+        let mut p = prefix.clone();
+        p.push(step);
+        let node = self.round(s, round, &mut p)?;
+        if let Some((why, step)) = self.broke.take() {
+            return Ok(Adv::Broke { step, why });
+        }
+        match node {
+            Some(n) => Ok(Adv::Going(At::Flow {
+                workflow: workflow.into(),
+                step,
+                inner: Some(Box::new(n)),
+            })),
+            None => self.step_done(workflow, step, prefix),
+        }
+    }
+
+    /// A timer: the next round of a cron repeat is due.
+    fn round_due(&mut self) -> Result<(), String> {
+        let Some(At::Flow {
+            workflow,
+            step,
+            inner: Some(i),
+        }) = self.rt.at.clone()
+        else {
+            return Ok(());
+        };
+        let At::Round {
+            round,
+            next: Some(next),
+            inner: None,
+        } = *i
+        else {
+            self.log
+                .push("a round timer ignored: no round waits".into());
+            return Ok(());
+        };
+        let due = DateTime::parse_from_rfc3339(&next).map_err(|e| e.to_string())?;
+        if due > self.now {
+            return Ok(());
+        }
+        let Some(s) = self.list(&workflow)?.get(step).cloned() else {
+            return Ok(());
+        };
+        let prefix = vec![self.rt.phase.index()];
+        let next = Round {
+            count: round.count + 1,
+            of: round.of,
+        };
+        match self.next_round_of(&workflow, step, prefix, &s, next)? {
+            Adv::Going(at) => {
+                self.rt.at = Some(at);
+                Ok(())
+            }
+            Adv::Done | Adv::RoundDone { .. } => self.list_done(),
+            Adv::Broke { step, why } => self.fail(&why, &step),
+        }
+    }
+
     fn start_name(
         &mut self,
         name: &Name,
         data: &Map<String, Value>,
         path: &[usize],
-        side: bool,
     ) -> Result<Option<At>, String> {
         match name {
             Name::Action { name, version } => {
@@ -803,25 +1074,7 @@ impl Machine<'_> {
                     output: None,
                     event: None,
                 };
-                let mine = self.rt.item.as_ref().is_some_and(|it| it.action == *name);
-                if let Some(Value::Array(items)) = self.i.repeat.get(name)
-                    && !mine
-                {
-                    if side || self.split.is_some() {
-                        return Err(format!(
-                            "#{name}: a list of args splits a run, which a step side by side cannot"
-                        ));
-                    }
-                    if self.i.child {
-                        return Err(format!(
-                            "#{name}: a list of args splits a run, which a workflow used as a step cannot"
-                        ));
-                    }
-                    self.split = Some((name.clone(), items.clone()));
-                    return Ok(Some(leaf));
-                }
-                self.jobs
-                    .extend(job(&mut leaf, path, self.rt.item.as_ref()));
+                self.jobs.extend(job(&mut leaf, path));
                 Ok(Some(leaf))
             }
             Name::Workflow(w) => {
@@ -839,6 +1092,7 @@ impl Machine<'_> {
                     path: path.to_vec(),
                     workflow: w.clone(),
                     event: data.clone(),
+                    seed: std::mem::take(&mut self.seed),
                 });
                 Ok(Some(At::Child {
                     workflow: w.clone(),
@@ -846,20 +1100,6 @@ impl Machine<'_> {
                 }))
             }
         }
-    }
-
-    /// Hands out the jobs of a run split from another.
-    fn resume(&mut self) {
-        let item = self.rt.item.clone();
-        let mut jobs = vec![];
-        if let Some(at) = self.rt.at.as_mut() {
-            leaves(at, &mut vec![self.rt.phase.index()], &mut |leaf, p| {
-                if matches!(leaf, At::Action { started: false, .. }) {
-                    jobs.extend(job(leaf, p, item.as_ref()));
-                }
-            });
-        }
-        self.jobs.extend(jobs);
     }
 
     /// The leaf at `path`, if it is one of this run's current actions.
@@ -926,7 +1166,7 @@ impl Machine<'_> {
                 self.rt.at = Some(at);
                 Ok(())
             }
-            Adv::Done => self.list_done(),
+            Adv::Done | Adv::RoundDone { .. } => self.list_done(),
             Adv::Broke { step, why } => self.fail(&why, &step),
         }
     }
@@ -958,6 +1198,21 @@ impl Machine<'_> {
                 step,
                 inner,
             } => self.advance_flow(workflow, step, inner, path, prefix, leaf),
+            // a round of a repeated step: the step's node under it
+            At::Round {
+                round,
+                next,
+                inner: Some(i),
+            } => Ok(match self.advance(*i, path, prefix, leaf)? {
+                Adv::Going(n) => Adv::Going(At::Round {
+                    round,
+                    next,
+                    inner: Some(Box::new(n)),
+                }),
+                Adv::Done => Adv::RoundDone { round },
+                other => other,
+            }),
+            waiting @ At::Round { inner: None, .. } => Ok(Adv::Going(waiting)),
             At::Side {
                 wait,
                 fail,
@@ -1022,6 +1277,8 @@ impl Machine<'_> {
                             entries[j].outcome = Some(Outcome::Broke { step, why });
                             entries[j].order = next_order(&entries);
                         }
+                        // a step side by side is never repeated
+                        Adv::RoundDone { .. } => unreachable!("a repeated step side by side"),
                     }
                 }
                 Ok(self.settle(wait, fail, entries, &prefix))
@@ -1054,15 +1311,41 @@ impl Machine<'_> {
                 inner: Some(Box::new(n)),
             })),
             broke @ Adv::Broke { .. } => Ok(broke),
+            Adv::RoundDone { round } => {
+                // each round's result is kept by the step's name
+                let status = self.kept.as_ref().and_then(|k| k.get("status").cloned());
+                if let Some(Step::One { label, .. }) = self.list(&workflow)?.get(step).cloned() {
+                    self.record(&flow::step_key(&label));
+                }
+                self.after_round(&workflow, step, prefix, round, status)
+            }
             Adv::Done => {
-                // the step finished: what takes it back, if the run breaks
-                // later
+                if self.rt.phase != Phase::Undo
+                    && let Some(Step::One { label, .. }) = self.list(&workflow)?.get(step).cloned()
+                {
+                    self.record(&flow::step_key(&label));
+                }
+                self.step_done(&workflow, step, prefix)
+            }
+        }
+    }
+
+    /// The step at `step` finished (and was kept by its name): what takes
+    /// it back, if the run breaks later, and on to the next step.
+    fn step_done(
+        &mut self,
+        workflow: &str,
+        step: usize,
+        prefix: Vec<usize>,
+    ) -> Result<Adv, String> {
+        {
+            {
                 if self.rt.phase == Phase::Steps
                     && let Some(Step::One {
                         undo: Some(u),
                         undo_args,
                         ..
-                    }) = self.flows[&workflow].steps.get(step)
+                    }) = self.flows[workflow].steps.get(step)
                 {
                     self.rt.undo.push(Undo {
                         step: written(u),
@@ -1070,15 +1353,8 @@ impl Machine<'_> {
                         output: self.rt.state.get("output").cloned().unwrap_or_default(),
                     });
                 }
-                // and its result, kept by its name (a group's steps were
-                // kept as each finished)
-                if self.rt.phase != Phase::Undo
-                    && let Some(Step::One { label, .. }) = self.list(&workflow)?.get(step).cloned()
-                {
-                    self.record(&flow::step_key(&label));
-                }
                 let mut p = prefix;
-                let next = self.start_list(&workflow, step + 1, &mut p)?;
+                let next = self.start_list(workflow, step + 1, &mut p)?;
                 if let Some((why, step)) = self.broke.take() {
                     return Ok(Adv::Broke { step, why });
                 }
@@ -1290,12 +1566,11 @@ impl Machine<'_> {
 
     /// Runs the waiting actions again.
     fn wake(&mut self) {
-        let item = self.rt.item.clone();
         let mut jobs = vec![];
         if let Some(at) = self.rt.at.as_mut() {
             leaves(at, &mut vec![self.rt.phase.index()], &mut |leaf, p| {
                 if matches!(leaf, At::Action { waiting: true, .. }) {
-                    jobs.extend(job(leaf, p, item.as_ref()));
+                    jobs.extend(job(leaf, p));
                 }
             });
         }
@@ -1325,7 +1600,6 @@ impl Machine<'_> {
         }
         // taken by each waiting step whose output it agrees with: it is
         // that step's output, and the step runs again
-        let item = self.rt.item.clone();
         let mut jobs = vec![];
         if let Some(at) = self.rt.at.as_mut() {
             leaves(at, &mut vec![self.rt.phase.index()], &mut |leaf, p| {
@@ -1341,7 +1615,7 @@ impl Machine<'_> {
                         .is_some_and(|o| ours(o, &data))
                 {
                     *event = Some(Value::Object(data.clone()));
-                    jobs.extend(job(leaf, p, item.as_ref()));
+                    jobs.extend(job(leaf, p));
                 }
             });
         }
@@ -1408,11 +1682,24 @@ impl Machine<'_> {
         chrono::Duration::from_std(t).unwrap_or(chrono::Duration::days(1))
     }
 
-    /// The run's timers: none unless a step waits; then the hourly retry
-    /// and the deadline of the longest waiting.
+    /// The run's timers: a cron repeat's next round, when one waits; and,
+    /// while a step waits for data, the hourly retry and the deadline of
+    /// the longest waiting.
     fn timers(&mut self) -> Vec<Timer> {
         if self.rt.ended.is_some() {
             return vec![];
+        }
+        if let Some(At::Flow { inner: Some(i), .. }) = &self.rt.at
+            && let At::Round {
+                next: Some(next),
+                inner: None,
+                ..
+            } = i.as_ref()
+        {
+            return vec![Timer {
+                at: next.clone(),
+                data: json!({"kind": "round"}),
+            }];
         }
         let since = self
             .waiting_leaves()
@@ -1454,6 +1741,10 @@ enum Leaf {
 enum Adv {
     Going(At),
     Done,
+    /// A round of a repeated step ended well.
+    RoundDone {
+        round: Round,
+    },
     /// A step broke: its name, and why.
     Broke {
         step: String,
@@ -1617,7 +1908,7 @@ fn written(n: &Name) -> String {
 }
 
 /// A leaf's job, handing it out.
-fn job(leaf: &mut At, path: &[usize], item: Option<&Item>) -> Option<StepJob> {
+fn job(leaf: &mut At, path: &[usize]) -> Option<StepJob> {
     let At::Action {
         name,
         version,
@@ -1638,9 +1929,6 @@ fn job(leaf: &mut At, path: &[usize], item: Option<&Item>) -> Option<StepJob> {
         action: name.clone(),
         version: version.clone(),
         data: data.clone(),
-        item: item
-            .filter(|it| it.action == *name)
-            .map(|it| it.value.clone()),
         waiting_since: waiting_since.clone(),
         event: event.clone(),
     })
@@ -1651,6 +1939,11 @@ fn job(leaf: &mut At, path: &[usize], item: Option<&Item>) -> Option<StepJob> {
 fn leaves(node: &mut At, path: &mut Vec<usize>, f: &mut dyn FnMut(&mut At, &[usize])) {
     match node {
         At::Action { .. } | At::Child { .. } => f(node, path),
+        At::Round { inner, .. } => {
+            if let Some(i) = inner {
+                leaves(i, path, f);
+            }
+        }
         At::Flow { step, inner, .. } => {
             if let Some(i) = inner {
                 path.push(*step);
@@ -1701,6 +1994,15 @@ fn prune(
                 inner: Some(Box::new(i)),
             })
         }
+        At::Round { round, next, inner } => {
+            inner
+                .and_then(|i| prune(*i, path, drop, gone))
+                .map(|i| At::Round {
+                    round,
+                    next,
+                    inner: Some(Box::new(i)),
+                })
+        }
         At::Side {
             wait,
             fail,
@@ -1732,6 +2034,7 @@ fn breaking(node: &At, path: &[usize]) -> bool {
     };
     match node {
         At::Action { .. } | At::Child { .. } => false,
+        At::Round { inner, .. } => inner.as_deref().is_some_and(|i| breaking(i, path)),
         At::Flow { step, inner, .. } => {
             first == *step && inner.as_deref().is_some_and(|i| breaking(i, rest))
         }
@@ -1754,6 +2057,10 @@ fn find<'n>(node: &'n mut At, path: &[usize]) -> Option<&'n mut At> {
     if matches!(node, At::Action { .. } | At::Child { .. }) {
         return path.is_empty().then_some(node);
     }
+    // a round of a repeated step takes no place in a path
+    if let At::Round { inner, .. } = node {
+        return find(inner.as_mut()?, path);
+    }
     let (&first, rest) = path.split_first()?;
     match node {
         At::Flow { step, inner, .. } => {
@@ -1763,7 +2070,7 @@ fn find<'n>(node: &'n mut At, path: &[usize]) -> Option<&'n mut At> {
             find(inner.as_mut()?, rest)
         }
         At::Side { entries, .. } => find(entries.get_mut(first)?.at.as_mut()?, rest),
-        At::Action { .. } | At::Child { .. } => None,
+        At::Action { .. } | At::Child { .. } | At::Round { .. } => None,
     }
 }
 

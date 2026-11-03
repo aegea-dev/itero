@@ -2,7 +2,8 @@
 //! print the data of one message of their file name's type; and `itero
 //! watch`, for connectors that watch a file.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
-use itero::connectors::supervise::{self, Connector, Policy};
+use itero::connectors::Copy;
+use itero::connectors::supervise::{self, Policy};
 use itero::engine::daemon::Health;
 use itero::engine::journal::Journal;
 use std::io::{BufRead, BufReader, Write};
@@ -81,10 +82,7 @@ fn run_it(ws: &itero::workspace::Workspace) -> Health {
     let (wake, _woken) = std::sync::mpsc::channel();
     let health = Mutex::new(Health::starting("2026-10-21T10:00:00Z"));
     let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
-    let connector = Connector {
-        kind: &kind,
-        file: &file,
-    };
+    let connector = Copy::plain(&kind, file.clone());
     supervise::run(
         ws,
         exe,
@@ -141,10 +139,7 @@ fn a_connector_that_cannot_start_is_given_up_on_with_why() {
     let (wake, _woken) = std::sync::mpsc::channel();
     let health = Mutex::new(Health::starting("2026-10-21T10:00:00Z"));
     let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
-    let connector = Connector {
-        kind: &kind,
-        file: &file,
-    };
+    let connector = Copy::plain(&kind, file.clone());
     supervise::run(
         &ws,
         exe,

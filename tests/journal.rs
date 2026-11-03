@@ -302,11 +302,12 @@ fn a_run_started_by_a_step_keeps_its_parent_and_the_step() {
         timers: None,
         events: vec![],
         shown: vec![],
-        splits: vec![],
+        next_round: None,
         children: vec![Child {
             workflow: "günlük",
             flows: &pinned,
             input: &input,
+            seed: &serde_json::Map::new(),
             path: vec![0, 1],
         }],
         stopped: vec![],

@@ -2,6 +2,7 @@
 //! into a message for the workspace, and starts it again when it ends,
 //! waiting longer each time; one that keeps ending is given up on, and the
 //! log and `/health` say so.
+use crate::connectors::Copy;
 use crate::engine::daemon::{ConnectorHealth, Health, stamp};
 use crate::engine::journal::{self, Envelope, Journal};
 use crate::engine::log::Log;
@@ -67,13 +68,6 @@ impl Policy {
     }
 }
 
-/// A connector of the workspace: the type of the messages it sends (its file
-/// name), and its file.
-pub struct Connector<'a> {
-    pub kind: &'a str,
-    pub file: &'a Path,
-}
-
 /// One line a connector printed: the data of a message, a JSON object.
 pub fn parse_line(line: &str) -> Result<Map<String, Value>, String> {
     match serde_json::from_str(line) {
@@ -106,19 +100,20 @@ pub fn path_with(exe: &Path) -> std::ffi::OsString {
     std::env::join_paths(dirs).unwrap_or_default()
 }
 
-/// One start of the connector, until it ends: how it ended. Its args are
-/// read at each start, so a change to them is taken on its next.
+/// One start of the connector, until it ends: how it ended. Its `$$NAME`s
+/// are looked up at each start, so a change to them is taken on its next.
 fn once(
     ws: &Workspace,
     exe: &Path,
-    s: &Connector,
+    s: &Copy,
     wake: &Sender<()>,
     log: &Log,
     stop: &Stop,
 ) -> anyhow::Result<String> {
     let j = Journal::open(ws)?;
-    let env = crate::engine::daemon::connector_env(ws, s.kind).map_err(anyhow::Error::msg)?;
-    let mut child = Command::new(s.file)
+    let env = crate::engine::daemon::connector_env(ws, &s.listen.kind, &s.listen.args)
+        .map_err(anyhow::Error::msg)?;
+    let mut child = Command::new(&s.file)
         .current_dir(&ws.root)
         .envs(env)
         .env("PATH", path_with(exe))
@@ -140,8 +135,8 @@ fn once(
         match parse_line(&line) {
             Ok(data) => {
                 let e = Envelope::new(
-                    &format!("connector/{}", s.kind),
-                    s.kind,
+                    &s.source(),
+                    &s.listen.kind,
                     &journal::subject("app"),
                     &stamp(chrono::Utc::now()),
                     None,
@@ -150,7 +145,7 @@ fn once(
                 j.publish(&e)?;
                 let _ = wake.send(());
             }
-            Err(why) => log.write("error", json!({ "connector": s.kind, "why": why })),
+            Err(why) => log.write("error", json!({ "connector": s.name(), "why": why })),
         }
     }
     drop(stdin);
@@ -165,13 +160,14 @@ fn once(
 pub fn run(
     ws: &Workspace,
     exe: &Path,
-    s: &Connector,
+    s: &Copy,
     policy: &Policy,
     wake: &Sender<()>,
     health: &Mutex<Health>,
     log: &Log,
     stop: &Stop,
 ) {
+    let name = s.name();
     let mut ends: Vec<Instant> = vec![];
     let mut pause = Duration::ZERO;
     loop {
@@ -179,11 +175,11 @@ pub fn run(
             return;
         }
         let began = Instant::now();
-        set(health, s.kind, |h| {
+        set(health, &name, |h| {
             h.state = "running".into();
             h.restarts = ends.len();
         });
-        log.write("connector.started", json!({ "connector": s.kind }));
+        log.write("connector.started", json!({ "connector": name }));
         let ended = match once(ws, exe, s, wake, log, stop) {
             Ok(status) => status,
             Err(e) => format!("error: {e:#}"),
@@ -191,7 +187,7 @@ pub fn run(
         let ran = began.elapsed();
         log.write(
             "connector.ended",
-            json!({ "connector": s.kind, "why": ended, "seconds": ran.as_secs() }),
+            json!({ "connector": name, "why": ended, "seconds": ran.as_secs() }),
         );
         if stop.is_set() {
             return;
@@ -205,20 +201,20 @@ pub fn run(
             );
             log.write(
                 "connector.gave-up",
-                json!({ "connector": s.kind, "why": why }),
+                json!({ "connector": name, "why": why }),
             );
             let own = crate::engine::events::own(
                 "itero.connector.gave-up",
-                json!({ "connector": s.kind, "why": why }),
+                json!({ "connector": name, "why": why }),
                 &stamp(chrono::Utc::now()),
             );
             if let Err(e) = Journal::open(ws).and_then(|j| j.publish(&own)) {
                 log.write(
                     "error",
-                    json!({ "connector": s.kind, "why": format!("{e:#}") }),
+                    json!({ "connector": name, "why": format!("{e:#}") }),
                 );
             }
-            set(health, s.kind, |h| {
+            set(health, &name, |h| {
                 h.state = "gave up".into();
                 h.restarts = restarts;
                 h.last_exit = Some(ended);
@@ -226,7 +222,7 @@ pub fn run(
             return;
         };
         pause = next;
-        set(health, s.kind, |h| {
+        set(health, &name, |h| {
             h.state = "waiting".into();
             h.restarts = restarts;
             h.last_exit = Some(ended);

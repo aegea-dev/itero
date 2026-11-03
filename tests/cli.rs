@@ -23,11 +23,6 @@ fn err(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).to_string()
 }
 
-/// The workspace's manifest, read.
-fn manifest(d: &Path) -> serde_json::Value {
-    serde_json::from_str(&std::fs::read_to_string(d.join("itero.config.json")).unwrap()).unwrap()
-}
-
 #[test]
 fn action_args_and_workflow_settings_are_gone() {
     let d = workspace();
@@ -35,6 +30,8 @@ fn action_args_and_workflow_settings_are_gone() {
     for args in [
         &["ws", "ac", "args", "get", "kargola"][..],
         &["ws", "wf", "config", "get", "kargola"],
+        &["ws", "cn", "args", "get", "kargola"],
+        &["ws", "ac", "repeat", "get", "kargola"],
     ] {
         let o = itero(d.path(), args);
         assert!(
@@ -75,66 +72,107 @@ fn check_refuses_values_in_the_manifest() {
         !o.status.success() && err(&o).contains("settings are gone"),
         "{o:?}"
     );
-}
-
-#[test]
-#[cfg(unix)]
-fn args_are_written_for_the_connector_and_checked() {
-    let d = workspace();
-    file(d.path(), "connectors/posta.geldi", "#!/bin/sh\n");
-    let o = itero(
-        d.path(),
-        &[
-            "ws",
-            "cn",
-            "args",
-            "set",
-            "posta.geldi",
-            r#"{"user": "ayşe@örnek.test"}"#,
-        ],
-    );
-    assert!(o.status.success(), "{o:?}");
-    let m = manifest(d.path());
-    assert_eq!(
-        m["connector"]["posta.geldi"]["args"]["user"],
-        "ayşe@örnek.test"
-    );
-    assert!(m.get("action").is_none(), "{m}");
-    assert!(itero(d.path(), &["ws", "check"]).status.success());
-    // a connector runs once: no list
-    let o = itero(
-        d.path(),
-        &[
-            "ws",
-            "cn",
-            "args",
-            "set",
-            "posta.geldi",
-            r#"[{"user": "can@örnek.test"}]"#,
-        ],
-    );
-    assert!(!o.status.success());
-    assert!(
-        err(&o).contains("a connector's args are an object"),
-        "{}",
-        err(&o)
-    );
+    // an action's repeat: onto the step
     file(
         d.path(),
         "itero.config.json",
-        r#"{"connector": {"posta.geldi": {"args": [{"user": "can@örnek.test"}]}}}"#,
+        r#"{"action": {"kargola": {"repeat": [{"firma": "PTT Kargo"}]}}}"#,
     );
     let o = itero(d.path(), &["ws", "check"]);
     assert!(
         !o.status.success()
-            && err(&o).contains("itero.config.json: args")
+            && err(&o).contains("repeat is gone")
+            && err(&o).contains("/actions/kargola)"),
+        "{o:?}"
+    );
+    // a connector's args: into each on entry that listens
+    file(d.path(), "connectors/posta.geldi", "#!/bin/sh\n");
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"connector": {"posta.geldi": {"args": {"KUTU": "satış"}}}}"#,
+    );
+    let o = itero(d.path(), &["ws", "check"]);
+    assert!(
+        !o.status.success()
+            && err(&o).contains("itero.config.json: args are gone")
+            && err(&o).contains("on entry")
             && err(&o).contains("/connectors/posta.geldi)"),
         "{o:?}"
     );
-    // listed, as JSON too
+}
+
+#[test]
+fn ws_add_keeps_env_out_of_git() {
+    let state = tempfile::tempdir().unwrap();
+    let d = workspace();
+    assert!(
+        itero_on(d.path(), state.path(), &["ws", "add"])
+            .status
+            .success()
+    );
+    assert_eq!(
+        std::fs::read_to_string(d.path().join(".gitignore")).unwrap(),
+        ".env\n"
+    );
+    // a .gitignore of its own: the line added once, after what is there
+    let d = workspace();
+    file(d.path(), ".gitignore", "node_modules");
+    assert!(
+        itero_on(d.path(), state.path(), &["ws", "add"])
+            .status
+            .success()
+    );
+    assert!(
+        itero_on(d.path(), state.path(), &["ws", "add"])
+            .status
+            .success()
+    );
+    assert_eq!(
+        std::fs::read_to_string(d.path().join(".gitignore")).unwrap(),
+        "node_modules\n.env\n"
+    );
+    let d = workspace();
+    file(d.path(), ".gitignore", "/.env\n");
+    assert!(
+        itero_on(d.path(), state.path(), &["ws", "add"])
+            .status
+            .success()
+    );
+    assert_eq!(
+        std::fs::read_to_string(d.path().join(".gitignore")).unwrap(),
+        "/.env\n"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn connectors_are_listed_once_for_each_set_of_args_the_workflows_give() {
+    let d = workspace();
+    file(d.path(), "connectors/posta.geldi", "#!/bin/sh\n");
+    file(d.path(), "connectors/saat.geldi", "#!/bin/sh\n");
+    file(
+        d.path(),
+        "workflows/satış.json",
+        r##"{ "on": [{ "event": "posta.geldi", "args": { "KUTU": "satış" } }], "steps": ["#notify"] }"##,
+    );
+    file(
+        d.path(),
+        "workflows/destek.json",
+        r##"{ "on": [{ "event": "posta.geldi", "args": { "KUTU": "destek" } }], "steps": ["#notify"] }"##,
+    );
     let v: serde_json::Value =
         serde_json::from_str(&out(&itero(d.path(), &["ws", "cn", "list", "--json"]))).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 3, "{v}");
     assert_eq!(v[0]["type"], "posta.geldi");
+    assert_eq!(v[0]["args"], serde_json::json!({ "KUTU": "destek" }));
+    assert_eq!(v[1]["args"], serde_json::json!({ "KUTU": "satış" }));
+    assert_eq!(
+        (v[2]["type"].as_str(), v[2].get("args")),
+        (Some("saat.geldi"), None)
+    );
+    let text = out(&itero(d.path(), &["ws", "cn", "list"]));
+    assert!(text.contains(r#"{"KUTU":"satış"}"#), "{text}");
 }
 
 #[test]
@@ -1153,10 +1191,6 @@ fn tab_completes_the_workspaces_own_names() {
     assert!(actions.contains(&"öde".to_string()), "{actions:?}");
     assert!(actions.contains(&"notify".to_string()), "{actions:?}");
     assert!(!actions.iter().any(|a| a.contains('@')), "{actions:?}");
-    assert_eq!(
-        completions(d.path(), &["ws", "cn", "args", "get", ""]),
-        ["posta.geldi"]
-    );
     // no runs yet, then the run's name
     assert!(completions(d.path(), &["ws", "wf", "runs", ""]).is_empty());
     itero(d.path(), &["ws", "emit", "sipariş.geldi", "{}"]);
@@ -1255,39 +1289,6 @@ fn check_warns_of_an_arg_notify_does_not_take() {
         r##"{"on": [{"event": "fiyat.soruldu"}], "steps": [{"#notify": {"args": {"title": "Fiyat", "text": "$output"}}}]}"##,
     );
     assert!(!err(&itero(d.path(), &["ws", "check"])).contains("#notify takes"));
-}
-
-#[test]
-fn repeat_is_set_and_shown_for_an_action() {
-    let d = workspace();
-    file(d.path(), "actions/imap-check", "#!/bin/sh\n");
-    let o = itero(
-        d.path(),
-        &[
-            "ws",
-            "ac",
-            "repeat",
-            "set",
-            "imap-check",
-            r#"[{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}]"#,
-        ],
-    );
-    assert!(o.status.success(), "{}", err(&o));
-    assert_eq!(
-        manifest(d.path())["action"]["imap-check"]["repeat"],
-        serde_json::json!([{"user": "ayşe@örnek.test"}, {"user": "can@örnek.test"}])
-    );
-    let o = itero(d.path(), &["ws", "ac", "repeat", "get", "imap-check"]);
-    assert!(out(&o).contains("can@örnek.test"), "{}", out(&o));
-    for bad in [r#"{"user": "a"}"#, "[]", "[1]"] {
-        let o = itero(d.path(), &["ws", "ac", "repeat", "set", "imap-check", bad]);
-        assert!(!o.status.success(), "{bad}");
-        assert!(
-            err(&o).contains("repeat is a list of one or more objects"),
-            "{bad}: {}",
-            err(&o)
-        );
-    }
 }
 
 #[cfg(target_os = "macos")]

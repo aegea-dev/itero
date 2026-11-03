@@ -18,8 +18,8 @@ itero ws which <name>         # where a name is
 itero ws emit <type>          # sends an event to this workspace
 itero ws secret <NAME>        # keeps a secret for this workspace
 itero ws wf list | runs       # the workflows and their runs
-itero ws ac list | errors | repeat
-itero ws cn list | args
+itero ws ac list | errors
+itero ws cn list
 ```
 
 Each page: [`check`](/commands/check/), [`which`](/commands/which/),
@@ -50,9 +50,14 @@ is replaced in this workspace's journal by a new one, and `add` says so.
 A workspace already on the list (its folder moved) has its folder
 updated. A daemon running `--all` starts it at once.
 
+It also adds `.env` to the workspace's `.gitignore` (making the file when
+there is none), unless a line there names it already: `.env` holds your
+own values, secrets among them, and stays out of git.
+
 ```
 $ itero ws add
 added quiet-river (/Users/me/projects/home)
+.env, where its secrets and values may be kept, is in .gitignore now
 the machine's daemon starts it now
 ```
 

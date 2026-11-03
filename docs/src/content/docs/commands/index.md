@@ -35,8 +35,8 @@ and every command that prints something takes `--json`.
 | [`ws emit`](/commands/emit/) | sends an event to this workspace, and says what it starts; `--wait` for the answer |
 | [`ws secret`](/commands/secret/#one-workspaces-secret) | keeps a secret for this workspace alone |
 | [`ws workflow`](/commands/workflow/) <span class="wf">●</span> (`wf`) | your workflows, their runs (and why one broke) |
-| [`ws action`](/commands/action/) <span class="act">■</span> (`ac`) | your actions, which ones break and why, their repeat |
-| [`ws connector`](/commands/connector/) <span class="con">▲</span> (`cn`) | your connectors, their args |
+| [`ws action`](/commands/action/) <span class="act">■</span> (`ac`) | your actions, which ones break and why |
+| [`ws connector`](/commands/connector/) <span class="con">▲</span> (`cn`) | your connectors, each with the args the workflows give it |
 
 A day with itero, in four of them:
 

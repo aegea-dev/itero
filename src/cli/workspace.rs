@@ -4,7 +4,7 @@ use super::out::{ago, show, table, text};
 use crate::engine::journal::Journal;
 use crate::machine::{Entry, List, list_path};
 use crate::workspace::Workspace;
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 /// The workspace a `ws` command is about: the one named on the machine's
@@ -48,6 +48,9 @@ pub fn add(ws: &Workspace) -> Result<()> {
     });
     list.write(&path)?;
     println!("added {name} ({})", ws.root.display());
+    if keep_env_out_of_git(&ws.root)? {
+        println!(".env, where its secrets and values may be kept, is in .gitignore now");
+    }
     if daemon_states().is_some() {
         println!("the machine's daemon starts it now");
     } else {
@@ -56,6 +59,28 @@ pub fn add(ws: &Workspace) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Adds `.env` to the workspace's `.gitignore` (made when there is none),
+/// unless a line there names it already: whether it added it.
+fn keep_env_out_of_git(root: &std::path::Path) -> Result<bool> {
+    let f = root.join(".gitignore");
+    let text = match std::fs::read_to_string(&f) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e).with_context(|| format!("cannot read {}", f.display())),
+    };
+    if text.lines().any(|l| matches!(l.trim(), ".env" | "/.env")) {
+        return Ok(false);
+    }
+    let sep = if text.is_empty() || text.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    std::fs::write(&f, format!("{text}{sep}.env\n"))
+        .with_context(|| format!("cannot write {}", f.display()))?;
+    Ok(true)
 }
 
 /// `itero workspace remove [name]`: off the list; the folder and its

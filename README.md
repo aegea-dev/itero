@@ -155,7 +155,7 @@ install|status|restart|uninstall`, `itero info`, `itero emit`, `itero secret`,
 `itero ai`, `itero watch`, `itero completion`. Everything about one workspace
 is under `itero ws`, in its folder or with `--ws <name>`: `add|list|remove`,
 `info`, `check`, `which`, `emit <type> '<data>'`, `secret`, `wf list|runs`,
-`ac list|errors|repeat`, `cn list|args`.
+`ac list|errors`, `cn list`.
 What the daemon does is in `.itero/itero.log`, one JSON line each.
 
 ## Examples

@@ -295,7 +295,7 @@ pub enum WorkflowCmd {
 
 #[derive(Subcommand)]
 pub enum ActionCmd {
-    /// Each action, its files and whether it repeats
+    /// Each action and its files
     List {
         #[arg(long)]
         json: bool,
@@ -311,76 +311,14 @@ pub enum ActionCmd {
         #[arg(long)]
         json: bool,
     },
-    /// An action's repeat: its step runs once per item
-    Repeat {
-        #[command(subcommand)]
-        cmd: ActionRepeatCmd,
-    },
 }
 
 #[derive(Subcommand)]
 pub enum ConnectorCmd {
-    /// Each connector, its file and whether it has args
+    /// Each connector, once for each set of args the workflows give it
     List {
         #[arg(long)]
         json: bool,
-    },
-    /// A connector's args: the data it starts with
-    Args {
-        #[command(subcommand)]
-        cmd: ConnectorArgsCmd,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ActionRepeatCmd {
-    /// Show an action's repeat
-    Get {
-        #[arg(add = complete::actions())]
-        name: String,
-        #[arg(long)]
-        json: bool,
-    },
-    /// Set an action's repeat: a list of objects, one run of its step for each
-    Set {
-        #[arg(add = complete::actions())]
-        name: String,
-        /// The items, as JSON
-        #[arg(
-            value_name = "DATA",
-            required_unless_present = "file",
-            conflicts_with = "file"
-        )]
-        data: Option<String>,
-        /// Read them from this file
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ConnectorArgsCmd {
-    /// Show a connector's args
-    Get {
-        #[arg(add = complete::connectors())]
-        name: String,
-        #[arg(long)]
-        json: bool,
-    },
-    /// Set a connector's args: an object
-    Set {
-        #[arg(add = complete::connectors())]
-        name: String,
-        /// The args, as JSON
-        #[arg(
-            value_name = "DATA",
-            required_unless_present = "file",
-            conflicts_with = "file"
-        )]
-        data: Option<String>,
-        /// Read them from this file
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
     },
 }
 
@@ -877,24 +815,12 @@ fn dispatch(cli: Cli) -> Result<()> {
                             limit,
                             json,
                         } => kinds::errors(&ws, action.as_deref(), limit, json)?,
-                        ActionCmd::Repeat {
-                            cmd: ActionRepeatCmd::Get { name, json },
-                        } => kinds::entry_get(&ws, kinds::Kind::Action, &name, "repeat", json)?,
-                        ActionCmd::Repeat {
-                            cmd: ActionRepeatCmd::Set { name, data, file },
-                        } => kinds::repeat_set(&ws, &name, data, file)?,
                     }
                 }
                 WorkspaceCmd::Connector { cmd } => {
                     let ws = chosen()?;
                     match cmd {
                         ConnectorCmd::List { json } => kinds::connectors(&ws, json)?,
-                        ConnectorCmd::Args {
-                            cmd: ConnectorArgsCmd::Get { name, json },
-                        } => kinds::args_get(&ws, kinds::Kind::Connector, &name, json)?,
-                        ConnectorCmd::Args {
-                            cmd: ConnectorArgsCmd::Set { name, data, file },
-                        } => kinds::args_set(&ws, kinds::Kind::Connector, &name, data, file)?,
                     }
                 }
             }

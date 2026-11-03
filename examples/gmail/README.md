@@ -15,12 +15,16 @@ Verification for your Google account, then make one at
 <https://myaccount.google.com/apppasswords>. Your own password does not
 work over IMAP.
 
+Write your address in `workflows/gmail.json`, in the args its `on` entry
+gives the connector: `"user": "you@gmail.com"`. The password stays a
+`$$GMAIL_PASS`: its value goes in the secret store, or in the
+workspace's `.env`, which `itero ws add` keeps out of git.
+
 ```sh
-itero ws cn args set gmail.received '{"user": "you@gmail.com", "password": "$$GMAIL_PASS"}'
 itero secret GMAIL_PASS     # the app password, without its spaces
 itero daemon
 ```
 
 The first start only notes where the inbox is; each mail after that is
 told once, across restarts. `host`, `port`, `tls` and `mailbox` in the
-args point it at another IMAP server or folder.
+same args point it at another IMAP server or folder.

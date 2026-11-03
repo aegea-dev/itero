@@ -15,12 +15,14 @@ is an error.
 | `failure` | steps run when the last step's result says `"success": false` | |
 | `error` | steps run when something broke | |
 | `timeout` | how long a run may wait for data, like `"2h"` | a day |
+| `repeat` | its runs go on in rounds, each with the one before's results ([Repeat](/guides/workflows/#repeat-rounds)) | |
 
 ## `on`
 
 | Entry | Means |
 |---|---|
 | `{"event": "order.placed"}` | an event of this type starts a run |
+| `{"event": "mail.received", "args": {...}}` | the same, and the args its connector is given, as environment variables: values or `$$NAME` ([A connector's args](/guides/secrets/#a-connectors-args)) |
 | `{"schedule": "0 9 * * *"}` | a schedule starts a run (cron, local time) |
 | `{"path": "inbox"}` | a change to this file or folder starts a run; `~/` is home, `$$NAME` a value from `.env` or the environment, a relative path is in the workspace |
 | `{"$event.order": 43}` | condition: the event's `order` is exactly `43` |
@@ -28,8 +30,8 @@ is an error.
 | `{"has": "$event.order"}` | condition: the event has an `order` |
 | `{"has": ["$event.order", "$$API"]}` | condition: all are there; `$$API` is defined (secret, `.env` or environment) |
 
-`event`, `schedule` and `path` are alternatives, each alone in its
-object; conditions must all hold. Any other key is an error naming it.
+`event` (with its `args`), `schedule` and `path` are alternatives, each
+alone in its object; conditions must all hold. Any other key is an error naming it.
 
 What a workflow is (its description, `off`, `from`, `until`, `internal`)
 is in its entry in
@@ -51,6 +53,7 @@ is in its entry in
 | `args` | what its action gets, and nothing else: an object, a list of objects read in order (an item with exactly `title` and `text` gives the arg `title` names its text, as text), or a value that is one (`"$output"`) |
 | `on` | when it runs, conditions only; otherwise it is skipped |
 | `undo` | what takes it back when a later step breaks: `"#name"`, or `{"#name": {"args": {...}}}`; given this step's result as `$output` |
+| `repeat` | it runs in rounds, each with the one before's `$output`, `$steps` and `$count`: `true`, a number, `"$output.count"`, `"<= 2026-12-31"`, `"> 2026-12-31"` or a cron line ([Repeat](/guides/workflows/#repeat-rounds)); not side by side |
 
 | A value | Is |
 |---|---|
@@ -58,6 +61,7 @@ is in its entry in
 | `$output`, `$output.total` | the step before's result; in the `error` list's first step, `why`, `failed_step`, `undo_failed` |
 | `$steps.fetch-rates`, `$steps.fetch-rates.price` | an earlier step's result, by its name; `$steps.fetch-rates/2` for the second of that name in the file |
 | `$config`, `$config.description` | `itero.config.json`, read-only |
+| `$count` | the round of a repeated step or workflow, from 1 |
 | `$$NAME` | a secret, a value in `.env`, or an environment variable; a whole value only |
 
 Fields go to any depth. A whole value keeps its type; inside text, and in

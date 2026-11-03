@@ -5,7 +5,7 @@
 //! one comes from a manager's answer.
 use super::Event;
 use super::events;
-use super::journal::{self, Child, Envelope, Handled, Journal, Recorded, Split, Start};
+use super::journal::{self, Child, Envelope, Handled, Journal, NextRound, Recorded, Start};
 use super::log::Log;
 use super::steps::{self, StepAnswer, StepInput, StepJob};
 use super::worker::{self, Failure, LOST_EXIT, Outcome, StepRun};
@@ -285,7 +285,7 @@ pub fn expand(root: &Path, path: &str) -> Result<PathBuf, String> {
         let name = &after[..n];
         let v = std::env::var(name)
             .ok()
-            .filter(|_| env_name(name))
+            .filter(|_| flow::env_name(name))
             .ok_or_else(|| format!("{path}: no environment variable {name}"))?;
         out.push_str(&v);
         rest = &after[n..];
@@ -953,7 +953,12 @@ fn route(
     for (name, f) in &flows.read {
         // a run's state starts with the message's data, its `$event`
         let first = steps::first_state(Value::Object(data.clone()), flows.config.clone());
-        if !(f.on.events.contains(&r.event.kind) || names_it(f))
+        if !(f
+            .on
+            .events
+            .iter()
+            .any(|e| e.takes(&r.event.kind, &r.event.source))
+            || names_it(f))
             || !flow::active(&f.meta, now)
             || !flow::holds(&f.on, &first, &|n: &str| defined(ws, n))
             || (on_a_run && data.get("workflow") == Some(&json!(name)))
@@ -1060,7 +1065,7 @@ fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Resul
         timers: None,
         events: vec![],
         shown: vec![],
-        splits: vec![],
+        next_round: None,
         children: vec![],
         stopped: vec![],
     })?;
@@ -1092,10 +1097,10 @@ fn deliver(
             format!("version {} is not in the journal", run.pin),
         );
     };
-    // what the manager needs beyond the run: the repeat of the actions its
-    // workflows name, and which of their $$ names are defined
+    // what the manager needs beyond the run: which of its workflows' $$
+    // names are defined, and whether its own is on
     let mut seen = std::collections::BTreeSet::new();
-    let mut repeat = BTreeMap::new();
+    let mut active = true;
     let mut names = vec![];
     let mut who = Who {
         run: &run,
@@ -1110,21 +1115,14 @@ fn deliver(
         };
         if *n == root {
             who.internal = f.meta.internal;
+            active = flow::active(&f.meta, clock.now());
         }
         for u in f.uses() {
             if let Name::Action { name, .. } = u
                 && seen.insert(name.clone())
+                && let Err(e) = ws.no_args(&name).and_then(|()| ws.no_repeat(&name))
             {
-                if let Err(e) = ws.no_args(&name) {
-                    return give_up(log, j, r.seq, &at, format!("{e:#}"));
-                }
-                match ws.repeat(&name) {
-                    Ok(Some(items)) => {
-                        repeat.insert(name, items);
-                    }
-                    Ok(None) => {}
-                    Err(e) => return give_up(log, j, r.seq, &at, format!("{e:#}")),
-                }
+                return give_up(log, j, r.seq, &at, format!("{e:#}"));
             }
         }
         names.extend(f.defined_names());
@@ -1135,7 +1133,7 @@ fn deliver(
         now: at.clone(),
         workflow: root,
         flows: values,
-        repeat,
+        active,
         config: ws.manifest().unwrap_or_default(),
         defined: names.into_iter().filter(|n| defined(ws, n)).collect(),
         child: run.parent.is_some(),
@@ -1213,8 +1211,9 @@ fn deliver(
             events.push(events::own(kind, data, &at));
         }
         // a workflow used as a step: what it returned goes to the step
-        // that started it
+        // that started it, once its last round has ended
         if answer.runtime.ended.is_some()
+            && answer.next_round.is_none()
             && let (Some(parent), Some(path)) = (&run.parent, &run.parent_path)
         {
             let mut back = steps::returned(&answer.runtime);
@@ -1235,17 +1234,16 @@ fn deliver(
         .iter()
         .map(|c| (c.path.clone(), Value::Object(c.event.clone())))
         .collect();
-    let splits = answer
-        .split
-        .iter()
-        .map(|rt| Split {
-            workflow: &run.workflow,
-            pin: &run.pin,
-            runtime: rt,
-            input: &run.input,
-            message: run.message.as_deref(),
-        })
-        .collect();
+    // a repeated workflow's next round: a run of its own, as a step of the
+    // same parent when it is one
+    let next_round = answer.next_round.as_ref().map(|rt| NextRound {
+        workflow: &run.workflow,
+        pin: &run.pin,
+        runtime: rt,
+        input: &run.input,
+        message: run.message.as_deref(),
+        parent: run.parent.as_deref().zip(run.parent_path.as_deref()),
+    });
     // the jobs of the steps it stopped, running or waiting their turn,
     // saved as stopped with the answer: none of them runs again. A job it
     // stopped in the same decision it would have started was never given
@@ -1276,7 +1274,7 @@ fn deliver(
         timers: Some(&answer.timers),
         events,
         shown,
-        splits,
+        next_round,
         children: answer
             .children
             .iter()
@@ -1284,6 +1282,7 @@ fn deliver(
                 workflow: &c.workflow,
                 flows: &input.flows,
                 input: &child_inputs[&c.path],
+                seed: &c.seed,
                 path: c.path.clone(),
             })
             .collect(),
@@ -1386,15 +1385,6 @@ fn tell(log: &Log, who: &Who, r: &Recorded, answer: &StepAnswer) {
     }
 }
 
-/// Whether a name can be an environment variable: a letter or `_`, then
-/// letters, digits or `_`.
-fn env_name(n: &str) -> bool {
-    let mut cs = n.chars();
-    cs.next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 /// A value of an action's args: `"$name"` is the state's, `"$$NAME"`
 /// the secret's (or the environment variable's); anything else itself.
 fn resolve(ws: &Workspace, v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
@@ -1413,19 +1403,13 @@ fn secret(ws: &Workspace, n: &str) -> Result<Value, String> {
 /// An action's environment, and its stdin.
 pub type Bound = (BTreeMap<String, String>, Map<String, Value>);
 
-/// What an action gets: its args (the step's, filled when it started, with
-/// its repeat item on top), each `"$$NAME"` the secret's value; and, when it runs
+/// What an action gets: its args (the step's, filled when it started),
+/// each `"$$NAME"` the secret's value; and, when it runs
 /// again after waiting, the event that came. As environment variables
 /// (names that cannot be one, and values past `ENV_MAX`, are on stdin
 /// only) and as its stdin, `{"args": {...}, "event": {...}}`.
-pub fn bind(ws: &Workspace, state: &Map<String, Value>, job: &StepJob) -> Result<Bound, String> {
+pub fn bind(ws: &Workspace, job: &StepJob) -> Result<Bound, String> {
     let mut args = job.data.clone();
-    // a repeat item's values on top of the step's args
-    if let Some(item) = job.item.as_ref().and_then(Value::as_object) {
-        for (k, v) in item {
-            args.insert(k.clone(), flow::fill(v, state)?);
-        }
-    }
     for v in args.values_mut() {
         if let Some(n) = flow::secret_ref(v) {
             *v = secret(ws, n)?;
@@ -1441,35 +1425,19 @@ pub fn bind(ws: &Workspace, state: &Map<String, Value>, job: &StepJob) -> Result
     Ok((to_env(values), input))
 }
 
-/// A connector's args (`connector.<name>.args`), each one an environment
-/// variable: a name no environment variable can have is an error, and so
-/// is a `"$name"`, as a connector has no run state.
-pub fn connector_args(ws: &Workspace, connector: &str) -> Result<Map<String, Value>, String> {
-    let args = ws
-        .connector_args(connector)
-        .map_err(|e| format!("{e:#}"))?
-        .unwrap_or_default();
-    for (k, v) in &args {
-        let at = format!("connector.{connector}.args.{k}");
-        if !env_name(k) {
-            return Err(format!("{at}: not a name an environment variable can have"));
-        }
-        if let Some(n) = flow::names_in(v).first().or(flow::unknown_in(v).first()) {
-            return Err(format!("{at}: a connector has no run state for ${n}"));
-        }
-    }
-    Ok(args)
-}
-
-/// A connector's environment: its args, `$$NAME` the secret's (or the
-/// environment variable's).
-pub fn connector_env(ws: &Workspace, connector: &str) -> Result<BTreeMap<String, String>, String> {
+/// A connector's environment: the args its copy is given (an `on` entry's,
+/// checked when the workflow was read), `$$NAME` the secret's, `.env`'s or
+/// the environment variable's.
+pub fn connector_env(
+    ws: &Workspace,
+    connector: &str,
+    args: &Map<String, Value>,
+) -> Result<BTreeMap<String, String>, String> {
     let none = Map::new();
     let mut values = Map::new();
-    for (k, v) in connector_args(ws, connector)? {
-        let v = resolve(ws, &v, &none)
-            .map_err(|why| format!("connector.{connector}.args.{k}: {why}"))?;
-        values.insert(k, v);
+    for (k, v) in args {
+        let v = resolve(ws, v, &none).map_err(|why| format!("{connector} args {k}: {why}"))?;
+        values.insert(k.clone(), v);
     }
     Ok(to_env(values))
 }
@@ -1480,7 +1448,7 @@ pub fn connector_env(ws: &Workspace, connector: &str) -> Result<BTreeMap<String,
 fn to_env(values: Map<String, Value>) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     for (k, v) in values {
-        if !env_name(&k) {
+        if !flow::env_name(&k) {
             continue;
         }
         let text = match &v {
@@ -1506,8 +1474,8 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
     let workflow = data["workflow"].as_str().unwrap_or("");
     let job: StepJob =
         serde_json::from_value(data["job"].clone()).map_err(|e| format!("the job: {e}"))?;
-    let run = j
-        .run(run_id)
+    // a job of a run that is gone is not run
+    j.run(run_id)
         .map_err(|e| format!("{e:#}"))?
         .ok_or_else(|| format!("no run {run_id}"))?;
     let file = match ws.action_file(&job.action, job.version.as_deref()) {
@@ -1518,7 +1486,7 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
     let (quiet, most) = ws.step_limits(&job.action).map_err(|e| format!("{e:#}"))?;
-    let (mut env, input) = bind(ws, &run.runtime.state, &job)?;
+    let (mut env, input) = bind(ws, &job)?;
     // the built-in #ai talks to the itero-ai the daemon keeps, unless a
     // url names another server
     if file == Path::new(worker::AI) && crate::ai::step::needs_itero_ai(&env)? {
@@ -1732,7 +1700,7 @@ fn save_result(
         timers: None,
         events: vec![e],
         shown: vec![],
-        splits: vec![],
+        next_round: None,
         children: vec![],
         stopped: vec![],
     })

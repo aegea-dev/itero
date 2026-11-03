@@ -19,42 +19,30 @@ stdin ([Actions](/guides/actions/#what-it-gets)):
 ```
 
 In args, a value that is exactly `"$event.x"`, `"$output.x"`,
-`"$steps.<name>.x"` or `"$config.x"` takes that value, one inside text is
+`"$steps.<name>.x"`, `"$config.x"` or `"$count"` takes that value, one inside text is
 filled ([Workflows](/guides/workflows/#a-value-inside-text)), and
 `"$$NAME"` is a secret, a value in `.env` or an environment variable
 ([below](#secrets-and-env)). `itero.config.json` holds no values for
-actions or workflows: an `args` in an action's entry, or a `settings` in a
-workflow's, is an error saying where the values go.
-
-## Repeat
-
-```sh
-itero ws ac repeat set imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
-                                     {"user": "you@example.com", "password": "$$YOU_PASS"}]'
-```
-
-writes `action.imap-check.repeat`: the action's step runs once per item,
-each item's values on top of its step's args. Each run has its own copy
-of the state for the rest of the run: the run that reaches the step ends
-as `split`, and one run per item goes on from there, through the rest of
-the steps and the end lists, each on its own; they never join. A step
-side by side cannot repeat, nor can a step of a workflow used as a step.
+actions, workflows or connectors: an `args` or a `repeat` in an action's
+entry, an `args` in a connector's, or a `settings` in a workflow's, is an
+error saying where it goes.
 
 ## A connector's args
 
-A [connector](/guides/connectors/) gets its args the same way, from
-`connector.<name>.args` ([`itero ws cn args set`](/commands/connector/#args)): an object, each value an environment variable, read
-each time it starts. A connector has no run, so its values are themselves or
-`"$$NAME"`, never `"$event.x"`.
+A [connector](/guides/connectors/) gets its args from the workflows that
+listen to it: each `on` entry gives them beside its event, and they reach
+the connector as environment variables, read each time it starts. A
+connector has no run, so its values are themselves or `"$$NAME"`, never
+`"$event.x"`.
 
 ```json
-"connector": {
-  "mail.pushed": { "args": { "user": "me@example.com", "password": "$$ME_PASS" } }
-}
+{ "on": [{ "event": "mail.pushed",
+           "args": { "user": "me@example.com", "password": "$$ME_PASS" } }] }
 ```
 
 A secret that is not set keeps the connector from starting, and the log
-says which.
+says which. Workflows giving different args run the connector once for
+each set ([Connectors](/guides/connectors/#one-connector-many-sets-of-args)).
 
 ## Secrets and `.env`
 
@@ -72,11 +60,13 @@ whole value only: inside a text (`"Bearer $$TOKEN"`) it is refused, as
 2. **the machine's secrets** in the same store, for every workspace, where
    [`itero secret`](/commands/secret/) keeps them;
 3. **the workspace's `.env`**, `NAME=value` lines (`#` starts a comment;
-   quotes and `export` are allowed), for values that are not secret;
+   quotes and `export` are allowed): your own values, secret or not, kept
+   out of git (`itero ws add` adds it to the workspace's `.gitignore`);
 4. **the daemon's environment variables**.
 
-Secrets go in the store, never in `.env`. If the store and the
-environment both have a name, the store wins and the environment variable
+A secret may live in the store or in `.env`: `.env` is a local file of
+yours, never synced or shared, and the store keeps it off the disk. If the
+store and the environment both have a name, the store wins and the environment variable
 is passed over. That is easy to miss, so `itero ws check` and the daemon,
 when it starts, warn about each such name:
 

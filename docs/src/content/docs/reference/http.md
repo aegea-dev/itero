@@ -81,8 +81,8 @@ URL the app sends in the event's data
 ## GET /runs
 
 `?workflow=<name>` keeps one workflow's runs; `?status=<status>` the runs
-with one status (`running`, `waiting`, `done`, `failed`, `error`,
-`split`); `?limit=N` (50 unless given) caps them. Internal
+with one status (`running`, `waiting`, `done`, `failed`, `error`);
+`?limit=N` (50 unless given) caps them. Internal
 workflows' runs only with `?all=true`. `parent` is the id of the run
 whose step started it, for a workflow used as a step, else `null`.
 
@@ -103,7 +103,7 @@ there is not.
 
 ```json
 [ { "name": "order", "path": "workflows/shop/order.json", "internal": false,
-    "on": { "events": ["order.placed"], "schedules": [] } } ]
+    "on": { "events": [{ "event": "order.placed" }], "schedules": [] } } ]
 ```
 
 `path` is from the workspace, and `null` for a built-in workflow.

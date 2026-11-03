@@ -1,17 +1,18 @@
-//! A connector's args, `connector.<name>.args` in the manifest: environment
-//! variables for the connector, `$$NAME` from the secret store or the
-//! environment. Its own test binary: it sets environment variables.
+//! A connector's args, as a workflow's `on` entry gives them: environment
+//! variables for the connector, `$$NAME` from the secret store, `.env` or
+//! the environment. Its own test binary: it sets environment variables.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
-use itero::connectors::supervise::{self, Connector, Policy};
+use itero::connectors::Copy;
+use itero::connectors::supervise::{self, Policy};
 use itero::engine::daemon::Health;
 use itero::engine::journal::Journal;
 use std::sync::Mutex;
 use std::time::Duration;
 
-/// A workspace with one connector, `connectors/posta.geldi`, and its manifest.
-fn ws_with(d: &std::path::Path, manifest: &str, script: &str) -> itero::workspace::Workspace {
+/// A workspace with one connector, `connectors/posta.geldi`.
+fn ws_with(d: &std::path::Path, script: &str) -> itero::workspace::Workspace {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::write(d.join("itero.config.json"), manifest).unwrap();
+    std::fs::write(d.join("itero.config.json"), "{}").unwrap();
     std::fs::create_dir_all(d.join("connectors")).unwrap();
     let s = d.join("connectors/posta.geldi");
     std::fs::write(&s, script).unwrap();
@@ -19,8 +20,9 @@ fn ws_with(d: &std::path::Path, manifest: &str, script: &str) -> itero::workspac
     itero::workspace::find(d).unwrap()
 }
 
-/// Runs the workspace's connector until it is given up on: how it last ended.
-fn run_it(ws: &itero::workspace::Workspace) -> String {
+/// Runs the workspace's connector with `args` until it is given up on: how
+/// it last ended.
+fn run_it(ws: &itero::workspace::Workspace, args: serde_json::Value) -> String {
     let (kind, file) = ws.connector_files().unwrap().remove(0);
     let (wake, _woken) = std::sync::mpsc::channel();
     let health = Mutex::new(Health::starting("2026-10-21T10:00:00Z"));
@@ -34,9 +36,12 @@ fn run_it(ws: &itero::workspace::Workspace) -> String {
         give_up_after: 1,
         window: Duration::from_secs(60),
     };
-    let connector = Connector {
-        kind: &kind,
-        file: &file,
+    let connector = Copy {
+        listen: itero::flow::Listen {
+            kind,
+            args: args.as_object().unwrap().clone(),
+        },
+        file,
     };
     supervise::run(
         ws,
@@ -49,7 +54,7 @@ fn run_it(ws: &itero::workspace::Workspace) -> String {
         &Default::default(),
     );
     let h = health.into_inner().unwrap();
-    h.connectors["posta.geldi"].last_exit.clone().unwrap()
+    h.connectors[&connector.name()].last_exit.clone().unwrap()
 }
 
 const PRINTS: &str = "#!/bin/sh\nprintf '{\"user\": \"%s\", \"password\": \"%s\", \"count\": \"%s\", \"home\": \"%s\"}\\n' \"$user\" \"$password\" \"$count\" \"$ITERO_TEST_EV\"\nexit 1\n";
@@ -66,13 +71,13 @@ fn a_connector_gets_its_args_and_secrets_as_environment_variables() {
     // its args, a secret among them; the daemon's environment as well
     let d = tempfile::tempdir().unwrap();
     // \\$ in JSON is a dollar sign
-    let ws = ws_with(
-        d.path(),
-        r#"{"connector": {"posta.geldi": {"args": {
-            "user": "ayşe@örnek.test", "password": "$$ITERO_TEST_POSTA_SIFRE", "count": "\\$3", "none": null}}}}"#,
-        PRINTS,
+    let ws = ws_with(d.path(), PRINTS);
+    run_it(
+        &ws,
+        serde_json::json!({
+            "user": "ayşe@örnek.test", "password": "$$ITERO_TEST_POSTA_SIFRE",
+            "count": "\\$3", "none": null }),
     );
-    run_it(&ws);
     let evs = Journal::open(&ws)
         .unwrap()
         .events(Some("itero.app"))
@@ -93,34 +98,12 @@ fn a_connector_gets_its_args_and_secrets_as_environment_variables() {
 
     // a secret that is not set: it does not start, and the log says why
     let d = tempfile::tempdir().unwrap();
-    let ws = ws_with(
-        d.path(),
-        r#"{"connector": {"posta.geldi": {"args": {"password": "$$ITERO_TEST_YOK"}}}}"#,
-        PRINTS,
-    );
-    let why = run_it(&ws);
+    let ws = ws_with(d.path(), PRINTS);
+    let why = run_it(&ws, serde_json::json!({ "password": "$$ITERO_TEST_YOK" }));
     assert!(why.contains("ITERO_TEST_YOK is not set"), "{why}");
     let evs = Journal::open(&ws)
         .unwrap()
         .events(Some("itero.app"))
         .unwrap();
     assert!(evs.iter().all(|e| e.event.kind != "posta.geldi"), "{evs:?}");
-
-    // a connector has no run state: "$name" is refused, as is a name no
-    // environment variable can have
-    for args in [
-        r#"{"user": "$kişi"}"#,
-        r#"{"user": "posta: $kişi"}"#,
-        r#"{"user": "giriş $$ITERO_TEST_POSTA_SIFRE"}"#,
-        r#"{"kullanıcı": "ayşe"}"#,
-    ] {
-        let d = tempfile::tempdir().unwrap();
-        let ws = ws_with(
-            d.path(),
-            &format!(r#"{{"connector": {{"posta.geldi": {{"args": {args}}}}}}}"#),
-            PRINTS,
-        );
-        let why = run_it(&ws);
-        assert!(why.contains("connector.posta.geldi.args"), "{args}: {why}");
-    }
 }

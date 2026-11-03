@@ -71,9 +71,8 @@ Each change starts a run.
 One go through a workflow, started by an event, a schedule or a watched
 path. It has an id (a UUIDv7) and a name (`misty-lake`), and keeps the
 version of its workflows it started with. It ends as `done`, `failed` or
-`error`, or `split` when it went on as one run per item of a list of
-[args](#args). A workflow used as a step is a run of its own, linked
-to the run whose step started it.
+`error`. A workflow used as a step is a run of its own, linked to the run
+whose step started it; a repeated workflow's next round is a run too.
 
 ### event
 
@@ -124,11 +123,11 @@ skipped.
 ### args
 
 What an action gets, and all it gets: a step's `args` in its workflow.
-An action's `repeat` in `itero.config.json`, a list, runs the step once
-per item. Args are an object or a list of objects; a list item with
-exactly `title` and `text` gives the arg `title` names its text, as text.
-A value in an arg's text is filled (`"$event.from: $event.subject"`). A
-connector has args too, `connector.<name>.args`: an object.
+Args are an object or a list of objects; a list item with exactly
+`title` and `text` gives the arg `title` names its text, as text. A value
+in an arg's text is filled (`"$event.from: $event.subject"`). A connector
+has args too, given by each `on` entry that listens:
+`{"event": "mail.received", "args": {...}}`.
 
 ### secret
 

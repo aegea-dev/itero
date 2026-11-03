@@ -61,22 +61,6 @@ pub fn ago(at: &str, now: chrono::DateTime<chrono::Utc>) -> String {
     }
 }
 
-/// JSON given on the command line or in a file, for `set` commands.
-pub fn given(data: Option<String>, file: Option<std::path::PathBuf>) -> Result<String> {
-    match (data, file) {
-        (Some(d), _) => Ok(d),
-        (None, Some(f)) => std::fs::read_to_string(&f)
-            .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", f.display())),
-        (None, None) => anyhow::bail!("give it as JSON, or --file"),
-    }
-}
-
-/// Whether `name` could be a workflow's, an action's or a connector's
-/// name: no path, no `#`, `@` or `$`, not hidden.
-pub fn plain_name(name: &str) -> bool {
-    !(name.is_empty() || name.contains(['/', '\\', '#', '@', '$']) || name.starts_with('.'))
-}
-
 /// Asks `question` on the terminal, unless `yes` was given; whether to go
 /// on. With no terminal and no `yes`, an error saying `no_terminal`.
 pub fn confirm(question: &str, yes: bool, no_terminal: &str) -> Result<bool> {

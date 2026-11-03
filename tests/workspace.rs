@@ -178,33 +178,24 @@ fn an_action_entry_holds_no_args() {
 }
 
 #[test]
-fn a_connectors_args_are_an_object() {
+fn a_connectors_entry_holds_no_args() {
     let d = tempfile::tempdir().unwrap();
     let ws = simple(d.path());
-    assert_eq!(ws.connector_args("posta.geldi").unwrap(), None);
+    ws.no_connector_args("posta.geldi").unwrap();
     write(
         d.path(),
         "itero.config.json",
         r#"{ "connector": {
-              "posta.geldi": { "args": { "user": "ayşe@örnek.test", "password": "$$POSTA_ŞİFRE" } },
+              "posta.geldi": { "args": { "user": "ayşe@örnek.test" } },
               "sade.olay": { "description": "Args yok" } } }"#,
     );
-    let a = ws.connector_args("posta.geldi").unwrap().unwrap();
-    assert_eq!(a["user"], "ayşe@örnek.test");
-    assert_eq!(ws.connector_args("sade.olay").unwrap(), None);
-    for args in [r#"[{"user": "can@örnek.test"}]"#, r#""çay""#] {
-        write(
-            d.path(),
-            "itero.config.json",
-            &format!(r#"{{"connector": {{"posta.geldi": {{"args": {args}}}}}}}"#),
-        );
-        let e = format!("{:#}", ws.connector_args("posta.geldi").unwrap_err());
-        assert!(
-            e.contains("connector.posta.geldi.args are an object")
-                && e.contains("itero.config.json"),
-            "{args}: {e}"
-        );
-    }
+    ws.no_connector_args("sade.olay").unwrap();
+    let e = format!("{:#}", ws.no_connector_args("posta.geldi").unwrap_err());
+    assert!(
+        e.contains("connector.posta.geldi.args are gone")
+            && e.contains(r#"{ "event": "posta.geldi", "args": {...} }"#),
+        "{e}"
+    );
 }
 
 #[test]
@@ -564,36 +555,21 @@ fn the_daemon_watches_the_manifest_and_each_workflow_folder_and_file() {
 }
 
 #[test]
-fn repeat_is_a_list_of_objects() {
+fn an_actions_entry_holds_no_repeat() {
     let d = tempfile::tempdir().unwrap();
     let ws = simple(d.path());
     write(
         d.path(),
         "itero.config.json",
         r##"{ "action": {
-              "posta": { "args": { "host": "imap.örnek.test" },
-                         "repeat": [ { "user": "ayşe@örnek.test" }, { "user": "can@örnek.test" } ] },
-              "sade": { "args": [ { "a": 1 }, { "b": 2 } ] } } }"##,
+              "posta": { "repeat": [ { "user": "ayşe@örnek.test" } ] },
+              "sade": { "description": "Tekrar yok" } } }"##,
     );
-    assert_eq!(
-        ws.repeat("posta").unwrap(),
-        Some(serde_json::json!([{ "user": "ayşe@örnek.test" }, { "user": "can@örnek.test" }]))
+    ws.no_repeat("sade").unwrap();
+    let e = format!("{:#}", ws.no_repeat("posta").unwrap_err());
+    assert!(
+        e.contains("action.posta.repeat is gone")
+            && e.contains(r##"{ "#posta": { "repeat": ... } }"##),
+        "{e}"
     );
-    assert_eq!(ws.repeat("sade").unwrap(), None);
-    for (repeat, says) in [
-        ("[]", "a list of one or more objects"),
-        ("[1]", "a list of one or more objects"),
-        (r#"{"user": "a"}"#, "a list of one or more objects"),
-    ] {
-        write(
-            d.path(),
-            "itero.config.json",
-            &format!(r#"{{"action": {{"bir": {{"repeat": {repeat}}}}}}}"#),
-        );
-        let e = format!("{:#}", ws.repeat("bir").unwrap_err());
-        assert!(
-            e.contains("action.bir.repeat") && e.contains(says),
-            "{repeat}: {e}"
-        );
-    }
 }

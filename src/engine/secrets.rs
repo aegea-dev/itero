@@ -150,14 +150,9 @@ pub fn used(ws: &Workspace) -> Result<Vec<String>> {
     for (_, f) in ws.flows()? {
         out.extend(f.secret_names());
         out.extend(f.defined_names());
-    }
-    for kind in ["action", "connector"] {
-        for e in ws.entries(kind)?.values() {
-            for key in ["args", "repeat"] {
-                if let Some(v) = e.get(key) {
-                    walk(v, &mut out);
-                }
-            }
+        // the args its on entries give their connectors
+        for e in &f.on.events {
+            walk(&serde_json::Value::Object(e.args.clone()), &mut out);
         }
     }
     out.sort();
