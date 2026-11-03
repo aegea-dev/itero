@@ -121,6 +121,7 @@ A list of objects, each saying one thing:
 | Entry | Means |
 |---|---|
 | `{ "event": "order.placed" }` | an event of this type starts a run |
+| `{ "event": "mail.received", "args": { "MAILBOX": "sales" } }` | the same, and the args its connector is given ([One connector, many sets of args](/guides/connectors/#one-connector-many-sets-of-args)) |
 | `{ "schedule": "0 9 * * *" }` | a schedule starts a run (cron, the machine's local time) |
 | `{ "path": "~/Pictures/inbox" }` | a change to this file or folder starts a run ([Watching files](/guides/connectors/#watching-files)) |
 | `{ "$event.paid": true }` | condition: the event's `paid` is exactly `true` |
@@ -136,8 +137,8 @@ run. The others are conditions that must all hold:
 ```
 
 starts a run on `order.received` only if `API` is defined. Values compare
-exactly: `0` is not `false`. An `event`, `schedule` or `path` stands alone
-in its object.
+exactly: `0` is not `false`. An `event` (with its `args`), a `schedule` or
+a `path` stands alone in its object.
 
 A workflow with no `event`, `schedule` or `path` never starts by itself:
 it runs only as a step of another.
@@ -196,7 +197,8 @@ Steps run in order. A step is:
   `on` holds conditions only: an event, a schedule or a path starts a
   workflow, never a step. `args` are the values its action gets
   ([below](#args-what-a-step-gives-its-action)), `undo` names what takes
-  it back ([Undo](#undo-taking-steps-back)). It has no other keys.
+  it back ([Undo](#undo-taking-steps-back)), `repeat` runs it in rounds
+  ([Repeat](#repeat-rounds)). It has no other keys.
 
 So branches are steps with conditions. `order-process` picks one of four,
 by the args its caller gave it, its `$event`:
@@ -224,6 +226,7 @@ A workflow reads a value by where it comes from:
 | `$output`, `$output.count` | what the step just before gave |
 | `$steps.count-files`, `$steps.count-files.count` | what an earlier step gave, by its name |
 | `$config`, `$config.description` | the workspace's `itero.config.json`, read-only |
+| `$count` | the round of a repeated step or workflow, from 1 ([Repeat](#repeat-rounds)) |
 | `$$NAME` | a secret, a value in the workspace's `.env`, or an environment variable ([Args and secrets](/guides/secrets/)) |
 
 After `$event`, `$output` or `$steps.<name>`, fields go as deep as the
@@ -453,8 +456,9 @@ ARCHIVE=~/Archive
 ```
 
 `$$NAME` is looked up in the OS secret store, then `.env`, then the
-daemon's environment: the first found. Secrets stay in the store, never in
-`.env` ([Args and secrets](/guides/secrets/)). A value for one run only
+daemon's environment: the first found. `.env` may hold secrets too: it is
+yours, local, and `itero ws add` keeps it out of git
+([Args and secrets](/guides/secrets/)). A value for one run only
 comes with its event: `itero ws emit sites.check '{"timeout": 5}'`, read as
 `$event.timeout`.
 
@@ -504,6 +508,40 @@ This is `examples/terraform`'s `cluster` workflow.
   as `error` with the first why.
 - A `failure` (`"success": false`) undoes nothing: the steps all worked.
 - `itero ws wf runs <run>` marks them: `#cluster-delete (undo)  done`.
+
+## Repeat: rounds
+
+`repeat` on a step runs it in rounds, one as soon as the one before has
+ended; on a workflow (beside `on` and `steps`), each round is a run of
+its own. Every output is input for the next round: each gets the round
+before's `$output` and `$steps`, the run's `$event`, and `$count`, its
+number from 1.
+
+```json
+{ "steps": [
+    { "#fetch-page": { "args": { "page": "$count", "after": "$output.last" },
+                       "repeat": "$output.pages" } },
+    "#report"
+] }
+```
+
+| `repeat` | Rounds |
+|---|---|
+| `true` | until one stops it (below) |
+| `3` | three |
+| `"$output.count"` | as many as the value says, read as the first round starts |
+| `"<= 2026-12-31"` | while it is not past that day |
+| `"> 2026-12-31"` | while it is past that day: before it, the first round only |
+| `"0 9 * * *"` | on a step, at each time the cron line names: the run waits between rounds (a workflow's schedule is in its `on`) |
+
+A round that fails (`"success": false`) or ends in error stops the repeat,
+as does the workflow being turned `off` or being out of its `from` and
+`until`. A round that breaks breaks the run, as any step. A repeated step
+gives its last round's result. A workflow used as a step with a `repeat`
+of its own answers its step after its last round; a repeated step that
+is a workflow starts a run per round, its state seeded with the round
+before's. A step side by side cannot repeat: put it in a workflow of its
+own, repeated, used there by its name.
 
 ## Waiting: `timeout`
 

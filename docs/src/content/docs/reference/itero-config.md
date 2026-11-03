@@ -93,15 +93,14 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 | In an `action` entry | Is |
 |---|---|
 | `description`, `tags`, your own keys | what it is |
-| `repeat` | a list of objects: the step runs once per item, each item's values on top of its step's args; [Args and secrets](/guides/secrets/#repeat) |
 | `limits` | `quiet` and `most` for this action's steps, like `{"quiet": "1h", "most": "2d"}`; unless given, the workspace's [`limits`](#limits) |
 
 | In a `connector` entry | Is |
 |---|---|
 | `description`, `tags`, your own keys | what it is |
-| `args` | data for the connector, as environment variables: an object; [A connector's args](/guides/secrets/#a-connectors-args) |
 
-`itero ws ac repeat set` and `itero ws cn args set` write `repeat`
-and `args` here, keeping the rest of the file as it was. A workflow's
-`settings` and an action's `args` are errors saying where the values go. A workflow file has no `meta`: one is an
+A workflow's `settings`, an action's `args` or `repeat`, and a
+connector's `args` are errors saying where they go: a step's `args` and
+`repeat` in its workflow, a connector's in each `on` entry that listens
+([A connector's args](/guides/secrets/#a-connectors-args)). A workflow file has no `meta`: one is an
 error saying where it goes.

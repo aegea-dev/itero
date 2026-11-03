@@ -45,9 +45,8 @@ $ itero ws wf runs
 01a16fd5-46c0-7738-98d2-f87b1211af19   sunny-lake    greet   done    2026-10-24T21:33:30Z   2026-10-24T21:33:30Z
 ```
 
-A status is `running`, `waiting`, `done`, `failed`, `error` or `split` (a
-run that went on as one run per item of a list, see
-[Repeat](/guides/secrets/#repeat)). The run of a workflow used as a step
+A status is `running`, `waiting`, `done`, `failed` or `error`. The run
+of a workflow used as a step
 ends its line with `from <parent run>`; `--json` gives `parent`, that
 run's id.
 

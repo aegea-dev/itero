@@ -1,32 +1,31 @@
 ---
 title: ws action
-description: Your actions, the ones that break, and their repeat.
+description: Your actions, and the ones that break.
 ---
 
-`itero ws ac` (`itero ws action` in full) shows your actions and sets their repeat. An action's
-args are written in the step that runs it ([Args and secrets](/guides/secrets/)). Actions
+`itero ws ac` (`itero ws action` in full) shows your actions. An action's
+args, and its `repeat`, are written in the step that runs it
+([Args and secrets](/guides/secrets/), [Repeat](/guides/workflows/#repeat-rounds)). Actions
 are where things usually go wrong, so `itero ws ac errors` tells you which
 ones broke your runs, and why.
 
 ```sh
 itero ws ac list
 itero ws ac errors [<action>] [--limit N]
-itero ws ac repeat get <action>
-itero ws ac repeat set <action> '<items>'
 ```
 
 Each one takes `--json`, to print JSON for scripts instead of a table.
 
 ## list
 
-Every action: its name, its file (one per version), and whether it
-repeats. The built-in ones are listed too.
+Every action: its name and its file (one per version). The built-in
+ones are listed too.
 
 ```
 $ itero ws ac list
 #check-payment   actions/check-payment
 #hello           actions/hello
-#imap-check      actions/imap-check      repeat
+#imap-check      actions/imap-check
 #notify          built in
 #forget          built in
 #roll-log        built in
@@ -54,18 +53,3 @@ $ itero ws ac errors send-mail
 where an error message or a traceback usually is. `--limit N` shows at most
 `N` (20). itero keeps how each run ended, so a step that failed and then
 passed when it ran again does not count.
-
-## repeat
-
-An action's repeat: its step runs once per item, each item's values on
-top of its step's args. Kept in `itero.config.json` under `action.<name>.repeat`:
-a list of one or more objects.
-
-```sh
-itero ws ac repeat set imap-check '[{"user": "me@example.com",  "password": "$$ME_PASS"},
-                                     {"user": "you@example.com", "password": "$$YOU_PASS"}]'
-itero ws ac repeat get imap-check
-```
-
-`set` prints the file it wrote. See
-[Args and secrets](/guides/secrets/#repeat).

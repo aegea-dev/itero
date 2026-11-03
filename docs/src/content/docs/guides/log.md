@@ -29,7 +29,7 @@ workflow is [internal](/guides/maintenance/).
 | `step.skipped` | `step`, `why` (its `on` did not hold) |
 | `undo.failed` | `step`, `why`: an [undo](/guides/workflows/#undo-taking-steps-back) that broke; the other undos still run |
 | `run.note` | `note`: what the run did with an event or a timer |
-| `run.ended` | `status` (`done`, `failed`, `error`, `split`), `why` |
+| `run.ended` | `status` (`done`, `failed`, `error`), `why` |
 | `run.skipped` | a schedule came due and the workflow's `on` did not hold |
 | `connector.started`, `connector.ended`, `connector.gave-up` | `connector`, `why` |
 | `paths.watched` | `paths`: every path watched now |
