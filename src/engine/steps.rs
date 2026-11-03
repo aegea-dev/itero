@@ -440,6 +440,15 @@ impl Machine<'_> {
 
     /// The step just done is kept by `key`, `$steps.<key>`: its `$output`.
     fn record(&mut self, key: &str) {
+        // the first of a name used more than once is read by the name
+        // alone too: `$steps.ayna` is `$steps.ayna/1`
+        if let Some(name) = key.strip_suffix("/1") {
+            self.record_as(name);
+        }
+        self.record_as(key);
+    }
+
+    fn record_as(&mut self, key: &str) {
         let out = self.rt.state.get("output").cloned().unwrap_or(Value::Null);
         if let Some(s) = self.scopes.last_mut() {
             s.steps.insert(key.into(), out);
@@ -620,8 +629,10 @@ impl Machine<'_> {
                 .iter()
                 .rev()
                 .map(|u| {
+                    let name = flow::name(&u.step)?;
                     Ok(Step::One {
-                        name: flow::name(&u.step)?,
+                        label: name.label(),
+                        name,
                         args: if u.args.is_null() {
                             Value::Object(Map::new())
                         } else {
@@ -630,7 +641,6 @@ impl Machine<'_> {
                         on: None,
                         undo: None,
                         undo_args: Value::Object(Map::new()),
-                        as_name: None,
                     })
                 })
                 .collect::<Result<_, String>>()?,
@@ -678,18 +688,24 @@ impl Machine<'_> {
 
     fn start_step(&mut self, step: &Step, path: &mut Vec<usize>) -> Result<Option<At>, String> {
         match step {
-            Step::One { name, args, on, .. } => {
+            Step::One {
+                name,
+                args,
+                on,
+                label,
+                ..
+            } => {
                 if let Some(on) = on
                     && !self.holds(on)
                 {
-                    self.skipped(&label(name));
+                    self.skipped(label);
                     return Ok(None);
                 }
                 let data = match self.args(args) {
                     Ok(data) => data,
                     Err(why) => {
                         // it cannot start: the run breaks here
-                        self.broke = Some((why, label(name)));
+                        self.broke = Some((why, label.clone()));
                         return Ok(None);
                     }
                 };
@@ -1021,11 +1037,10 @@ impl Machine<'_> {
                 // and its result, kept by its name (a group's steps were
                 // kept as each finished)
                 if self.rt.phase != Phase::Undo
-                    && let Some(Step::One { name, as_name, .. }) =
+                    && let Some(Step::One { label, .. }) =
                         self.list(&workflow, depth == 0)?.get(step).cloned()
                 {
-                    let key = as_name.unwrap_or_else(|| flow::step_key(&name.label()));
-                    self.record(&key);
+                    self.record(&flow::step_key(&label));
                 }
                 let mut p = prefix;
                 let next = self.start_list(&workflow, depth == 0, step + 1, &mut p)?;

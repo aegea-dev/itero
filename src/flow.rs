@@ -138,8 +138,10 @@ pub enum Step {
         /// The undo's args, when it is written as a step: filled when it
         /// runs, `$output` being the result of the step it takes back.
         undo_args: Value,
-        /// Its `as`: the name its result is kept by (`$steps.<as>`).
-        as_name: Option<String>,
+        /// How the workflow knows it: `#ask-mirror`, `#ask-mirror/2` when its
+        /// name is in the file more than once (counted over the whole
+        /// file), a workflow's name.
+        label: String,
     },
     /// Actions and workflows that run side by side; the next step waits as
     /// the group says.
@@ -316,6 +318,9 @@ pub fn read(v: &Value) -> Result<Flow, Vec<Problem>> {
     }
     // the names its steps read, once its steps are all there: a step that
     // could not be read would make every name it gives look missing
+    if ps.is_empty() {
+        ps = f.number();
+    }
     if ps.is_empty() {
         ps = f.check_names();
     }
@@ -601,8 +606,19 @@ fn name_len(s: &str) -> usize {
 /// The length of a step's name `s` starts with, as `#name` has it:
 /// letters, digits, `_` or `-`.
 fn step_len(s: &str) -> usize {
-    s.find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
-        .unwrap_or(s.len())
+    let name = s
+        .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
+        .unwrap_or(s.len());
+    // and its number, when its name is in the file more than once: `ayna/2`
+    match s[name..].strip_prefix('/') {
+        Some(rest) => {
+            let digits = rest
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len());
+            if digits > 0 { name + 1 + digits } else { name }
+        }
+        None => name,
+    }
 }
 
 /// The length of the value's path `s` starts with (after `$`): a root of
@@ -947,14 +963,17 @@ fn parsed_labels(list: &[Step]) -> Vec<String> {
 fn step(v: &Value) -> Result<Step, Vec<Problem>> {
     let one = |e: String| vec![Problem::new("", e)];
     match v {
-        Value::String(s) => Ok(Step::One {
-            name: name(s).map_err(one)?,
-            args: Value::Object(Map::new()),
-            on: None,
-            undo: None,
-            undo_args: Value::Object(Map::new()),
-            as_name: None,
-        }),
+        Value::String(s) => {
+            let name = name(s).map_err(one)?;
+            Ok(Step::One {
+                label: name.label(),
+                name,
+                args: Value::Object(Map::new()),
+                on: None,
+                undo: None,
+                undo_args: Value::Object(Map::new()),
+            })
+        }
         Value::Array(items) => Ok(Step::Side(Group {
             members: side_members(items, "a list side by side")?,
             wait: Wait::All,
@@ -964,12 +983,12 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
         Value::Object(m) => {
             let w = written(m)?;
             Ok(Step::One {
+                label: w.name.label(),
                 name: w.name,
                 args: w.args,
                 on: w.on.map(Box::new),
                 undo: w.undo,
                 undo_args: w.undo_args,
-                as_name: w.as_name,
             })
         }
         _ => Err(one(format!(
@@ -1122,8 +1141,6 @@ struct Written {
     on: Option<On>,
     undo: Option<Name>,
     undo_args: Value,
-    /// Its `as`: the name its result is kept by.
-    as_name: Option<String>,
 }
 
 fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
@@ -1228,23 +1245,10 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             "strict is gone: a step's args reach its action and nothing else now",
         ));
     }
-    let as_name = match fields.remove("as") {
-        None => None,
-        Some(Value::String(a)) if plain(&a) => Some(a),
-        Some(a) => {
-            ps.push(Problem::new(
-                "",
-                format!(
-                    "as names the step's result ($steps.<as>), without # or spaces, like \"mirror-1\", not {a}"
-                ),
-            ));
-            None
-        }
-    };
     for other in fields.keys() {
         ps.push(Problem::new(
             "",
-            format!("\"{other}\" is not one of args, on, undo, as: a step's values go under args"),
+            format!("\"{other}\" is not one of args, on, undo: a step's values go under args"),
         ));
     }
     match step_name {
@@ -1254,7 +1258,6 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             on: when,
             undo,
             undo_args,
-            as_name,
         }),
         _ => Err(ps),
     }
@@ -1275,11 +1278,7 @@ fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, Vec<Problem>
                         "undo is for a step of a list, not one side by side",
                     )]);
                 }
-                let label = match (&w.as_name, &w.name) {
-                    (Some(a), Name::Action { .. }) => format!("#{a}"),
-                    (Some(a), Name::Workflow(_)) => a.clone(),
-                    (None, n) => n.label(),
-                };
+                let label = w.name.label();
                 Ok(Member {
                     name: w.name,
                     args: w.args,
@@ -1364,30 +1363,20 @@ fn group(v: &Value, m: &Map<String, Value>) -> Result<Step, Vec<Problem>> {
             return Err(ps);
         }
     };
-    let labels: Vec<String> = members.iter().map(|m| m.label.clone()).collect();
-    // a step is told apart by its label, whatever its version
-    for (i, l) in labels.iter().enumerate() {
-        if labels[..i].contains(l) {
-            ps.push(bad(format!(
-                "{l} is in the list twice: give each \"as\", a name of its own, to tell them apart"
-            )));
-        }
-    }
-    // a list of names that must be steps of this group
+    // names of its steps, as written: checked once the file's steps are
+    // numbered ([`Flow::number`])
     let steps_of = |what: &str, v: &Value| -> Result<Vec<String>, String> {
         let list: Vec<&Value> = match v {
             Value::Array(a) => a.iter().collect(),
             one => vec![one],
         };
-        let mut out = vec![];
-        for n in list {
-            let s = n.as_str().unwrap_or("");
-            if !labels.iter().any(|l| l == s) {
-                return Err(format!("{what}: {n} is not one of the steps in the list"));
-            }
-            out.push(s.to_string());
-        }
-        Ok(out)
+        list.iter()
+            .map(|n| {
+                n.as_str()
+                    .map(String::from)
+                    .ok_or(format!("{what}: {n} is not one of the steps in the list"))
+            })
+            .collect()
     };
     let wait = match key {
         "all" => Ok(Wait::All),
@@ -1509,13 +1498,89 @@ impl Flow {
         let mut out = vec![];
         for s in self.all_steps() {
             match s {
-                Step::One { name, as_name, .. } => {
-                    out.push(as_name.clone().unwrap_or_else(|| step_key(&name.label())))
-                }
+                Step::One { label, .. } => out.push(step_key(label)),
                 Step::Side(g) => out.extend(g.members.iter().map(|m| step_key(&m.label))),
             }
         }
         out
+    }
+
+    /// Numbers each step whose name is in the file more than once, `/1`,
+    /// `/2`, counted over the whole file (`steps`, `success`, `failure`,
+    /// `error`; a step side by side where it stands), whatever its version;
+    /// then reads each group's `fail` and `names` by those numbers, the
+    /// name alone the first.
+    fn number(&mut self) -> Vec<Problem> {
+        let mut counts: std::collections::HashMap<String, usize> = Default::default();
+        for (_, list) in self.lists() {
+            for s in list {
+                match s {
+                    Step::One { label, .. } => *counts.entry(label.clone()).or_default() += 1,
+                    Step::Side(g) => {
+                        for m in &g.members {
+                            *counts.entry(m.label.clone()).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let mut seen: std::collections::HashMap<String, usize> = Default::default();
+        let mut numbered = |l: &mut String| {
+            if counts.get(l.as_str()).copied().unwrap_or(0) > 1 {
+                let n = seen.entry(l.clone()).or_default();
+                *n += 1;
+                *l = format!("{l}/{n}");
+            }
+        };
+        for list in [
+            &mut self.steps,
+            &mut self.success,
+            &mut self.failure,
+            &mut self.error,
+        ] {
+            for s in list.iter_mut() {
+                match s {
+                    Step::One { label, .. } => numbered(label),
+                    Step::Side(g) => g.members.iter_mut().for_each(|m| numbered(&mut m.label)),
+                }
+            }
+        }
+        let mut ps = vec![];
+        for (key, list) in [
+            ("steps", &mut self.steps),
+            ("success", &mut self.success),
+            ("failure", &mut self.failure),
+            ("error", &mut self.error),
+        ] {
+            let at = parsed_labels(list);
+            for (s, at) in list.iter_mut().zip(at) {
+                let Step::Side(g) = s else {
+                    continue;
+                };
+                let labels: Vec<String> = g.members.iter().map(|m| m.label.clone()).collect();
+                let mut read = |what: &str, names: &mut Vec<String>| {
+                    for n in names.iter_mut() {
+                        let first = format!("{n}/1");
+                        if labels.contains(n) {
+                        } else if labels.contains(&first) {
+                            *n = first;
+                        } else {
+                            ps.push(Problem::new(
+                                format!("{key}/{at}"),
+                                format!("{what}: \"{n}\" is not one of the steps in the list"),
+                            ));
+                        }
+                    }
+                };
+                if let Some(Fail::Steps(names)) = &mut g.fail {
+                    read("fail", names);
+                }
+                if let Wait::Some(Need::Names(names)) = &mut g.wait {
+                    read("names", names);
+                }
+            }
+        }
+        ps
     }
 
     /// A `$steps.x` naming no step, or a name two steps have: a problem
@@ -1542,19 +1607,16 @@ impl Flow {
                 if seen.contains(&step) {
                     continue;
                 }
-                let message = match keys.iter().filter(|k| **k == step).count() {
-                    0 => format!(
-                        "$steps.{step} names no step of this workflow (its steps: {})",
-                        keys.join(", ")
-                    ),
-                    1 => {
-                        seen.push(step);
-                        continue;
-                    }
-                    _ => format!(
-                        "$steps.{step}: two steps are {step}; give one an as, like {{ \"#{step}\": {{ \"as\": \"{step}-2\" }} }}"
-                    ),
-                };
+                // the name alone is the first of its number
+                let first = format!("{step}/1");
+                if keys.iter().any(|k| *k == step || *k == first) {
+                    seen.push(step);
+                    continue;
+                }
+                let message = format!(
+                    "$steps.{step} names no step of this workflow (its steps: {})",
+                    keys.join(", ")
+                );
                 ps.push(Problem::new(at.clone(), message));
                 seen.push(step);
             }

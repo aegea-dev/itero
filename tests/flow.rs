@@ -136,7 +136,7 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
             on: None,
             undo: None,
             undo_args: json!({}),
-            as_name: None
+            label: "order-process".into()
         }
     );
     let Step::One { name, .. } = &f.steps[2] else {
@@ -155,14 +155,14 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
         on,
         undo,
         undo_args,
-        as_name,
+        label,
     } = &f.steps[3]
     else {
         panic!()
     };
     assert_eq!(*name, action("ship"));
     assert_eq!(*args, json!({"carrier": "PTT Kargo"}));
-    assert_eq!(*as_name, None);
+    assert_eq!(label, "#ship");
     assert_eq!(on.as_ref().unwrap().equal, obj(json!({"event.paid": true})));
     assert_eq!(*undo, None);
     assert_eq!(*undo_args, json!({}));
@@ -247,7 +247,7 @@ fn mistakes_are_named() {
         // a step's values go under args
         (
             r##"{ "steps": [{ "#a": { "carrier": "PTT Kargo" } }] }"##,
-            "\"carrier\" is not one of args, on, undo, as",
+            "\"carrier\" is not one of args, on, undo:",
         ),
         (
             r##"{ "steps": [{ "#a": { "args": 3 } }] }"##,
@@ -288,8 +288,8 @@ fn mistakes_are_named() {
         ),
         // every step's result by its name: one name once, and a name a step has
         (
-            r##"{ "steps": ["#a", "#a", { "#b": { "args": { "n": "$steps.a" } } }] }"##,
-            "$steps.a: two steps are a; give one an as",
+            r##"{ "steps": ["#a", "#a", { "#b": { "args": { "n": "$steps.a/3" } } }] }"##,
+            "$steps.a/3 names no step of this workflow",
         ),
         (
             r##"{ "steps": ["#a", { "#b": { "args": { "n": "$steps.c" } } }] }"##,
@@ -721,19 +721,6 @@ fn a_group_mistake_is_named_with_the_step() {
         ),
         (r##"{ "all": ["#a", "#b"], "fail": [] }"##, "fail is"),
         (r##"{ "all": ["#a", "#b"], "fail": 3 }"##, "fail is"),
-        // two steps with the same name, whatever their versions
-        (
-            r##"{ "all": ["#a", "#b", "#a"] }"##,
-            "#a is in the list twice",
-        ),
-        (
-            r##"{ "race": ["#a", "#a@0.2"] }"##,
-            "#a is in the list twice",
-        ),
-        (
-            r##"{ "settled": ["yedekle", "#a", "yedekle"] }"##,
-            "yedekle is in the list twice",
-        ),
     ] {
         let e = err(&format!(r##"{{ "steps": [{step}] }}"##));
         assert!(e.contains(says), "{step}: {e}");
@@ -746,21 +733,19 @@ fn a_group_mistake_is_named_with_the_step() {
 }
 
 #[test]
-fn the_same_step_twice_needs_an_as_only_to_be_read() {
+fn the_same_step_twice_is_read_by_its_number() {
     // twice, and nothing reads it by name: fine
     flow::parse(r##"{ "steps": [["#kontrol", "#kontrol"], "#notify", "#notify"] }"##).unwrap();
-    let e = err(
-        r##"{ "steps": [["#kontrol", "#kontrol"], { "#son": { "args": { "k": "$steps.kontrol" } } }] }"##,
-    );
-    assert!(e.contains("two steps are kontrol"), "{e}");
-    let g = group(r##"["#kontrol", { "#kontrol": { "as": "kontrol-2" } }]"##);
-    assert_eq!(g.members.len(), 2);
+    // whatever their versions, one name
+    let g = group(r##"["#kontrol", "#kontrol@0.2"]"##);
+    let labels: Vec<&str> = g.members.iter().map(|m| m.label.as_str()).collect();
+    assert_eq!(labels, ["#kontrol/1", "#kontrol/2"]);
     let f = flow::parse(
-        r##"{ "steps": [{ "#bölge": { "as": "ab" } }, { "#bölge": { "as": "abd" } },
-                      { "#topla": { "args": { "a": "$steps.ab", "b": "$steps.abd.toplam" } } }] }"##,
+        r##"{ "steps": ["#bölge", "#bölge",
+                      { "#topla": { "args": { "a": "$steps.bölge/1", "b": "$steps.bölge/2.toplam" } } }] }"##,
     )
     .unwrap();
-    assert_eq!(f.step_keys(), vec!["ab", "abd", "topla"]);
+    assert_eq!(f.step_keys(), vec!["bölge/1", "bölge/2", "topla"]);
 }
 
 #[test]
@@ -849,15 +834,15 @@ fn the_secrets_of_a_list_of_args_are_named() {
 fn a_step_of_a_group_may_be_an_object_with_args_on_and_as() {
     let g = group(
         r##"{ "any": [
-              { "#ayna": { "args": [{ "url": "http://127.0.0.1:9/fiyat" }], "as": "ayna-1" } },
-              { "#ayna": { "args": { "url": "$event.ikinci" }, "as": "ayna-2" } },
-              { "yedek": { "on": [{ "$event.yedekli": true }], "as": "yedek-akış" } },
+              { "#ayna": { "args": [{ "url": "http://127.0.0.1:9/fiyat" }] } },
+              { "#ayna": { "args": { "url": "$event.ikinci" } } },
+              { "yedek": { "on": [{ "$event.yedekli": true }] } },
               "#son"
             ] }"##,
     );
     let labels: Vec<&str> = g.members.iter().map(|m| m.label.as_str()).collect();
     // an action's step is read with #, a workflow's without, as names are
-    assert_eq!(labels, vec!["#ayna-1", "#ayna-2", "yedek-akış", "#son"]);
+    assert_eq!(labels, vec!["#ayna/1", "#ayna/2", "yedek", "#son"]);
     assert_eq!(g.members[0].name, action("ayna"));
     assert_eq!(
         g.members[0].args,
@@ -865,40 +850,26 @@ fn a_step_of_a_group_may_be_an_object_with_args_on_and_as() {
     );
     assert!(g.members[2].on.is_some());
     assert_eq!(g.members[3].args, json!({}));
-    // fail and names go by the labels
-    let g = group(
-        r##"{ "some": [{ "#ayna": { "as": "bir" } }, { "#ayna": { "as": "iki" } }], "names": ["#iki"], "fail": "#bir" }"##,
-    );
-    assert_eq!(g.wait, Wait::Some(Need::Names(names(&["#iki"]))));
-    assert_eq!(g.fail, Some(Fail::Steps(names(&["#bir"]))));
+    // fail and names go by the labels, numbers and all
+    let g = group(r##"{ "some": ["#ayna", "#ayna"], "names": ["#ayna/2"], "fail": "#ayna/1" }"##);
+    assert_eq!(g.wait, Wait::Some(Need::Names(names(&["#ayna/2"]))));
+    assert_eq!(g.fail, Some(Fail::Steps(names(&["#ayna/1"]))));
 }
 
 #[test]
 fn a_step_of_a_group_says_what_is_wrong() {
     for (step, says) in [
         (
-            r##"{ "any": [{ "#ayna": {} }, { "#ayna": {} }] }"##,
-            "#ayna is in the list twice: give each \"as\"",
-        ),
-        (
-            r##"{ "any": ["#ayna", { "#ayna": { "as": "ayna" } }] }"##,
-            "#ayna is in the list twice",
-        ),
-        (
-            r##"{ "any": [{ "#ayna": { "as": "bir" } }, { "#ayna": { "as": "iki" } }], "fail": "#ayna" }"##,
-            "fail: \"#ayna\" is not one of the steps",
+            r##"{ "any": ["#ayna", "#ayna"], "fail": "#ayna/3" }"##,
+            "fail: \"#ayna/3\" is not one of the steps",
         ),
         (
             r##"{ "all": [{ "#kur": { "undo": "#sil" } }, "#b"] }"##,
             "undo is for a step of a list, not one side by side",
         ),
         (
-            r##"{ "all": [{ "#a": { "as": "" } }, "#b"] }"##,
-            "as names the step",
-        ),
-        (
-            r##"{ "all": [{ "#a": { "as": "#a2" } }, "#b"] }"##,
-            "as names the step",
+            r##"{ "all": [{ "#a": { "as": "bir" } }, "#b"] }"##,
+            "\"as\" is not one of args, on, undo",
         ),
         (
             r##"{ "all": ["#a", 7] }"##,
@@ -912,16 +883,13 @@ fn a_step_of_a_group_says_what_is_wrong() {
         let e = err(&format!(r##"{{ "steps": [{step}] }}"##));
         assert!(e.contains(says), "{step}: {e}");
     }
-    // as names any step's result
-    let f = flow::parse(r##"{ "steps": [{ "#a": { "as": "bir" } }] }"##).unwrap();
-    assert_eq!(f.step_keys(), vec!["bir"]);
 }
 
 #[test]
 fn the_uses_secrets_and_conditions_of_a_group_s_steps_are_read() {
     let f = flow::parse(
         r##"{ "steps": [{ "race": [
-              { "#ayna": { "args": { "key": "$$AYNA_KEY" }, "as": "bir" } },
+              { "#ayna": { "args": { "key": "$$AYNA_KEY" } } },
               { "yedek": { "on": [{ "has": "$$YEDEK" }] } }
             ] }] }"##,
     )
@@ -1023,4 +991,61 @@ fn a_step_is_addressed_by_its_action_and_place() {
             "#ai/1", "#notify", "#ai/2", "günlük", "all", "race/1", "race/2"
         ]
     );
+}
+
+#[test]
+fn a_name_used_more_than_once_is_numbered_over_the_whole_file() {
+    let f = flow::parse(
+        r##"{ "steps": [
+        "#ayna",
+        { "race": ["#ayna", "#ayna"], "fail": "#ayna/3" },
+        { "#kaydet": { "args": { "ikinci": "$steps.ayna/2.fiyat", "ilk": "$steps.ayna" } } } ],
+      "error": ["#ayna"] }"##,
+    )
+    .unwrap();
+    let Step::One { label, .. } = &f.steps[0] else {
+        panic!()
+    };
+    assert_eq!(label, "#ayna/1");
+    let Step::Side(g) = &f.steps[1] else { panic!() };
+    let labels: Vec<&str> = g.members.iter().map(|m| m.label.as_str()).collect();
+    assert_eq!(labels, ["#ayna/2", "#ayna/3"]);
+    assert_eq!(g.fail, Some(Fail::Steps(vec!["#ayna/3".into()])));
+    let Step::One { label, .. } = &f.steps[2] else {
+        panic!()
+    };
+    assert_eq!(label, "#kaydet", "a name once has no number");
+    let Step::One { label, .. } = &f.error[0] else {
+        panic!()
+    };
+    assert_eq!(label, "#ayna/4");
+}
+
+#[test]
+fn a_number_names_a_step_that_is_there() {
+    for (text, says) in [
+        (
+            r##"{ "steps": [["#a", "#a"], { "#b": { "args": { "x": "$steps.a/3" } } }] }"##,
+            "$steps.a/3 names no step",
+        ),
+        (
+            r##"{ "steps": [{ "all": ["#a", "#a"], "fail": "#a/3" }] }"##,
+            "\"#a/3\" is not one of the steps",
+        ),
+        (
+            r##"{ "steps": [{ "#a": { "as": "bir" } }] }"##,
+            "\"as\" is not one of args, on, undo",
+        ),
+    ] {
+        let e = err(text);
+        assert!(e.contains(says), "{text}: {e}");
+    }
+    // the name alone is the first
+    let f = flow::parse(
+        r##"{ "steps": [["#a", "#a"], { "#b": { "args": { "x": "$steps.a" } } }],
+             "error": [{ "all": ["#c", "#c"], "fail": "#c" }] }"##,
+    )
+    .unwrap();
+    let Step::Side(g) = &f.error[0] else { panic!() };
+    assert_eq!(g.fail, Some(Fail::Steps(vec!["#c/1".into()])));
 }
