@@ -185,16 +185,215 @@ Restart ==
                    orphans, left, overLimit, twice>>
 
 -----------------------------------------------------------------------------
+(* The manager: steps.rs decide, as each workflow's steps. Its answer: the *)
+(* run, the jobs to give out, a child to start, the leaves it stopped.     *)
 
+Answer(run, jobs, child, stopped) ==
+    [run |-> run, jobs |-> jobs, child |-> child, stopped |-> stopped]
+Same(run) == Answer(run, <<>>, 0, {})
+End(run, how) ==
+    [run EXCEPT !.open = {}, !.waiting = FALSE, !.child = FALSE, !.ended = how]
+
+\* the run at step k, just started
+Begin(run, k) ==
+    LET s == Step(run.wf, k)
+        at == [run EXCEPT !.pos = k, !.waiting = FALSE, !.child = (s.kind = "child"),
+                   !.open = CASE s.kind = "act" -> {1}
+                              [] s.kind = "group" -> {1, 2}
+                              [] OTHER -> {}]
+    IN Answer(at,
+              CASE s.kind = "act" -> <<<<k, 1>>>>
+                [] s.kind = "group" -> <<<<k, 1>>, <<k, 2>>>>
+                [] OTHER -> <<>>,
+              IF s.kind = "child" THEN s.flow ELSE 0,
+              {})
+
+\* the step at run.pos ended well: the next, or the run is done
+Advance(run) ==
+    IF run.pos < Len(Flows[run.wf].steps) THEN Begin(run, run.pos + 1)
+    ELSE Same(End(run, "done"))
+
+Here(run, e) == e.path = run.pos /\ e.br \in run.open
+Others(run, e) == {<<run.pos, b>> : b \in run.open \ {e.br}}
+
+Decide(run, e) ==
+    IF run.ended /= "" /\ Bug /= "ended" THEN Same(run)
+    ELSE CASE e.type = "run.started" ->
+                IF run.pos = 0 THEN Begin(run, 1) ELSE Same(run)
+           [] e.type = "action.finished" ->
+                IF Here(run, e) THEN [Advance(run) EXCEPT !.stopped = Others(run, e)]
+                ELSE Same(run)
+           [] e.type = "action.failed" ->
+                IF Here(run, e) THEN Answer(End(run, "error"), <<>>, 0, Others(run, e))
+                ELSE Same(run)
+           [] e.type = "action.waiting" ->
+                IF Here(run, e) THEN Same([run EXCEPT !.waiting = TRUE]) ELSE Same(run)
+           [] e.type = "message" ->
+                \* taken by the waiting step, which runs again; it still waits
+                IF ~run.waiting \/ (e.msg \in run.taken /\ Bug /= "taken") THEN Same(run)
+                ELSE Answer([run EXCEPT !.taken = @ \cup {e.msg}], <<<<run.pos, 1>>>>, 0, {})
+           [] e.type = "workflow.ended" ->
+                IF e.path = run.pos /\ run.child THEN Advance([run EXCEPT !.child = FALSE])
+                ELSE Same(run)
+           [] e.type = "timer.fired" ->
+                IF run.waiting THEN Same(End(run, "error")) ELSE Same(run)
+           [] e.type = "run.stop" ->
+                Answer(End(run, "stopped"), <<>>, 0, {<<run.pos, b>> : b \in run.open})
+           [] OTHER -> Same(run)
+
+-----------------------------------------------------------------------------
+(* The daemon's pass: daemon.rs work, route, deliver; journal.rs handle *)
+
+First(j) == Open(j) /\ \A k \in 1..(j - 1) : ~Open(k)
+Deliverable(j) == IF Bug = "order" THEN Open(j) ELSE First(j)
+
+\* the oldest event is a message: read it (route's transaction is next)
+Take(j) ==
+    /\ up /\ taking = 0 /\ Deliverable(j) /\ ev[j].subj = APP
+    /\ taking' = j
+    /\ UNCHANGED <<ev, runs, timers, up, held, running, cancel, deferred,
+                   orphans, left, overLimit, twice>>
+
+Starts(e) ==
+    SelectSeq([w \in 1..Len(Flows) |-> w],
+              LAMBDA w : e.kind \in Flows[w].on /\ ~(e.type = "itero.run.done" /\ e.wf = w))
+Counted(e) == \E k \in 1..Len(Starts(e)) : ~Flows[Starts(e)[k]].internal
+
+\* journal.rs route: handled first (one cancelled since it was read starts
+\* nothing), its runs started, copied to the runs waiting
+Route ==
+    /\ up /\ taking /= 0
+    /\ LET j == taking
+           e == ev[j]
+           s == Starts(e)
+           full == Counted(e) /\ ActiveOf(runs) >= Limit
+           waiters == SelectSeq([r \in 1..Len(runs) |-> r],
+                                LAMBDA r : runs[r].waiting /\ runs[r].ended = "")
+           reach == IF e.type = "itero.run.done" THEN <<>> ELSE waiters
+           started == [k \in 1..Len(s) |->
+                        [Ev(Len(runs) + k, "run.started") EXCEPT !.cause = j]]
+           copies == Map(reach, LAMBDA r : [Ev(r, "message") EXCEPT !.msg = j])
+           fresh == [k \in 1..Len(s) |-> Run(s[k], 0, 0, 1, j, Len(ev) + k, e.type)]
+       IN IF e.handled /\ Bug /= "handled"
+          THEN UNCHANGED <<ev, runs, held, overLimit>>
+          ELSE IF full /\ Bug /= "limit"
+          THEN /\ held' = held \cup {j}
+               /\ UNCHANGED <<ev, runs, overLimit>>
+          ELSE /\ ev' = [ev EXCEPT ![j] = Mark(@, @.note)] \o started \o copies
+               /\ runs' = runs \o fresh
+               /\ overLimit' = (overLimit \/ full)
+               /\ UNCHANGED held
+    /\ taking' = 0
+    /\ UNCHANGED <<timers, up, running, cancel, deferred, orphans, left, twice>>
+
+\* deliver: a run's event to its manager, the answer saved in one handle
+Deliver(j) ==
+    /\ up /\ taking = 0 /\ Deliverable(j) /\ ev[j].subj > 0
+    /\ LET e == ev[j]
+           r == e.subj
+           old == runs[r]
+           a == Decide(old, e)
+           new == a.run
+           ends == new.ended /= "" /\ old.ended = ""
+           again == ends /\ new.ended = "done" /\ old.round < Flows[old.wf].rounds
+           jobs == Map(a.jobs, LAMBDA p : [Ev(WORKER, "action.requested") EXCEPT
+                               !.run = r, !.path = p[1], !.br = p[2], !.cause = j])
+           \* journal.rs messages_since: each message for the workspace
+           \* since the run started, but the one that started it
+           missed == IF new.waiting /\ ~old.waiting
+                     THEN SelectSeq(Ids, LAMBDA m : ev[m].subj = APP /\ ev[m].type = "outside"
+                                                   /\ m >= old.from /\ m /= old.msg)
+                     ELSE <<>>
+           copies == Map(missed, LAMBDA m : [Ev(r, "message") EXCEPT !.msg = m])
+           \* quiet_when_done: one a run's message started says nothing
+           done == IF ends /\ new.ended = "done"
+                        /\ (old.origin /= "itero.run.done" \/ Bug = "quiet")
+                   THEN <<[Ev(APP, "itero.run.done") EXCEPT !.kind = "run.done",
+                               !.wf = old.wf, !.run = r]>>
+                   ELSE <<>>
+           \* a workflow used as a step: its end goes back, after its last round
+           back == IF ends /\ old.parent /= 0 /\ (~again \/ Bug = "rounds") /\ Bug /= "back"
+                   THEN <<[Ev(old.parent, "workflow.ended") EXCEPT !.path = old.ppath,
+                               !.run = r, !.cause = j]>>
+                   ELSE <<>>
+           stopped == {s \in DOMAIN ev : ev[s].subj = WORKER /\ ~ev[s].handled
+                                         /\ ev[s].run = r /\ <<ev[s].path, ev[s].br>> \in a.stopped}
+           why == IF ends /\ new.ended = "stopped" THEN "run stopped" ELSE "stopped"
+           marked == [s \in DOMAIN ev |-> IF s = j THEN Mark(ev[s], "")
+                                          ELSE IF s \in stopped THEN Mark(ev[s], why)
+                                          ELSE ev[s]]
+           head == marked \o jobs \o copies \o done \o back
+           round == IF again THEN <<[Ev(Len(runs) + 1, "run.started") EXCEPT !.cause = j]>>
+                    ELSE <<>>
+           nextRun == Run(old.wf, old.parent, old.ppath, old.round + 1, old.msg,
+                          Len(head) + 1, old.origin)
+           kid == IF a.child /= 0
+                  THEN <<[Ev(Len(runs) + Len(round) + 1, "run.started") EXCEPT !.cause = j]>>
+                  ELSE <<>>
+           kidRun == Run(a.child, r, new.pos, 1, 0, Len(head) + Len(round) + 1, old.origin)
+           newRuns == [runs EXCEPT ![r] = new]
+                        \o (IF again THEN <<nextRun>> ELSE <<>>)
+                        \o (IF a.child /= 0 THEN <<kidRun>> ELSE <<>>)
+       IN /\ ev' = head \o round \o kid
+          /\ runs' = newRuns
+          /\ timers' = IF new.waiting /\ new.ended = "" THEN timers \cup {r}
+                       ELSE IF new.ended /= "" /\ Bug = "timer" THEN timers
+                       ELSE timers \ {r}
+          /\ cancel' = cancel \cup (stopped \cap running)
+          /\ held' = IF held /= {} /\ ActiveOf(newRuns) < Limit /\ Bug /= "held"
+                     THEN {} ELSE held
+          /\ twice' = (twice \/ (e.type = "message" /\ e.msg \in old.taken /\ a.jobs /= <<>>))
+    /\ deferred' = FALSE
+    /\ UNCHANGED <<up, taking, running, orphans, left, overLimit>>
+
+\* ask_again: the manager killed MAX_TRIES times; the event is given again
+\* in a second, and no job starts meanwhile
+ManagerKilled(j) ==
+    /\ up /\ taking = 0 /\ Deliverable(j) /\ ev[j].subj > 0 /\ left.mkill > 0
+    /\ left' = [left EXCEPT !.mkill = @ - 1]
+    /\ deferred' = TRUE
+    /\ UNCHANGED <<ev, runs, timers, up, taking, held, running, cancel,
+                   orphans, overLimit, twice>>
+
+\* fire_timers: a due timer becomes its run's event, in one transaction
+FireTimer(r) ==
+    /\ up /\ taking = 0 /\ r \in timers
+    /\ timers' = timers \ {r}
+    /\ ev' = Append(ev, Ev(r, "timer.fired"))
+    /\ UNCHANGED <<runs, up, taking, held, running, cancel, deferred, orphans,
+                   left, overLimit, twice>>
+
+-----------------------------------------------------------------------------
+
+Outs == {"finished", "failed", "waiting"}
+
+\* what the daemon does by itself: it goes on while it can
+Daemon ==
+    \/ \E j \in DOMAIN ev : Take(j) \/ Deliver(j)
+    \/ Route
+    \/ \E s \in DOMAIN ev : StartJob(s) \/ OrphanDies(s) \/ \E o \in Outs : EndWorker(s, o)
+    \/ \E r \in DOMAIN runs : FireTimer(r)
+    \/ Restart
+
+\* Daemon's actions listed again, one a line: a trace names a step by its
+\* action, or by its line here when the action ranges over the state
 Next ==
+    \/ \E j \in DOMAIN ev : Take(j)
+    \/ \E j \in DOMAIN ev : Deliver(j)
+    \/ Route
+    \/ \E s \in DOMAIN ev : StartJob(s)
+    \/ \E s \in DOMAIN ev : OrphanDies(s)
+    \/ \E s \in DOMAIN ev : \E o \in Outs : EndWorker(s, o)
+    \/ \E r \in DOMAIN runs : FireTimer(r)
+    \/ Restart
     \/ \E k \in Kinds : Emit(k)
     \/ \E j \in DOMAIN ev : CancelEvent(j)
+    \/ \E j \in DOMAIN ev : ManagerKilled(j)
     \/ \E r \in DOMAIN runs : StopRun(r)
-    \/ \E s \in DOMAIN ev : \/ StartJob(s) \/ KillWorker(s) \/ OrphanDies(s)
-                            \/ \E o \in {"finished", "failed", "waiting"} : EndWorker(s, o)
-    \/ Crash \/ Restart
+    \/ \E s \in DOMAIN ev : KillWorker(s)
+    \/ Crash
 
-Spec == Init /\ [][Next]_vars
+Spec == Init /\ [][Next]_vars /\ WF_vars(Daemon)
 
 -----------------------------------------------------------------------------
 (* Rules *)
