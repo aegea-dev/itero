@@ -696,6 +696,27 @@ fn a_waiting_step_runs_again_every_hour_and_gives_up_after_its_timeout() {
 }
 
 #[test]
+fn a_retry_due_with_the_deadline_gives_up_and_does_not_run_the_step_again() {
+    // a timeout of whole hours: the hourly retry and the deadline are due
+    // together, the retry first
+    let mut r = Run::new(&[(
+        "sipariş",
+        json!({"steps": ["#check-payment"], "timeout": "1h", "error": ["#alert-team"]}),
+    )]);
+    let a = r.start(json!({"order": 43}));
+    let a = r.waiting(&a.jobs[0], json!({"payment_ref": "ö-1"}));
+    assert_eq!(a.timers[0].at, a.timers[1].at, "{:?}", a.timers);
+    r.now = "2026-10-21T11:00:00Z".into();
+    let a = r.send("timer.fired", json!({"kind": "retry"}));
+    assert_eq!(names(&a), vec!["alert-team"], "its time is up");
+    assert!(r.rt.why.as_deref().unwrap().contains("1h"));
+    // the deadline after it finds nothing left to do
+    let a = r.send("timer.fired", json!({"kind": "deadline"}));
+    assert!(a.jobs.is_empty());
+    assert_eq!(r.rt.phase, Phase::Error);
+}
+
+#[test]
 fn an_error_stops_the_steps_and_runs_the_error_list() {
     let mut r = Run::new(&[(
         "sipariş",

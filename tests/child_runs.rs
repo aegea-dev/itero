@@ -269,3 +269,35 @@ fn a_parent_that_breaks_leaves_its_running_child_to_run_to_its_end() {
     assert_eq!(steps::status(&w.run("küme").runtime), "error");
     assert_eq!(steps::status(&w.run("stok").runtime), "done");
 }
+
+#[test]
+fn a_child_s_own_timeout_ends_its_wait_and_its_parent_s_does_not() {
+    let w = Ws::new();
+    // the parent's timeout is a minute: it waits for no data itself
+    w.flow(
+        "sipariş",
+        json!({ "on": [{ "event": "sipariş.geldi" }], "timeout": "1m", "steps": [
+            "stok",
+            {"#yaz": {"args": {"durum": "$steps.stok.status", "cevap": "$output.why"}}}
+        ] }),
+    );
+    w.flow("stok", json!({ "timeout": "1h", "steps": ["#onay"] }));
+    w.action("onay", r#"echo '{"sipariş": "ş-1"}'; exit 75"#);
+    w.action("yaz", r#"echo "$durum $cevap" >> sonuç.log"#);
+    w.emit("sipariş.geldi", json!({}));
+    w.pass_at("2026-10-21T10:00:00Z");
+    w.pass_at("2026-10-21T10:30:00Z");
+    assert_eq!(steps::status(&w.run("stok").runtime), "waiting");
+    assert_eq!(steps::status(&w.run("sipariş").runtime), "running");
+    // a pass's clock moves on while it runs: the wait began a second or
+    // two after 10:00, so its hour is up a little after 11:00
+    w.pass_at("2026-10-21T11:00:30Z");
+    assert_eq!(steps::status(&w.run("stok").runtime), "error");
+    assert_eq!(
+        w.read("sonuç.log"),
+        "error waited 1h for data\n",
+        "{:#?}",
+        w.log()
+    );
+    assert_eq!(steps::status(&w.run("sipariş").runtime), "done");
+}

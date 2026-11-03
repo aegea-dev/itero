@@ -1357,43 +1357,50 @@ impl Machine<'_> {
 
     fn timer(&mut self, d: &Value) -> Result<(), String> {
         match d.get("kind").and_then(Value::as_str) {
+            // a step whose time is up gives up, though the retry came first
+            // (a timeout of whole hours brings both at once); the rest run
+            // again
             Some("retry") => {
+                self.give_up_late()?;
                 self.wake();
                 Ok(())
             }
-            Some("deadline") => {
-                let limit = self.timeout();
-                let late: Vec<_> = self
-                    .waiting_leaves()
-                    .into_iter()
-                    .filter(|(_, _, since)| {
-                        since
-                            .as_deref()
-                            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                            .is_some_and(|s| s + limit <= self.now)
-                    })
-                    .collect();
-                for (path, name, _) in late {
-                    // one that a group stopped, or a run that went on, is not
-                    // a step now
-                    if self.leaf(&path).is_none() {
-                        continue;
-                    }
-                    let wait = humantime::format_duration(limit.to_std().unwrap_or_default());
-                    let (why, step) = (format!("waited {wait} for data"), format!("#{name}"));
-                    if self.rt.phase == Phase::Undo {
-                        self.undo_failed(&path, &step, &why)?;
-                    } else {
-                        self.settle_leaf(&path, Leaf::Broke { step, why })?;
-                    }
-                }
-                Ok(())
-            }
+            Some("deadline") => self.give_up_late(),
             _ => {
                 self.log.push("a timer of no kind ignored".into());
                 Ok(())
             }
         }
+    }
+
+    /// The waiting steps that have waited their `timeout` break.
+    fn give_up_late(&mut self) -> Result<(), String> {
+        let limit = self.timeout();
+        let late: Vec<_> = self
+            .waiting_leaves()
+            .into_iter()
+            .filter(|(_, _, since)| {
+                since
+                    .as_deref()
+                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .is_some_and(|s| s + limit <= self.now)
+            })
+            .collect();
+        for (path, name, _) in late {
+            // one that a group stopped, or a run that went on, is not a step
+            // now
+            if self.leaf(&path).is_none() {
+                continue;
+            }
+            let wait = humantime::format_duration(limit.to_std().unwrap_or_default());
+            let (why, step) = (format!("waited {wait} for data"), format!("#{name}"));
+            if self.rt.phase == Phase::Undo {
+                self.undo_failed(&path, &step, &why)?;
+            } else {
+                self.settle_leaf(&path, Leaf::Broke { step, why })?;
+            }
+        }
+        Ok(())
     }
 
     fn timeout(&self) -> chrono::Duration {
