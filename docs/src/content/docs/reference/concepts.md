@@ -106,3 +106,30 @@ See [Actions](/guides/actions/).
 - `itero watch <path>` for one that watches files.
 
 See [Connectors](/guides/connectors/).
+
+## Addresses
+
+Any part of a workspace is named by one address, from the workspace's
+name down, by kind, then the workflow file's own keys. `itero ws check`
+says where each problem is with one.
+
+| Address | Names |
+|---|---|
+| `home` | the workspace |
+| `home/workflows/posta` | a workflow, and its entry in `itero.config.json` |
+| `home/workflows/posta/on/2` | the second entry of its `on` |
+| `home/workflows/posta/steps/#ai` | a step running the action `ai` |
+| `home/workflows/posta/steps/#ai/2` | the second `#ai` step in `steps` |
+| `home/workflows/posta/steps/daily` | a step running the workflow `daily` |
+| `home/workflows/posta/steps/all/#check-stock` | a step side by side, in a plain list or an `all` group |
+| `home/workflows/posta/steps/race/2/#a` | in the second `race` group of `steps` |
+| `home/workflows/posta/steps/#ship/undo` | a step's undo |
+| `home/workflows/posta/error/#notify` | a step in `success`, `failure` or `error` |
+| `home/actions/check-stock` | an action (`check-stock@2` pinned, `ai` built in) |
+| `home/connectors/mail.received` | a connector, by the event it sends |
+
+A step is named by its action (with `#`) or its workflow, as the step
+writes it. When one is in its list more than once, `/1`, `/2` tell them
+apart; `#ai` and `#ai/1` are the same step, so a step keeps its address
+when a second one is added. A workflow used as a step has its own
+address: `home/workflows/daily/...`.

@@ -1,10 +1,27 @@
 //! The workspace: the folder with itero.config.json, and the folders it
 //! lists for workflows, actions and connectors. One daemon runs one workspace.
+use crate::problem::Problem;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Workflows read, by name (their file names).
+pub type Flows = Vec<(String, crate::flow::Flow)>;
+
+/// Workflows as their files' JSON, by name.
+type Values = BTreeMap<String, Value>;
+
+/// What reading every workflow found: those that could be read, the
+/// problems of the rest, and every file that is JSON as written (with
+/// the built-in ones), so its steps can be checked even when the
+/// workflow as a whole cannot be read.
+pub struct ReadFlows {
+    pub flows: Flows,
+    pub problems: Vec<Problem>,
+    pub written: BTreeMap<String, Value>,
+}
 
 /// The workspace's manifest: what it is, how it runs, and what its
 /// workflows, actions and connectors are.
@@ -435,28 +452,72 @@ impl Workspace {
     /// built-in ones no file replaces. More than `limits.workflows`, the
     /// internal ones apart, is an error.
     pub fn flow_values(&self) -> Result<BTreeMap<String, Value>> {
-        let mut out = BTreeMap::new();
+        let (values, problems) = self.read_flow_values()?;
+        if !problems.is_empty() {
+            bail!("{}", crate::flow::told(&problems));
+        }
+        Ok(values)
+    }
+
+    /// Every workflow file that can be read, as its JSON, by name, and the
+    /// built-in ones no file replaces; and the problems of the rest, at
+    /// `workflow/<name>/...`. An error only for what is not the workflows'
+    /// own (a folder that cannot be listed).
+    pub fn read_flow_values(&self) -> Result<(BTreeMap<String, Value>, Vec<Problem>)> {
+        let (values, problems, _) = self.read_flow_files()?;
+        Ok((values, problems))
+    }
+
+    /// As `read_flow_values`, and every file that is JSON as written, by
+    /// name, whatever else is wrong with it.
+    fn read_flow_files(&self) -> Result<(Values, Vec<Problem>, Values)> {
+        let (mut out, mut problems, mut written) = (BTreeMap::new(), vec![], BTreeMap::new());
         for (name, f) in self.flow_files()? {
-            let text = std::fs::read_to_string(&f)
-                .with_context(|| format!("cannot read {}", f.display()))?;
-            let v: Value =
-                serde_json::from_str(&text).map_err(|e| anyhow!("{}: {e}", f.display()))?;
+            let at = format!("workflows/{name}");
+            let text = match std::fs::read_to_string(&f) {
+                Ok(t) => t,
+                Err(e) => {
+                    problems.push(Problem::new(
+                        at,
+                        format!("cannot read {}: {e}", f.display()),
+                    ));
+                    continue;
+                }
+            };
+            // past a syntax error nothing more of the file can be read
+            let v: Value = match serde_json::from_str(&text) {
+                Ok(v) => v,
+                Err(e) => {
+                    problems.push(Problem::new(at, format!("not JSON: {e}")));
+                    continue;
+                }
+            };
+            written.insert(name.clone(), v.clone());
             if v.get("meta").is_some() {
-                bail!(
-                    "{}: meta goes in {MANIFEST} now: \"workflow\": {{\"{name}\": {{\"description\": ...}}}}",
-                    f.display()
-                );
+                problems.push(Problem::new(
+                    at,
+                    format!(
+                        "meta goes in {MANIFEST} now: \"workflow\": {{\"{name}\": {{\"description\": ...}}}}"
+                    ),
+                ));
+                continue;
             }
-            crate::flow::from_value(&v).map_err(|e| anyhow!("{}: {e}", f.display()))?;
-            out.insert(name, v);
+            match crate::flow::read(&v) {
+                Ok(_) => {
+                    out.insert(name, v);
+                }
+                Err(ps) => problems.extend(ps.into_iter().map(|p| p.under(&at))),
+            }
         }
         for (name, text) in BUILT_IN {
             // the machine's daemon scans for models once, for every workspace
             if self.machine && name == "models" {
                 continue;
             }
-            if !out.contains_key(name) {
-                out.insert(name.to_string(), serde_json::from_str(text)?);
+            if !out.contains_key(name) && !written.contains_key(name) {
+                let v: Value = serde_json::from_str(text)?;
+                written.insert(name.to_string(), v.clone());
+                out.insert(name.to_string(), v);
             }
         }
         let entries = self.entries("workflow")?;
@@ -467,21 +528,43 @@ impl Workspace {
         };
         let counted = out.iter().filter(|(n, v)| !internal(n, v)).count();
         if counted > self.limits.workflows {
-            bail!(
-                "{counted} workflows: limits.workflows in itero.config.json allows {}",
-                self.limits.workflows
-            );
+            problems.push(Problem::new(
+                "",
+                format!(
+                    "{counted} workflows: limits.workflows in {MANIFEST} allows {}",
+                    self.limits.workflows
+                ),
+            ));
         }
-        Ok(out)
+        Ok((out, problems, written))
     }
 
     /// Every workflow, read, by name (its file name).
-    pub fn flows(&self) -> Result<Vec<(String, crate::flow::Flow)>> {
+    pub fn flows(&self) -> Result<Flows> {
+        let read = self.read_flows()?;
+        if !read.problems.is_empty() {
+            bail!("{}", crate::flow::told(&read.problems));
+        }
+        Ok(read.flows)
+    }
+
+    /// Every workflow that can be read, by name, and the problems of the
+    /// rest, each at its address (`workflow/posta/steps/#ai`).
+    pub fn read_flows(&self) -> Result<ReadFlows> {
         let entries = self.entries("workflow")?;
-        self.flow_values()?
-            .into_iter()
-            .map(|(n, v)| Ok((n.clone(), self.read_flow(&n, &v, &entries)?)))
-            .collect()
+        let (values, mut problems, written) = self.read_flow_files()?;
+        let mut flows = vec![];
+        for (n, v) in values {
+            match self.flow_with_entry(&n, &v, &entries) {
+                Ok(f) => flows.push((n, f)),
+                Err(ps) => problems.extend(ps),
+            }
+        }
+        Ok(ReadFlows {
+            flows,
+            problems,
+            written,
+        })
     }
 
     /// The workflow `name`, its file read as `v`, with its entry in the
@@ -492,7 +575,19 @@ impl Workspace {
         v: &Value,
         entries: &Map<String, Value>,
     ) -> Result<crate::flow::Flow> {
-        let mut f = crate::flow::from_value(v).map_err(|e| anyhow!("{name}: {e}"))?;
+        self.flow_with_entry(name, v, entries)
+            .map_err(|ps| anyhow!("{}", crate::flow::told(&ps)))
+    }
+
+    fn flow_with_entry(
+        &self,
+        name: &str,
+        v: &Value,
+        entries: &Map<String, Value>,
+    ) -> Result<crate::flow::Flow, Vec<Problem>> {
+        let at = format!("workflows/{name}");
+        let mut f = crate::flow::read(v)
+            .map_err(|ps| ps.into_iter().map(|p| p.under(&at)).collect::<Vec<_>>())?;
         // a built-in workflow says what it is in its own JSON; the entry
         // goes on top
         let mut entry = match v.get("meta") {
@@ -502,13 +597,8 @@ impl Workspace {
         if let Some(Value::Object(e)) = entries.get(name) {
             entry.extend(e.clone());
         }
-        let meta = crate::flow::entry(&Value::Object(entry)).map_err(|e| {
-            anyhow!(
-                "{}: workflow.{name}: {e}",
-                self.root.join(MANIFEST).display()
-            )
-        })?;
-        f.meta = meta;
+        f.meta = crate::flow::entry(&Value::Object(entry))
+            .map_err(|e| vec![Problem::new(at, format!("{MANIFEST}: {e}"))])?;
         Ok(f)
     }
 

@@ -2,16 +2,34 @@
 //! `ws info`, `ws check`, `ws which`.
 use super::out::{show, text};
 use crate::engine::journal::Journal;
-use crate::flow::{Flow, Name};
+use crate::flow::Name;
+use crate::problem::Problem;
 use crate::workspace::Workspace;
 use anyhow::{Result, bail};
 use serde_json::{Map, Value, json};
 use std::path::PathBuf;
 
-/// What `itero ws check` refuses in the manifest: an entry naming no workflow,
-/// action or connector, and the folders from before it (`args/`, `config/`).
-fn check_manifest(ws: &Workspace, flows: &[(String, Flow)]) -> Result<()> {
-    let manifest = crate::workspace::MANIFEST;
+/// A manifest entry's problem at the address of what it is about
+/// (`actions/depo`), its text after the manifest's name, its path and the
+/// entry's key taken off: `itero.config.json: limits: ...`.
+fn entry_problem(ws: &Workspace, kind: &str, name: &str, why: &str) -> Problem {
+    let path = format!("{}: ", ws.root.join(crate::workspace::MANIFEST).display());
+    let why = why.strip_prefix(&path).unwrap_or(why);
+    let why = why
+        .strip_prefix(&format!("{kind}.{name}."))
+        .or_else(|| why.strip_prefix(&format!("{kind}.{name}: ")))
+        .unwrap_or(why);
+    Problem::new(
+        format!("{kind}s/{name}"),
+        format!("{}: {why}", crate::workspace::MANIFEST),
+    )
+}
+
+/// What `itero ws check` refuses in the manifest: an entry naming no
+/// workflow, action or connector, an entry that is wrong, and the folders
+/// from before it (`args/`, `config/`). `workflows` are the workflows'
+/// names, read or not: a broken file's entry is not missing.
+fn check_manifest(ws: &Workspace, workflows: &[String]) -> Result<Vec<Problem>> {
     let mut wrong = vec![];
     for (dir, now) in [
         (
@@ -24,7 +42,7 @@ fn check_manifest(ws: &Workspace, flows: &[(String, Flow)]) -> Result<()> {
         ),
     ] {
         if ws.root.join(dir).is_dir() {
-            wrong.push(format!("{dir}/: is gone: {now}"));
+            wrong.push(Problem::new("", format!("{dir}/: is gone: {now}")));
         }
     }
     let actions: Vec<String> = ws
@@ -40,44 +58,46 @@ fn check_manifest(ws: &Workspace, flows: &[(String, Flow)]) -> Result<()> {
     let connectors: Vec<String> = ws.connector_files()?.into_iter().map(|(n, _)| n).collect();
     for name in ws.entries("connector")?.keys() {
         if let Err(why) = crate::engine::daemon::connector_args(ws, name) {
-            wrong.push(why);
+            wrong.push(entry_problem(ws, "connector", name, &why));
         }
     }
     for (name, _) in ws.entries("action")? {
         if let Err(why) = ws.no_args(&name) {
-            let why = format!("{why:#}");
-            let path = format!("{}: ", ws.root.join(manifest).display());
-            wrong.push(why.strip_prefix(&path).unwrap_or(&why).to_string());
+            wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
         }
-        // its error names the manifest, which the list below names once
         if let Err(why) = ws.step_limits(&name) {
-            let why = format!("{why:#}");
-            let path = format!("{}: ", ws.root.join(manifest).display());
-            wrong.push(why.strip_prefix(&path).unwrap_or(&why).to_string());
+            wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
         }
     }
     for (kind, known) in [
-        (
-            "workflow",
-            flows.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
-        ),
+        ("workflow", workflows.to_vec()),
         ("action", actions),
         ("connector", connectors),
     ] {
         for name in ws.entries(kind)?.keys() {
             if !known.contains(name) {
-                wrong.push(format!("{kind}.{name}: no {kind} {name}"));
+                wrong.push(Problem::new(
+                    format!("{kind}s/{name}"),
+                    format!("{}: no {kind} {name}", crate::workspace::MANIFEST),
+                ));
             }
         }
     }
-    if !wrong.is_empty() {
-        bail!("{}: {}", ws.root.join(manifest).display(), wrong.join("; "));
-    }
-    Ok(())
+    Ok(wrong)
 }
 
-/// Reads every workflow, action and connector and says what is wrong: an
-/// error stops it, naming the file; what it found is printed.
+/// A problem as printed: `<message> (<workspace>/<address>)`.
+fn told(ws_name: &str, p: &Problem) -> Value {
+    let at = match p.at.as_str() {
+        "" => ws_name.to_string(),
+        a => format!("{ws_name}/{a}"),
+    };
+    json!({ "message": p.message, "at": at })
+}
+
+/// Reads every workflow, action and connector and says what is wrong:
+/// every problem, each with its address, then how many; what it found is
+/// printed when nothing is wrong.
 pub fn check(ws: &Workspace, json: bool) -> Result<()> {
     let mut notes = vec![];
     for dir in ws.workflows.iter().chain(&ws.actions) {
@@ -85,19 +105,88 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
             notes.push(format!("no folder {}", dir.display()));
         }
     }
-    let mut flows = ws.flows()?;
-    check_manifest(ws, &flows)?;
+    let read = ws.read_flows()?;
+    let mut flows = read.flows;
+    let files = ws.flow_files()?;
+    let mut named: Vec<String> = files.keys().cloned().collect();
+    named.extend(read.written.keys().cloned());
+    let mut errors = check_manifest(ws, &named)?;
+    errors.extend(read.problems);
     // the internal ones last, apart
     flows.sort_by_key(|(_, f)| f.meta.internal);
     let j = Journal::open(ws)?;
+    let ws_name = j.workspace()?.name;
     let now = crate::engine::daemon::stamp(chrono::Utc::now());
-    let files = ws.flow_files()?;
     // the PATH an action runs with
     let path = crate::connectors::supervise::path_with(&std::env::current_exe()?);
     // where an #ai step without a url of its own sends
     let machine = crate::ai::defaults::path()
         .and_then(|p| crate::ai::defaults::read(&p))
         .unwrap_or_default();
+    let mut warnings: Vec<Problem> = crate::engine::secrets::shadowed(ws)?
+        .iter()
+        .map(|n| Problem::new("", crate::engine::secrets::shadow_warning(n)))
+        .collect();
+    // an arg a built-in does not read: likely a mix-up, not an error (it
+    // still joins the state)
+    let built_ins: [(&str, &[&str]); 2] = [
+        (
+            crate::engine::worker::NOTIFY,
+            &crate::engine::worker::NOTIFY_ARGS,
+        ),
+        (crate::engine::worker::AI, &crate::ai::step::ARGS),
+    ];
+    // #ai's own messages name it: the address says the step
+    let ai = |m: String| m.strip_prefix("#ai: ").map(String::from).unwrap_or(m);
+    // every step that can be read, in every file, whatever else is wrong
+    for (name, v) in &read.written {
+        for (at, step, args) in crate::flow::addressed(v) {
+            let (step, args) = (&step, &args);
+            let at = format!("workflows/{name}/{at}");
+            match step {
+                Name::Action { name: a, version } => {
+                    let built_in =
+                        crate::engine::worker::BUILT_IN.contains(&a.as_str()) && version.is_none();
+                    if !built_in && let Err(e) = ws.action_file(a, version.as_deref()) {
+                        errors.push(Problem::new(at.clone(), format!("{e:#}")));
+                    }
+                    for (action, taken) in built_ins {
+                        if a != action || !built_in {
+                            continue;
+                        }
+                        for arg in crate::flow::arg_names_of(args) {
+                            if !taken.contains(&arg.as_str()) {
+                                let (last, rest) =
+                                    taken.split_last().expect("a built-in takes args");
+                                warnings.push(Problem::new(
+                                    at.clone(),
+                                    format!(
+                                        "#{action} takes {} and {last}, not {arg}",
+                                        rest.join(", ")
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                    if built_in && a == crate::engine::worker::AI {
+                        match crate::ai::step::check(args) {
+                            Ok(seen) => warnings.extend(
+                                crate::ai::step::warnings(&seen)
+                                    .into_iter()
+                                    .map(|w| Problem::new(at.clone(), ai(w))),
+                            ),
+                            Err(e) => errors.push(Problem::new(at.clone(), ai(e))),
+                        }
+                    }
+                }
+                Name::Workflow(w) => {
+                    if !named.contains(w) {
+                        errors.push(Problem::new(at.clone(), format!("no workflow {w}")));
+                    }
+                }
+            }
+        }
+    }
     let mut out = vec![];
     for (name, f) in &flows {
         let id = j.workflow_id(name, &now)?;
@@ -127,14 +216,10 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
                         }
                         uses.push(u)
                     }
-                    Err(e) => bail!("{name}: {e:#}"),
+                    // told among the errors
+                    Err(_) => {}
                 },
-                Name::Workflow(w) => {
-                    if !flows.iter().any(|(n, _)| *n == w) {
-                        bail!("{name} uses workflow {w}, which is not there");
-                    }
-                    uses.push(json!({ "workflow": w }));
-                }
+                Name::Workflow(w) => uses.push(json!({ "workflow": w })),
             }
         }
         out.push(json!({
@@ -162,50 +247,31 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
         .into_iter()
         .map(|(kind, file)| json!({ "type": kind, "file": file.display().to_string() }))
         .collect();
-    let mut warnings: Vec<String> = crate::engine::secrets::shadowed(ws)?
-        .iter()
-        .map(|n| crate::engine::secrets::shadow_warning(n))
-        .collect();
-    // an arg a built-in does not read: likely a mix-up, not an error (it
-    // still joins the state)
-    let built_ins: [(&str, &[&str]); 2] = [
-        (
-            crate::engine::worker::NOTIFY,
-            &crate::engine::worker::NOTIFY_ARGS,
-        ),
-        (crate::engine::worker::AI, &crate::ai::step::ARGS),
-    ];
-    for (name, f) in &flows {
-        for (action, taken) in built_ins {
-            for a in f.arg_names(action) {
-                if !taken.contains(&a.as_str()) {
-                    let (last, rest) = taken.split_last().expect("a built-in takes args");
-                    warnings.push(format!(
-                        "{name}: #{action} takes {} and {last}, not {a}",
-                        rest.join(", ")
-                    ));
+    let told_all = |ps: &[Problem]| ps.iter().map(|p| told(&ws_name, p)).collect::<Vec<_>>();
+    let v = json!({ "workflows": out, "connectors": connectors, "notes": notes,
+                    "errors": told_all(&errors), "warnings": told_all(&warnings) });
+    if !errors.is_empty() {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&v)?);
+        } else {
+            for (kind, list) in [("error", &v["errors"]), ("warning", &v["warnings"])] {
+                for p in list.as_array().into_iter().flatten() {
+                    eprintln!("{kind}: {} ({})", text(&p["message"]), text(&p["at"]));
                 }
             }
+            eprintln!(
+                "{}",
+                crate::problem::count_line(errors.len(), warnings.len())
+            );
         }
-        for args in f.args_of(crate::engine::worker::AI) {
-            match crate::ai::step::check(args) {
-                Ok(seen) => warnings.extend(
-                    crate::ai::step::warnings(&seen)
-                        .into_iter()
-                        .map(|w| format!("{name}: {w}")),
-                ),
-                Err(e) => bail!("{name}: {e}"),
-            }
-        }
+        std::process::exit(1);
     }
-    let v =
-        json!({ "workflows": out, "connectors": connectors, "notes": notes, "warnings": warnings });
     show(json, &v, |v| {
         for n in v["notes"].as_array().into_iter().flatten() {
             eprintln!("note: {}", text(n));
         }
         for w in v["warnings"].as_array().into_iter().flatten() {
-            eprintln!("warning: {}", text(w));
+            eprintln!("warning: {} ({})", text(&w["message"]), text(&w["at"]));
         }
         let mut apart = false;
         for w in v["workflows"].as_array().into_iter().flatten() {
