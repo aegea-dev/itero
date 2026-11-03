@@ -393,9 +393,11 @@ wants, by its `status`:
 ] }
 ```
 
-Parent and child stay apart: the parent never sees the child's steps
-but through what it returned, and the child's undos are its own. The
-parent's undo of the step (`{ "infrastructure": { "undo": "#teardown" } }`)
+Parent and child are independent: the parent never sees the child's
+steps but through what it returned, and the child's undos are its own.
+Nothing the parent does stops its child: a child left behind by its
+group (a `race` it lost) or by its parent breaking goes on to its end.
+The parent's undo of the step (`{ "infrastructure": { "undo": "#teardown" } }`)
 is the parent's, run when the parent breaks later.
 
 `itero ws wf runs` lists the child's run under its own workflow,
@@ -598,9 +600,9 @@ all have.
 When a group ends or breaks before all its steps have (`race`, `any`,
 `some`), the others are stopped: a running one's process is ended, a
 waiting one waits no more, and the run's story shows them `stopped` (a
-workflow by its own name; its run ends `stopped`, with the runs it
-started). itero undoes nothing for them; to clean up after them, write
-the next step to do it.
+workflow by its own name). A workflow among them is a run of its own: it
+goes on to its end, and what it returns reaches nothing. itero undoes
+nothing for them; to clean up after them, write the next step to do it.
 
 `all` and `settled` wait for every step, even once one broke them: the
 steps still running run to their end, then the group breaks (and the run

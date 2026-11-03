@@ -72,9 +72,8 @@ One go through a workflow, started by an event, a schedule or a watched
 path. It has an id (a UUIDv7) and a name (`misty-lake`), and keeps the
 version of its workflows it started with. It ends as `done`, `failed` or
 `error`, or `split` when it went on as one run per item of a list of
-[args](#args), or `stopped` when a group ended without it. A workflow
-used as a step is a run of its own, linked to the run whose step
-started it.
+[args](#args). A workflow used as a step is a run of its own, linked
+to the run whose step started it.
 
 ### event
 
