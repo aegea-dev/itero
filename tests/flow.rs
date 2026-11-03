@@ -737,9 +737,9 @@ fn a_group_mistake_is_named_with_the_step() {
     ] {
         let e = err(&format!(r##"{{ "steps": [{step}] }}"##));
         assert!(e.contains(says), "{step}: {e}");
-        // the step is shown as written
+        // where: the step as written, or, for one of its steps, its address
         assert!(
-            e.contains(&step.replace(' ', "")) || e.contains(step),
+            e.contains(&step.replace(' ', "")) || e.contains(step) || e.contains("(steps/"),
             "{step}: {e}"
         );
     }
@@ -973,5 +973,54 @@ fn the_names_of_the_args_given_to_an_action_are_read() {
     assert_eq!(
         f.arg_names("notify"),
         names(&["metin", "ses", "text", "title"])
+    );
+}
+
+#[test]
+fn every_problem_of_a_workflow_is_told_with_its_address() {
+    let v = json!({
+        "on": [{ "event": "posta.geldi" }, { "event": "tek" }],
+        "renk": "mavi",
+        "steps": ["#ai", { "#ai": { "argz": {} } },
+                  ["#a", { "#b": { "on": [{ "event": "x.y" }] } }],
+                  { "#ship": { "undo": 3 } }],
+        "error": ["#notify", 7],
+        "timeout": "uzun"
+    });
+    let ps = flow::read(&v).unwrap_err();
+    let at: Vec<&str> = ps.iter().map(|p| p.at.as_str()).collect();
+    assert_eq!(
+        at,
+        [
+            "on/2",
+            "",
+            "steps/#ai/2",
+            "steps/all/#b",
+            "steps/#ship/undo",
+            "error",
+            "timeout"
+        ],
+        "{ps:?}"
+    );
+    assert!(ps[1].message.contains("unknown key \"renk\""), "{ps:?}");
+    assert!(ps[5].message.contains("the 2nd step"), "{}", ps[5].message);
+}
+
+#[test]
+fn a_value_of_the_wrong_shape_is_one_problem() {
+    let ps = flow::read(&json!({ "on": "her gün", "steps": "#ai" })).unwrap_err();
+    assert_eq!(ps.len(), 2, "{ps:?}");
+    assert_eq!((ps[0].at.as_str(), ps[1].at.as_str()), ("on", "steps"));
+}
+
+#[test]
+fn a_step_is_addressed_by_its_action_and_place() {
+    let items = json!(["#ai", "#notify", "#ai", "günlük", ["#a", "#b"],
+                       { "race": ["#a", "#b"] }, { "race": ["#c", "#d"] }]);
+    assert_eq!(
+        flow::step_labels(items.as_array().unwrap()),
+        [
+            "#ai/1", "#notify", "#ai/2", "günlük", "all", "race/1", "race/2"
+        ]
     );
 }

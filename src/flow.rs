@@ -1,6 +1,7 @@
 //! A workflow file in the simple form: `on`,
 //! `steps`, and the `success`, `failure` and `error` lists run at the end.
 //! Its name is its file name, so the file has none.
+use crate::problem::Problem;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -248,44 +249,83 @@ pub fn parse(text: &str) -> Result<Flow, String> {
     from_value(&v)
 }
 
-/// Reads a workflow already read as JSON: what the manager is given.
+/// Reads a workflow already read as JSON: what the manager is given. Its
+/// error tells every problem, each with its place in the workflow.
 pub fn from_value(v: &Value) -> Result<Flow, String> {
+    read(v).map_err(|ps| told(&ps))
+}
+
+/// Problems as one text: `message (address)`, joined by `; `.
+pub fn told(ps: &[Problem]) -> String {
+    ps.iter()
+        .map(|p| match p.at.as_str() {
+            "" => p.message.clone(),
+            at => format!("{} ({at})", p.message),
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// A workflow read as JSON, or every problem it has, each at its address
+/// in the workflow: `on/2`, `steps/#ai`, `""` for the whole.
+pub fn read(v: &Value) -> Result<Flow, Vec<Problem>> {
     let Value::Object(top) = v else {
-        return Err("a workflow is an object: { \"on\": [...], \"steps\": [...] }".into());
+        return Err(vec![Problem::new(
+            "",
+            "a workflow is an object: { \"on\": [...], \"steps\": [...] }",
+        )]);
     };
     let mut f = Flow::default();
+    let mut ps = vec![];
+    let list = |key: &str, v: &Value, ps: &mut Vec<Problem>| -> Vec<Step> {
+        steps(key, v).unwrap_or_else(|e| {
+            ps.extend(e.into_iter().map(|p| p.under(key)));
+            vec![]
+        })
+    };
     for (k, v) in top {
         match k.as_str() {
             // what a workflow is lives in itero.config.json; a version
             // pinned before (and a built-in one) still carries a meta, read
             // there, not here
             "meta" => {}
-            "on" => f.on = on(v)?,
-            "steps" => f.steps = steps(k, v)?,
-            "success" => f.success = steps(k, v)?,
-            "failure" => f.failure = steps(k, v)?,
-            "error" => f.error = steps(k, v)?,
-            "timeout" => {
-                let t = v.as_str().ok_or("timeout is a duration, like \"2h\"")?;
-                f.timeout = Some(humantime::parse_duration(t).map_err(|_| {
-                    format!("timeout: a duration is like 30m, 2h or 1d, not \"{t}\"")
-                })?);
-            }
-            other => {
-                return Err(format!(
+            "on" => match on(v) {
+                Ok(o) => f.on = o,
+                Err(e) => ps.extend(e.into_iter().map(|p| p.under("on"))),
+            },
+            "steps" => f.steps = list(k, v, &mut ps),
+            "success" => f.success = list(k, v, &mut ps),
+            "failure" => f.failure = list(k, v, &mut ps),
+            "error" => f.error = list(k, v, &mut ps),
+            "timeout" => match timeout(v) {
+                Ok(t) => f.timeout = Some(t),
+                Err(e) => ps.push(Problem::new("timeout", e)),
+            },
+            other => ps.push(Problem::new(
+                "",
+                format!(
                     "unknown key \"{other}\": a workflow has meta, on, steps, success, failure, error and timeout"
-                ));
-            }
+                ),
+            )),
         }
     }
     if !top.contains_key("steps") {
-        return Err("a workflow needs steps".into());
+        ps.push(Problem::new("", "a workflow needs steps"));
+    } else if f.steps.is_empty() && !ps.iter().any(|p| p.at.starts_with("steps")) {
+        ps.push(Problem::new("steps", "steps is empty"));
     }
-    if f.steps.is_empty() {
-        return Err("steps is empty".into());
+    // the names its steps read, once its steps are all there: a step that
+    // could not be read would make every name it gives look missing
+    if ps.is_empty() {
+        ps = f.check_names();
     }
-    f.check_names()?;
-    Ok(f)
+    if ps.is_empty() { Ok(f) } else { Err(ps) }
+}
+
+fn timeout(v: &Value) -> Result<Duration, String> {
+    let t = v.as_str().ok_or("timeout is a duration, like \"2h\"")?;
+    humantime::parse_duration(t)
+        .map_err(|_| format!("timeout: a duration is like 30m, 2h or 1d, not \"{t}\""))
 }
 
 /// The name a step's result is kept by, `$steps.<key>`: its `as`, else the
@@ -628,15 +668,32 @@ pub fn is_message_type(s: &str) -> bool {
 }
 
 /// `on`: a list of objects, each saying what it is with its key.
-fn on(v: &Value) -> Result<On, String> {
-    const FORMS: &str = "{\"event\": ...}, {\"schedule\": ...}, {\"path\": ...}, {\"$event.x\": value} or {\"has\": ...}";
+fn on(v: &Value) -> Result<On, Vec<Problem>> {
     let Value::Array(items) = v else {
-        return Err(format!("on is a list of objects: {FORMS}"));
+        return Err(vec![Problem::new(
+            "",
+            format!("on is a list of objects: {ON_FORMS}"),
+        )]);
     };
     let mut o = On::default();
-    for item in items {
+    let mut ps = vec![];
+    for (i, item) in items.iter().enumerate() {
+        if let Err(e) = on_entry(item, &mut o) {
+            ps.push(Problem::new((i + 1).to_string(), e));
+        }
+    }
+    if ps.is_empty() { Ok(o) } else { Err(ps) }
+}
+
+const ON_FORMS: &str = "{\"event\": ...}, {\"schedule\": ...}, {\"path\": ...}, {\"$event.x\": value} or {\"has\": ...}";
+
+/// One entry of `on`, into `o`.
+fn on_entry(item: &Value, o: &mut On) -> Result<(), String> {
+    {
         let Value::Object(m) = item else {
-            return Err(format!("on: {item} is not an object; an entry is {FORMS}"));
+            return Err(format!(
+                "on: {item} is not an object; an entry is {ON_FORMS}"
+            ));
         };
         let trigger = ["event", "schedule", "path"]
             .iter()
@@ -704,7 +761,7 @@ fn on(v: &Value) -> Result<On, String> {
             }
         }
     }
-    Ok(o)
+    Ok(())
 }
 
 /// A condition's value, `event.kind` for `$event.kind`; a `$word` that is
@@ -723,15 +780,121 @@ fn word(n: &str, whole: &str) -> Result<String, String> {
     Ok(n.to_string())
 }
 
-fn steps(key: &str, v: &Value) -> Result<Vec<Step>, String> {
-    let items = v.as_array().ok_or(format!("{key} is a list"))?;
-    items.iter().map(step).collect()
+fn steps(key: &str, v: &Value) -> Result<Vec<Step>, Vec<Problem>> {
+    let Some(items) = v.as_array() else {
+        return Err(vec![Problem::new("", format!("{key} is a list"))]);
+    };
+    let (mut out, mut ps) = (vec![], vec![]);
+    for (i, (item, label)) in items.iter().zip(step_labels(items)).enumerate() {
+        match step(item) {
+            Ok(s) => out.push(s),
+            Err(e) => ps.extend(placed(e, i, &label)),
+        }
+    }
+    if ps.is_empty() { Ok(out) } else { Err(ps) }
 }
 
-fn step(v: &Value) -> Result<Step, String> {
+/// A step's problems at its label, or, for a step with none (neither a
+/// name nor an object), at its list, saying which.
+fn placed(e: Vec<Problem>, i: usize, label: &str) -> Vec<Problem> {
+    e.into_iter()
+        .map(|p| match label {
+            "" => Problem::new("", format!("the {} step: {}", ordinal(i + 1), p.message)),
+            l => p.under(l),
+        })
+        .collect()
+}
+
+/// 1st, 2nd, 3rd, 4th, 11th, 21st.
+fn ordinal(n: usize) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
+
+/// A step's label as written: an action `#ai` (with its version), a
+/// workflow's name, a group's wait (`all` for a plain list); `""` for a
+/// step that is none of these.
+fn raw_label(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Array(_) => "all".into(),
+        Value::Object(m) if is_group(m) => WAITS
+            .iter()
+            .find(|w| m.contains_key(**w))
+            .map_or_else(|| "all".to_string(), |w| w.to_string()),
+        Value::Object(m) if m.len() == 1 => m.keys().next().cloned().unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+/// `/1`, `/2` added to each label that is in the list more than once.
+fn numbered(labels: Vec<String>) -> Vec<String> {
+    let mut seen: std::collections::HashMap<String, usize> = Default::default();
+    labels
+        .iter()
+        .map(|l| {
+            if l.is_empty() || labels.iter().filter(|x| *x == l).count() == 1 {
+                return l.clone();
+            }
+            let n = seen.entry(l.clone()).or_default();
+            *n += 1;
+            format!("{l}/{n}")
+        })
+        .collect()
+}
+
+/// Each step's address in its list: `#ai`, a workflow's name, a group's
+/// wait (`all` for a plain list); `/1`, `/2` when one is there more than
+/// once.
+pub fn step_labels(items: &[Value]) -> Vec<String> {
+    numbered(items.iter().map(raw_label).collect())
+}
+
+/// A name as a step writes it: `#ai`, `#ai@2`, `günlük`.
+fn written_label(n: &Name) -> String {
+    match n {
+        Name::Action {
+            name,
+            version: Some(v),
+        } => format!("#{name}@{v}"),
+        other => other.label(),
+    }
+}
+
+fn wait_word(w: &Wait) -> &'static str {
+    match w {
+        Wait::All => "all",
+        Wait::Race => "race",
+        Wait::Any => "any",
+        Wait::Some(_) => "some",
+        Wait::Settled => "settled",
+    }
+}
+
+/// The addresses of steps already read, as [`step_labels`] gives them for
+/// the steps as written.
+fn parsed_labels(list: &[Step]) -> Vec<String> {
+    numbered(
+        list.iter()
+            .map(|s| match s {
+                Step::One { name, .. } => written_label(name),
+                Step::Side(g) => wait_word(&g.wait).to_string(),
+            })
+            .collect(),
+    )
+}
+
+fn step(v: &Value) -> Result<Step, Vec<Problem>> {
+    let one = |e: String| vec![Problem::new("", e)];
     match v {
         Value::String(s) => Ok(Step::One {
-            name: name(s)?,
+            name: name(s).map_err(one)?,
             args: Value::Object(Map::new()),
             on: None,
             undo: None,
@@ -755,7 +918,9 @@ fn step(v: &Value) -> Result<Step, String> {
                 as_name: w.as_name,
             })
         }
-        _ => Err("a step is a name, a list side by side, or { name: { data } }".into()),
+        _ => Err(one(format!(
+            "a step is a name, a list side by side, or {{ name: {{ data }} }}, not {v}"
+        ))),
     }
 }
 
@@ -898,8 +1063,6 @@ fn brief(v: &Value) -> String {
 /// A step written as an object, `{ "#ship": { "args": ..., "on": ... } }`,
 /// read: what a step of a list and a step of a group share.
 struct Written {
-    /// As written, for the errors: `#ship`.
-    key: String,
     name: Name,
     args: Value,
     on: Option<On>,
@@ -909,107 +1072,154 @@ struct Written {
     as_name: Option<String>,
 }
 
-fn written(m: &Map<String, Value>) -> Result<Written, String> {
+fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
+    let one = |e: &str| vec![Problem::new("", e)];
     let mut it = m.iter();
     let (Some((k, v)), None) = (it.next(), it.next()) else {
-        return Err("a step object has one name: { \"#ship\": { ... } }".into());
+        return Err(one("a step object has one name: { \"#ship\": { ... } }"));
     };
     let Value::Object(fields) = v else {
-        return Err(format!(
-            "{k}: a step is an object: {{ \"args\": {{ ... }} }}"
-        ));
+        return Err(one("a step is an object: { \"args\": { ... } }"));
+    };
+    // each of its fields on its own: every problem told
+    let mut ps = vec![];
+    let step_name = match name(k) {
+        Ok(n) => Some(n),
+        Err(e) => {
+            ps.push(Problem::new("", e));
+            None
+        }
     };
     let mut fields = fields.clone();
-    let when = fields.remove("on").map(|w| on(&w)).transpose()?;
-    if let Some(w) = &when {
-        let starts = [
-            (!w.events.is_empty(), "an event"),
-            (!w.schedules.is_empty(), "a schedule"),
-            (!w.paths.is_empty(), "a path"),
-        ];
-        if let Some((_, what)) = starts.iter().find(|(given, _)| *given) {
-            return Err(format!(
-                "{k}: a step's on holds conditions ({{\"$name\": value}}, {{\"has\": ...}}), not {what}: an event, a schedule or a path starts a workflow"
-            ));
+    let when = match fields.remove("on").map(|w| on(&w)) {
+        None => None,
+        Some(Err(e)) => {
+            ps.extend(e.into_iter().map(|p| Problem::new("", p.message)));
+            None
         }
-    }
+        Some(Ok(w)) => {
+            let starts = [
+                (!w.events.is_empty(), "an event"),
+                (!w.schedules.is_empty(), "a schedule"),
+                (!w.paths.is_empty(), "a path"),
+            ];
+            if let Some((_, what)) = starts.iter().find(|(given, _)| *given) {
+                ps.push(Problem::new(
+                    "",
+                    format!(
+                        "a step's on holds conditions ({{\"$name\": value}}, {{\"has\": ...}}), not {what}: an event, a schedule or a path starts a workflow"
+                    ),
+                ));
+            }
+            Some(w)
+        }
+    };
     // a name, or a step with args: `{ "#küme-sil": { "args": { "id": "$output.id" } } }`
+    let empty = || Value::Object(Map::new());
     let (undo, undo_args) = match fields.remove("undo") {
-        None => (None, Value::Object(Map::new())),
-        Some(Value::String(s)) => (
-            Some(name(&s).map_err(|e| format!("{k}: undo: {e}"))?),
-            Value::Object(Map::new()),
-        ),
+        None => (None, empty()),
+        Some(Value::String(s)) => match name(&s) {
+            Ok(n) => (Some(n), empty()),
+            Err(e) => {
+                ps.push(Problem::new("undo", e));
+                (None, empty())
+            }
+        },
         Some(Value::Object(u)) if u.len() == 1 => {
             let (n, v) = u.iter().next().expect("one");
             let args = match v {
                 Value::Object(f) if f.keys().all(|key| key == "args") => match f.get("args") {
-                    Some(a) => read_args(a).map_err(|why| format!("{k}: undo: {why}"))?,
-                    None => Value::Object(Map::new()),
+                    Some(a) => read_args(a).unwrap_or_else(|why| {
+                        ps.push(Problem::new("undo", why));
+                        empty()
+                    }),
+                    None => empty(),
                 },
                 _ => {
-                    return Err(format!(
-                        "{k}: undo: a step to undo takes args only: {{ \"{n}\": {{ \"args\": {{ ... }} }} }}"
+                    ps.push(Problem::new(
+                        "undo",
+                        format!(
+                            "a step to undo takes args only: {{ \"{n}\": {{ \"args\": {{ ... }} }} }}"
+                        ),
                     ));
+                    empty()
                 }
             };
-            (Some(name(n).map_err(|e| format!("{k}: undo: {e}"))?), args)
+            match name(n) {
+                Ok(n) => (Some(n), args),
+                Err(e) => {
+                    ps.push(Problem::new("undo", e));
+                    (None, args)
+                }
+            }
         }
         Some(_) => {
-            return Err(format!(
-                "{k}: undo is an action or a workflow, like \"#cluster-delete\", or one with args"
+            ps.push(Problem::new(
+                "undo",
+                "undo is an action or a workflow, like \"#cluster-delete\", or one with args",
             ));
+            (None, empty())
         }
     };
     let args = match fields.remove("args") {
-        None => Value::Object(Map::new()),
-        Some(a) => read_args(&a).map_err(|why| format!("{k}: {why}"))?,
+        None => empty(),
+        Some(a) => read_args(&a).unwrap_or_else(|why| {
+            ps.push(Problem::new("", why));
+            empty()
+        }),
     };
     if fields.remove("strict").is_some() {
-        return Err(format!(
-            "{k}: strict is gone: a step's args reach its action and nothing else now"
+        ps.push(Problem::new(
+            "",
+            "strict is gone: a step's args reach its action and nothing else now",
         ));
     }
     let as_name = match fields.remove("as") {
         None => None,
         Some(Value::String(a)) if plain(&a) => Some(a),
         Some(a) => {
-            return Err(format!(
-                "{k}: as names the step's result ($steps.<as>), without # or spaces, like \"mirror-1\", not {a}"
+            ps.push(Problem::new(
+                "",
+                format!(
+                    "as names the step's result ($steps.<as>), without # or spaces, like \"mirror-1\", not {a}"
+                ),
             ));
+            None
         }
     };
-    if let Some(other) = fields.keys().next() {
-        return Err(format!(
-            "{k}: \"{other}\" is not one of args, on, undo, as: a step's values go under args"
+    for other in fields.keys() {
+        ps.push(Problem::new(
+            "",
+            format!("\"{other}\" is not one of args, on, undo, as: a step's values go under args"),
         ));
     }
-    let name = name(k)?;
-    Ok(Written {
-        key: k.clone(),
-        name,
-        args,
-        on: when,
-        undo,
-        undo_args,
-        as_name,
-    })
+    match step_name {
+        Some(name) if ps.is_empty() => Ok(Written {
+            name,
+            args,
+            on: when,
+            undo,
+            undo_args,
+            as_name,
+        }),
+        _ => Err(ps),
+    }
 }
 
 /// The steps of a list side by side, each a name or a step object; `what`
-/// says whose list it is.
-fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, String> {
-    items
-        .iter()
-        .map(|i| match i {
-            Value::String(s) => name(s).map(Member::bare),
-            Value::Object(m) if !is_group(m) => {
-                let w = written(m)?;
+/// says whose list it is. Each one's problems are at its label.
+fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, Vec<Problem>> {
+    let one = |e: String| vec![Problem::new("", e)];
+    let (mut out, mut ps) = (vec![], vec![]);
+    for (i, (item, label)) in items.iter().zip(step_labels(items)).enumerate() {
+        let member = match item {
+            Value::String(s) => name(s).map(Member::bare).map_err(one),
+            Value::Object(m) if !is_group(m) => written(m).and_then(|w| {
                 if w.undo.is_some() {
-                    return Err(format!(
-                        "{}: undo is for a step of a list, not one side by side",
-                        w.key
-                    ));
+                    return Err(vec![Problem::new(
+                        "undo",
+                        "undo is for a step of a list, not one side by side",
+                    )]);
                 }
                 let label = match (&w.as_name, &w.name) {
                     (Some(a), Name::Action { .. }) => format!("#{a}"),
@@ -1022,15 +1232,20 @@ fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, String> {
                     on: w.on.map(Box::new),
                     label,
                 })
-            }
-            Value::Object(_) => Err(format!(
-                "a group inside a group goes in a workflow of its own, used here by its name: {i}"
-            )),
-            _ => Err(format!(
-                "a step of {what} is a name or an object, like {{ \"#ask\": {{ \"args\": ... }} }}, not {i}"
-            )),
-        })
-        .collect()
+            }),
+            Value::Object(_) => Err(one(format!(
+                "a group inside a group goes in a workflow of its own, used here by its name: {item}"
+            ))),
+            _ => Err(one(format!(
+                "a step of {what} is a name or an object, like {{ \"#ask\": {{ \"args\": ... }} }}, not {item}"
+            ))),
+        };
+        match member {
+            Ok(m) => out.push(m),
+            Err(e) => ps.extend(placed(e, i, &label)),
+        }
+    }
+    if ps.is_empty() { Ok(out) } else { Err(ps) }
 }
 
 const WAITS: [&str; 5] = ["all", "race", "any", "some", "settled"];
@@ -1047,50 +1262,59 @@ fn is_group(m: &Map<String, Value>) -> bool {
 }
 
 /// `{ "race": ["#a", "#b"], "fail": ... }`: steps side by side that say
-/// how to wait. Every error shows the step as written.
-fn group(v: &Value, m: &Map<String, Value>) -> Result<Step, String> {
-    let bad = |why: String| format!("{v}: {why}");
+/// how to wait. Every error shows the step as written; its steps' own
+/// problems are at their labels.
+fn group(v: &Value, m: &Map<String, Value>) -> Result<Step, Vec<Problem>> {
+    let bad = |why: String| Problem::new("", format!("{v}: {why}"));
     let keys: Vec<&str> = m
         .keys()
         .map(String::as_str)
         .filter(|k| WAITS.contains(k))
         .collect();
+    // its shape first: past a wrong one, nothing inside it is checked
     let key = match keys.as_slice() {
         [one] => *one,
         [] => {
-            return Err(bad(
+            return Err(vec![bad(
                 "a group holds one of all, race, any, some or settled, with a list of steps".into(),
-            ));
+            )]);
         }
         several => {
-            return Err(bad(format!(
+            return Err(vec![bad(format!(
                 "a group holds one of all, race, any, some or settled, not both {}",
                 several.join(" and ")
-            )));
+            ))]);
         }
     };
-    if let Some(other) = m
-        .keys()
-        .find(|k| !WAITS.contains(&k.as_str()) && !["fail", "count", "names"].contains(&k.as_str()))
-    {
-        return Err(bad(format!(
-            "\"{other}\" is not one of {key}, fail, count, names"
-        )));
-    }
     let items = match &m[key] {
         Value::Array(items) if items.len() >= 2 => items,
         _ => {
-            return Err(bad(format!(
+            return Err(vec![bad(format!(
                 "{key} is a list of two or more steps, like [\"#a\", \"#b\"]"
-            )));
+            ))]);
         }
     };
-    let members = side_members(items, key).map_err(&bad)?;
+    let mut ps = vec![];
+    for other in m.keys().filter(|k| {
+        !WAITS.contains(&k.as_str()) && !["fail", "count", "names"].contains(&k.as_str())
+    }) {
+        ps.push(bad(format!(
+            "\"{other}\" is not one of {key}, fail, count, names"
+        )));
+    }
+    let members = match side_members(items, key) {
+        Ok(members) => members,
+        Err(e) => {
+            // its fail and names name its steps: not checked without them
+            ps.extend(e);
+            return Err(ps);
+        }
+    };
     let labels: Vec<String> = members.iter().map(|m| m.label.clone()).collect();
     // a step is told apart by its label, whatever its version
     for (i, l) in labels.iter().enumerate() {
         if labels[..i].contains(l) {
-            return Err(bad(format!(
+            ps.push(bad(format!(
                 "{l} is in the list twice: give each \"as\", a name of its own, to tell them apart"
             )));
         }
@@ -1105,70 +1329,71 @@ fn group(v: &Value, m: &Map<String, Value>) -> Result<Step, String> {
         for n in list {
             let s = n.as_str().unwrap_or("");
             if !labels.iter().any(|l| l == s) {
-                return Err(bad(format!(
-                    "{what}: {n} is not one of the steps in the list"
-                )));
+                return Err(format!("{what}: {n} is not one of the steps in the list"));
             }
             out.push(s.to_string());
         }
         Ok(out)
     };
     let wait = match key {
-        "all" => Wait::All,
-        "race" => Wait::Race,
-        "any" => Wait::Any,
-        "settled" => Wait::Settled,
+        "all" => Ok(Wait::All),
+        "race" => Ok(Wait::Race),
+        "any" => Ok(Wait::Any),
+        "settled" => Ok(Wait::Settled),
         _ => match (m.get("count"), m.get("names")) {
-            (None, None) => return Err(bad("some needs count or names".into())),
-            (Some(_), Some(_)) => return Err(bad("some takes count or names, not both".into())),
+            (None, None) => Err("some needs count or names".to_string()),
+            (Some(_), Some(_)) => Err("some takes count or names, not both".to_string()),
             (Some(c), None) => match c.as_u64() {
                 Some(n) if (1..=members.len() as u64).contains(&n) => {
-                    Wait::Some(Need::Count(n as usize))
+                    Ok(Wait::Some(Need::Count(n as usize)))
                 }
-                _ => {
-                    return Err(bad(format!(
-                        "count is a whole number from 1 to {}, the steps in the list",
-                        members.len()
-                    )));
-                }
+                _ => Err(format!(
+                    "count is a whole number from 1 to {}, the steps in the list",
+                    members.len()
+                )),
             },
             (None, Some(n)) => match n {
-                Value::Array(a) if !a.is_empty() => Wait::Some(Need::Names(steps_of("names", n)?)),
-                _ => {
-                    return Err(bad(
-                        "names is a list of the steps that must end well, like [\"#a\", \"#c\"]"
-                            .into(),
-                    ));
+                Value::Array(a) if !a.is_empty() => {
+                    steps_of("names", n).map(|ns| Wait::Some(Need::Names(ns)))
                 }
+                _ => Err(
+                    "names is a list of the steps that must end well, like [\"#a\", \"#c\"]"
+                        .to_string(),
+                ),
             },
         },
     };
     for k in ["count", "names"] {
         if key != "some" && m.contains_key(k) {
-            return Err(bad(format!("{k} goes with some")));
+            ps.push(bad(format!("{k} goes with some")));
         }
     }
     let fail = match m.get("fail") {
-        None => None,
-        Some(Value::String(s)) if s == "any" => Some(Fail::Any),
-        Some(Value::String(s)) if s == "all" => Some(Fail::All),
-        Some(Value::String(s)) if s == "never" => Some(Fail::Never),
+        None => Ok(None),
+        Some(Value::String(s)) if s == "any" => Ok(Some(Fail::Any)),
+        Some(Value::String(s)) if s == "all" => Ok(Some(Fail::All)),
+        Some(Value::String(s)) if s == "never" => Ok(Some(Fail::Never)),
         Some(f @ (Value::String(_) | Value::Array(_)))
             if f.as_array().is_none_or(|a| !a.is_empty()) =>
         {
-            Some(Fail::Steps(steps_of("fail", f)?))
+            steps_of("fail", f).map(|ns| Some(Fail::Steps(ns)))
         }
         Some(_) => {
-            return Err(bad(
-                "fail is \"any\", \"all\", \"never\", a step's name or a list of names".into(),
-            ));
+            Err("fail is \"any\", \"all\", \"never\", a step's name or a list of names".to_string())
         }
     };
-    Ok(Step::Side(Group {
-        members,
-        wait,
-        fail,
-    }))
+    match (wait, fail) {
+        (Ok(wait), Ok(fail)) if ps.is_empty() => Ok(Step::Side(Group {
+            members,
+            wait,
+            fail,
+        })),
+        (wait, fail) => {
+            ps.extend(wait.err().map(bad));
+            ps.extend(fail.err().map(bad));
+            Err(ps)
+        }
+    }
 }
 
 /// `#name` or `#name@1.2` is an action, any other name a workflow.
@@ -1239,10 +1464,11 @@ impl Flow {
         out
     }
 
-    /// A `$steps.x` naming no step, or a name two steps have, is an error.
-    fn check_names(&self) -> Result<(), String> {
+    /// A `$steps.x` naming no step, or a name two steps have: a problem
+    /// at the step (or the `on`) that reads it.
+    fn check_names(&self) -> Vec<Problem> {
         let keys = self.step_keys();
-        let mut read = vec![];
+        let mut ps = vec![];
         let conditions = |on: &On, read: &mut Vec<String>| {
             read.extend(
                 on.has
@@ -1252,43 +1478,72 @@ impl Flow {
             );
             read.extend(on.equal.keys().cloned());
         };
+        let told = |at: String, read: Vec<String>, ps: &mut Vec<Problem>| {
+            let mut seen = vec![];
+            for path in read {
+                let Some(rest) = path.strip_prefix("steps.") else {
+                    continue;
+                };
+                let step = rest.split('.').next().unwrap_or(rest).to_string();
+                if seen.contains(&step) {
+                    continue;
+                }
+                let message = match keys.iter().filter(|k| **k == step).count() {
+                    0 => format!(
+                        "$steps.{step} names no step of this workflow (its steps: {})",
+                        keys.join(", ")
+                    ),
+                    1 => {
+                        seen.push(step);
+                        continue;
+                    }
+                    _ => format!(
+                        "$steps.{step}: two steps are {step}; give one an as, like {{ \"#{step}\": {{ \"as\": \"{step}-2\" }} }}"
+                    ),
+                };
+                ps.push(Problem::new(at.clone(), message));
+                seen.push(step);
+            }
+        };
+        let mut read = vec![];
         conditions(&self.on, &mut read);
-        for s in self.all_steps() {
-            let parts: Vec<(&Value, Option<&On>)> = match s {
-                Step::One { args, on, .. } => vec![(args, on.as_deref())],
-                Step::Side(g) => g
-                    .members
-                    .iter()
-                    .map(|m| (&m.args, m.on.as_deref()))
-                    .collect(),
-            };
-            for (args, on) in parts {
-                read.extend(names_in(args));
-                if let Some(on) = on {
-                    conditions(on, &mut read);
+        told("on".into(), read, &mut ps);
+        for (key, list) in self.lists() {
+            for (s, label) in list.iter().zip(parsed_labels(list)) {
+                let parts: Vec<(String, &Value, Option<&On>)> = match s {
+                    Step::One { args, on, .. } => {
+                        vec![(format!("{key}/{label}"), args, on.as_deref())]
+                    }
+                    Step::Side(g) => {
+                        let names =
+                            numbered(g.members.iter().map(|m| written_label(&m.name)).collect());
+                        g.members
+                            .iter()
+                            .zip(names)
+                            .map(|(m, n)| (format!("{key}/{label}/{n}"), &m.args, m.on.as_deref()))
+                            .collect()
+                    }
+                };
+                for (at, args, on) in parts {
+                    let mut read = names_in(args);
+                    if let Some(on) = on {
+                        conditions(on, &mut read);
+                    }
+                    told(at, read, &mut ps);
                 }
             }
         }
-        for path in read {
-            if let Some(rest) = path.strip_prefix("steps.") {
-                let step = rest.split('.').next().unwrap_or(rest);
-                match keys.iter().filter(|k| *k == step).count() {
-                    0 => {
-                        return Err(format!(
-                            "$steps.{step} names no step of this workflow (its steps: {})",
-                            keys.join(", ")
-                        ));
-                    }
-                    1 => {}
-                    _ => {
-                        return Err(format!(
-                            "$steps.{step}: two steps are {step}; give one an as, like {{ \"#{step}\": {{ \"as\": \"{step}-2\" }} }}"
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(())
+        ps
+    }
+
+    /// Its lists of steps by their keys in the file.
+    fn lists(&self) -> [(&'static str, &Vec<Step>); 4] {
+        [
+            ("steps", &self.steps),
+            ("success", &self.success),
+            ("failure", &self.failure),
+            ("error", &self.error),
+        ]
     }
 
     /// The actions and workflows it names, each once, in order.
