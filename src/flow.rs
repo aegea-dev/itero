@@ -1536,6 +1536,42 @@ impl Flow {
         ps
     }
 
+    /// Every step and undo with its address in the workflow
+    /// (`steps/#ai/2`, `steps/all/#b`, `steps/#ship/undo`), what it runs
+    /// and its args.
+    pub fn addressed(&self) -> Vec<(String, &Name, &Value)> {
+        let mut out = vec![];
+        for (key, list) in self.lists() {
+            for (s, label) in list.iter().zip(parsed_labels(list)) {
+                match s {
+                    Step::One {
+                        name,
+                        args,
+                        undo,
+                        undo_args,
+                        ..
+                    } => {
+                        let at = format!("{key}/{label}");
+                        if let Some(u) = undo {
+                            out.push((at.clone(), name, args));
+                            out.push((format!("{at}/undo"), u, undo_args));
+                        } else {
+                            out.push((at, name, args));
+                        }
+                    }
+                    Step::Side(g) => {
+                        let names =
+                            numbered(g.members.iter().map(|m| written_label(&m.name)).collect());
+                        for (m, n) in g.members.iter().zip(names) {
+                            out.push((format!("{key}/{label}/{n}"), &m.name, &m.args));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Its lists of steps by their keys in the file.
     fn lists(&self) -> [(&'static str, &Vec<Step>); 4] {
         [
@@ -1638,7 +1674,7 @@ impl Flow {
 
 /// The names of args as written: an object's keys, a list's direct items'
 /// keys and its pairs' titles; a whole `"$name"` names none.
-fn arg_names_of(args: &Value) -> Vec<String> {
+pub fn arg_names_of(args: &Value) -> Vec<String> {
     match args {
         Value::Object(o) => o.keys().cloned().collect(),
         Value::Array(items) => items

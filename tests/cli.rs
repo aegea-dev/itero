@@ -60,7 +60,9 @@ fn check_refuses_values_in_the_manifest() {
     );
     let o = itero(d.path(), &["ws", "check"]);
     assert!(
-        !o.status.success() && err(&o).contains("action.kargola.args are gone"),
+        !o.status.success()
+            && err(&o).contains("itero.config.json: args are gone")
+            && err(&o).contains("/action/kargola)"),
         "{o:?}"
     );
     file(
@@ -124,7 +126,9 @@ fn args_are_written_for_the_connector_and_checked() {
     );
     let o = itero(d.path(), &["ws", "check"]);
     assert!(
-        !o.status.success() && err(&o).contains("connector.posta.geldi.args"),
+        !o.status.success()
+            && err(&o).contains("itero.config.json: args")
+            && err(&o).contains("/connector/posta.geldi)"),
         "{o:?}"
     );
     // listed, as JSON too
@@ -207,8 +211,10 @@ fn check_refuses_an_entry_naming_nothing_and_folders_from_before() {
     let o = itero(d.path(), &["ws", "check"]);
     assert!(
         !o.status.success()
-            && err(&o).contains("workflow.yok-böyle")
-            && err(&o).contains("action.hayalet"),
+            && err(&o).contains("no workflow yok-böyle (")
+            && err(&o).contains("/workflow/yok-böyle)")
+            && err(&o).contains("no action hayalet (")
+            && err(&o).contains("/action/hayalet)"),
         "{o:?}"
     );
     file(d.path(), "itero.config.json", "{}");
@@ -281,7 +287,8 @@ fn check_names_a_wrong_limit_of_an_action_once() {
     assert!(!o.status.success());
     let e = err(&o);
     assert!(
-        e.contains("action.depo.limits: runs: an action's limits are quiet and most"),
+        e.contains("itero.config.json: limits: runs: an action's limits are quiet and most (")
+            && e.contains("/action/depo)"),
         "{e}"
     );
     assert_eq!(e.matches("itero.config.json").count(), 1, "{e}");
@@ -1172,7 +1179,8 @@ fn check_warns_of_an_arg_notify_does_not_take() {
     assert!(o.status.success(), "{}", err(&o));
     let e = err(&o);
     assert!(
-        e.contains("warning: fiyat: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Fiyat"),
+        e.contains("warning: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Fiyat (")
+            && e.contains("/workflow/fiyat/steps/#notify)"),
         "{e}"
     );
     // the args it takes give no warning

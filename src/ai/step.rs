@@ -26,6 +26,10 @@ pub const ARGS: [&str; 15] = [
     "context",
 ];
 
+/// The args `#ai` refuses with an error saying what to write instead: not
+/// warned of as args it does not read too.
+pub const REFUSED: [&str; 2] = ["text", "choose"];
+
 /// The types a field of `fields` may have.
 pub const FIELD_TYPES: [&str; 5] = ["text", "number", "integer", "boolean", "date"];
 
