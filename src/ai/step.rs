@@ -26,10 +26,6 @@ pub const ARGS: [&str; 15] = [
     "context",
 ];
 
-/// The args `#ai` refuses with an error saying what to write instead: not
-/// warned of as args it does not read too.
-pub const REFUSED: [&str; 2] = ["text", "choose"];
-
 /// The types a field of `fields` may have.
 pub const FIELD_TYPES: [&str; 5] = ["text", "number", "integer", "boolean", "date"];
 
@@ -63,11 +59,6 @@ fn fields(text: &str) -> Result<Vec<(String, String)>, String> {
 }
 
 pub(super) fn shape(env: &BTreeMap<String, String>) -> Result<Shape, String> {
-    if env.contains_key("choose") {
-        return Err(fail(
-            "choose is gone: say the labels, and what each means, in system or message",
-        ));
-    }
     match env.get("fields") {
         Some(f) => Ok(Shape::Fields(fields(f)?)),
         None => Ok(Shape::Text),
@@ -147,9 +138,6 @@ pub fn request(env: &BTreeMap<String, String>) -> Result<Value, String> {
 
 /// The request for `model`, by `#ai`'s rules on the args.
 pub(super) fn body(model: &str, env: &BTreeMap<String, String>) -> Result<Value, String> {
-    if env.contains_key("text") {
-        return Err(fail("it takes message, not text"));
-    }
     if let Some(url) = env.get("url") {
         if !url.starts_with('$') {
             super::remote::api(url)?;

@@ -153,10 +153,7 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
                             continue;
                         }
                         for arg in crate::flow::arg_names_of(args) {
-                            // an arg refused is an error already: told once
-                            let refused = action == crate::engine::worker::AI
-                                && crate::ai::step::REFUSED.contains(&arg.as_str());
-                            if !taken.contains(&arg.as_str()) && !refused {
+                            if !taken.contains(&arg.as_str()) {
                                 let (last, rest) =
                                     taken.split_last().expect("a built-in takes args");
                                 warnings.push(Problem::new(

@@ -88,10 +88,6 @@ fn what_is_wrong_is_said() {
     for (env, says) in [
         (vec![("model", "u/k")], "$message"),
         (
-            vec![("model", "u/k"), ("message", "x"), ("choose", "[]")],
-            "choose",
-        ),
-        (
             vec![
                 ("model", "u/k"),
                 ("message", "x"),
@@ -142,23 +138,4 @@ fn a_missing_model_is_told_to_the_workspace() {
         kinds.contains(&"itero.ai.model.missing".to_string()),
         "{kinds:?}"
     );
-}
-
-#[test]
-fn text_and_choose_are_errors_naming_what_to_write() {
-    let d = tempfile::tempdir().unwrap();
-    let sock = d.path().join("ai.sock");
-    let _s = fake_ai::serve(&sock, Some("özet"));
-    let text = worker::run_step(&step(d.path(), &sock, &[("model", "u/k"), ("text", "x")]));
-    assert!(format!("{:?}", text.unwrap_err()).contains("takes message, not text"));
-    let choose = worker::run_step(&step(
-        d.path(),
-        &sock,
-        &[
-            ("model", "u/k"),
-            ("message", "x"),
-            ("choose", r#"["acil","sonra"]"#),
-        ],
-    ));
-    assert!(format!("{:?}", choose.unwrap_err()).contains("choose is gone"));
 }

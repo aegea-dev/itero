@@ -100,7 +100,7 @@ fn ws_check_reports_every_problem_then_counts_them() {
     for line in [
         format!("({name}/workflow/yok-böyle)\n"),
         format!("({name}/workflow/bozuk)\n"),
-        format!("error: it takes message, not text ({name}/workflow/posta/steps/#ai/1)\n"),
+        format!("error: it needs $message ({name}/workflow/posta/steps/#ai/1)\n"),
         format!(
             "error: no action gönder in the actions folders ({name}/workflow/posta/steps/#gönder)\n"
         ),
@@ -108,20 +108,23 @@ fn ws_check_reports_every_problem_then_counts_them() {
         format!(
             "warning: key looks like a token: write it as a $$NAME ({name}/workflow/posta/steps/#ai/2)\n"
         ),
-        "5 errors, 1 warning\n".to_string(),
+        "5 errors, 2 warnings\n".to_string(),
     ] {
         assert!(err.contains(&line), "{line}\n{err}");
     }
-    // an arg refused is told once, as an error
-    assert!(!err.contains("#ai takes"), "{err}");
     // a broken file's entry is not called missing
     assert_eq!(err.matches("bozuk").count(), 1, "{err}");
     let o = ws_check(d.path(), true);
     assert_eq!(o.status.code(), Some(1));
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(v["errors"].as_array().unwrap().len(), 5, "{v}");
-    assert_eq!(
-        v["warnings"][0]["at"],
-        serde_json::json!(format!("{name}/workflow/posta/steps/#ai/2"))
+    let at = format!("{name}/workflow/posta/steps/#ai/2");
+    assert!(
+        v["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["at"] == at.as_str()),
+        "{v}"
     );
 }

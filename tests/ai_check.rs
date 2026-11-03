@@ -130,14 +130,6 @@ fn what_a_run_would_refuse_is_an_error() {
     for (args, says) in [
         (json!({ "model": "u/var" }), "it needs $message"),
         (
-            json!({ "model": "u/var", "text": "x" }),
-            "it takes message, not text",
-        ),
-        (
-            json!({ "model": "u/var", "message": "x", "choose": ["acil", "sonra"] }),
-            "choose is gone",
-        ),
-        (
             json!({ "model": "u/var", "message": "x", "fields": { "a": "renk" } }),
             "not renk",
         ),
@@ -214,7 +206,7 @@ fn check_says_where_each_ai_step_sends_and_refuses_a_bad_url() {
         ),
         (
             json!({ "model": "u/var", "text": "x" }),
-            "takes message, not text",
+            "it needs $message",
         ),
     ] {
         let (ok, out) = check(ai(args.clone()));
