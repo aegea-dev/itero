@@ -1426,13 +1426,13 @@ fn a_list_of_args_is_one_object_for_its_action_only() {
 }
 
 #[test]
-fn one_action_twice_in_a_group_runs_with_each_step_s_args_and_is_read_by_its_as() {
+fn one_action_twice_in_a_group_runs_with_each_step_s_args_and_is_read_by_its_number() {
     let mut r = Run::new(&[(
         "fiyat",
         json!({"steps": [
             {"any": [
-                {"#ayna": {"args": [{"url": "$event.bir"}], "as": "ayna-1"}},
-                {"#ayna": {"args": [{"url": "$event.iki"}], "as": "ayna-2"}}
+                {"#ayna": {"args": [{"url": "$event.bir"}]}},
+                {"#ayna": {"args": [{"url": "$event.iki"}]}}
             ]},
             "#sonra"
         ]}),
@@ -1442,16 +1442,18 @@ fn one_action_twice_in_a_group_runs_with_each_step_s_args_and_is_read_by_its_as(
     assert_eq!(names(&a), vec!["ayna", "ayna"]);
     assert_eq!(a.jobs[0].data["url"], "http://127.0.0.1:9/fiyat");
     assert_eq!(a.jobs[1].data["url"], "http://127.0.0.1:8765/fiyat");
-    // the first copy breaks, the second gives a plain value: it wins by its as
+    // the first copy breaks, the second gives a plain value: it wins by its number
     assert!(r.failed(&a.jobs[0], "exit 7: bağlantı yok").jobs.is_empty());
     let a = r.done(&a.jobs[1], json!("42.50"));
     assert_eq!(names(&a), vec!["sonra"]);
-    // the copy that broke is named by its as too
+    // the copy that broke is named by its number too
     assert_eq!(
         r.rt.state["output"],
-        json!({"ayna-2": "42.50", "winner": "ayna-2",
-               "failed": ["ayna-1"], "why": {"ayna-1": "exit 7: bağlantı yok"}})
+        json!({"ayna/2": "42.50", "winner": "ayna/2",
+               "failed": ["ayna/1"], "why": {"ayna/1": "exit 7: bağlantı yok"}})
     );
+    // and read by it later
+    assert_eq!(r.rt.state["steps"]["ayna/2"], json!("42.50"));
 }
 
 #[test]
@@ -1503,4 +1505,21 @@ fn an_action_s_list_of_args_is_one_set_of_values_not_a_repeat() {
         Value::Object(a.jobs[0].data.clone()),
         json!({"host": "imap.örnek.test", "user": "ayşe@örnek.test"})
     );
+}
+
+#[test]
+fn the_name_alone_reads_the_first_of_its_number() {
+    let mut r = Run::new(&[(
+        "bölge",
+        json!({"steps": [
+            "#ölç", "#ölç",
+            {"#topla": {"args": {"ilk": "$steps.ölç", "ikinci": "$steps.ölç/2.değer"}}}
+        ]}),
+    )]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({"değer": 3}));
+    let a = r.done(&a.jobs[0], json!({"değer": 4}));
+    assert_eq!(names(&a), vec!["topla"]);
+    assert_eq!(a.jobs[0].data["ilk"], json!({"değer": 3}));
+    assert_eq!(a.jobs[0].data["ikinci"], json!(4));
 }
