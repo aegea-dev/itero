@@ -5,7 +5,7 @@
 //! one comes from a manager's answer.
 use super::Event;
 use super::events;
-use super::journal::{self, Envelope, Handled, Journal, Recorded, Split, Start};
+use super::journal::{self, Child, Envelope, Handled, Journal, Recorded, Split, Start};
 use super::log::Log;
 use super::steps::{self, StepAnswer, StepInput, StepJob};
 use super::worker::{self, Failure, LOST_EXIT, Outcome, StepRun};
@@ -1063,6 +1063,7 @@ fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Resul
         splits: vec![],
         children: vec![],
         stopped: vec![],
+        stopped_runs: vec![],
     })?;
     Ok(Delivered::Handled(vec![]))
 }
@@ -1138,6 +1139,7 @@ fn deliver(
         repeat,
         config: ws.manifest().unwrap_or_default(),
         defined: names.into_iter().filter(|n| defined(ws, n)).collect(),
+        child: run.parent.is_some(),
         runtime: run.runtime.clone(),
         event: Event {
             id: r.event.id.clone(),
@@ -1211,7 +1213,29 @@ fn deliver(
         if let Some((kind, data)) = own {
             events.push(events::own(kind, data, &at));
         }
+        // a workflow used as a step: what it returned goes to the step
+        // that started it
+        if answer.runtime.ended.is_some()
+            && let (Some(parent), Some(path)) = (&run.parent, &run.parent_path)
+        {
+            let mut back = steps::returned(&answer.runtime);
+            back["path"] = json!(path);
+            back["run"] = json!(id);
+            events.push(Envelope::new(
+                &format!("manager/{id}"),
+                "workflow.ended",
+                &journal::subject(parent),
+                &at,
+                Some(r.event.id.clone()),
+                back,
+            ));
+        }
     }
+    let child_inputs: BTreeMap<Vec<usize>, Value> = answer
+        .children
+        .iter()
+        .map(|c| (c.path.clone(), Value::Object(c.event.clone())))
+        .collect();
     let splits = answer
         .split
         .iter()
@@ -1227,7 +1251,21 @@ fn deliver(
     // saved as stopped with the answer: none of them runs again. A job it
     // stopped in the same decision it would have started was never given
     // out, so is not in the journal: nothing to stop.
-    let stopped = stopped_jobs(j, &id, &answer.stopped)?;
+    let mut stopped = stopped_jobs(j, &id, &answer.stopped)?;
+    // the runs those steps started (workflows used as steps), and theirs,
+    // deepest first: each ends stopped where it is, its jobs with it
+    let gone = stopped_runs(j, &id, &answer.stopped)?;
+    let gone_ids: Vec<&str> = gone.iter().map(|r| r.id.as_str()).collect();
+    stopped.extend(
+        j.jobs()?
+            .into_iter()
+            .filter(|r| {
+                r.event.data["run"]
+                    .as_str()
+                    .is_some_and(|run| gone_ids.contains(&run))
+            })
+            .map(|r| r.seq),
+    );
     // each step the answer stopped, as the workflow names it, for the run's
     // story
     let shown = answer
@@ -1254,12 +1292,58 @@ fn deliver(
         events,
         shown,
         splits,
-        children: vec![],
+        children: answer
+            .children
+            .iter()
+            .map(|c| Child {
+                workflow: &c.workflow,
+                flows: &input.flows,
+                input: &child_inputs[&c.path],
+                path: c.path.clone(),
+            })
+            .collect(),
         stopped: stopped.clone(),
+        stopped_runs: gone
+            .iter()
+            .map(|g| {
+                let mut rt = g.runtime.clone();
+                steps::stop(&mut rt);
+                (g.id.clone(), rt)
+            })
+            .collect(),
     })?;
     tell(log, &who, r, &answer);
+    for g in &gone {
+        let who = Who {
+            run: g,
+            internal: who.internal,
+        };
+        log.write("run.ended", who.line(json!({ "status": "stopped" })));
+    }
     super::die_at("answer");
     Ok(Delivered::Handled(stopped))
+}
+
+/// The runs under way that run `id`'s steps at `paths` started, and the
+/// runs theirs started, deepest first.
+fn stopped_runs(j: &Journal, id: &str, paths: &[Vec<usize>]) -> Result<Vec<journal::Run>> {
+    fn under(j: &Journal, run: journal::Run, out: &mut Vec<journal::Run>) -> Result<()> {
+        for c in j.children_of(&run.id)? {
+            under(j, c, out)?;
+        }
+        out.push(run);
+        Ok(())
+    }
+    let mut out = vec![];
+    if paths.is_empty() {
+        return Ok(out);
+    }
+    for c in j.children_of(id)? {
+        if c.parent_path.as_ref().is_some_and(|p| paths.contains(p)) {
+            under(j, c, &mut out)?;
+        }
+    }
+    Ok(out)
 }
 
 /// The jobs not yet handled, running or not, of run `id`'s actions at
@@ -1701,6 +1785,7 @@ fn save_result(
         splits: vec![],
         children: vec![],
         stopped: vec![],
+        stopped_runs: vec![],
     })
 }
 

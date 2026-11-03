@@ -290,6 +290,9 @@ pub struct Handled<'a> {
     /// Jobs (by `seq`) whose steps this answer stopped: handled, noted
     /// `JOB_STOPPED`, so none runs again.
     pub stopped: Vec<i64>,
+    /// Runs this answer stopped (workflows used as steps whose group ended
+    /// without them), each with its runtime ended: their timers go.
+    pub stopped_runs: Vec<(String, Runtime)>,
 }
 
 pub struct Journal {
@@ -489,13 +492,13 @@ impl Journal {
     }
 
     /// The type of the message that started a run, through the runs it
-    /// split from; `None` when no message did (a schedule, a split's lost
-    /// parent).
+    /// split from and the runs whose steps started it; `None` when no
+    /// message did (a schedule, a split's lost parent).
     pub fn started_on(&self, run: &Run) -> Result<Option<String>> {
-        let mut cause = run.message.clone();
+        let mut cause = run.message.clone().or_else(|| run.parent.clone());
         while let Some(id) = cause {
             if let Some(parent) = self.run(&id)? {
-                cause = parent.message;
+                cause = parent.message.or(parent.parent);
                 continue;
             }
             return Ok(self
@@ -529,6 +532,18 @@ impl Journal {
             .query_map(params![message], run_row)?
             .collect::<rusqlite::Result<_>>()?;
         Ok(Some(rows.into_iter().collect::<Result<_>>()?))
+    }
+
+    /// The runs under way that steps of run `id` started, oldest first.
+    pub fn children_of(&self, id: &str) -> Result<Vec<Run>> {
+        let mut s = self.db.prepare(&format!(
+            "SELECT {RUN_COLUMNS} FROM runs
+             WHERE parent = ?1 AND ended IS NULL ORDER BY started, id"
+        ))?;
+        let rows: Vec<Result<Run>> = s
+            .query_map(params![id], run_row)?
+            .collect::<rusqlite::Result<_>>()?;
+        rows.into_iter().collect()
     }
 
     /// A run by id.
@@ -851,6 +866,13 @@ impl Journal {
                     )?;
                 }
             }
+        }
+        for (id, rt) in &h.stopped_runs {
+            tx.execute(
+                "UPDATE runs SET runtime = ?2, ended = COALESCE(ended, ?3) WHERE id = ?1",
+                params![id, json(rt)?, now],
+            )?;
+            tx.execute("DELETE FROM timers WHERE run = ?1", params![id])?;
         }
         for seq in &h.stopped {
             tx.execute(

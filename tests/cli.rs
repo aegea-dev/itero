@@ -455,9 +455,18 @@ fn a_waiting_step_and_a_workflow_that_lost_are_stopped_in_the_story_after_the_wi
     );
     itero(d.path(), &["ws", "emit", "yarış.başladı", "{}"]);
     itero(d.path(), &["daemon", "--once"]);
-    let list = out(&itero(d.path(), &["ws", "wf", "runs"]));
+    let list = out(&itero(
+        d.path(),
+        &["ws", "wf", "runs", "--workflow", "yarış"],
+    ));
     let id = list.split_whitespace().next().unwrap();
     let story = out(&itero(d.path(), &["ws", "wf", "runs", id]));
+    // the workflow that lost is a run of its own, stopped
+    let child = out(&itero(
+        d.path(),
+        &["ws", "wf", "runs", "--workflow", "demleme"],
+    ));
+    assert!(child.contains("stopped"), "{child}");
     let at = |says: &str| {
         story
             .find(says)

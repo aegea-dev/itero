@@ -127,8 +127,8 @@ fn order(ws: &Ws) {
                 {"order-process": {"args": "$output"}},
                 {"#send-mail": {"args": {
                     "order": "$event.order",
-                    "tracking": "$steps.order-process.tracking",
-                    "success": "$steps.order-process.success"
+                    "tracking": "$steps.order-process.output.tracking",
+                    "success": "$steps.order-process.output.success"
                 }}}
             ],
             "success": [log],
@@ -192,7 +192,8 @@ fn an_order_waits_for_its_payment_then_ships() {
         json!({"payment_ref": "ödeme-1", "paid": true}),
     );
     ws.pass(NOW);
-    assert_eq!(ws.statuses(), vec!["done"]);
+    // order-process ran as a run of its own
+    assert_eq!(ws.statuses(), vec!["done", "done"]);
     assert_eq!(ws.read("gönderilen.log"), "sipariş 43: TR123\n");
     assert_eq!(ws.read("sonuç.log"), "true  \n");
 }
@@ -208,7 +209,7 @@ fn an_order_out_of_stock_ends_as_failed() {
     );
     // the payment came before the step waited for it: it still reaches it
     ws.pass(NOW);
-    assert_eq!(ws.statuses(), vec!["failed"]);
+    assert_eq!(ws.statuses(), vec!["failed", "failed"]);
     assert_eq!(ws.read("gönderilen.log"), "sipariş 44: kargo yok\n");
     assert_eq!(ws.read("sonuç.log"), "false  \n");
 }
