@@ -1806,3 +1806,96 @@ fn an_event_from_a_connector_s_copy_starts_only_the_workflows_that_asked_for_its
     got.sort();
     assert_eq!(got, ["destek", "hepsi", "hepsi", "satış", "satış"]);
 }
+
+#[test]
+fn a_run_stopped_by_command_ends_stopped_its_running_step_killed() {
+    let ws = Ws::with(KEEP_OFF);
+    ws.flow(
+        "uzun",
+        json!({"on": [{ "event": "uzun.başla" }], "steps": [{"#kur": {"undo": "#sil"}}, "#bekle"],
+               "error": ["#hata"]}),
+    );
+    ws.action("kur", "echo kuruldu");
+    ws.action("bekle", "sleep 30; echo bitti >> iz.log");
+    ws.action("sil", "echo silindi >> iz.log");
+    ws.action("hata", "echo hata >> iz.log");
+    ws.emit("uzun.başla", json!({}));
+    let began = std::time::Instant::now();
+    let w = itero::workspace::find(ws.d.path()).unwrap();
+    let pass = std::thread::spawn(move || run_once(&w, NOW.parse().unwrap(), exe()).unwrap());
+    // once #bekle runs, the run is asked to stop
+    let run = loop {
+        let runs = ws.runs();
+        if let Some(r) = runs.first()
+            && r.runtime.state.get("steps").is_some()
+        {
+            break r.clone();
+        }
+        assert!(began.elapsed().as_secs() < 10, "#kur never finished");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let asked = itero::engine::events::stop_run(&ws.ws, &run.name, NOW).unwrap();
+    assert!(
+        matches!(asked, itero::engine::events::StopAsked::Asked { .. }),
+        "{asked:?}"
+    );
+    pass.join().unwrap();
+    assert!(began.elapsed().as_secs() < 20, "#bekle was killed");
+    assert_eq!(ws.statuses(), vec!["stopped"]);
+    // no undo, no error list, and #bekle never finished
+    assert_eq!(ws.read("iz.log"), "");
+    let j = Journal::open(&ws.ws).unwrap();
+    let job = j
+        .events(Some("itero.worker"))
+        .unwrap()
+        .into_iter()
+        .find(|e| e.event.data["job"]["action"] == "bekle")
+        .unwrap();
+    assert_eq!(job.note.as_deref(), Some("stopped: its run was stopped"));
+    let log = ws.log();
+    assert!(
+        log.iter()
+            .any(|l| l["event"] == "run.ended" && l["status"] == "stopped")
+    );
+    assert!(
+        !ws.messages().iter().any(|m| m.starts_with("itero.run.")),
+        "{:?}",
+        ws.messages()
+    );
+    // an ended run is not asked again
+    let again = itero::engine::events::stop_run(&ws.ws, &run.id, NOW).unwrap();
+    assert!(
+        matches!(&again, itero::engine::events::StopAsked::Ended { status, .. } if status == "stopped"),
+        "{again:?}"
+    );
+}
+
+#[test]
+fn a_run_stopped_with_no_daemon_is_stopped_by_the_next() {
+    let ws = Ws::with(KEEP_OFF);
+    ws.flow(
+        "bekleyen",
+        json!({"on": [{ "event": "bekle.başla" }], "steps": ["#bekle", "#son"]}),
+    );
+    ws.action("bekle", r#"echo '{"sipariş": 1}'; exit 75"#);
+    ws.action("son", "echo son >> iz.log");
+    ws.emit("bekle.başla", json!({}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["waiting"]);
+    let id = ws.runs()[0].id.clone();
+    let asked = itero::engine::events::stop_run(&ws.ws, &id, NOW).unwrap();
+    assert!(
+        matches!(
+            asked,
+            itero::engine::events::StopAsked::Asked { daemon: false, .. }
+        ),
+        "{asked:?}"
+    );
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["stopped"]);
+    assert_eq!(ws.read("iz.log"), "");
+    assert!(matches!(
+        itero::engine::events::stop_run(&ws.ws, "yok", NOW).unwrap(),
+        itero::engine::events::StopAsked::Missing
+    ));
+}

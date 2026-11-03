@@ -1828,3 +1828,48 @@ fn a_repeated_workflow_starts_its_next_round_as_a_run_with_its_results() {
     assert_eq!(r.rt.ended, Some(Ended::Failed));
     assert!(a.next_round.is_none());
 }
+
+#[test]
+fn a_run_asked_to_stop_ends_stopped_where_it_is() {
+    // a step running, an undo before it and an error list: none runs
+    let mut r = Run::new(&[
+        (
+            "kurulum",
+            json!({"steps": [{"#kur": {"undo": "#sil"}}, ["#bekle", "#iş", "alt"]],
+                   "error": ["#hata"]}),
+        ),
+        ("alt", json!({"steps": ["#a"]})),
+    ]);
+    let a = r.start(json!({}));
+    let a = r.done(&a.jobs[0], json!({}));
+    let (bekle, is) = (a.jobs[0].clone(), a.jobs[1].clone());
+    r.waiting(&bekle, json!({"sipariş": 1}));
+    let a = r.send("run.stop", json!({}));
+    assert!(a.jobs.is_empty() && a.children.is_empty());
+    assert_eq!(r.rt.ended, Some(Ended::Stopped));
+    assert_eq!(steps::status(&r.rt), "stopped");
+    // its actions' jobs end; the child runs on
+    let mut gone = a.stopped.clone();
+    gone.sort();
+    assert_eq!(gone, vec![bekle.path.clone(), is.path.clone()]);
+    assert!(a.timers.is_empty());
+    assert!(
+        r.done(&is, json!({})).jobs.is_empty(),
+        "nothing moves it now"
+    );
+}
+
+#[test]
+fn a_cron_round_waiting_and_a_repeated_workflow_stop_too() {
+    let mut r = Run::new(&[("a", json!({"steps": [{"#say": {"repeat": "0 * * * *"}}]}))]);
+    let a = r.start(json!({}));
+    r.done(&a.jobs[0], json!({}));
+    let a = r.send("run.stop", json!({}));
+    assert_eq!(r.rt.ended, Some(Ended::Stopped));
+    assert!(a.timers.is_empty());
+    let mut r = Run::new(&[("tur", json!({"repeat": 3, "steps": ["#iş"]}))]);
+    r.start(json!({}));
+    let a = r.send("run.stop", json!({}));
+    assert_eq!(r.rt.ended, Some(Ended::Stopped));
+    assert!(a.next_round.is_none());
+}

@@ -28,8 +28,9 @@ stopped waits for it.
 | `--timeout D` | with `--wait`: how long, like `30s` or `5m` (60s) |
 | `--json` | prints its id and what it starts as JSON |
 
-It prints the event's id, then (on stderr) what the event will do, from
-the workflows on disk:
+It prints the event's id (which [`itero ws ev cancel`](/commands/event/#cancel)
+takes back while no daemon has handled it), then (on stderr) what the
+event will do, from the workflows on disk:
 
 ```
 $ itero ws emit greet.someone '{"name": "Can"}'

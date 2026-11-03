@@ -17,9 +17,10 @@ itero ws check                # reads your files
 itero ws which <name>         # where a name is
 itero ws emit <type>          # sends an event to this workspace
 itero ws secret <NAME>        # keeps a secret for this workspace
-itero ws wf list | runs       # the workflows and their runs
+itero ws wf list | runs | stop  # the workflows, their runs, stopping one
 itero ws ac list | errors
 itero ws cn list
+itero ws ev list | cancel     # events not yet handled
 ```
 
 Each page: [`check`](/commands/check/), [`which`](/commands/which/),

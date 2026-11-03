@@ -1068,6 +1068,7 @@ fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Resul
         next_round: None,
         children: vec![],
         stopped: vec![],
+        stopped_why: journal::JOB_STOPPED,
     })?;
     Ok(Delivered::Handled(vec![]))
 }
@@ -1287,6 +1288,14 @@ fn deliver(
             })
             .collect(),
         stopped: stopped.clone(),
+        // a run stopped by command ends its jobs for that reason
+        stopped_why: if run.runtime.ended.is_none()
+            && answer.runtime.ended == Some(steps::Ended::Stopped)
+        {
+            journal::JOB_RUN_STOPPED
+        } else {
+            journal::JOB_STOPPED
+        },
     })?;
     tell(log, &who, r, &answer);
     super::die_at("answer");
@@ -1703,6 +1712,7 @@ fn save_result(
         next_round: None,
         children: vec![],
         stopped: vec![],
+        stopped_why: journal::JOB_STOPPED,
     })
 }
 

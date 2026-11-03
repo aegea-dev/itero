@@ -9,7 +9,7 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde_json::{Value, json};
 use std::sync::mpsc::Sender;
@@ -45,9 +45,11 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16) -> Router {
     };
     Router::new()
         .route("/health", get(health))
-        .route("/events", post(event))
+        .route("/events", post(event).get(queued))
+        .route("/events/{id}", delete(cancel_event))
         .route("/runs", get(runs))
         .route("/runs/{id}", get(run))
+        .route("/runs/{id}/stop", post(stop_run))
         .route("/workflows", get(workflows))
         .layer(middleware::from_fn_with_state(s.clone(), local_only))
         .with_state(s)
@@ -128,6 +130,61 @@ struct EventQuery {
 
 /// The longest an answer is waited for, in seconds.
 const MAX_WAIT: u64 = 600;
+
+/// Asks a run to stop: 202; 409 when it has ended, 404 when there is none.
+async fn stop_run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Reply, Reply> {
+    let wake = s.engine.wake.clone();
+    let asked = blocking(&s, move |ws| {
+        let now = super::daemon::stamp(chrono::Utc::now());
+        match super::events::stop_run(ws, &id, &now).map_err(internal)? {
+            super::events::StopAsked::Asked { name, .. } => Ok(json!({ "stopping": name })),
+            super::events::StopAsked::Ended { name, status } => Err(fail(
+                StatusCode::CONFLICT,
+                format!("{name} has ended: {status}"),
+            )),
+            super::events::StopAsked::Missing => {
+                Err(fail(StatusCode::NOT_FOUND, format!("no run {id}")))
+            }
+        }
+    })
+    .await?;
+    let _ = wake.send(());
+    Ok((StatusCode::ACCEPTED, asked))
+}
+
+/// The events for the workspace no daemon has handled yet.
+async fn queued(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
+    blocking(&s, |ws| {
+        let q = Journal::open(ws)
+            .map_err(internal)?
+            .queued()
+            .map_err(internal)?;
+        serde_json::to_value(q).map_err(|e| internal(e.into()))
+    })
+    .await
+}
+
+/// Cancels an event no daemon has handled yet: 409 when one has, 404 when
+/// there is none.
+async fn cancel_event(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, Reply> {
+    blocking(&s, move |ws| {
+        let now = super::daemon::stamp(chrono::Utc::now());
+        match Journal::open(ws).map_err(internal)?.cancel(&id, &now).map_err(internal)? {
+            super::journal::Cancelled::Done => Ok(json!({ "cancelled": id })),
+            super::journal::Cancelled::Handled { note, started } => Err((
+                StatusCode::CONFLICT,
+                Json(json!({ "error": format!("{id} was already handled"), "note": note, "started": started })),
+            )),
+            super::journal::Cancelled::Missing => {
+                Err(fail(StatusCode::NOT_FOUND, format!("no event {id}")))
+            }
+        }
+    })
+    .await
+}
 
 async fn event(
     State(s): State<Shared>,

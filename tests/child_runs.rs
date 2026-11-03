@@ -301,3 +301,47 @@ fn a_child_s_own_timeout_ends_its_wait_and_its_parent_s_does_not() {
     );
     assert_eq!(steps::status(&w.run("sipariş").runtime), "done");
 }
+
+#[test]
+fn a_child_stopped_answers_its_parent_and_a_parent_stopped_leaves_its_child() {
+    // the child stopped: its parent goes on with what it returned
+    let w = Ws::new();
+    order(&w, json!({ "steps": ["#onay"] }));
+    w.action("onay", r#"echo '{"sipariş": "ş-1"}'; exit 75"#);
+    w.emit("sipariş.geldi", json!({}));
+    w.pass();
+    let child = w.run("stok");
+    itero::engine::events::stop_run(&w.ws, &child.id, NOW).unwrap();
+    w.pass();
+    assert_eq!(steps::status(&w.run("stok").runtime), "stopped");
+    assert_eq!(steps::status(&w.run("sipariş").runtime), "done");
+    assert!(
+        w.read("sonuç.log").starts_with("stopped "),
+        "{}",
+        w.read("sonuç.log")
+    );
+    // the parent stopped: its child runs to its end
+    let w = Ws::new();
+    order(&w, json!({ "steps": ["#onay"] }));
+    w.action(
+        "onay",
+        r#"case "$event" in *'"tamam":true'*) echo 'onaylı'; exit 0 ;; esac
+echo '{"sipariş": "ş-1"}'
+exit 75"#,
+    );
+    w.emit("sipariş.geldi", json!({}));
+    w.pass();
+    let parent = w.run("sipariş");
+    itero::engine::events::stop_run(&w.ws, &parent.id, NOW).unwrap();
+    w.pass();
+    assert_eq!(steps::status(&w.run("sipariş").runtime), "stopped");
+    assert_eq!(
+        steps::status(&w.run("stok").runtime),
+        "waiting",
+        "it runs on"
+    );
+    w.emit("onay.geldi", json!({ "sipariş": "ş-1", "tamam": true }));
+    w.pass();
+    assert_eq!(steps::status(&w.run("stok").runtime), "done");
+    assert_eq!(w.read("sonuç.log"), "", "what it returned reached nothing");
+}

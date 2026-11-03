@@ -1,4 +1,6 @@
-use itero::engine::journal::{Child, Envelope, Handled, Journal, SCHEMA_VERSION, Start};
+use itero::engine::journal::{
+    CANCELLED, Cancelled, Child, Envelope, Handled, Journal, SCHEMA_VERSION, Start,
+};
 use serde_json::{Value, json};
 
 const NOW: &str = "2026-10-21T10:00:00Z";
@@ -311,6 +313,7 @@ fn a_run_started_by_a_step_keeps_its_parent_and_the_step() {
             path: vec![0, 1],
         }],
         stopped: vec![],
+        stopped_why: "",
     })
     .unwrap();
     let runs = j.runs().unwrap();
@@ -419,4 +422,66 @@ fn a_workspaces_id_is_read_while_the_journal_is_being_written() {
         t.elapsed()
     );
     writing.execute_batch("ROLLBACK").unwrap();
+}
+
+#[test]
+fn an_event_not_yet_handled_is_cancelled_and_one_handled_is_not() {
+    let d = tempfile::tempdir().unwrap();
+    let mut j = Journal::open(&ws(d.path())).unwrap();
+    for kind in ["sipariş.geldi", "ödeme.geldi"] {
+        j.publish(&Envelope::new(
+            "outside",
+            kind,
+            "itero.app",
+            NOW,
+            None,
+            json!({"n": 1}),
+        ))
+        .unwrap();
+    }
+    let q = j.queued().unwrap();
+    assert_eq!(
+        q.iter().map(|e| e.kind.as_str()).collect::<Vec<_>>(),
+        ["sipariş.geldi", "ödeme.geldi"]
+    );
+    assert_eq!(q[0].data, json!({"n": 1}));
+    assert!(matches!(j.cancel(&q[0].id, NOW).unwrap(), Cancelled::Done));
+    assert_eq!(j.queued().unwrap().len(), 1);
+    let e = j.events(Some("itero.app")).unwrap();
+    assert_eq!(e[0].note.as_deref(), Some(CANCELLED));
+    // handled already: refused, saying so
+    assert!(matches!(
+        j.cancel(&q[0].id, NOW).unwrap(),
+        Cancelled::Handled { .. }
+    ));
+    assert!(matches!(j.cancel("yok", NOW).unwrap(), Cancelled::Missing));
+    // taken by a daemon after it was cancelled: it starts nothing
+    let r = j.next(&[]).unwrap().unwrap();
+    assert_eq!(r.event.kind, "ödeme.geldi");
+    assert!(matches!(
+        j.cancel(&r.event.id, NOW).unwrap(),
+        Cancelled::Done
+    ));
+    let mut s = start("kayıt", json!({"kayıt": {"steps": ["#yaz"]}}));
+    s.cause = Some(r.event.id.clone());
+    assert!(j.route(&r, &[s], &[], NOW).unwrap().is_empty());
+    assert!(j.runs().unwrap().is_empty(), "cancelled first: no run");
+    // and one routed is cancelled no more: it says what it started
+    j.publish(&Envelope::new(
+        "outside",
+        "kayıt.geldi",
+        "itero.app",
+        NOW,
+        None,
+        json!({}),
+    ))
+    .unwrap();
+    let r = j.next(&[]).unwrap().unwrap();
+    let mut s = start("kayıt", json!({"kayıt": {"steps": ["#yaz"]}}));
+    s.cause = Some(r.event.id.clone());
+    let started = j.route(&r, &[s], &[], NOW).unwrap();
+    match j.cancel(&r.event.id, NOW).unwrap() {
+        Cancelled::Handled { started: s, .. } => assert_eq!(s, started),
+        other => panic!("{other:?}"),
+    }
 }

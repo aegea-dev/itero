@@ -197,6 +197,67 @@ async fn a_run_started_by_a_step_names_its_parent() {
     assert_eq!(one["parent"], top[0]["id"]);
 }
 
+#[tokio::test]
+async fn events_not_yet_handled_are_listed_and_cancelled() {
+    let d = tempfile::tempdir().unwrap();
+    let (app, _w) = app(d.path());
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let id = itero::engine::events::emit(&ws, "kayıt.geldi", None, "2026-10-15T14:00:00Z").unwrap();
+    let (code, q) = send(&app, get("/events")).await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(q[0]["id"], id);
+    let del = |id: &str| {
+        Request::delete(format!("/events/{id}"))
+            .header("host", "127.0.0.1:8790")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (code, v) = send(&app, del(&id)).await;
+    assert_eq!(
+        (code, v["cancelled"].as_str()),
+        (StatusCode::OK, Some(id.as_str()))
+    );
+    assert_eq!(send(&app, del(&id)).await.0, StatusCode::CONFLICT);
+    assert_eq!(send(&app, del("yok")).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(send(&app, get("/events")).await.1, json!([]));
+}
+
+#[tokio::test]
+async fn a_run_is_stopped_over_the_api() {
+    let d = tempfile::tempdir().unwrap();
+    let (app, _w) = app(d.path());
+    std::fs::create_dir_all(d.path().join("workflows")).unwrap();
+    std::fs::create_dir_all(d.path().join("actions")).unwrap();
+    std::fs::write(
+        d.path().join("workflows/bekleyen.json"),
+        r##"{ "on": [{ "event": "bekle.başla" }], "steps": ["#bekle"] }"##,
+    )
+    .unwrap();
+    let action = d.path().join("actions/bekle");
+    std::fs::write(&action, "#!/bin/sh\necho '{\"n\": 1}'; exit 75\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&action, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let now = "2026-10-15T14:00:00Z";
+    itero::engine::events::emit(&ws, "bekle.başla", None, now).unwrap();
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
+    itero::engine::daemon::run_once(&ws, now.parse().unwrap(), exe).unwrap();
+    let (_, runs) = send(&app, get("/runs")).await;
+    let id = runs[0]["id"].as_str().unwrap().to_string();
+    let (code, v) = send(&app, post(&format!("/runs/{id}/stop"), "")).await;
+    assert_eq!(code, StatusCode::ACCEPTED, "{v}");
+    itero::engine::daemon::run_once(&ws, now.parse().unwrap(), exe).unwrap();
+    let (code, _) = send(&app, post(&format!("/runs/{id}/stop"), "")).await;
+    assert_eq!(code, StatusCode::CONFLICT);
+    assert_eq!(
+        send(&app, post("/runs/yok/stop", "")).await.0,
+        StatusCode::NOT_FOUND
+    );
+}
+
 fn post(path: &str, body: &str) -> Request<Body> {
     Request::post(path)
         .header("host", "127.0.0.1:8790")

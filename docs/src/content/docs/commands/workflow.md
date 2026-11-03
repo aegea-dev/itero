@@ -1,15 +1,16 @@
 ---
 title: ws workflow
-description: Your workflows and their runs.
+description: Your workflows and their runs, and stopping one.
 ---
 
 `itero ws wf` (`itero ws workflow` in full) shows your workflows and what they
-did. Use it to see which workflows you have, to look at their runs, and to
-find out why a run went wrong.
+did. Use it to see which workflows you have, to look at their runs, to
+find out why a run went wrong, and to stop one.
 
 ```sh
 itero ws wf list
 itero ws wf runs [<run>] [--errors] [--workflow W] [--action A] [--limit N] [--all]
+itero ws wf stop <run>
 ```
 
 Each one takes `--json`, to print JSON for scripts instead of a table.
@@ -45,7 +46,8 @@ $ itero ws wf runs
 01a16fd5-46c0-7738-98d2-f87b1211af19   sunny-lake    greet   done    2026-10-24T21:33:30Z   2026-10-24T21:33:30Z
 ```
 
-A status is `running`, `waiting`, `done`, `failed` or `error`. The run
+A status is `running`, `waiting`, `done`, `failed`, `error` or `stopped`
+([stop](#stop)). The run
 of a workflow used as a step
 ends its line with `from <parent run>`; `--json` gives `parent`, that
 run's id.
@@ -86,3 +88,21 @@ day), then forgotten. See [The log, IDs and names](/guides/log/).
 `itero ws wf runs` shows what already ran. To find mistakes in your files
 before anything runs, use [`itero ws check`](/commands/check/).
 
+## stop
+
+Stops a run, by its id or name, where it is: a step running is killed
+(as a group ends the steps it no longer waits for), one waiting for an
+event or a cron round waits no more, and nothing more starts. No undo
+runs and no `error` list: a stop is a person's, not a failure. The run
+ends `stopped`, and its story says `stopped by command`.
+
+```
+$ itero ws wf stop misty-lake
+stopping misty-lake
+```
+
+The daemon running the workspace stops it at once; with none running,
+the next to start does. A workflow the run used as a step, a run of its
+own, runs on; a stopped run that is itself a workflow used as a step
+answers its parent with `status` `stopped`, and the parent goes on. A run
+that has ended is refused, saying how it ended.

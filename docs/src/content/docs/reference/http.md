@@ -81,7 +81,8 @@ URL the app sends in the event's data
 ## GET /runs
 
 `?workflow=<name>` keeps one workflow's runs; `?status=<status>` the runs
-with one status (`running`, `waiting`, `done`, `failed`, `error`);
+with one status (`running`, `waiting`, `done`, `failed`, `error`,
+`stopped`);
 `?limit=N` (50 unless given) caps them. Internal
 workflows' runs only with `?all=true`. `parent` is the id of the run
 whose step started it, for a workflow used as a step, else `null`.
@@ -90,6 +91,20 @@ whose step started it, for a workflow used as a step, else `null`.
 [ { "id": "...", "name": "misty-lake", "workflow": "order", "status": "waiting",
     "started": "...", "ended": null, "parent": null } ]
 ```
+
+## POST /runs/\{id or name\}/stop
+
+Stops a run where it is, as [`itero ws wf stop`](/commands/workflow/#stop)
+does: `202` once asked, `409` when it has ended, `404` when there is
+none.
+
+## GET /events, DELETE /events/\{id\}
+
+`GET /events` lists the events not yet handled, as
+[`itero ws ev list`](/commands/event/#list) does: `[{ "id", "type",
+"time", "data" }]`. `DELETE /events/{id}` cancels one: `200` with
+`{"cancelled": id}`, `409` when a daemon has handled it, `404` when there
+is none.
 
 ## GET /runs/\{id or name\}
 
