@@ -41,7 +41,7 @@ is in its entry in
 |---|---|
 | `"#name"` | an action, its latest version |
 | `"#name@0.2"` | an action at a version |
-| `"name"` | a workflow, run here; its `$event` is the args its step gives, its result its last step's |
+| `"name"` | a workflow, a run of its own; its `$event` is the args its step gives, its result what it returns ([A workflow used as a step](/guides/workflows/#a-workflow-used-as-a-step)) |
 | `["#a", "b"]` | side by side; the next step waits for all, and their results merge into one; a step in it may be an object (below) |
 | `{"race": ["#a", "b"]}` | side by side, waiting as its key says (below) |
 | `{"#name": {...}}` | with keys of its own (below) |

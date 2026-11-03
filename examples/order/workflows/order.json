@@ -16,7 +16,7 @@
   ],
   "failure": [
     { "#send-mail": { "args": { "email": "$event.email", "order": "$event.order" } } },
-    { "#log-result": { "args": { "order": "$event.order", "why": "$steps.order-process.why" } } }
+    { "#log-result": { "args": { "order": "$event.order", "why": "$steps.order-process.output.why" } } }
   ],
   "error": [
     { "#log-result": { "args": { "order": "$event.order", "failed_step": "$output.failed_step",
