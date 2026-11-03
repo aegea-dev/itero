@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use std::path::PathBuf;
 
 /// A manifest entry's problem at the address of what it is about
-/// (`action/depo`), its text after the manifest's name, its path and the
+/// (`actions/depo`), its text after the manifest's name, its path and the
 /// entry's key taken off: `itero.config.json: limits: ...`.
 fn entry_problem(ws: &Workspace, kind: &str, name: &str, why: &str) -> Problem {
     let path = format!("{}: ", ws.root.join(crate::workspace::MANIFEST).display());
@@ -20,7 +20,7 @@ fn entry_problem(ws: &Workspace, kind: &str, name: &str, why: &str) -> Problem {
         .or_else(|| why.strip_prefix(&format!("{kind}.{name}: ")))
         .unwrap_or(why);
     Problem::new(
-        format!("{kind}/{name}"),
+        format!("{kind}s/{name}"),
         format!("{}: {why}", crate::workspace::MANIFEST),
     )
 }
@@ -77,7 +77,7 @@ fn check_manifest(ws: &Workspace, workflows: &[String]) -> Result<Vec<Problem>> 
         for name in ws.entries(kind)?.keys() {
             if !known.contains(name) {
                 wrong.push(Problem::new(
-                    format!("{kind}/{name}"),
+                    format!("{kind}s/{name}"),
                     format!("{}: no {kind} {name}", crate::workspace::MANIFEST),
                 ));
             }
@@ -142,7 +142,7 @@ pub fn check(ws: &Workspace, json: bool) -> Result<()> {
     for (name, v) in &read.written {
         for (at, step, args) in crate::flow::addressed(v) {
             let (step, args) = (&step, &args);
-            let at = format!("workflow/{name}/{at}");
+            let at = format!("workflows/{name}/{at}");
             match step {
                 Name::Action { name: a, version } => {
                     let built_in =

@@ -40,10 +40,10 @@ fn every_workflow_that_can_be_read_is_and_the_rest_are_told() {
     assert_eq!(
         at,
         [
-            "workflow/bozuk",
-            "workflow/eski",
-            "workflow/yanlış",
-            "workflow/yanlış/timeout"
+            "workflows/bozuk",
+            "workflows/eski",
+            "workflows/yanlış",
+            "workflows/yanlış/timeout"
         ],
         "{ps:?}"
     );
@@ -99,15 +99,15 @@ fn ws_check_reports_every_problem_then_counts_them() {
     assert_eq!(o.status.code(), Some(1), "{err}");
     assert!(o.stdout.is_empty(), "no listing with errors");
     for line in [
-        format!("({name}/workflow/yok-böyle)\n"),
-        format!("({name}/workflow/bozuk)\n"),
-        format!("error: it needs $message ({name}/workflow/posta/steps/#ai/1)\n"),
+        format!("({name}/workflows/yok-böyle)\n"),
+        format!("({name}/workflows/bozuk)\n"),
+        format!("error: it needs $message ({name}/workflows/posta/steps/#ai/1)\n"),
         format!(
-            "error: no action gönder in the actions folders ({name}/workflow/posta/steps/#gönder)\n"
+            "error: no action gönder in the actions folders ({name}/workflows/posta/steps/#gönder)\n"
         ),
-        format!("({name}/workflow/posta/steps/kayıp)\n"),
+        format!("({name}/workflows/posta/steps/kayıp)\n"),
         format!(
-            "warning: key looks like a token: write it as a $$NAME ({name}/workflow/posta/steps/#ai/2)\n"
+            "warning: key looks like a token: write it as a $$NAME ({name}/workflows/posta/steps/#ai/2)\n"
         ),
         "5 errors, 2 warnings\n".to_string(),
     ] {
@@ -119,7 +119,7 @@ fn ws_check_reports_every_problem_then_counts_them() {
     assert_eq!(o.status.code(), Some(1));
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(v["errors"].as_array().unwrap().len(), 5, "{v}");
-    let at = format!("{name}/workflow/posta/steps/#ai/2");
+    let at = format!("{name}/workflows/posta/steps/#ai/2");
     assert!(
         v["warnings"]
             .as_array()
@@ -153,13 +153,13 @@ fn the_steps_of_a_workflow_with_mistakes_are_checked_too() {
     let o = ws_check(d.path(), false);
     let err = String::from_utf8_lossy(&o.stderr);
     for at in [
-        "/workflow/posta)",
-        "/workflow/posta/steps/#ai)",
-        "/workflow/posta/steps/all/#yok)",
-        "/workflow/posta/steps/all/#depo/2)",
-        "/workflow/posta/steps/#kargola)",
-        "/workflow/posta/steps/#depo/undo)",
-        "/workflow/posta/error)",
+        "/workflows/posta)",
+        "/workflows/posta/steps/#ai)",
+        "/workflows/posta/steps/all/#yok)",
+        "/workflows/posta/steps/all/#depo/2)",
+        "/workflows/posta/steps/#kargola)",
+        "/workflows/posta/steps/#depo/undo)",
+        "/workflows/posta/error)",
     ] {
         assert!(err.contains(at), "{at}\n{err}");
     }

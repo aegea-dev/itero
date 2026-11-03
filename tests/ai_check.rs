@@ -76,7 +76,7 @@ fn a_good_step_passes_and_a_missing_model_is_warned_of() {
     let (ok, out) = check(ai(json!({ "model": "u/yok", "message": "x" })));
     assert!(
         ok && out.contains("warning: no model u/yok on this machine (")
-            && out.contains("/workflow/posta/steps/#ai)"),
+            && out.contains("/workflows/posta/steps/#ai)"),
         "{out}"
     );
     // a model given as a value is known only in a run
@@ -90,7 +90,7 @@ fn a_good_step_passes_and_a_missing_model_is_warned_of() {
 fn a_step_without_a_model_is_warned_of_unless_the_machine_has_one() {
     let (ok, out) = check(ai(json!({ "message": "x" })));
     assert!(
-        ok && out.contains("warning: no model") && out.contains("/workflow/posta/steps/#ai)"),
+        ok && out.contains("warning: no model") && out.contains("/workflows/posta/steps/#ai)"),
         "{out}"
     );
     let (ok, out) = check_with(
@@ -249,7 +249,7 @@ fn a_key_that_looks_like_a_token_is_warned_of() {
     ));
     assert!(
         ok && out.contains("warning: key looks like a token: write it as a $$NAME (")
-            && out.contains("/workflow/posta/steps/#ai)"),
+            && out.contains("/workflows/posta/steps/#ai)"),
         "{out}"
     );
     // a short word, a secret, a value of the run: nothing to say

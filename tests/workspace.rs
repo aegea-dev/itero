@@ -113,7 +113,7 @@ fn workflows_are_named_after_their_files() {
     );
     write(d.path(), "workflows/bozuk.json", r##"{ "steps": [] }"##);
     let e = format!("{:#}", ws.flows().unwrap_err());
-    assert!(e.contains("steps is empty (workflow/bozuk/steps)"), "{e}");
+    assert!(e.contains("steps is empty (workflows/bozuk/steps)"), "{e}");
 }
 
 #[test]
@@ -507,7 +507,7 @@ fn a_workflow_files_meta_is_refused_and_built_ins_are_internal() {
     );
     let e = format!("{:#}", ws.flows().unwrap_err());
     assert!(
-        e.contains("(workflow/eski)") && e.contains("itero.config.json"),
+        e.contains("(workflows/eski)") && e.contains("itero.config.json"),
         "{e}"
     );
 }

@@ -473,7 +473,7 @@ impl Workspace {
     fn read_flow_files(&self) -> Result<(Values, Vec<Problem>, Values)> {
         let (mut out, mut problems, mut written) = (BTreeMap::new(), vec![], BTreeMap::new());
         for (name, f) in self.flow_files()? {
-            let at = format!("workflow/{name}");
+            let at = format!("workflows/{name}");
             let text = match std::fs::read_to_string(&f) {
                 Ok(t) => t,
                 Err(e) => {
@@ -585,7 +585,7 @@ impl Workspace {
         v: &Value,
         entries: &Map<String, Value>,
     ) -> Result<crate::flow::Flow, Vec<Problem>> {
-        let at = format!("workflow/{name}");
+        let at = format!("workflows/{name}");
         let mut f = crate::flow::read(v)
             .map_err(|ps| ps.into_iter().map(|p| p.under(&at)).collect::<Vec<_>>())?;
         // a built-in workflow says what it is in its own JSON; the entry
