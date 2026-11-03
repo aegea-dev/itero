@@ -192,6 +192,12 @@ test-docker: ## Run the tests that need Docker: container actions, IMAP and POP3
 test-formula: ## Install the formula from a local tap (macOS; changes Homebrew, undone after)
 	sh scripts/test-formula.sh
 
+# The engine's model (model/Engine.tla), checked by TLC in Docker: every
+# order of events, commands and crashes within each scenario's bounds.
+.PHONY: model
+model: ## Check the engine's model with TLC, every scenario (Docker)
+	sh scripts/model.sh check
+
 .PHONY: install
 install: ## Install itero to ~/.cargo/bin, and on macOS Itero.app to ~/Applications
 	$(CARGO) install --path . --force --bin itero
