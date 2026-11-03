@@ -82,7 +82,9 @@ pub fn body(
             json!({ "messages": messages })
         }
         Api::Responses => {
-            let mut r = json!({ "input": content });
+            // OpenAI keeps a Responses answer 30 days unless told not to;
+            // itero keeps its own copy in the log (`ai.answer`)
+            let mut r = json!({ "input": content, "store": false });
             if let Some(s) = env.get("system") {
                 r["instructions"] = json!(s);
             }
