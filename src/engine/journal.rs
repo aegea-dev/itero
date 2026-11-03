@@ -21,13 +21,15 @@ const OLDEST: i64 = 7;
 /// The steps from each version to the next: `MIGRATIONS[0]` takes `OLDEST`
 /// to the one after, and so on. A step is only ever added, never changed:
 /// a journal on someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 2] = [
+const MIGRATIONS: [&str; 3] = [
     // 8: the tables nothing reads any more
     "DROP TABLE IF EXISTS queued; DROP TABLE IF EXISTS paused;
      DROP TABLE IF EXISTS cursors; DROP TABLE IF EXISTS memory;",
     // 9: callbacks are gone; a workflow posts its result itself
     "DROP TABLE IF EXISTS replies;
      ALTER TABLE events DROP COLUMN reply; ALTER TABLE runs DROP COLUMN reply;",
+    // 10: a workflow used as a step is a run of its own, linked to its parent
+    "ALTER TABLE runs ADD COLUMN parent TEXT; ALTER TABLE runs ADD COLUMN parent_path TEXT;",
 ];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
@@ -64,7 +66,9 @@ CREATE TABLE IF NOT EXISTS runs (
   ended TEXT,
   input TEXT,
   name TEXT,
-  message TEXT
+  message TEXT,
+  parent TEXT,
+  parent_path TEXT
 );
 CREATE TABLE IF NOT EXISTS workflows (pin TEXT PRIMARY KEY, definition TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS workflow_ids (name TEXT PRIMARY KEY, id TEXT NOT NULL, created TEXT NOT NULL, itero TEXT NOT NULL);
@@ -138,6 +142,10 @@ pub struct Run {
     pub ended: Option<String>,
     /// The message that started it, or the run it split from.
     pub message: Option<String>,
+    /// The run whose step started it, when it is a workflow used as a step.
+    pub parent: Option<String>,
+    /// That step's path in the parent's position: where its end goes back.
+    pub parent_path: Option<Vec<usize>>,
 }
 
 /// A run's answer: what a waiting app or a callback gets when it ends.
@@ -218,6 +226,7 @@ impl Start {
             now,
             cause: self.cause.as_deref(),
             message: self.cause.as_deref(),
+            parent: None,
         }
     }
 }
@@ -231,6 +240,17 @@ pub struct Split<'a> {
     pub input: &'a Value,
     /// The message of the run it splits from.
     pub message: Option<&'a str>,
+}
+
+/// A run a step of another starts: a workflow used as a step. Its
+/// `$event` is the args the step gives it; it runs the versions its parent
+/// is pinned to.
+pub struct Child<'a> {
+    pub workflow: &'a str,
+    pub flows: &'a BTreeMap<String, Value>,
+    pub input: &'a Value,
+    /// The step's path in the parent's position.
+    pub path: Vec<usize>,
 }
 
 /// A subject: `itero.run.<id>`, `itero.worker` for jobs, or `itero.app`
@@ -265,6 +285,8 @@ pub struct Handled<'a> {
     pub shown: Vec<Envelope>,
     /// Runs split from this one.
     pub splits: Vec<Split<'a>>,
+    /// Runs its steps start, each linked to this run (`run` names it).
+    pub children: Vec<Child<'a>>,
     /// Jobs (by `seq`) whose steps this answer stopped: handled, noted
     /// `JOB_STOPPED`, so none runs again.
     pub stopped: Vec<i64>,
@@ -857,8 +879,35 @@ impl Journal {
                     now,
                     cause: None,
                     message: s.message,
+                    parent: None,
                 },
             )?;
+        }
+        if !h.children.is_empty() {
+            let Some((parent, ..)) = h.run else {
+                bail!("a run started by a step needs the run whose step it is");
+            };
+            let cause = tx.query_row(
+                "SELECT id FROM events WHERE seq = ?1",
+                params![h.seq],
+                |r| r.get::<_, String>(0),
+            )?;
+            for c in &h.children {
+                let pin = pin(&tx, c.workflow, c.flows)?;
+                insert_run(
+                    &tx,
+                    NewRun {
+                        workflow: c.workflow,
+                        pin: &pin,
+                        rt: &Runtime::default(),
+                        input: c.input,
+                        now,
+                        cause: Some(&cause),
+                        message: None,
+                        parent: Some((parent, &c.path)),
+                    },
+                )?;
+            }
         }
         tx.commit()?;
         Ok(())
@@ -909,10 +958,12 @@ impl Journal {
     }
 }
 
-const RUN_COLUMNS: &str = "id, workflow, pin, runtime, input, started, ended, name, message";
+const RUN_COLUMNS: &str =
+    "id, workflow, pin, runtime, input, started, ended, name, message, parent, parent_path";
 
 fn run_row(r: &rusqlite::Row) -> rusqlite::Result<Result<Run>> {
     let (rt, input): (String, Option<String>) = (r.get(3)?, r.get(4)?);
+    let (parent, parent_path): (Option<String>, Option<String>) = (r.get(9)?, r.get(10)?);
     let (id, workflow, pin, started, ended, name, message) = (
         r.get(0)?,
         r.get(1)?,
@@ -936,6 +987,8 @@ fn run_row(r: &rusqlite::Row) -> rusqlite::Result<Result<Run>> {
             started,
             ended,
             message,
+            parent,
+            parent_path: parent_path.map(|t| serde_json::from_str(&t)).transpose()?,
         })
     })())
 }
@@ -986,13 +1039,15 @@ struct NewRun<'a> {
     /// The message whose answer it is part of: its cause, or (split) its
     /// parent's.
     message: Option<&'a str>,
+    /// The run whose step started it, and that step's path.
+    parent: Option<(&'a str, &'a [usize])>,
 }
 
 fn insert_run(db: &Connection, r: NewRun) -> Result<String> {
     let id = uuid::Uuid::now_v7().to_string();
     db.execute(
-        "INSERT INTO runs (id, name, workflow, pin, runtime, args, input, started, message)
-         VALUES (?1, ?2, ?3, ?4, ?5, '{}', ?6, ?7, ?8)",
+        "INSERT INTO runs (id, name, workflow, pin, runtime, args, input, started, message, parent, parent_path)
+         VALUES (?1, ?2, ?3, ?4, ?5, '{}', ?6, ?7, ?8, ?9, ?10)",
         params![
             id,
             crate::names::random(),
@@ -1001,7 +1056,9 @@ fn insert_run(db: &Connection, r: NewRun) -> Result<String> {
             json(r.rt)?,
             json(r.input)?,
             r.now,
-            r.message
+            r.message,
+            r.parent.map(|(id, _)| id),
+            r.parent.map(|(_, path)| json(&path)).transpose()?
         ],
     )?;
     let e = Envelope::new(

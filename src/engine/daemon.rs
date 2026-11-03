@@ -1061,6 +1061,7 @@ fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Resul
         events: vec![],
         shown: vec![],
         splits: vec![],
+        children: vec![],
         stopped: vec![],
     })?;
     Ok(Delivered::Handled(vec![]))
@@ -1253,6 +1254,7 @@ fn deliver(
         events,
         shown,
         splits,
+        children: vec![],
         stopped: stopped.clone(),
     })?;
     tell(log, &who, r, &answer);
@@ -1697,6 +1699,7 @@ fn save_result(
         events: vec![e],
         shown: vec![],
         splits: vec![],
+        children: vec![],
         stopped: vec![],
     })
 }
