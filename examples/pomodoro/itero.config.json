@@ -1,0 +1,9 @@
+{
+  "name": "pomodoro",
+  "description": "A pomodoro session: a notification once its time is over",
+  "workflow": {
+    "pomodoro": {
+      "description": "Waits the session's duration, then tells it has finished"
+    }
+  }
+}
