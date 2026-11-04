@@ -76,6 +76,7 @@ held    MCHeld  PROPERTY  AllHandled
 back    MCChild PROPERTY  ChildrenReport
 back    MCChild PROPERTY  RunsEnd
 quiet   MCChild INVARIANT NoChain
+nolock  MCStop  INVARIANT OneCopy
 '
 
 # Each mutant must break its rule; what does not goes in a file, as the

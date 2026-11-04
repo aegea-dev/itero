@@ -133,10 +133,12 @@ Save(s, o) ==
                       !.br = ev[s].br, !.cause = s])
 
 \* work: once no event is left, each job not running is counted, then
-\* started; one counted MAX_RUNS times already is an error instead
+\* started; one counted MAX_RUNS times already is an error instead. A job
+\* an orphan still runs holds its lock (lock.rs take_job): it waits
 StartJob(s) ==
     /\ up /\ taking = 0 /\ ~deferred /\ NoEvent
     /\ ev[s].subj = WORKER /\ ~ev[s].handled /\ s \notin running
+    /\ (s \notin orphans \/ Bug = "nolock")
     /\ IF ev[s].tries >= MaxRuns /\ Bug /= "maxruns"
        THEN Save(s, "failed") /\ UNCHANGED running
        ELSE /\ ev' = [ev EXCEPT ![s].tries = @ + 1]
