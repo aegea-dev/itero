@@ -57,8 +57,8 @@ the machine's defaults say. See
 
 It reports every problem in every file in one run, not only the first: a
 key it does not know, an event type of one word, an action or a workflow
-that is not there, an action that is not executable, a manifest entry that
-is wrong. Each is its message, then where it is, as an
+that is not there, an action that is not executable, a file an arg names that
+cannot be used, a manifest entry that is wrong. Each is its message, then where it is, as an
 [address](/reference/concepts/#addresses); then how many, and the check
 fails (exit 1), printing nothing else:
 

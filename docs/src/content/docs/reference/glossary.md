@@ -125,7 +125,8 @@ skipped.
 All an action gets from its run: a step's `args` in its workflow.
 Args are an object or a list of objects; a list item with exactly
 `title` and `text` gives the arg `title` names its text, as text. A value
-in an arg's text is filled (`"$event.from: $event.subject"`). A connector
+in an arg's text is filled (`"$event.from: $event.subject"`). An arg may be
+a file, `{"file": "prompts/sort.md"}`: its text, as written. A connector
 has args too, given by each `on` entry that listens:
 `{"event": "mail.received", "args": {...}}`.
 
