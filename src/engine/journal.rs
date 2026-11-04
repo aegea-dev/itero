@@ -58,6 +58,11 @@ pub enum Cancelled {
         note: Option<String>,
         started: Vec<String>,
     },
+    /// No daemon had routed it, but runs that started to wait had it
+    /// already (copied by `messages_since`): those runs.
+    Reached {
+        runs: Vec<String>,
+    },
     /// No event of the workspace has that id.
     Missing,
 }
@@ -497,16 +502,19 @@ impl Journal {
     }
 
     /// The messages for the workspace since `time`, apart from `except`
-    /// (the one that started a run) and the daemon's own (`itero.`, which
-    /// no run waits for): what a run starting to wait may have missed.
+    /// (the one that started a run), the daemon's own (`itero.`, which no
+    /// run waits for) and those cancelled: what a run starting to wait may
+    /// have missed. Those not yet routed are in it: one held for room
+    /// under `limits.runs` reaches the run all the same.
     pub fn messages_since(&self, time: &str, except: Option<&str>) -> Result<Vec<Recorded>> {
         let sql = format!(
             "SELECT {COLUMNS} FROM events WHERE subject = 'itero.app' AND time >= ?1
-               AND (?2 IS NULL OR id != ?2) AND substr(type, 1, 6) != 'itero.' ORDER BY seq"
+               AND (?2 IS NULL OR id != ?2) AND substr(type, 1, 6) != 'itero.'
+               AND (note IS NULL OR note != ?3) ORDER BY seq"
         );
         let mut s = self.db.prepare(&sql)?;
         let out = s
-            .query_map(params![time, except], row)?
+            .query_map(params![time, except, CANCELLED], row)?
             .collect::<rusqlite::Result<_>>()?;
         Ok(out)
     }
@@ -862,11 +870,27 @@ impl Journal {
                 Cancelled::Handled { note, started }
             }
             Some((None, _)) => {
-                tx.execute(
-                    "UPDATE events SET handled = ?2, note = ?3 WHERE id = ?1 AND handled IS NULL",
-                    params![id, at, CANCELLED],
+                // copied to runs that started to wait before a daemon
+                // routed it: they have it, so it is not cancelled
+                let mut s = tx.prepare(
+                    "SELECT subject FROM events WHERE type = 'message' AND cause = ?1 ORDER BY seq",
                 )?;
-                Cancelled::Done
+                let runs: Vec<String> = s
+                    .query_map(params![id], |r| r.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+                    .iter()
+                    .filter_map(|subject| run_of(subject).map(str::to_string))
+                    .collect();
+                drop(s);
+                if runs.is_empty() {
+                    tx.execute(
+                        "UPDATE events SET handled = ?2, note = ?3 WHERE id = ?1 AND handled IS NULL",
+                        params![id, at, CANCELLED],
+                    )?;
+                    Cancelled::Done
+                } else {
+                    Cancelled::Reached { runs }
+                }
             }
         };
         tx.commit()?;

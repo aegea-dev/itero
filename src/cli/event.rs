@@ -42,6 +42,9 @@ pub fn cancel(ws: &Workspace, id: &str, json: bool) -> Result<()> {
             };
             bail!("{id} was already handled: {what}")
         }
+        Cancelled::Reached { runs } => {
+            bail!("{id} has reached runs waiting for it: {}", runs.join(", "))
+        }
         Cancelled::Missing => {
             bail!("no event {id} in this workspace: itero ws ev list lists those not yet handled")
         }

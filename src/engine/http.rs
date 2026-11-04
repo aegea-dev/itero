@@ -178,6 +178,10 @@ async fn cancel_event(
                 StatusCode::CONFLICT,
                 Json(json!({ "error": format!("{id} was already handled"), "note": note, "started": started })),
             )),
+            super::journal::Cancelled::Reached { runs } => Err((
+                StatusCode::CONFLICT,
+                Json(json!({ "error": format!("{id} has reached runs waiting for it"), "reached": runs })),
+            )),
             super::journal::Cancelled::Missing => {
                 Err(fail(StatusCode::NOT_FOUND, format!("no event {id}")))
             }
