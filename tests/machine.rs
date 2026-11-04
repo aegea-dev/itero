@@ -909,3 +909,118 @@ fn info_says_when_the_daemon_runs_another_itero() {
         assert!(out.contains(says), "{says}: {out}");
     }
 }
+
+/// A machine's daemon standing in: `/health` and `/workspaces` answer
+/// `health` and `workspaces`, at the port the commands read.
+fn fake_machine(m: &Machine, health: Value, workspaces: Value) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for s in listener.incoming() {
+            let mut s = s.unwrap();
+            let mut asked = [0u8; 1024];
+            let n = s.read(&mut asked).unwrap_or(0);
+            let asked = String::from_utf8_lossy(&asked[..n]);
+            let body = if asked.starts_with("GET /workspaces") {
+                &workspaces
+            } else {
+                &health
+            }
+            .to_string();
+            let _ = write!(
+                s,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    let state = m.d.path().join("durum/itero");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("port"), port.to_string()).unwrap();
+}
+
+fn emit_said(m: &Machine, w: &Path) -> String {
+    let out = m
+        .command(w)
+        .args(["ws", "emit", "deneme.geldi"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stderr).to_string()
+}
+
+#[test]
+fn emit_says_why_the_machines_daemon_does_not_run_the_workspace() {
+    let m = Machine::new();
+    let w = m.workspace("eski");
+    let why = "eski: journal.sqlite was made by a newer itero (journal schema 10; this itero knows up to 9): update itero";
+    fake_machine(
+        &m,
+        serde_json::json!({ "ok": true, "daemon": { "pid": 7, "itero": "0.0.1" } }),
+        serde_json::json!([{ "name": "eski", "folder": w, "state": "missing", "why": why }]),
+    );
+    let said = emit_said(&m, &w);
+    assert!(
+        said.contains(&format!("the machine's daemon does not run eski: {why}")),
+        "{said}"
+    );
+    assert!(
+        said.contains(&format!(
+            "the machine's daemon runs itero 0.0.1, this is {}: itero service restart puts this one in place",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{said}"
+    );
+    assert!(!said.contains("no daemon is running"), "{said}");
+}
+
+#[test]
+fn emit_says_the_machines_daemon_does_not_have_a_workspace_off_its_list() {
+    let m = Machine::new();
+    let w = m.workspace("listede-yok");
+    fake_machine(
+        &m,
+        serde_json::json!({ "ok": true, "daemon": { "pid": 7, "itero": env!("CARGO_PKG_VERSION") } }),
+        serde_json::json!([]),
+    );
+    let said = emit_said(&m, &w);
+    assert!(
+        said.contains(
+            "the machine's daemon does not run this workspace: itero ws add puts it on its list"
+        ),
+        "{said}"
+    );
+    assert!(!said.contains("runs itero"), "the same itero: {said}");
+    // no machine's daemon at all: as before
+    std::fs::remove_file(m.d.path().join("durum/itero/port")).unwrap();
+    assert!(emit_said(&m, &w).contains("no daemon is running"));
+}
+
+#[test]
+fn add_says_whether_the_machines_daemon_runs_the_workspace() {
+    let m = Machine::new();
+    let refused = m.workspace("reddedilen");
+    fake_machine(
+        &m,
+        serde_json::json!({ "ok": true, "daemon": { "pid": 7, "itero": env!("CARGO_PKG_VERSION") } }),
+        serde_json::json!([{ "name": "reddedilen", "folder": refused, "state": "missing", "why": "kötü bir günlük" }]),
+    );
+    let said = m.ok(&refused, &["ws", "add"]);
+    assert!(
+        said.contains("the machine's daemon does not run it: kötü bir günlük"),
+        "{said}"
+    );
+    assert!(!said.contains("starts it now"), "{said}");
+    // a real one, which takes it up
+    let m = Machine::new();
+    let _d = m.daemon_all();
+    m.port();
+    let good = m.workspace("iyi");
+    let said = m.ok(&good, &["ws", "add"]);
+    assert!(said.contains("the machine's daemon runs it"), "{said}");
+}
