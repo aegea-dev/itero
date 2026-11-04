@@ -14,7 +14,10 @@ an error is `{"error": "..."}` with its status.
 | `GET /health` | the workspace, the daemon, its passes and its connectors |
 | `POST /events` | sends an event (a message) |
 | `GET /runs` | runs, newest first |
+| `GET /events` | the events not yet handled |
+| `DELETE /events/{id}` | cancels an event not yet handled |
 | `GET /runs/{id or name}` | a run, its state and its events |
+| `POST /runs/{id or name}/stop` | stops a run where it is |
 | `GET /workflows` | each workflow's name and what starts it |
 
 ## Only from this machine
@@ -33,14 +36,13 @@ cannot post one without a preflight, which is never granted.
                  "path": "/Users/me/home", "meta": { "owner": "ayşe" } },
   "daemon": { "id": "01a15f2c…", "name": "brave-otter", "started": "...", "pid": 4242,
               "host": "mini", "itero": "0.15.0" },
-  "started": "...", "passes": 42, "last_pass": "...", "last_error": null, "busy_since": null,
+  "started": "...", "passes": 42, "last_pass": "...", "last_error": null,
   "connectors": { "mail.received": { "state": "running", "restarts": 0, "last_exit": null } } }
 ```
 
 `workspace` and `daemon` are their [IDs and names](/guides/log/#ids-and-names).
 
-`busy_since` is when the pass under way began, `null` while the daemon
-waits; the service's watchdog restarts a daemon whose pass runs too long.
+`busy_since`, there while a pass is under way, is when it began.
 
 `connectors` has each [connector](/guides/connectors/): `running`,
 `waiting` (to start again) or `gave up`, its restarts, and how it ended
@@ -69,7 +71,9 @@ the event started have ended, and answers 200 with them:
 ```json
 { "id": "01a1…", "message": "01a1…",
   "runs": [ { "run": "01a1…", "name": "misty-lake", "workflow": "order",
-              "status": "done", "state": { "order": 43, "tracking": "TR-43", "output": "" } } ] }
+              "status": "done",
+              "state": { "event": { "order": 43 }, "output": { "tracking": "TR-43" },
+                         "steps": { "ship": { "tracking": "TR-43" } } } } ] }
 ```
 
 When the time runs out first, it answers 202 with the runs so far.

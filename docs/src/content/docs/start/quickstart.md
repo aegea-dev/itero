@@ -70,10 +70,10 @@ run it from login on: `itero workspace add`, then `itero service install`
 - [Connectors](/guides/connectors/): where events come from.
 - [The log, IDs and names](/guides/log/): what happened, and how to find
   it.
-- The examples in the repository: `mail-alert`, `mail-servers`, `gmail`
-  (new mail pushed as it arrives), `notify-api` (an app's notification,
-  its answer posted back), `order`,
-  `page-digest`, `page-summary` (a local model), `photos`, `pomodoro` (a
+- The examples in the repository: `beacon`, `mail-alert`, `mail-servers`,
+  `gmail` (new mail pushed as it arrives), `notify-api` (an app's
+  notification, its answer posted back), `order`, `page-digest`,
+  `page-summary` and `ai-mail` (a local model), `photos`, `pomodoro` (a
   notification once a session's time is over), `languages`
   (actions in Python, Node, Bun and Docker) and `terraform` (a k3d cluster
   with a web app, rolled back when a step fails).

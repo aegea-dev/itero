@@ -95,5 +95,5 @@ step: `"key": "$$OPENAI_API_KEY"`
 ([A model behind a URL](/ai/workflows/#a-model-behind-a-url)). itero
 sends it only to that step's `url`.
 
-`ITERO_NO_SECRET_STORE` set keeps itero away from the store: secrets then
-come from the environment only, as in tests and CI.
+`ITERO_NO_SECRET_STORE` set keeps itero away from the store: a `$$NAME`
+then comes from `.env` and the environment only, as in tests and CI.

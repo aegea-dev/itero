@@ -88,7 +88,8 @@ For runs that wait for days, a workflow can post its result itself, from
 its `success`, `failure` and `error` steps
 ([Posting a result](/guides/workflows/#posting-a-result)).
 
-Types starting with `itero.` are the daemon's own and refused. An app
+Types starting with `itero.`, `action.`, `timer.`, `run.`, `workflow.` or
+`connector.` are the engine's own and refused. An app
 sends the same with `POST /events` ([HTTP API](/reference/http/)). See
 [Connectors](/guides/connectors/).
 

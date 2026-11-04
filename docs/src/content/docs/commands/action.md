@@ -29,6 +29,8 @@ $ itero ws ac list
 #notify          built in
 #forget          built in
 #roll-log        built in
+#ai              built in
+#find-models     built in
 ```
 
 ## errors

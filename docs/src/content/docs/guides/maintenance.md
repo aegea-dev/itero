@@ -48,8 +48,9 @@ another one is done, name it in the event's condition:
 ```json
 { "on": [{ "event": "itero.run.done" }, { "$event.workflow": "nightly-backup" }],
   "steps": ["#upload-report"] }
-``` No run waits for these events:
-they only start workflows.
+```
+
+No run waits for these events: they only start workflows.
 
 ## Internal workflows
 

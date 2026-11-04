@@ -7,8 +7,8 @@ Three kinds of things, each with its shape, as in the logo and in
 pictures of a workflow: **a workflow <span class="wf">●</span>**, **an action <span class="act">■</span>** and **a
 connector <span class="con">▲</span>**, where events (messages) come from.
 
-**A workspace** is a folder with an `itero.config.json`. One daemon runs one
-workspace:
+**A workspace** is a folder with an `itero.config.json`, run by one daemon
+at a time:
 
 ```
 itero.config.json          the manifest: what it is, port, limits, and each workflow, action and connector
@@ -54,13 +54,14 @@ event for it arrives. A run ends as `done`, `failed` (the last step says
 `"success": false`), `error` (something broke) or `stopped` (stopped by
 command).
 
-**The daemon** runs the workspace, one per workspace. When something
-happens (an event arrives, a schedule comes due, a watched path changes,
-a waiting run's timer fires) it makes a pass, at once; in between it waits,
-with no CPU:
+**The daemon** runs the workspace of its folder, or with `--all` every
+workspace on the machine's list ([One itero per machine](/guides/machine/)),
+each on its own. When something happens (an event arrives, a schedule
+comes due, a watched path changes, a waiting run's timer fires) it makes a
+pass, at once; in between it waits, with no CPU:
 
 ```
-itero daemon  (one per workspace)
+itero daemon  (for each workspace it runs)
 │
 ├─ connectors and watched paths: beside it, feeding events in
 │
