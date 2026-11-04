@@ -33,6 +33,7 @@ Private/local context may exist outside this repository, but it must not be quot
 - `src/ai/`: the built-in `#ai` step and model finding; `itero-ai/` runs a local model, `itero-ai-index/` lists the models a machine has.
 - `src/builtin/`: the daemon's own workflows; `src/bin/itero-notifier.rs`: Itero.app's notifier.
 - `tests/`: integration tests, one file per area.
+- `model/`: a TLA+ model of the engine (`Engine.tla`) and its scenarios (`MC*.tla`, `MC*.cfg`), checked by TLC; `model/README.md` maps each action to the Rust it stands for.
 - `examples/`: workspaces you can run; some have their own tests in `test/`, and `tests/examples.rs` checks them all.
 - `docs/`: the docs site (Astro); its pages are in `docs/src/content/docs/`.
 - `packaging/`: Homebrew, macOS app, licence notices; `scripts/`: what the Linux, Docker, install and formula tests run.
@@ -49,6 +50,8 @@ Private/local context may exist outside this repository, but it must not be quot
 - Lint gate, any warning fails: make lint-check
 - Tests and clippy on Linux, in Docker: make test-linux
 - Tests that need Docker (container actions; IMAP, POP3 and Gmail against GreenMail): make test-docker
+- Check the engine's model with TLC, in Docker: make model
+- Check that each of the model's rules can fail: make model-test
 - Security audit of Cargo.lock: make audit
 - Test coverage per file: make coverage
 - Full verification (fmt-check, check, lint-check, test, audit, docs-build): make verify
@@ -81,4 +84,5 @@ when it touches the mail examples or connectors, `make test-docker`.
 - Verify with emitting event and running workflow before claiming work is complete.
 - Tests come first: write the failing unit/integration test, then implement the feature or fix (TDD).
 - Work each ticket in its own git worktree under .claude/worktrees/.
+- A change to how the engine handles events, runs or jobs updates model/ in the same PR, and make model and make model-test pass.
 - .claude/worktrees/ is shared: never modify or delete a worktree you did not create.

@@ -199,6 +199,16 @@ test-docker: ## Run the tests that need Docker: container actions, IMAP and POP3
 test-formula: ## Install the formula from a local tap (macOS; changes Homebrew, undone after)
 	sh scripts/test-formula.sh
 
+# The engine's model (model/Engine.tla), checked by TLC in Docker: every
+# order of events, commands and crashes within each scenario's bounds.
+.PHONY: model
+model: ## Check the engine's model with TLC, every scenario (Docker)
+	sh scripts/model.sh check
+
+.PHONY: model-test
+model-test: ## Check that each of the model's rules can fail (Docker)
+	sh scripts/model.sh mutants
+
 # Every example's own tests (each examples/<name>/test), on the itero just
 # built rather than the one on PATH, with folders of their own as make test
 # has; each one's result is said, then the failing ones. Needs Bun.
