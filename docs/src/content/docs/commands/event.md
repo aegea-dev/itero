@@ -38,5 +38,7 @@ cancelled 01a1a2f0-5c3e-7a10-9d3b-2f6e0c8a4b11
 
 An event a daemon has handled already is refused, saying what it did
 (the runs it started); a daemon taking it at the same moment never also
-starts runs for it. To stop a run it started, see
+starts runs for it. So is one that runs waiting for it have had already:
+a run that starts to wait gets the messages sent since it began, routed
+or not, and the refusal names those runs. To stop a run it started, see
 [`itero ws wf stop`](/commands/workflow/#stop).

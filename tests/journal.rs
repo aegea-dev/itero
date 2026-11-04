@@ -485,3 +485,58 @@ fn an_event_not_yet_handled_is_cancelled_and_one_handled_is_not() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn a_run_that_starts_waiting_misses_no_message_but_those_cancelled() {
+    let d = tempfile::tempdir().unwrap();
+    let mut j = Journal::open(&ws(d.path())).unwrap();
+    for kind in ["sipariş.geldi", "ödeme.geldi", "iade.geldi"] {
+        j.publish(&Envelope::new(
+            "outside",
+            kind,
+            "itero.app",
+            NOW,
+            None,
+            json!({}),
+        ))
+        .unwrap();
+    }
+    // the first routed, the second cancelled, the third not yet taken
+    let r = j.next(&[]).unwrap().unwrap();
+    j.route(&r, &[], &[], NOW).unwrap();
+    let q = j.queued().unwrap();
+    assert!(matches!(j.cancel(&q[0].id, NOW).unwrap(), Cancelled::Done));
+    let missed: Vec<String> = j
+        .messages_since(NOW, None)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.event.kind)
+        .collect();
+    assert_eq!(missed, ["sipariş.geldi", "iade.geldi"]);
+}
+
+#[test]
+fn a_message_copied_to_a_waiting_run_is_cancelled_no_more_naming_the_runs() {
+    let d = tempfile::tempdir().unwrap();
+    let mut j = Journal::open(&ws(d.path())).unwrap();
+    let m = Envelope::new(
+        "outside",
+        "sipariş.geldi",
+        "itero.app",
+        NOW,
+        None,
+        json!({}),
+    );
+    j.publish(&m).unwrap();
+    // two runs started to wait before any daemon routed it
+    for run in ["koşu-bir", "koşu-iki"] {
+        j.publish(&itero::engine::journal::copy(&m, run, NOW))
+            .unwrap();
+    }
+    match j.cancel(&m.id, NOW).unwrap() {
+        Cancelled::Reached { runs } => assert_eq!(runs, ["koşu-bir", "koşu-iki"]),
+        other => panic!("{other:?}"),
+    }
+    // not cancelled: a daemon still routes it
+    assert_eq!(j.queued().unwrap().len(), 1);
+}

@@ -103,8 +103,9 @@ none.
 `GET /events` lists the events not yet handled, as
 [`itero ws ev list`](/commands/event/#list) does: `[{ "id", "type",
 "time", "data" }]`. `DELETE /events/{id}` cancels one: `200` with
-`{"cancelled": id}`, `409` when a daemon has handled it, `404` when there
-is none.
+`{"cancelled": id}`, `409` when a daemon has handled it (with the runs it
+`started`) or runs waiting for it have it already (those runs, as
+`reached`), `404` when there is none.
 
 ## GET /runs/\{id or name\}
 
