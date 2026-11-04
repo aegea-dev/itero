@@ -23,8 +23,9 @@ build-dev: ## Build the debug binary (target/debug/itero)
 
 # The tests run with a state and a cache folder of their own, new for each
 # run in the system's temporary folder: never this machine's daemon, its
-# list of workspaces or its port, which change as itero runs here.
-ISOLATED = tmp=$$(mktemp -d -t itero-test) && \
+# list of workspaces or its port, which change as itero runs here. The
+# template has its X's, which GNU's mktemp needs (BSD's does not).
+ISOLATED = tmp=$$(mktemp -d "$${TMPDIR:-/tmp}/itero-test.XXXXXX") && \
 	XDG_STATE_HOME="$$tmp/state" XDG_CACHE_HOME="$$tmp/cache"
 
 # --no-fail-fast: one failing test binary must not hide the rest.
