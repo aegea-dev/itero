@@ -1442,14 +1442,16 @@ fn secret(ws: &Workspace, n: &str) -> Result<Value, String> {
 pub type Bound = (BTreeMap<String, String>, Map<String, Value>);
 
 /// What an action gets: its args (the step's, filled when it started),
-/// each `"$$NAME"` the secret's value; and, when it runs
+/// those the step writes as `"$$NAME"` the secret's value; and, when it runs
 /// again after waiting, the event that came. As environment variables
 /// (names that cannot be one, and values past `ENV_MAX`, are on stdin
 /// only) and as its stdin, `{"args": {...}, "event": {...}}`.
 pub fn bind(ws: &Workspace, job: &StepJob) -> Result<Bound, String> {
     let mut args = job.data.clone();
-    for v in args.values_mut() {
-        if let Some(n) = flow::secret_ref(v) {
+    for name in &job.secrets {
+        if let Some(v) = args.get_mut(name)
+            && let Some(n) = flow::secret_ref(v)
+        {
             *v = secret(ws, n)?;
         }
     }

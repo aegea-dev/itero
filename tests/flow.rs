@@ -656,13 +656,42 @@ fn a_secret_is_never_filled_inside_text() {
         fill(json!("$event.parola"), &state),
         json!("$$POSTA_PAROLA")
     );
-    for text in ["giriş $$POSTA_PAROLA", "giriş $event.parola"] {
-        let e = flow::fill(&json!(text), &state).unwrap_err();
-        assert!(e.contains("a secret is a whole value only"), "{text}: {e}");
-    }
+    let e = flow::fill(&json!("giriş $$POSTA_PAROLA"), &state).unwrap_err();
+    assert!(e.contains("a secret is a whole value only"), "{e}");
+    // a value that holds one is data, only text
+    assert_eq!(
+        fill(json!("giriş $event.parola"), &state),
+        json!("giriş $$POSTA_PAROLA")
+    );
+    // the args written as a secret, whichever form args take
+    let written = flow::written_secrets;
+    assert_eq!(
+        written(&json!({"a": "$$X", "b": "$event.x", "c": "$$ ", "d": ["$$X"]})),
+        ["a"]
+    );
+    assert_eq!(
+        written(&json!([{"a": "$$X"}, {"title": "b", "text": "$event.x"}, {"c": "$$Y"}])),
+        ["a", "c"]
+    );
+    assert!(written(&json!("$output")).is_empty());
     // a workflow that writes one inside text is refused when it is read
     let e = err(r##"{ "steps": [{ "#a": { "args": { "t": ["x $$API"] } } }] }"##);
     assert!(e.contains("a secret is a whole value only"), "{e}");
+    // a workflow's $event is data: it is written in the step that needs it
+    for text in [
+        r##"{ "steps": [{ "küme": { "args": { "anahtar": "$$API" } } }] }"##,
+        r##"{ "steps": [["#a", { "küme": { "args": { "anahtar": "$$API" } } }]] }"##,
+        r##"{ "steps": [{ "#a": { "undo": { "küme": { "args": { "anahtar": "$$API" } } } } }] }"##,
+    ] {
+        let e = err(text);
+        assert!(e.contains("a secret goes to an action"), "{text}: {e}");
+    }
+    assert!(
+        flow::parse(
+            r##"{ "steps": [{ "#a": { "undo": { "#b": { "args": { "k": "$$API" } } } } }] }"##
+        )
+        .is_ok()
+    );
 }
 
 fn group(step: &str) -> Group {

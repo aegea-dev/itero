@@ -52,7 +52,9 @@ address). It is looked up only when an action or the connector starts,
 and the value never reaches the run's state, the journal, a log or a
 command line; only the action whose args name it gets it. A `$$NAME` is a
 whole value only: inside a text (`"Bearer $$TOKEN"`) it is refused, as
-`itero ws check` says. itero looks in four places, in this order:
+`itero ws check` says. It counts only where a step's args write it: an
+event or a step's result holding `$$NAME` holds that text, so nothing from
+outside can name a secret. itero looks in four places, in this order:
 
 1. **the workspace's own secrets** in the OS secret store (the macOS
    Keychain, the Secret Service on Linux), where
