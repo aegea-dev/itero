@@ -1555,3 +1555,106 @@ fn a_command_that_moved_names_its_new_form() {
     let help = out(&itero(d.path(), &["--help"]));
     assert!(!help.contains("Moved"), "{help}");
 }
+
+fn itero_with_stdin(dir: &Path, args: &[&str], stdin: &str) -> Output {
+    use std::io::Write;
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+        .args(args)
+        .current_dir(dir)
+        .env("ITERO_NO_SECRET_STORE", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn events_waiting(d: &Path) -> Vec<serde_json::Value> {
+    serde_json::from_str(&out(&itero(d, &["ws", "ev", "list", "--json"]))).unwrap()
+}
+
+#[test]
+fn emit_takes_its_data_from_a_file_or_stdin() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/sipariş.json",
+        r##"{ "on": [{ "event": "order.placed" }, { "$event.şehir": "İzmir" }], "steps": ["#gönder"] }"##,
+    );
+    file(d.path(), "actions/gönder", "#!/bin/sh\n");
+    file(d.path(), "istek.json", "{\"şehir\": \"İzmir\"}\n");
+    let o = itero(
+        d.path(),
+        &["ws", "emit", "--file", "istek.json", "order.placed"],
+    );
+    assert!(o.status.success(), "{o:?}");
+    // what it starts is read from the file's data too
+    assert!(err(&o).contains("starts: sipariş"), "{}", err(&o));
+    let o = itero_with_stdin(
+        d.path(),
+        &["ws", "emit", "order.placed", "--file", "-"],
+        r#"{"şehir": "Muğla", "adet": 3}"#,
+    );
+    assert!(o.status.success(), "{o:?}");
+    let events = events_waiting(d.path());
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(events[0]["data"], serde_json::json!({"şehir": "İzmir"}));
+    assert_eq!(
+        events[1]["data"],
+        serde_json::json!({"şehir": "Muğla", "adet": 3})
+    );
+}
+
+#[test]
+fn emit_refuses_a_file_it_cannot_use_and_sends_nothing() {
+    let d = workspace();
+    file(d.path(), "bozuk.json", "{\"şehir\": ");
+    file(d.path(), "liste.json", "[1, 2]");
+    file(d.path(), "istek.json", "{}");
+    for (args, stdin, said) in [
+        (
+            &["ws", "emit", "a.b", "--file", "yok.json"][..],
+            "",
+            &["yok.json"][..],
+        ),
+        (
+            &["ws", "emit", "a.b", "--file", "bozuk.json"],
+            "",
+            &["bozuk.json", "not JSON", "line 1"],
+        ),
+        (
+            &["ws", "emit", "a.b", "--file", "liste.json"],
+            "",
+            &["liste.json", "a JSON object"],
+        ),
+        (
+            &["ws", "emit", "a.b", "--file", "-"],
+            "ılık",
+            &["stdin", "not JSON"],
+        ),
+        (
+            &["ws", "emit", "a.b", "--file", "-"],
+            "",
+            &["stdin", "not JSON"],
+        ),
+        (
+            &["ws", "emit", "a.b", "{}", "--file", "istek.json"],
+            "",
+            &["cannot be used with"],
+        ),
+    ] {
+        let o = itero_with_stdin(d.path(), args, stdin);
+        assert!(!o.status.success(), "{args:?}: {o:?}");
+        for word in said {
+            assert!(err(&o).contains(word), "{args:?}: {word}: {}", err(&o));
+        }
+    }
+    assert!(events_waiting(d.path()).is_empty());
+}

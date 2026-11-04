@@ -10,9 +10,9 @@ script, an app, or by hand to try a workflow.
 machine's list.
 
 ```sh
-itero ws emit <type> ['<data>']
-itero ws emit --wait [--timeout 60s] <type> ['<data>']
-itero emit <type> ['<data>']
+itero ws emit <type> ['<data>' | --file <path>]
+itero ws emit --wait [--timeout 60s] <type> ['<data>' | --file <path>]
+itero emit <type> ['<data>' | --file <path>]
 ```
 
 `itero ws emit` picks the workspace of the folder it runs in, or the one
@@ -24,6 +24,7 @@ stopped waits for it.
 
 | Option | Does |
 |---|---|
+| `--file <path>` | takes the data from this file, `-` for stdin ([below](#data-from-a-file)) |
 | `--wait` | waits for the runs it starts to end, and prints them as JSON (below) |
 | `--timeout D` | with `--wait`: how long, like `30s` or `5m` (60s) |
 | `--json` | prints its id and what it starts as JSON |
@@ -52,6 +53,23 @@ no daemon is running: it waits for itero daemon
   `the machine's daemon runs itero <v>, this is <w>: itero service restart
   puts this one in place` when it runs another itero;
 - `no daemon is running`, when none answers at all.
+
+## Data from a file
+
+Long or generated data is easier from a file, or from stdin with `-`:
+
+```sh
+itero ws --ws ready-meadow emit --file ~/wf/request.json pomodoro.start
+jq -n '{minutes: 25}' | itero ws emit pomodoro.start --file -
+```
+
+The file holds one JSON object, sent as it is: nothing in it is filled. A
+relative path is from the folder you run in, also with `--ws`. A file that
+cannot be read, is not JSON or is not an object is an error naming it, and
+nothing is sent; so is giving both `--file` and `<data>`.
+
+Its content is the event's data, kept in the journal and the log like any
+other, so keep secrets out of it ([Args and secrets](/guides/secrets/)).
 
 ## Waiting for the answer
 

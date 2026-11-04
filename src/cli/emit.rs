@@ -9,10 +9,32 @@ use crate::machine::{List, list_path};
 use crate::workspace::Workspace;
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Map, Value, json};
+use std::path::Path;
 use std::time::{Duration, Instant};
+
+/// The data in `--file`, or on stdin when that is `-`.
+fn data_in(path: &Path) -> Result<Value> {
+    let (name, text) = if path == Path::new("-") {
+        (
+            "stdin".to_string(),
+            std::io::read_to_string(std::io::stdin()),
+        )
+    } else {
+        (path.display().to_string(), std::fs::read_to_string(path))
+    };
+    let text = text.map_err(|e| anyhow!("{name}: {e}"))?;
+    let value: Value = serde_json::from_str(&text).map_err(|e| anyhow!("{name}: not JSON: {e}"))?;
+    if !value.is_object() {
+        bail!("{name}: the data is a JSON object");
+    }
+    Ok(value)
+}
 
 /// The event's data, as given.
 fn data(args: &EmitArgs) -> Result<Option<Value>> {
+    if let Some(path) = &args.file {
+        return data_in(path).map(Some);
+    }
     args.data
         .as_deref()
         .map(|d| serde_json::from_str(d).map_err(|_| anyhow!("the data is a JSON object")))
