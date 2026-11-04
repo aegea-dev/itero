@@ -32,6 +32,9 @@ pub struct EmitArgs {
     /// Its data, a JSON object
     #[arg(value_name = "DATA")]
     data: Option<String>,
+    /// Its data from this file, a JSON object (- for stdin)
+    #[arg(long, value_name = "PATH", conflicts_with = "data")]
+    file: Option<std::path::PathBuf>,
     /// Wait for the runs it starts to end, and print them as JSON (exit 1: one failed or broke; 2: time ran out)
     #[arg(long)]
     wait: bool,

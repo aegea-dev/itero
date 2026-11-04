@@ -698,6 +698,39 @@ fn emit_reaches_every_workspace_on_the_list_and_ws_emit_one() {
 }
 
 #[test]
+fn emit_reads_its_file_from_the_folder_it_runs_in() {
+    let m = Machine::new();
+    let (a, b) = (m.busy_workspace("bir"), m.busy_workspace("iki"));
+    m.ok(&a, &["ws", "add"]);
+    m.ok(&b, &["ws", "add"]);
+    let na = m.journal_name(&a);
+    let elsewhere = m.d.path().join("başka");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("istek.json"), r#"{"şehir": "İzmir"}"#).unwrap();
+    let cities = |dir: &Path| {
+        m.journal(dir)
+            .events(None)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.event.kind == "deneme.geldi")
+            .map(|r| r.event.data["şehir"].clone())
+            .collect::<Vec<_>>()
+    };
+    // --ws names the workspace; the file is still this folder's
+    let file = ["--file", "istek.json", "deneme.geldi"];
+    m.ok(
+        &elsewhere,
+        &[&["ws", "--ws", &na, "emit"][..], &file].concat(),
+    );
+    assert_eq!(cities(&a), ["İzmir"]);
+    assert!(cities(&b).is_empty());
+    // itero emit: every workspace gets it
+    m.ok(&elsewhere, &[&["emit"][..], &file].concat());
+    assert_eq!(cities(&a), ["İzmir", "İzmir"]);
+    assert_eq!(cities(&b), ["İzmir"]);
+}
+
+#[test]
 fn emit_with_an_empty_list_says_how_to_fill_it() {
     let m = Machine::new();
     let elsewhere = m.d.path().join("başka");
