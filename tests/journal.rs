@@ -540,3 +540,39 @@ fn a_message_copied_to_a_waiting_run_is_cancelled_no_more_naming_the_runs() {
     // not cancelled: a daemon still routes it
     assert_eq!(j.queued().unwrap().len(), 1);
 }
+
+#[test]
+fn a_job_is_done_once_handled_or_forgotten_and_not_while_it_waits() {
+    let d = tempfile::tempdir().unwrap();
+    let mut j = Journal::open(&ws(d.path())).unwrap();
+    for _ in 0..2 {
+        j.publish(&Envelope::new(
+            "manager/r",
+            "action.requested",
+            "itero.worker",
+            NOW,
+            None,
+            json!({}),
+        ))
+        .unwrap();
+    }
+    let jobs = j.jobs().unwrap();
+    j.lose_job(jobs[0].seq, "denendi").unwrap();
+    assert!(!j.job_done(jobs[0].seq).unwrap(), "waits");
+    j.handle(Handled {
+        seq: jobs[1].seq,
+        at: NOW,
+        error: None,
+        run: None,
+        timers: None,
+        events: vec![],
+        shown: vec![],
+        next_round: None,
+        children: vec![],
+        stopped: vec![],
+        stopped_why: itero::engine::journal::JOB_STOPPED,
+    })
+    .unwrap();
+    assert!(j.job_done(jobs[1].seq).unwrap(), "handled");
+    assert!(j.job_done(999).unwrap(), "forgotten");
+}

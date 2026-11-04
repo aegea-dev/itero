@@ -36,6 +36,9 @@ pub struct Pass {
     pub stopped: usize,
     /// Events left for the next pass: their manager kept being killed.
     pub deferred: usize,
+    /// Jobs not started: a copy of each still runs, one a daemon that died
+    /// left, until it sees its parent gone. The next pass is in a second.
+    pub elsewhere: usize,
     /// It stopped at its cap of events with more waiting.
     pub more: bool,
 }
@@ -185,8 +188,11 @@ pub fn run_loop(
         report(&pass);
         let next = match &pass {
             Ok(p) if p.more => Ok(Some(now)),
-            // a lost manager is asked again, as before, a second on
-            Ok(p) if p.deferred > 0 => Ok(Some(now + chrono::Duration::seconds(1))),
+            // a lost manager is asked again, as before, a second on; so is a
+            // job a copy of which still runs
+            Ok(p) if p.deferred > 0 || p.elsewhere > 0 => {
+                Ok(Some(now + chrono::Duration::seconds(1)))
+            }
             Ok(_) => next_due(ws, Utc::now()),
             Err(_) => Ok(Some(now + AFTER_FAILURE)),
         };
@@ -558,7 +564,15 @@ impl<'s, 'e> Workers<'s, 'e> {
     }
 
     /// Runs a job in a worker of its own.
-    fn start(&mut self, root: &Path, r: Recorded, run: i64, step: Result<StepRun, String>) {
+    /// It gets the job's lock, which its worker then holds.
+    fn start(
+        &mut self,
+        root: &Path,
+        r: Recorded,
+        run: i64,
+        step: Result<StepRun, String>,
+        lock: std::fs::File,
+    ) {
         let seq = r.seq;
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, exe, stop) = (self.tx.clone(), self.exe, cancel.clone());
@@ -572,7 +586,7 @@ impl<'s, 'e> Workers<'s, 'e> {
         });
         self.scope.spawn(move || {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match &step {
-                Ok(step) => spawn_worker(exe, step, said, &stop),
+                Ok(step) => spawn_worker(exe, step, said, &stop, lock),
                 Err(why) => Err(Failure::Error(why.clone())),
             }))
             .unwrap_or_else(|_| Err(Failure::Error("the worker's runner panicked".into())));
@@ -645,6 +659,8 @@ fn work(
     // Messages that would start a run while `runs` are under way are held;
     // they are taken again once a run has ended.
     let mut held = vec![];
+    // the jobs said this pass to run elsewhere still
+    let mut told = std::collections::BTreeSet::new();
     // when the event whose manager kept being killed is given again
     let mut again: Option<std::time::Instant> = None;
     loop {
@@ -716,6 +732,19 @@ fn work(
         // stopped during counts too
         let mut saved = false;
         for r in waiting {
+            // a copy of it still runs, left by a daemon that died: not now
+            // and not counted; the next pass looks again in a second
+            let Some(lock) = super::lock::take_job(&ws.root, r.seq).map_err(anyhow::Error::msg)?
+            else {
+                if told.insert(r.seq) {
+                    pass.elsewhere += 1;
+                    log.write(
+                        "warning",
+                        json!({ "why": format!("job {} not started: a copy of it still runs", r.seq) }),
+                    );
+                }
+                continue;
+            };
             let (runs, lost) = j.job_runs(r.seq)?;
             if runs >= MAX_RUNS {
                 let why = lost.unwrap_or_default();
@@ -726,7 +755,7 @@ fn work(
                 j.start_job(r.seq)?;
                 super::die_at("job-started");
                 let step = step_run(ws, j, &r.event.data, &clock.stamp());
-                w.start(&ws.root, r, runs + 1, step);
+                w.start(&ws.root, r, runs + 1, step, lock);
             }
         }
         if saved {
@@ -1545,6 +1574,7 @@ fn spawn_worker(
     step: &StepRun,
     said: Arc<dyn Fn(&str) + Send + Sync>,
     cancel: &AtomicBool,
+    lock: std::fs::File,
 ) -> Result<Outcome, Failure> {
     if cancel.load(Ordering::SeqCst) {
         return Err(Failure::Lost(journal::JOB_STOPPED.into()));
@@ -1557,9 +1587,27 @@ fn spawn_worker(
         .stderr(Stdio::piped());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut c, 0);
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let fd = lock.as_raw_fd();
+        // SAFETY: between fork and exec only fcntl runs, which is
+        // async-signal-safe: it clears close-on-exec on the job's lock, so
+        // the worker, and its action's processes, hold it
+        unsafe {
+            std::os::unix::process::CommandExt::pre_exec(&mut c, move || {
+                if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
     let mut child = c
         .spawn()
         .map_err(|e| format!("cannot start a worker: {e}"))?;
+    // the worker holds the job's lock now
+    drop(lock);
     let text = serde_json::to_string(step).map_err(|e| e.to_string())?;
     child
         .stdin
@@ -1759,7 +1807,8 @@ mod tests {
                 told.store(true, Ordering::SeqCst);
             })
         };
-        let outcome = spawn_worker(&exe, &step, said, &cancel);
+        let lock = super::super::lock::take_job(d.path(), 1).unwrap().unwrap();
+        let outcome = spawn_worker(&exe, &step, said, &cancel, lock);
         assert!(
             matches!(&outcome, Err(Failure::Lost(w)) if w == journal::JOB_STOPPED),
             "{outcome:?}"
