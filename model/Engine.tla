@@ -93,10 +93,12 @@ Emit(k) ==
     /\ UNCHANGED <<runs, timers, up, taking, held, running, cancel, deferred,
                    orphans, overLimit, twice>>
 
-\* journal.rs cancel: a message no daemon has handled
+\* journal.rs cancel: a message no daemon has handled, and no run that
+\* started to wait has had copied
 CancelEvent(j) ==
     /\ left.cancel > 0
     /\ ev[j].subj = APP /\ ~ev[j].handled
+    /\ (Bug = "copied" \/ ~\E k \in DOMAIN ev : ev[k].type = "message" /\ ev[k].msg = j)
     /\ ev' = [ev EXCEPT ![j] = Mark(@, "cancelled")]
     /\ left' = [left EXCEPT !.cancel = @ - 1]
     /\ UNCHANGED <<runs, timers, up, taking, held, running, cancel, deferred,
@@ -300,10 +302,12 @@ Deliver(j) ==
            jobs == Map(a.jobs, LAMBDA p : [Ev(WORKER, "action.requested") EXCEPT
                                !.run = r, !.path = p[1], !.br = p[2], !.cause = j])
            \* journal.rs messages_since: each message for the workspace
-           \* since the run started, but the one that started it
+           \* since the run started, routed or not, but the one that
+           \* started it and those cancelled
            missed == IF new.waiting /\ ~old.waiting
                      THEN SelectSeq(Ids, LAMBDA m : ev[m].subj = APP /\ ev[m].type = "outside"
-                                                   /\ m >= old.from /\ m /= old.msg)
+                                                   /\ m >= old.from /\ m /= old.msg
+                                                   /\ (ev[m].note /= "cancelled" \/ Bug = "since"))
                      ELSE <<>>
            copies == Map(missed, LAMBDA m : [Ev(r, "message") EXCEPT !.msg = m])
            \* quiet_when_done: one a run's message started says nothing

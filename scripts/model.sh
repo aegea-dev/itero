@@ -61,6 +61,8 @@ check() {
 # config of its own.
 MUTANTS='
 handled MCStop  INVARIANT CancelledReachesNone
+since   MCWait  INVARIANT CancelledReachesNone
+copied  MCHeld  INVARIANT CancelledReachesNone
 ended   MCStop  PROPERTY  EndedStays
 maxruns MCLost  INVARIANT JobRunsBounded
 cancel  MCStop  INVARIANT StoppedSaysNothing
