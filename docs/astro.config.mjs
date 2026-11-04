@@ -87,7 +87,7 @@ export default defineConfig({
 						{ label: 'Workflows ●', slug: 'guides/workflows' },
 						{ label: 'Actions ■', slug: 'guides/actions' },
 						{ label: 'Connectors ▲', slug: 'guides/connectors' },
-						{ label: 'Args and secrets', slug: 'guides/secrets' },
+						{ label: 'Secrets and environment variables', slug: 'guides/secrets' },
 						{ label: 'The log, IDs and names', slug: 'guides/log' },
 						{ label: "The daemon's own workflows", slug: 'guides/maintenance' },
 						{ label: 'One itero per machine', slug: 'guides/machine' },

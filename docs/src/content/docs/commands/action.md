@@ -5,7 +5,7 @@ description: Your actions, and the ones that break.
 
 `itero ws ac` (`itero ws action` in full) shows your actions. An action's
 args, and its `repeat`, are written in the step that runs it
-([Args and secrets](/guides/secrets/), [Repeat](/guides/workflows/#repeat-rounds)). Actions
+([Secrets and environment variables](/guides/secrets/), [Repeat](/guides/workflows/#repeat-rounds)). Actions
 are where things usually go wrong, so `itero ws ac errors` tells you which
 ones broke your runs, and why.
 

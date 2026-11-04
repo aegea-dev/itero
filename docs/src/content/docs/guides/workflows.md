@@ -66,7 +66,7 @@ These are from the `examples/` folder, each a workspace you can run.
 - `on`: every day at 09:00.
 - `#fetch` gets the page: its result, `$output`, for the next step.
 - `#ask-ai` summarizes it, with the API key kept as a secret
-  (`$$ANTHROPIC_KEY`, [Args and secrets](/guides/secrets/)).
+  (`$$ANTHROPIC_KEY`, [Secrets and environment variables](/guides/secrets/)).
 - `#send-mail` mails the summary, its password a secret too. A step's
   args reach its action and nothing else: no later step sees the key or
   the password.
@@ -227,7 +227,7 @@ A workflow reads a value by where it comes from:
 | `$steps.count-files`, `$steps.count-files.count` | what an earlier step gave, by its name |
 | `$config`, `$config.description` | the workspace's `itero.config.json`, read-only |
 | `$count` | the round of a repeated step or workflow, from 1 ([Repeat](#repeat-rounds)) |
-| `$$NAME` | a secret, a value in the workspace's `.env`, or an environment variable ([Args and secrets](/guides/secrets/)) |
+| `$$NAME` | a secret, a value in the workspace's `.env`, or an environment variable ([Secrets and environment variables](/guides/secrets/)) |
 
 After `$event`, `$output` or `$steps.<name>`, fields go as deep as the
 value does: `$event.order.id`. Any other `$name` is no value: `itero ws
@@ -292,7 +292,7 @@ Nothing else of the run reaches it.
   `524`. A field that is not there is `null`, and an action gets no
   variable for it.
 - `"$$NAME"` is a secret, a value in `.env` or an environment variable
-  ([Args and secrets](/guides/secrets/)), for an action: a workflow used as
+  ([Secrets and environment variables](/guides/secrets/)), for an action: a workflow used as
   a step writes it in its own step that needs it, as its `$event` is data.
 - Inside text, each value is filled ([below](#a-value-inside-text)):
   `"$output.count files in ~/$event.folder"`.
@@ -465,7 +465,7 @@ ARCHIVE=~/Archive
 `$$NAME` is looked up in the OS secret store, then `.env`, then the
 daemon's environment: the first found. `.env` may hold secrets too: it is
 yours, local, and `itero ws add` keeps it out of git
-([Args and secrets](/guides/secrets/)). A value for one run only
+([Secrets and environment variables](/guides/secrets/)). A value for one run only
 comes with its event: `itero ws emit sites.check '{"timeout": 5}'`, read as
 `$event.timeout`.
 

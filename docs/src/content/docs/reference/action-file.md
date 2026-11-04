@@ -8,7 +8,7 @@ extension, in any language its first line names.
 
 | It gets | |
 |---|---|
-| environment variables | its step's args, nothing else; a value over 64 KB is on stdin only; `$event`, the event it waited for, when it runs again after waiting |
+| environment variables | its step's args, and the daemon's own environment; a value over 64 KB is on stdin only; `$event`, the event it waited for, when it runs again after waiting |
 | stdin | `{"args": {...}}`, with `"event"` when it waited for one |
 | `$ITERO_MEMORY` | a file it may keep things in, one per workflow |
 | `$ITERO_WAITING_SINCE` | when it runs again after waiting |
