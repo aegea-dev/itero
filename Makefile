@@ -198,6 +198,15 @@ test-docker: ## Run the tests that need Docker: container actions, IMAP and POP3
 test-formula: ## Install the formula from a local tap (macOS; changes Homebrew, undone after)
 	sh scripts/test-formula.sh
 
+# Every example's own tests (each examples/<name>/test), on the itero just
+# built rather than the one on PATH, with folders of their own as make test
+# has; each one's result is said, then the failing ones. Needs Bun.
+.PHONY: test-examples
+test-examples: build-dev ## Run every example's own tests on the itero just built (needs Bun)
+	@failed=; for t in examples/*/test; do e=$${t%/test}; echo "== $$e"; \
+	  ( cd $$e && $(ISOLATED) ITERO_BIN="$(CURDIR)/target/debug/itero" bun test ) || failed="$$failed $${e#examples/}"; \
+	done; [ -z "$$failed" ] || { echo "examples failing:$$failed" >&2; exit 1; }
+
 .PHONY: install
 install: ## Install itero to ~/.cargo/bin, and on macOS Itero.app to ~/Applications
 	$(CARGO) install --path . --force --bin itero
