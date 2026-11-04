@@ -21,10 +21,16 @@ build: ## Build the release binary (target/release/itero)
 build-dev: ## Build the debug binary (target/debug/itero)
 	$(CARGO) build
 
+# The tests run with a state and a cache folder of their own, new for each
+# run in the system's temporary folder: never this machine's daemon, its
+# list of workspaces or its port, which change as itero runs here.
+ISOLATED = tmp=$$(mktemp -d -t itero-test) && \
+	XDG_STATE_HOME="$$tmp/state" XDG_CACHE_HOME="$$tmp/cache"
+
 # --no-fail-fast: one failing test binary must not hide the rest.
 .PHONY: test
 test: ## Run the full test suite
-	$(CARGO) test --workspace --no-fail-fast
+	$(ISOLATED) $(CARGO) test --workspace --no-fail-fast
 
 # rustfmt only visits files reachable through `mod`, so `cargo fmt` silently
 # skips a file not yet wired in. Handing every source file to rustfmt closes
@@ -71,7 +77,7 @@ coverage: ## Measure test coverage per file (cargo-llvm-cov), with an HTML repor
 	rustup component add llvm-tools --toolchain $(TOOLCHAIN)
 	if [ -f "$(ITERO_AI_TEST_MODEL)" ]; then export ITERO_AI_TEST_MODEL="$(ITERO_AI_TEST_MODEL)"; \
 	else echo "no Qwen3.5-4B at $(ITERO_AI_TEST_MODEL): itero-ai's engine is not measured"; fi; \
-	$(CARGO) llvm-cov --workspace --no-fail-fast --html
+	$(ISOLATED) $(CARGO) llvm-cov --workspace --no-fail-fast --html
 	$(CARGO) llvm-cov --workspace --no-run
 
 .PHONY: verify
