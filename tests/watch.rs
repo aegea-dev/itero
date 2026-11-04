@@ -18,6 +18,18 @@ fn until(b: &mut Box<dyn watch::Backend>, kind: Kind, secs: u64) -> Vec<Kind> {
     seen
 }
 
+/// Waits until nothing has been told for a second. FSEvents also tells what
+/// happened just before its stream started, so a folder's watch hears the
+/// test's own setup; a test that checks one change starts after that.
+fn settle(b: &mut Box<dyn watch::Backend>) {
+    let mut quiet_since = Instant::now();
+    while quiet_since.elapsed() < Duration::from_secs(1) {
+        if !b.wait(Some(Duration::from_millis(100))).unwrap().is_empty() {
+            quiet_since = Instant::now();
+        }
+    }
+}
+
 fn append(p: &std::path::Path, text: &str) {
     std::fs::OpenOptions::new()
         .create(true)
@@ -99,6 +111,7 @@ fn a_file_changing_in_a_folder_is_a_change() {
     let f = folder.join("fatüra.txt");
     append(&f, "ilk");
     let mut b = watch::open(&folder).unwrap();
+    settle(&mut b);
     append(&f, "ikinci");
     let seen = until(&mut b, Kind::Changed, 3);
     assert!(seen.contains(&Kind::Changed), "{seen:?}");
@@ -113,6 +126,7 @@ fn a_file_changing_in_a_subfolder_is_no_change() {
     let f = sub.join("makbuz.txt");
     append(&f, "ilk");
     let mut b = watch::open(&folder).unwrap();
+    settle(&mut b);
     append(&f, "ikinci");
     let seen = until(&mut b, Kind::Changed, 1);
     assert!(seen.is_empty(), "{seen:?}");
