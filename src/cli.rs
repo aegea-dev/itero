@@ -529,10 +529,12 @@ fn report(pass: &Result<crate::engine::daemon::Pass>, log: Option<&crate::engine
         return;
     }
     match pass {
-        Ok(p) if p.delivered + p.worked + p.lost + p.stopped + p.deferred > 0 => eprintln!(
-            "{} events, {} jobs, {} lost (run again), {} stopped, {} waiting",
-            p.delivered, p.worked, p.lost, p.stopped, p.deferred
-        ),
+        Ok(p) if p.delivered + p.worked + p.lost + p.stopped + p.deferred + p.elsewhere > 0 => {
+            eprintln!(
+                "{} events, {} jobs, {} lost (run again), {} stopped, {} waiting, {} running elsewhere",
+                p.delivered, p.worked, p.lost, p.stopped, p.deferred, p.elsewhere
+            )
+        }
         Ok(_) => {}
         Err(e) => eprintln!("error: {e:#}"),
     }
