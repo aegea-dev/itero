@@ -1,0 +1,7 @@
+{
+  "on": [{ "event": "pomodoro.start" }],
+  "steps": [
+    { "#sleep": { "args": { "duration": "$event.duration" } } },
+    { "#notify": { "args": { "title": "Pomodoro", "text": "Pomodoro session finished" } } }
+  ]
+}

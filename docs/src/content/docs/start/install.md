@@ -77,12 +77,15 @@ curl -fsSL https://itero.sh/install | sh   # the install script
 git pull && make install           # from source
 ```
 
-A daemon that is already running keeps the itero it started with: the
-new files change nothing until it starts again. If you run itero as a
-service ([Start at login](/guides/service/)), the install script restarts
-it for you, when it runs the itero it upgraded, and says so; a service you
-stopped stays stopped. After `brew upgrade` or `make install`, or when the
-script says it could not, restart it yourself:
+If you run itero as a service ([Start at login](/guides/service/)), it
+follows the upgrade by itself, however you upgraded: within 10 seconds
+its watchdog sees a new itero at the path the service starts, and runs it
+in its place, with a new daemon. A service you stopped stays stopped.
+
+A daemon you run in a terminal keeps the itero it started with until you
+start it again; so does a watchdog started before this version, once.
+`itero ws emit` and `itero ws add` say when the machine's daemon runs
+another itero than theirs. Then restart it yourself:
 
 ```bash
 itero service restart

@@ -57,7 +57,8 @@ Private/local context may exist outside this repository, but it must not be quot
 - Full verification (fmt-check, check, lint-check, test, audit, docs-build): make verify
 - Install docs deps: make docs-install
 - Build docs: make docs-build
-- An example's own tests: `bun test` in `examples/<name>`, with `ITERO_BIN` set to an absolute path to `target/debug/itero`
+- Every example's own tests, on the itero just built: make test-examples (needs Bun)
+- One example's own tests: `bun test` in `examples/<name>`, with `ITERO_BIN` set to an absolute path to `target/debug/itero` (else the itero on PATH runs them)
 - Every target: make help
 
 Environment variables for tests:

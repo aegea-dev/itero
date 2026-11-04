@@ -68,12 +68,26 @@ pub fn one(ws: &Workspace, args: EmitArgs) -> Result<()> {
     super::nudge(ws, &now);
     let fate = events::fate(ws, kind, &fields)?;
     let running = super::daemon_running(ws)?;
+    // none holds it: what the machine's daemon, if one answers, says of it
+    let machine = if running {
+        None
+    } else {
+        super::workspace::machine_says(&ws.root)
+    };
+    let mut daemon = json!({ "running": running });
+    if let Some(m) = &machine {
+        daemon["machine"] = json!({
+            "state": m.state.as_ref().map(|(s, _)| s),
+            "why": m.state.as_ref().and_then(|(_, w)| w.as_ref()),
+            "itero": m.itero,
+        });
+    }
     let v = json!({
         "id": id,
         "starts": fate.starts,
         "waiting": fate.waiting,
         "nearest": fate.nearest,
-        "daemon": { "running": running },
+        "daemon": daemon,
     });
     show(args.json, &v, |_| {
         println!("{id}");
@@ -90,8 +104,14 @@ pub fn one(ws: &Workspace, args: EmitArgs) -> Result<()> {
                 None => eprintln!("nothing starts on {kind}"),
             }
         }
-        if !running {
-            eprintln!("no daemon is running: it waits for itero daemon");
+        match (&machine, running) {
+            (_, true) => {}
+            (Some(m), false) => {
+                for l in m.lines(m.name.as_deref().unwrap_or("this workspace")) {
+                    eprintln!("{l}");
+                }
+            }
+            (None, false) => eprintln!("no daemon is running: it waits for itero daemon"),
         }
     })
 }

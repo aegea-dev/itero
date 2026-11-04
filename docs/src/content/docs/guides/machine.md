@@ -73,6 +73,9 @@ list changes or the machine's daemon starts again
 
 [`itero service install`](/commands/service/) runs the machine's daemon
 from login on, and removes the services from before, one per workspace.
+The service follows an upgrade by itself: its watchdog runs the new itero
+([The watchdog](/guides/service/#the-watchdog)), so a workspace whose
+journal a newer itero made is not left `missing`.
 
 ## One API
 

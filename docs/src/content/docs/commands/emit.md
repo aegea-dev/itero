@@ -46,7 +46,12 @@ no daemon is running: it waits for itero daemon
 - `starts:` the workflows it starts;
 - `may reach N waiting run(s)`, when runs wait for data;
 - `nothing starts on …`, with the nearest type that does start something;
-- `no daemon is running`, when none answers on the workspace's port.
+- when no daemon runs the workspace, what the machine's daemon says of it,
+  if one answers: `the machine's daemon does not run <name>: <why>`, or
+  `does not run this workspace: itero ws add puts it on its list`; and
+  `the machine's daemon runs itero <v>, this is <w>: itero service restart
+  puts this one in place` when it runs another itero;
+- `no daemon is running`, when none answers at all.
 
 ## Waiting for the answer
 

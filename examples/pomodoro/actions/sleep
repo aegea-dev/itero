@@ -1,0 +1,17 @@
+#!/bin/sh
+# Waits $duration seconds, its arg: the session. Says on stderr how long is
+# left each minute, which keeps the step from counting as quiet (10
+# minutes by default) and shows in `itero ws wf runs`.
+left=$(printf '%s' "$duration" | sed 's/^0*//')
+case "$left" in
+'' | *[!0-9]*)
+	echo "duration must be a whole number of seconds above 0, not '$duration'" >&2
+	exit 1
+	;;
+esac
+while [ "$left" -gt 60 ]; do
+	echo "${left}s left" >&2
+	sleep 60
+	left=$((left - 60))
+done
+sleep "$left"

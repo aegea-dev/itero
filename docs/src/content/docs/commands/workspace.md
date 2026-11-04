@@ -59,8 +59,13 @@ own values, secrets among them, and stays out of git.
 $ itero ws add
 added quiet-river (/Users/me/projects/home)
 .env, where its secrets and values may be kept, is in .gitignore now
-the machine's daemon starts it now
+the machine's daemon runs it
 ```
+
+With the machine's daemon running, it waits for it to take the workspace
+up (a few seconds) and says so, or why not:
+`the machine's daemon does not run it: <why>`, and, when that daemon runs
+another itero, `itero service restart` puts this one in place.
 
 ## `remove`
 

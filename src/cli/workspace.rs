@@ -52,7 +52,33 @@ pub fn add(ws: &Workspace) -> Result<()> {
         println!(".env, where its secrets and values may be kept, is in .gitignore now");
     }
     if daemon_states().is_some() {
-        println!("the machine's daemon starts it now");
+        // its state, once the daemon has read the list (in about 2 s)
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let said = loop {
+            match machine_says(&ws.root) {
+                Some(m) if m.state.is_some() || std::time::Instant::now() >= end => break Some(m),
+                None => break None,
+                Some(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            }
+        };
+        match said {
+            Some(m) if m.state.is_none() => {
+                println!(
+                    "the machine's daemon has not taken it up yet: itero ws list says when it has"
+                )
+            }
+            Some(m) => {
+                if m.runs() {
+                    println!("the machine's daemon runs it");
+                }
+                for l in m.lines("it") {
+                    println!("{l}");
+                }
+            }
+            None => {
+                println!("the machine's daemon no longer answers: itero service status says why")
+            }
+        }
     } else {
         println!(
             "no daemon runs the list now: itero service install starts one at login (or itero daemon --all, in a terminal)"
@@ -129,7 +155,72 @@ fn state(e: &Entry) -> (Value, Value) {
 }
 
 /// The machine daemon's own view of its workspaces, when one answers.
-fn daemon_states() -> Option<Vec<Value>> {
+/// What the machine's daemon, when one answers, says of a workspace: its
+/// name and state there and why (none when it is not on its list), and
+/// which itero the daemon runs.
+pub(crate) struct MachineSays {
+    pub name: Option<String>,
+    pub state: Option<(String, Option<String>)>,
+    pub itero: Option<String>,
+}
+
+/// What the machine's daemon says of the workspace at `root`; `None` when
+/// no machine's daemon answers.
+pub(crate) fn machine_says(root: &std::path::Path) -> Option<MachineSays> {
+    let states = daemon_states()?;
+    let entry = states
+        .iter()
+        .find(|w| w["folder"].as_str().map(std::path::Path::new) == Some(root));
+    let itero = crate::engine::http::machine_port()
+        .and_then(super::daemon_health)
+        .and_then(|h| h["daemon"]["itero"].as_str().map(str::to_string));
+    Some(MachineSays {
+        name: entry.and_then(|w| w["name"].as_str().map(str::to_string)),
+        state: entry.map(|w| {
+            (
+                w["state"].as_str().unwrap_or("unknown").to_string(),
+                w["why"].as_str().map(str::to_string),
+            )
+        }),
+        itero,
+    })
+}
+
+impl MachineSays {
+    /// Whether it runs the workspace.
+    pub fn runs(&self) -> bool {
+        self.state.as_ref().is_some_and(|(s, _)| s == "running")
+    }
+
+    /// What to tell, `what` naming the workspace ("pala-su", or "it"): why
+    /// it does not run it, and, when it runs another itero, how to put this
+    /// one in place. Nothing when it runs it with this itero.
+    pub fn lines(&self, what: &str) -> Vec<String> {
+        let mut out = vec![];
+        match &self.state {
+            Some((s, _)) if s == "running" => {}
+            Some((s, why)) => out.push(format!(
+                "the machine's daemon does not run {what}: {}",
+                why.as_deref().unwrap_or(s)
+            )),
+            None => out.push(
+                "the machine's daemon does not run this workspace: itero ws add puts it on its list"
+                    .into(),
+            ),
+        }
+        let this = env!("CARGO_PKG_VERSION");
+        if let Some(v) = &self.itero
+            && v != this
+        {
+            out.push(format!(
+                "the machine's daemon runs itero {v}, this is {this}: itero service restart puts this one in place"
+            ));
+        }
+        out
+    }
+}
+
+pub(crate) fn daemon_states() -> Option<Vec<Value>> {
     let port = crate::engine::http::machine_port()?;
     crate::net::client(std::time::Duration::from_secs(2))
         .ok()?

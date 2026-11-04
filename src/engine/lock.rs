@@ -10,7 +10,14 @@ use std::path::Path;
 
 /// A workspace's lock, held while this lives.
 pub struct DaemonLock {
-    _file: File,
+    file: File,
+}
+
+impl DaemonLock {
+    /// The locked file, for a process that is to hold the lock.
+    pub fn into_file(self) -> File {
+        self.file
+    }
 }
 
 /// Why a lock was not taken.
@@ -48,7 +55,7 @@ pub fn take_file(path: &Path, who: &str) -> Result<DaemonLock, Refused> {
     file.set_len(0).map_err(at)?;
     file.rewind().map_err(at)?;
     file.write_all(who.as_bytes()).map_err(at)?;
-    Ok(DaemonLock { _file: file })
+    Ok(DaemonLock { file })
 }
 
 fn path(ws: &Workspace) -> std::path::PathBuf {
@@ -99,5 +106,66 @@ pub fn held(ws: &Workspace) -> Result<bool, String> {
     match e.raw_os_error() {
         Some(libc::EWOULDBLOCK) => Ok(true),
         _ => Err(format!("{}: {e}", p.display())),
+    }
+}
+
+fn job_path(root: &Path, seq: i64) -> std::path::PathBuf {
+    root.join(".itero").join("jobs").join(format!("{seq}.lock"))
+}
+
+/// Job `seq`'s lock, `.itero/jobs/<seq>.lock`; `None` while another holds
+/// it: a copy of the job still runs, as one a daemon that died left does
+/// until it sees its parent gone. The processes that run the job hold it:
+/// the worker inherits it, its action's processes too.
+pub fn take_job(root: &Path, seq: i64) -> Result<Option<File>, String> {
+    match take_file(&job_path(root, seq), &format!("job {seq}")) {
+        Ok(l) => Ok(Some(l.into_file())),
+        Err(Refused::Held(_)) => Ok(None),
+        Err(Refused::Failed(why)) => Err(why),
+    }
+}
+
+/// Removes the lock files of the jobs that `done` says can never start
+/// again; one that may stays, since a daemon would lock a new file of its
+/// name while a copy holds the old one. Says every file it could not remove
+/// or tell about, after trying them all.
+pub fn forget_jobs(root: &Path, done: &dyn Fn(i64) -> Result<bool, String>) -> Result<(), String> {
+    let dir = root.join(".itero").join("jobs");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+    };
+    let mut failed = vec![];
+    for e in entries {
+        let e = match e {
+            Ok(e) => e,
+            Err(err) => {
+                failed.push(format!("{}: {err}", dir.display()));
+                continue;
+            }
+        };
+        let name = e.file_name();
+        let Some(seq) = name
+            .to_str()
+            .and_then(|n| n.strip_suffix(".lock"))
+            .and_then(|n| n.parse::<i64>().ok())
+        else {
+            continue;
+        };
+        match done(seq) {
+            Ok(true) => {
+                if let Err(err) = std::fs::remove_file(e.path()) {
+                    failed.push(format!("{}: {err}", e.path().display()));
+                }
+            }
+            Ok(false) => {}
+            Err(why) => failed.push(why),
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed.join("; "))
     }
 }

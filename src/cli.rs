@@ -529,10 +529,12 @@ fn report(pass: &Result<crate::engine::daemon::Pass>, log: Option<&crate::engine
         return;
     }
     match pass {
-        Ok(p) if p.delivered + p.worked + p.lost + p.stopped + p.deferred > 0 => eprintln!(
-            "{} events, {} jobs, {} lost (run again), {} stopped, {} waiting",
-            p.delivered, p.worked, p.lost, p.stopped, p.deferred
-        ),
+        Ok(p) if p.delivered + p.worked + p.lost + p.stopped + p.deferred + p.elsewhere > 0 => {
+            eprintln!(
+                "{} events, {} jobs, {} lost (run again), {} stopped, {} waiting, {} running elsewhere",
+                p.delivered, p.worked, p.lost, p.stopped, p.deferred, p.elsewhere
+            )
+        }
         Ok(_) => {}
         Err(e) => eprintln!("error: {e:#}"),
     }
@@ -975,8 +977,17 @@ fn dispatch(cli: Cli) -> Result<()> {
             };
             #[cfg(unix)]
             stop_on_signal(crate::engine::watchdog::stop_daemon);
+            // the path it was started by: a service starts it by an
+            // absolute one, which an upgrade points at a new file
+            let exe = std::env::args_os()
+                .next()
+                .map(std::path::PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .map_or_else(std::env::current_exe, Ok)?;
             run(&Options {
-                exe: std::env::current_exe()?,
+                binary: crate::engine::watchdog::Binary::now(&exe)?,
+                args: std::env::args_os().skip(1).collect(),
+                exe,
                 target,
                 rules: Rules {
                     check_every: std::time::Duration::from_secs(check_every),

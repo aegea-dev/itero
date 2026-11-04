@@ -180,6 +180,8 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
   the daemon's terminal.
 - [`examples/photos`][photos]: a thumbnail for each photo dropped
   into a folder the daemon watches.
+- [`examples/pomodoro`](examples/pomodoro): a pomodoro session of the
+  length an event says, with a notification once it is over.
 - [`examples/languages`][languages]: actions in Python (uv), Node,
   Bun and Docker, each in its subfolder and bringing its own packages,
   answering `itero ws emit --wait`.

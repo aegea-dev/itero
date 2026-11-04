@@ -1899,3 +1899,91 @@ fn a_run_stopped_with_no_daemon_is_stopped_by_the_next() {
         itero::engine::events::StopAsked::Missing
     ));
 }
+
+#[test]
+fn a_job_a_copy_of_which_still_runs_waits_uncounted_until_it_ends() {
+    let ws = Ws::new();
+    ws.flow(
+        "uzun",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#uzun"]}),
+    );
+    ws.action("uzun", "echo başladı >> başlangıçlar.txt");
+    ws.emit("order.placed", json!({"order": 1}));
+    // the message is seq 1, the run's start 2, its job 3: a copy holds the
+    // job's lock, as one a daemon that died leaves running does
+    let copy = itero::engine::lock::take_job(ws.d.path(), 3)
+        .unwrap()
+        .unwrap();
+    let p = ws.pass(NOW);
+    let j = Journal::open(&ws.ws).unwrap();
+    assert_eq!(
+        j.jobs().unwrap().iter().map(|r| r.seq).collect::<Vec<_>>(),
+        [3]
+    );
+    assert_eq!(p.elsewhere, 1);
+    assert_eq!(ws.read("başlangıçlar.txt"), "");
+    assert_eq!(j.job_runs(3).unwrap().0, 0, "not counted");
+    assert!(
+        ws.log()
+            .iter()
+            .any(|l| l["event"] == "warning"
+                && l["why"] == "job 3 not started: a copy of it still runs"),
+        "{:?}",
+        ws.log()
+    );
+    drop(copy);
+    let p = ws.pass(NOW);
+    assert_eq!(p.elsewhere, 0);
+    assert_eq!(ws.read("başlangıçlar.txt"), "başladı\n");
+    assert_eq!(ws.statuses(), vec!["done"]);
+}
+
+#[test]
+fn a_running_jobs_processes_hold_its_lock_until_they_end() {
+    let ws = Ws::new();
+    ws.flow(
+        "uzun",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#uzun"]}),
+    );
+    ws.action("uzun", "echo $$ > pid.txt; sleep 2");
+    ws.emit("order.placed", json!({"order": 1}));
+    let pass = pass_apart(&ws);
+    let pid = pid_in(&ws, "pid.txt");
+    assert!(alive(pid));
+    assert!(
+        itero::engine::lock::take_job(ws.d.path(), 3)
+            .unwrap()
+            .is_none(),
+        "held while it runs"
+    );
+    pass.join().unwrap();
+    assert!(
+        soon(|| itero::engine::lock::take_job(ws.d.path(), 3)
+            .unwrap()
+            .is_some()),
+        "free once it ended"
+    );
+}
+
+#[test]
+fn forget_removes_the_locks_of_jobs_done_and_keeps_those_that_may_run() {
+    let ws = Ws::new();
+    ws.flow(
+        "unut",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#forget"]}),
+    );
+    // a job long forgotten, and #forget's own job, running as it looks
+    drop(
+        itero::engine::lock::take_job(ws.d.path(), 99)
+            .unwrap()
+            .unwrap(),
+    );
+    ws.emit("order.placed", json!({}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert!(!ws.d.path().join(".itero/jobs/99.lock").exists());
+    assert!(
+        ws.d.path().join(".itero/jobs/3.lock").exists(),
+        "its own job waited as it looked"
+    );
+}
