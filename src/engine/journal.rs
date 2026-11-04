@@ -481,6 +481,19 @@ impl Journal {
         Ok(())
     }
 
+    /// Whether job `seq` can never start again: handled, or forgotten.
+    pub fn job_done(&self, seq: i64) -> Result<bool> {
+        let handled: Option<Option<String>> = self
+            .db
+            .query_row(
+                "SELECT handled FROM events WHERE seq = ?1 AND subject = 'itero.worker'",
+                params![seq],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(handled.is_none_or(|h| h.is_some()))
+    }
+
     /// Why a job's run was lost; the job stays waiting, to run again.
     pub fn lose_job(&self, seq: i64, why: &str) -> Result<()> {
         self.db.execute(

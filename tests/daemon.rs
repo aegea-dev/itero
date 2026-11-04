@@ -1964,3 +1964,26 @@ fn a_running_jobs_processes_hold_its_lock_until_they_end() {
         "free once it ended"
     );
 }
+
+#[test]
+fn forget_removes_the_locks_of_jobs_done_and_keeps_those_that_may_run() {
+    let ws = Ws::new();
+    ws.flow(
+        "unut",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#forget"]}),
+    );
+    // a job long forgotten, and #forget's own job, running as it looks
+    drop(
+        itero::engine::lock::take_job(ws.d.path(), 99)
+            .unwrap()
+            .unwrap(),
+    );
+    ws.emit("order.placed", json!({}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
+    assert!(!ws.d.path().join(".itero/jobs/99.lock").exists());
+    assert!(
+        ws.d.path().join(".itero/jobs/3.lock").exists(),
+        "its own job waited as it looked"
+    );
+}
