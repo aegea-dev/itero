@@ -106,6 +106,37 @@ pub fn pause(previous: Duration, ran: Duration) -> Duration {
     (previous * 2).clamp(Duration::from_secs(1), Duration::from_secs(60))
 }
 
+/// The itero a watchdog was started as: the path it was started by, the
+/// file that path leads to, and that file's device, inode and modification
+/// time. An upgrade changes it: Homebrew moves the link to a new folder,
+/// an install renames a new file over the old one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Binary {
+    pub path: PathBuf,
+    pub file: PathBuf,
+    pub id: (u64, u64, i64, i64),
+}
+
+impl Binary {
+    /// The itero at `path` now.
+    #[cfg(unix)]
+    pub fn now(path: &std::path::Path) -> std::io::Result<Binary> {
+        use std::os::unix::fs::MetadataExt;
+        let file = std::fs::canonicalize(path)?;
+        let m = std::fs::metadata(&file)?;
+        Ok(Binary {
+            path: path.to_path_buf(),
+            file,
+            id: (m.dev(), m.ino(), m.mtime(), m.mtime_nsec()),
+        })
+    }
+}
+
+/// Whether the itero at `old`'s path is another file now.
+pub fn changed(old: &Binary, new: &Binary) -> bool {
+    old.file != new.file || old.id != new.id
+}
+
 /// The daemon a watchdog keeps running.
 pub enum Target {
     /// `itero daemon` in a workspace: its port is read at each check, as
@@ -143,12 +174,80 @@ impl Target {
 
 /// What the watchdog runs.
 pub struct Options {
-    /// This itero binary.
+    /// The itero it runs the daemon with: the path it was started by.
     pub exe: PathBuf,
+    /// That itero as the watchdog started: when the path leads to another
+    /// file and it runs, the watchdog runs it in its place.
+    pub binary: Binary,
+    /// The watchdog's own arguments, to run the new itero with.
+    pub args: Vec<std::ffi::OsString>,
     pub target: Target,
     pub rules: Rules,
     /// Where its own lines and the daemon's stderr go; stderr when none.
     pub log: Option<PathBuf>,
+}
+
+/// The version the file at `path` says, run as `itero --version` (3 s at
+/// most), or why it does not run as itero.
+fn version_of(path: &std::path::Path) -> std::result::Result<String, String> {
+    let mut c = Command::new(path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    match c
+        .wait_timeout(Duration::from_secs(3))
+        .map_err(|e| e.to_string())?
+    {
+        Some(s) if s.success() => {}
+        Some(s) => return Err(format!("its --version ended with {s}")),
+        None => {
+            let _ = c.kill();
+            let _ = c.wait();
+            return Err("its --version did not answer in 3s".into());
+        }
+    }
+    let mut out = String::new();
+    std::io::Read::read_to_string(&mut c.stdout.take().expect("piped"), &mut out)
+        .map_err(|e| e.to_string())?;
+    let out = out.trim();
+    out.strip_prefix("itero ")
+        .map(str::to_string)
+        .ok_or_else(|| format!("its --version said {out:?}, not itero's"))
+}
+
+/// The new itero's version, when the path the watchdog was started by
+/// leads to another file now and it runs. Why not is said once for each
+/// reason (`told` keeps the last one said).
+fn upgraded(started: &Binary, told: &mut Option<String>, say: &dyn Fn(&str)) -> Option<String> {
+    let mut tell = |why: String| {
+        if told.as_deref() != Some(why.as_str()) {
+            say(&why);
+            *told = Some(why);
+        }
+        None
+    };
+    let now = match Binary::now(&started.path) {
+        Ok(b) => b,
+        Err(e) => {
+            return tell(format!(
+                "{} cannot be read: {e}; the daemon stays",
+                started.path.display()
+            ));
+        }
+    };
+    if !changed(started, &now) {
+        return None;
+    }
+    match version_of(&now.path) {
+        Ok(v) => Some(v),
+        Err(why) => tell(format!(
+            "itero changed but {} does not run: {why}; the daemon stays",
+            now.file.display()
+        )),
+    }
 }
 
 /// Asks the daemon's `/health`; no port yet is no answer.
@@ -234,6 +333,8 @@ pub fn run(o: &Options) -> Result<()> {
     };
     let client = crate::net::client(Duration::from_secs(5))?;
     let mut wait = Duration::ZERO;
+    // why the new itero is not run, said once
+    let mut told: Option<String> = None;
     loop {
         let stderr = match &log {
             Some(f) => Stdio::from(f.try_clone()?),
@@ -262,6 +363,23 @@ pub fn run(o: &Options) -> Result<()> {
                 Some(status) => Probe::Exited(status.to_string()),
                 None => probe(&client, o.target.port()),
             };
+            #[cfg(unix)]
+            if let Some(v) = upgraded(&o.binary, &mut told, &say) {
+                say(&format!(
+                    "itero changed: {} \u{2192} {} (itero {v}): running it",
+                    o.binary.file.display(),
+                    std::fs::canonicalize(&o.binary.path)
+                        .unwrap_or_else(|_| o.binary.path.clone())
+                        .display()
+                ));
+                let _ = child.kill();
+                let _ = child.wait();
+                // the same process, the new itero: it starts a new daemon
+                let e = std::os::unix::process::CommandExt::exec(
+                    Command::new(&o.binary.path).args(&o.args),
+                );
+                return Err(anyhow::anyhow!("cannot run the new itero: {e}"));
+            }
             if let Verdict::Restart(why) = decide(&mut w, &found, Utc::now(), &o.rules) {
                 break why;
             }
