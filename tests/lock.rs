@@ -74,6 +74,28 @@ fn a_second_lock_on_one_workspace_is_refused_naming_the_first() {
 }
 
 #[test]
+fn one_pass_refuses_a_workspace_already_run_and_runs_nothing() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = workspace(d.path());
+    let held = itero::engine::lock::take(&ws, "sakin-nehir, pid 1").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_itero"))
+        .args(["daemon", "--once"])
+        .current_dir(d.path())
+        .env("ITERO_NO_SECRET_STORE", "1")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    drop(held);
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{said}");
+    assert!(said.contains("is run by sakin-nehir, pid 1"), "{said}");
+    assert!(
+        !d.path().join(".itero/journal.sqlite").exists(),
+        "a pass ran beside the daemon"
+    );
+}
+
+#[test]
 fn a_foreground_daemon_refuses_a_workspace_already_run() {
     let d = tempfile::tempdir().unwrap();
     workspace(d.path());
