@@ -298,6 +298,17 @@ Nothing else of the run reaches it.
   `"$output.count files in ~/$event.folder"`.
 - `"args": "$output"` passes a whole object on: each field is an arg. A
   result that is not an object is an error there.
+- **A file** is an object with only the key `file`, and its text is the arg,
+  exactly as written; nothing in it is filled:
+
+  ```json
+  { "#ai": { "args": { "system": { "file": "prompts/sort.md" }, "message": "$event.body" } } }
+  ```
+
+  The path is from the workspace's folder. The file is inside the workspace,
+  and is not `.env` or in `.itero/`. It is read with the workflow, so a run
+  keeps the text it started with, and `itero ws check` says when one cannot
+  be used.
 - **Args may be a list** of objects, read in order as one set of values. An
   item gives each of its keys as it is, or, with exactly the keys `title`
   and `text`, gives the arg `title` names its `text` formatted as text:

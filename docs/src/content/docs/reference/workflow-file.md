@@ -63,6 +63,7 @@ is in its entry in
 | `$config`, `$config.description` | `itero.config.json`, read-only |
 | `$count` | the round of a repeated step or workflow, from 1 |
 | `$$NAME` | a secret, a value in `.env`, or an environment variable; a whole value only |
+| `{"file": "prompts/sort.md"}` | as an arg: that file's text, as written; its path from the workspace's folder, inside it, not `.env` or in `.itero/` |
 
 Fields go to any depth. A whole value keeps its type; inside text, and in
 lists and objects, each is filled (`""` when it is not there); `\\$` is a

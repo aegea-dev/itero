@@ -502,10 +502,16 @@ impl Workspace {
                 ));
                 continue;
             }
+            // each file an arg names becomes its text, before anything reads it
+            let mut v = v;
+            let files = crate::file_arg::inline(&self.root, &mut v);
+            let usable = files.is_empty();
+            problems.extend(files.into_iter().map(|why| Problem::new(at.clone(), why)));
             match crate::flow::read(&v) {
-                Ok(_) => {
+                Ok(_) if usable => {
                     out.insert(name, v);
                 }
+                Ok(_) => {}
                 Err(ps) => problems.extend(ps.into_iter().map(|p| p.under(&at))),
             }
         }

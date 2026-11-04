@@ -2,6 +2,7 @@ pub mod ai;
 pub mod cli;
 pub mod connectors;
 pub mod engine;
+mod file_arg;
 pub mod flow;
 pub mod machine;
 pub mod names;

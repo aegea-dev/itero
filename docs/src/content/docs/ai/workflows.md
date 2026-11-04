@@ -27,6 +27,10 @@ To sort, say the labels, and what each means, in `system` or `message`:
     "message": "$event.body" } } }
 ```
 
+A long prompt can live in a file, passed as it is:
+`"system": { "file": "prompts/sort.md" }`
+([Args](/guides/workflows/#args-what-a-step-gives-its-action)).
+
 **Fields** hold the model to a form, so the next steps can rely on it:
 `$output` is an object with exactly those fields, of those types.
 
