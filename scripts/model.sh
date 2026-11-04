@@ -1,7 +1,10 @@
 #!/bin/sh
 # Checks the engine's model (model/) with TLC, in Docker: nothing to
 # install but Docker. `check` runs each scenario (model/MC*.cfg) with its
-# rules, reports every scenario that breaks one, then fails.
+# rules, reports every scenario that breaks one, then fails. `mutants`
+# breaks the model once per rule (the constant Bug) and expects that rule
+# to fail, since a rule that cannot fail checks nothing; it reports every
+# rule that did not, then fails.
 # tla2tools.jar is downloaded once into target/model/ and checked against
 # the SHA-256 pinned here (GitHub publishes none for it); the Java image is
 # pinned by its digest.
@@ -53,10 +56,58 @@ check() {
 	fi
 }
 
+# Each line: the code Bug breaks (Engine.tla), the scenario, and the rule
+# that must catch it, an INVARIANT or a PROPERTY. Each runs alone in a
+# config of its own.
+MUTANTS='
+handled MCStop  INVARIANT CancelledReachesNone
+ended   MCStop  PROPERTY  EndedStays
+maxruns MCLost  INVARIANT JobRunsBounded
+cancel  MCStop  INVARIANT StoppedSaysNothing
+cancel  MCStop  INVARIANT HandledOnce
+limit   MCHeld  INVARIANT LimitKept
+taken   MCWait  INVARIANT TakenOnce
+order   MCStop  INVARIANT InOrder
+rounds  MCChild INVARIANT OneEnd
+timer   MCWait  INVARIANT EndedNoTimer
+held    MCHeld  PROPERTY  AllHandled
+back    MCChild PROPERTY  ChildrenReport
+back    MCChild PROPERTY  RunsEnd
+quiet   MCChild INVARIANT NoChain
+'
+
+# Each mutant must break its rule; what does not goes in a file, as the
+# loop runs in a subshell, and all are said at the end.
+mutants() {
+	missed=$root/target/model/missed
+	rm -f "$missed"
+	echo "$MUTANTS" | while read -r bug s kind rule; do
+		[ -n "$bug" ] || continue
+		cfg=target/model/$s-$bug-$rule.cfg
+		sed -e "s/^ *Bug = .*/    Bug = \"$bug\"/" -e '/^INVARIANT/d' -e '/^PROPERTY/d' \
+			"$root/model/$s.cfg" > "$root/$cfg"
+		echo "$kind $rule" >> "$root/$cfg"
+		echo "== $s, Bug = $bug: $rule must fail"
+		if tlc "$s.tla" "$cfg" > "$root/$cfg.out" 2>&1; then
+			echo "$rule did not fail" >&2
+			echo "$s:$bug:$rule" >> "$missed"
+		elif ! grep -q "violated" "$root/$cfg.out"; then
+			cat "$root/$cfg.out" >&2
+			echo "$s:$bug:$rule" >> "$missed"
+		fi
+	done
+	if [ -s "$missed" ]; then
+		echo "rules that did not fail: $(tr '\n' ' ' < "$missed")" >&2
+		rm -f "$missed"
+		exit 1
+	fi
+}
+
 case "${1:-}" in
 check) fetch && check ;;
+mutants) fetch && mutants ;;
 *)
-	echo "usage: sh scripts/model.sh check" >&2
+	echo "usage: sh scripts/model.sh check|mutants" >&2
 	exit 2
 	;;
 esac

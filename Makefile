@@ -198,6 +198,10 @@ test-formula: ## Install the formula from a local tap (macOS; changes Homebrew, 
 model: ## Check the engine's model with TLC, every scenario (Docker)
 	sh scripts/model.sh check
 
+.PHONY: model-test
+model-test: ## Check that each of the model's rules can fail (Docker)
+	sh scripts/model.sh mutants
+
 .PHONY: install
 install: ## Install itero to ~/.cargo/bin, and on macOS Itero.app to ~/Applications
 	$(CARGO) install --path . --force --bin itero

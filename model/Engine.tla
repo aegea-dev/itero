@@ -123,9 +123,10 @@ Outcomes(s) ==
     ELSE IF StepOf(s).wait THEN {"waiting", "finished"}
     ELSE {"finished", "failed"}
 
-\* save_result: the job handled, its result the run's next event
+\* save_result: the job handled (handle sets no note: one it had stays),
+\* its result the run's next event
 Save(s, o) ==
-    ev' = Append([ev EXCEPT ![s] = Mark(@, "")],
+    ev' = Append([ev EXCEPT ![s] = Mark(@, @.note)],
                  [Ev(ev[s].run, "action." \o o) EXCEPT !.path = ev[s].path,
                       !.br = ev[s].br, !.cause = s])
 
@@ -319,7 +320,7 @@ Deliver(j) ==
            stopped == {s \in DOMAIN ev : ev[s].subj = WORKER /\ ~ev[s].handled
                                          /\ ev[s].run = r /\ <<ev[s].path, ev[s].br>> \in a.stopped}
            why == IF ends /\ new.ended = "stopped" THEN "run stopped" ELSE "stopped"
-           marked == [s \in DOMAIN ev |-> IF s = j THEN Mark(ev[s], "")
+           marked == [s \in DOMAIN ev |-> IF s = j THEN Mark(ev[s], ev[s].note)
                                           ELSE IF s \in stopped THEN Mark(ev[s], why)
                                           ELSE ev[s]]
            head == marked \o jobs \o copies \o done \o back
