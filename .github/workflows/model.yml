@@ -1,0 +1,40 @@
+name: Model
+
+# The engine's model (model/), checked by TLC when the model or the
+# engine changes: the same make targets as on a development machine.
+# Docker runs Java; tla2tools.jar is cached by the pin in the script.
+on:
+  push:
+    branches: [main]
+    paths: ["model/**", "src/engine/**", "scripts/model.sh", ".github/workflows/model.yml"]
+  pull_request:
+    paths: ["model/**", "src/engine/**", "scripts/model.sh", ".github/workflows/model.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  model:
+    name: model
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/model/tla2tools-*.jar
+          key: tla2tools-${{ hashFiles('scripts/model.sh') }}
+
+      - name: Model
+        run: make model
+
+      - name: Every rule can fail
+        run: make model-test
