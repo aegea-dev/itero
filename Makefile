@@ -85,7 +85,7 @@ coverage: ## Measure test coverage per file (cargo-llvm-cov), with an HTML repor
 verify: fmt-check check lint-check test audit docs-build ## Every gate CI runs before a release: formatting, check, clippy, tests, audit, docs
 
 .PHONY: docs
-docs: ## Serve the docs site at http://localhost:4321/itero/ with live reload
+docs: ## Serve the docs site at http://localhost:4321/ with live reload
 	yarn --cwd docs dev
 
 .PHONY: docs-install

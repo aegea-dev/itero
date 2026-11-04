@@ -149,7 +149,7 @@ may notify.
 rolls the log, and `#find-models` finds the models on the machine; the
 built-in workflows use them
 ([The daemon's own workflows](/guides/maintenance/)). `#ai` asks a
-local model ([#ai in a workflow](/ai/workflows/)).
+model, on this machine or behind a URL ([#ai in a workflow](/ai/workflows/)).
 
 A workspace action of the same name is used instead of a built-in one.
 

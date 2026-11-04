@@ -43,7 +43,7 @@ minute, so a daemon that cannot start does not start over and over. Once
 a daemon has run for 5 minutes, the wait is back to 1 second.
 
 Stopping the watchdog (`SIGTERM` or `SIGINT`, as the service or a `kill`
-sends) stops its daemon too, as `itero stop` does, so no daemon is left
+sends) stops its daemon too, as `itero service stop` does, so no daemon is left
 running without one.
 
 What each workspace does is in its `.itero/itero.log`
@@ -65,13 +65,18 @@ state.
 
 ## After an upgrade
 
-The install script restarts the service when it runs, so every
-workspace runs on the new itero. After `brew upgrade` or `make install`,
-or when the script says it could not:
+The watchdog follows an upgrade by itself, however you upgraded
+([The watchdog](#the-watchdog)), and the install script also restarts the
+service when it runs. To run the new itero at once, or when the script
+says it could not:
 
 ```bash
 itero service restart
 ```
+
+A watchdog started before this version does not follow the upgrade that
+brings it, so that one upgrade needs this too
+([Upgrading](/start/install/#upgrading)).
 
 ## Remove it
 

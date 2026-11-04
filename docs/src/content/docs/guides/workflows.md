@@ -230,7 +230,7 @@ A workflow reads a value by where it comes from:
 | `$$NAME` | a secret, a value in the workspace's `.env`, or an environment variable ([Args and secrets](/guides/secrets/)) |
 
 After `$event`, `$output` or `$steps.<name>`, fields go as deep as the
-value does: `$event.order.id`. Any other `$name` is no value: `itero
+value does: `$event.order.id`. Any other `$name` is no value: `itero ws
 check` says what to write instead (`$order` is `$event.order`).
 
 ### `$event`: what started the run
@@ -550,9 +550,9 @@ own, repeated, used there by its name.
 ## Waiting: `timeout`
 
 A step that exits 75 is not ready yet: the run waits for an event that
-agrees with what the step printed ([What an event does](/guides/connectors/#what-an-event-does)).
-That event is then the step's `$output`, and it runs again. `timeout` is
-how long a run may wait, like `"2h"`; unless given, a day.
+agrees with what the step printed ([What an event does](/guides/connectors/#what-an-event-does)),
+then the step runs again. `timeout` is how long a run may wait, like
+`"2h"`; unless given, a day.
 
 What the step prints is what an event is matched on. When one agrees,
 only that step sees it: run again, its action gets the event's data as

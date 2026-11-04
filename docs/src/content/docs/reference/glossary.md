@@ -74,18 +74,18 @@ version of its workflows it started with. It ends as `done`, `failed`,
 `error`, or `stopped` when stopped by command. A workflow used as a step is a run of its own, linked to the run
 whose step started it; a repeated workflow's next round is a run too.
 
-### event
+### $event
 
 `$event`: the data of the event that started a run, the same in every
 step. A workflow used as a step has its step's args as its `$event`. A
 waiting action gets the event that matched it as `$event` too.
 
-### output
+### $output
 
 `$output`: the result of the step just before, what it printed, read as
 JSON when it is JSON. Each step's result takes its place.
 
-### steps
+### $steps
 
 `$steps.<name>`: an earlier step's result, by its name (`#fetch-rates` is
 `$steps.fetch-rates`), with its number when that name is in the file more
@@ -133,7 +133,8 @@ has args too, given by each `on` entry that listens:
 
 `$$NAME`: from the OS secret store, else the workspace's `.env`, else the
 daemon's environment, bound only when a step starts, never written down.
-Set with `itero secret`; values that are not secret go in `.env`.
+Set with `itero secret` or `itero ws secret`; `.env` holds your other
+values, and may hold secrets too.
 
 ### memory
 

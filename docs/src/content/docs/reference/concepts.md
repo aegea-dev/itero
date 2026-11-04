@@ -48,8 +48,8 @@ Each has parts of its own, listed under it.
   `package.json`, never values to work on
   ([itero.config.json](/reference/itero-config/)).
 - Holds `workflows/`, `actions/`, `connectors/`.
-- `.env`: the user's own values (`NAME=value`), read as `$$NAME`; secrets
-  stay in the OS secret store ([Args and secrets](/guides/secrets/)).
+- `.env`: the user's own values (`NAME=value`), read as `$$NAME`; a secret
+  may be here or in the OS secret store ([Args and secrets](/guides/secrets/)).
 - Its own state in `.itero/`: journal, log (`itero.log`), port, memory,
   lock.
 - Run by one daemon at a time (a lock on `.itero/daemon.lock`).
@@ -104,7 +104,8 @@ See [Actions](/guides/actions/).
   (giving up on one that keeps ending).
 - Each line it prints is one event: a JSON object.
 - Its stdin closes when the daemon goes: then it stops.
-- Its args in `itero.config.json`; its stderr goes to the daemon's log.
+- Its args come from the `on` entries of the workflows that listen to it;
+  its stderr goes to the daemon's (`daemon.log` under the service).
 - `itero watch <path>` for one that watches files.
 
 See [Connectors](/guides/connectors/).

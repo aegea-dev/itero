@@ -106,7 +106,7 @@ make audit        # Cargo.lock against RustSec advisories (needs cargo-audit)
 make dist         # a release archive with THIRD-PARTY-LICENSES (needs cargo-about)
 make test-linux   # the tests and clippy on Linux, in Docker
 make test-docker  # the IMAP, POP3 and Gmail examples against a mail server in Docker
-make docs         # the docs site at http://localhost:4321/itero/ (make docs-install once)
+make docs         # the docs site at http://localhost:4321/ (make docs-install once)
 make verify       # every gate before a release: fmt, check, clippy, tests, audit, docs
 ```
 
@@ -151,7 +151,7 @@ a name stays its file name, and `itero ws which <name>` says where it is.
   steps waiting for it that it matches by what they printed.
 
 Commands at the top level are the machine's: `itero daemon`, `itero service
-install|status|restart|uninstall`, `itero info`, `itero emit`, `itero secret`,
+install|status|start|stop|restart|uninstall`, `itero info`, `itero emit`, `itero secret`,
 `itero ai`, `itero watch`, `itero completion`. Everything about one workspace
 is under `itero ws`, in its folder or with `--ws <name>`: `add|list|remove`,
 `info`, `check`, `which`, `emit <type> '<data>'`, `secret`, `wf list|runs|stop`,
@@ -178,6 +178,8 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
 - [`examples/page-summary`][page-summary]: a page sent in a
   message, summarized by a model on this machine (LM Studio), printed in
   the daemon's terminal.
+- [`examples/ai-mail`](examples/ai-mail): each mail sorted by a model on
+  this machine, with a notification for the urgent ones.
 - [`examples/photos`][photos]: a thumbnail for each photo dropped
   into a folder the daemon watches.
 - [`examples/pomodoro`](examples/pomodoro): a pomodoro session of the

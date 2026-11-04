@@ -23,10 +23,11 @@ and how many events (messages) wait for it.
 
 ```
 $ itero ws wf list
-greet   workflows/greet.json   on greet.someone                    runs 1   last: done 1s ago
-order   workflows/order.json   on order.placed                     runs 2   last: error 1s ago
-keep    built in               on itero.space.full, at 0 * * * *   runs 0   last: none           internal
-logs    built in               on itero.log.full                   runs 0   last: none           internal
+greet    workflows/greet.json   on greet.someone                                                   runs 1   last: done 1s ago
+order    workflows/order.json   on order.placed                                                    runs 2   last: error 1s ago
+keep     built in               on itero.space.full, at 0 * * * *                                  runs 0   last: none           internal
+logs     built in               on itero.log.full                                                  runs 0   last: none           internal
+models   built in               on itero.daemon.started, on itero.ai.model.missing, at 0 * * * *   runs 0   last: none           internal
 daemon: not running, no event waiting
 ```
 

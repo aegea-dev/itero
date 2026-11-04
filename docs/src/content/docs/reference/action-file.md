@@ -20,11 +20,12 @@ extension, in any language its first line names.
 | stdout | its result, the next step's `$output`: JSON when it is JSON, else the text, trimmed; `""` for nothing |
 | stderr | while it runs, its last line is its progress, shown by `itero ws wf runs` (cut to 200 characters); when it fails, its end says why |
 | exit `0` | done |
-| exit `75` | not yet: the run waits for an event that agrees with what it printed (then its `$output`), or the hourly retry |
+| exit `75` | not yet: the run waits for an event that agrees with what it printed (then its `$event`), or the hourly retry |
 | any other exit | an error; the end of stderr says why |
 
 A step may print nothing for 10 minutes and run for a day at most
 (`quiet` and `most` in [`limits`](/reference/itero-config/#limits)); a
 lost or stopped step runs again, up to 3 times. Built in, unless the workspace has an action of the name:
-`#notify` (shows its args `text` and `title`), `#forget` and `#roll-log`. See
+`#notify` (shows its args `text` and `title`), `#ai` (asks a model), `#forget`,
+`#roll-log` and `#find-models`. See
 [Actions](/guides/actions/).
