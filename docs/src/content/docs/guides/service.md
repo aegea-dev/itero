@@ -32,6 +32,12 @@ It restarts the daemon when it:
 A workspace whose pass runs past its limit (10 minutes) does not restart
 the daemon: that workspace is shown as `stuck`, and the others run on.
 
+When the path the service starts leads to another itero (an upgrade by
+Homebrew, the install script or `make install`), the watchdog asks it
+`--version`, stops the daemon and runs the new itero in its own place,
+which starts a new daemon. A new file that does not run leaves the daemon
+as it was, and the log says why.
+
 Between restarts it waits 1 second, then twice as long each time, up to a
 minute, so a daemon that cannot start does not start over and over. Once
 a daemon has run for 5 minutes, the wait is back to 1 second.
