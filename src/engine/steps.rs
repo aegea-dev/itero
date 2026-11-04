@@ -175,6 +175,9 @@ pub enum At {
         version: Option<String>,
         #[serde(default, skip_serializing_if = "Map::is_empty")]
         data: Map<String, Value>,
+        /// Which of its args are secrets: those its step writes as `$$NAME`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        secrets: Vec<String>,
         /// Its job was handed out (not yet, for a run just split).
         started: bool,
         #[serde(default)]
@@ -318,6 +321,10 @@ pub struct StepJob {
     /// The step's data in the workflow.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub data: Map<String, Value>,
+    /// Which of its args are secrets: those its step writes as `$$NAME`.
+    /// Any other value is data, whatever it looks like.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<String>,
     /// Since when it has been waiting, when it runs again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_since: Option<String>,
@@ -773,7 +780,7 @@ impl Machine<'_> {
                         return Ok(None);
                     }
                 };
-                self.start_name(name, &data, path)
+                self.start_name(name, &data, flow::written_secrets(args), path)
             }
             Step::Side(group) => {
                 let mut entries: Vec<Entry> = vec![];
@@ -784,7 +791,12 @@ impl Machine<'_> {
                         None
                     } else {
                         match self.args(&m.args) {
-                            Ok(data) => self.start_name(&m.name, &data, path)?,
+                            Ok(data) => self.start_name(
+                                &m.name,
+                                &data,
+                                flow::written_secrets(&m.args),
+                                path,
+                            )?,
                             Err(why) => {
                                 // it cannot start: that step of the group breaks
                                 self.broke = Some((why, m.label.clone()));
@@ -1069,6 +1081,7 @@ impl Machine<'_> {
         &mut self,
         name: &Name,
         data: &Map<String, Value>,
+        secrets: Vec<String>,
         path: &[usize],
     ) -> Result<Option<At>, String> {
         match name {
@@ -1077,6 +1090,7 @@ impl Machine<'_> {
                     name: name.clone(),
                     version: version.clone(),
                     data: data.clone(),
+                    secrets,
                     started: false,
                     waiting: false,
                     waiting_since: None,
@@ -1941,6 +1955,7 @@ fn job(leaf: &mut At, path: &[usize]) -> Option<StepJob> {
         name,
         version,
         data,
+        secrets,
         started,
         waiting,
         waiting_since,
@@ -1957,6 +1972,7 @@ fn job(leaf: &mut At, path: &[usize]) -> Option<StepJob> {
         action: name.clone(),
         version: version.clone(),
         data: data.clone(),
+        secrets: secrets.clone(),
         waiting_since: waiting_since.clone(),
         event: event.clone(),
     })

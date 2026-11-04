@@ -386,6 +386,7 @@ pub(super) fn output(env: &BTreeMap<String, String>, content: &str) -> Result<Va
 /// Runs `#ai`: streams the answer, telling its token count as progress.
 pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome, Failure> {
     let mut env = r.env.clone();
+    let own_key = env.contains_key("key");
     let machine = super::defaults::path()
         .and_then(|p| super::defaults::read(&p))
         .map_err(fail)?;
@@ -394,13 +395,14 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         .map_err(fail)?;
     super::defaults::fill(&mut env, &machine, &ix);
     if let Some(url) = env.get("url").cloned() {
+        // a key from the machine's defaults: a $$NAME the step's binding did
+        // not see. The step's own was bound, or is data, and data names nothing
         if let Some(n) = env
             .get("key")
+            .filter(|_| !own_key)
             .and_then(|k| k.strip_prefix("$$"))
             .map(String::from)
         {
-            // a key from the machine's defaults: a $$NAME the step's
-            // binding did not see
             let ws = crate::workspace::find(&r.root).map_err(fail)?;
             let v = crate::engine::secrets::get_in(&ws, &n).ok_or_else(|| {
                 fail(format!(

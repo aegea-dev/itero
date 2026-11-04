@@ -926,6 +926,7 @@ fn a_run_written_before_output_is_read_and_goes_on() {
             action: "uygula".into(),
             version: None,
             data: Map::new(),
+            secrets: vec![],
             waiting_since: None,
             event: None,
         },
@@ -935,22 +936,24 @@ fn a_run_written_before_output_is_read_and_goes_on() {
 }
 
 #[test]
-fn a_secret_held_by_an_event_value_breaks_a_step_that_puts_it_in_text() {
+fn a_value_holding_a_secrets_name_is_only_text_and_only_written_args_are_secrets() {
     let mut r = Run::new(&[(
         "a",
         json!({"steps": [
             "#gir",
-            {"#bildir": {"args": {"text": "giriş: $event.parola"}}}
-        ], "error": ["#uyar"]}),
+            {"#bildir": {"args": {"text": "giriş: $event.parola", "aynen": "$event.parola",
+                                  "anahtar": "$$ANAHTAR"}}}
+        ]}),
     )]);
     let a = r.start(json!({"parola": "$$POSTA"}));
+    assert!(a.jobs[0].secrets.is_empty());
     let a = r.done(&a.jobs[0], json!(""));
-    assert_eq!(names(&a), vec!["uyar"]);
-    assert_eq!(r.rt.failed_step.as_deref(), Some("#bildir"));
-    let why = r.rt.why.clone().unwrap();
-    assert!(why.contains("a secret is a whole value only"), "{why}");
-    // the error list starts with why
-    assert_eq!(r.rt.state["output"]["failed_step"], "#bildir");
+    let job = &a.jobs[0];
+    assert_eq!(job.action, "bildir");
+    assert_eq!(job.data["text"], "giriş: $$POSTA");
+    assert_eq!(job.data["aynen"], "$$POSTA");
+    assert_eq!(job.data["anahtar"], "$$ANAHTAR");
+    assert_eq!(job.secrets, ["anahtar"]);
 }
 
 // ---- steps side by side say how to wait ----
@@ -1509,6 +1512,7 @@ fn a_group_is_read_from_a_run_written_before_groups_said_how_to_wait() {
         action: "şeker".into(),
         version: None,
         data: Map::new(),
+        secrets: vec![],
         waiting_since: None,
         event: None,
     };

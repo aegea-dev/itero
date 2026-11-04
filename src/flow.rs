@@ -517,9 +517,10 @@ fn find<'s>(state: &'s Map<String, Value>, path: &str) -> Found<'s> {
 
 /// A value of args filled from the state. A whole `"$event.count"` is the
 /// state's value, with its type, null when it has none; a whole secret,
-/// `"$$NAME"`, stays as written, for the action alone. Inside text each
-/// name is filled ([`pieces`]); texts in lists and objects are filled too.
-/// A secret inside text is refused, and so is a value holding one.
+/// `"$$NAME"`, stays as written, for the action alone ([`written_secrets`]
+/// says which args those are: a value that looks like one is only text).
+/// Inside text each name is filled ([`pieces`]); texts in lists and objects
+/// are filled too. A secret written inside text is refused.
 pub fn fill(v: &Value, state: &Map<String, Value>) -> Result<Value, String> {
     match v {
         Value::String(_) if secret_ref(v).is_some() => Ok(v.clone()),
@@ -675,13 +676,14 @@ pub fn pieces(text: &str) -> Vec<Piece<'_>> {
 }
 
 fn fill_text(text: &str, state: &Map<String, Value>) -> Result<String, String> {
-    let refused = |what: String| format!("a secret is a whole value only: {what} inside text");
     let mut out = String::new();
     for p in pieces(text) {
         match p {
             Piece::Text(t) => out.push_str(&t),
             Piece::Unknown(_) => {}
-            Piece::Secret(n) => return Err(refused(format!("$${n}"))),
+            Piece::Secret(n) => {
+                return Err(format!("a secret is a whole value only: $${n} inside text"));
+            }
             Piece::Name(path) => {
                 let (v, rest) = match find(state, path) {
                     Found::Whole(v) => (Some(v), String::new()),
@@ -690,12 +692,6 @@ fn fill_text(text: &str, state: &Map<String, Value>) -> Result<String, String> {
                 };
                 match v {
                     None | Some(Value::Null) => {}
-                    Some(v) if secret_ref(v).is_some() => {
-                        return Err(refused(format!(
-                            "${path}, which holds {}",
-                            v.as_str().unwrap_or("")
-                        )));
-                    }
                     Some(Value::String(t)) => out.push_str(t),
                     Some(other) => out.push_str(&other.to_string()),
                 }
@@ -1451,6 +1447,19 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             ),
         ));
     }
+    // a workflow's `$event` is data, where a `$$NAME` is only text
+    for (at, n, a) in [("", &step_name, &args), ("undo", &undo, &undo_args)] {
+        if let Some(Name::Workflow(w)) = n
+            && let Some(arg) = written_secrets(a).first()
+        {
+            ps.push(Problem::new(
+                at,
+                format!(
+                    "args: a secret goes to an action, not to a workflow: write it in the step of {w} that needs it, not as {arg} here"
+                ),
+            ));
+        }
+    }
     match step_name {
         Some(name) if ps.is_empty() => Ok(Written {
             name,
@@ -1989,6 +1998,28 @@ fn direct_values(args: &Value) -> Box<dyn Iterator<Item = &Value> + '_> {
                 .flat_map(|o| o.values()),
         ),
         _ => Box::new(std::iter::empty()),
+    }
+}
+
+/// The args a step writes as a whole `"$$NAME"`: the only ones that are
+/// secrets. Values are data, however they look: what came in an event or a
+/// step's result must never be able to name a secret.
+pub fn written_secrets(args: &Value) -> Vec<String> {
+    let of = |o: &Map<String, Value>| -> Vec<String> {
+        o.iter()
+            .filter(|(_, v)| secret_ref(v).is_some())
+            .map(|(k, _)| k.clone())
+            .collect()
+    };
+    match args {
+        Value::Object(o) => of(o),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(Value::as_object)
+            .filter(|o| pair(o).is_none())
+            .flat_map(of)
+            .collect(),
+        _ => vec![],
     }
 }
 

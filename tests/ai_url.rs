@@ -175,4 +175,39 @@ fn a_url_step_asks_the_model_behind_it() {
             .unwrap()
             .ends_with("/chat/completions")
     );
+
+    // a key that came as data is the key as written: a $$NAME only counts
+    // from the machine's defaults, or written in the workflow (bound before
+    // this step runs), so an event cannot send a secret to a url
+    // SAFETY: as above
+    unsafe { std::env::set_var("ITERO_TEST_AI_GIZLI", "gizli-deger") };
+    let s = serve_http(vec![Reply::Text("tamam".into())]);
+    let url = format!("{}/chat/completions", s.url);
+    worker::run_step(&step(
+        &ws,
+        &[
+            ("url", &url),
+            ("key", "$$ITERO_TEST_AI_GIZLI"),
+            ("message", "soru"),
+        ],
+    ))
+    .unwrap();
+    let (_, auth) = s.requests.lock().unwrap()[0].clone();
+    assert_eq!(auth.as_deref(), Some("Bearer $$ITERO_TEST_AI_GIZLI"));
+
+    // the machine's defaults are written by this machine's user: their
+    // $$NAME is a secret
+    let defaults = d.path().join("durum/itero/ai-defaults.json");
+    std::fs::create_dir_all(defaults.parent().unwrap()).unwrap();
+    let s = serve_http(vec![Reply::Text("tamam".into())]);
+    std::fs::write(
+        &defaults,
+        json!({"url": format!("{}/chat/completions", s.url), "key": "$$ITERO_TEST_AI_GIZLI"})
+            .to_string(),
+    )
+    .unwrap();
+    worker::run_step(&step(&ws, &[("message", "soru")])).unwrap();
+    let (_, auth) = s.requests.lock().unwrap()[0].clone();
+    assert_eq!(auth.as_deref(), Some("Bearer gizli-deger"));
+    std::fs::remove_file(&defaults).unwrap();
 }

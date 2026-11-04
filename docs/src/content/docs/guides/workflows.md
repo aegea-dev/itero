@@ -292,7 +292,8 @@ Nothing else of the run reaches it.
   `524`. A field that is not there is `null`, and an action gets no
   variable for it.
 - `"$$NAME"` is a secret, a value in `.env` or an environment variable
-  ([Args and secrets](/guides/secrets/)).
+  ([Args and secrets](/guides/secrets/)), for an action: a workflow used as
+  a step writes it in its own step that needs it, as its `$event` is data.
 - Inside text, each value is filled ([below](#a-value-inside-text)):
   `"$output.count files in ~/$event.folder"`.
 - `"args": "$output"` passes a whole object on: each field is an arg. A
@@ -338,8 +339,10 @@ With `{"count": 3}` as the step before's result and `{"folder":
   `"text": "\\$count is not filled"`. A `$` that starts no name is itself
   already: `"costs $5"`.
 - A secret is a whole value only, never part of a text: `"Bearer $$TOKEN"`
-  is refused by `itero ws check` and by a run, and so is an event's value
-  holding a secret, inside text.
+  is refused by `itero ws check` and by a run.
+- Only a `$$NAME` written in a step's args is a secret. In a value that came
+  from an event or a step's result it is plain text, so nothing from outside
+  can name a secret.
 
 ## How it ended: `success`, `failure`, `error`
 

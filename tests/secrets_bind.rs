@@ -104,6 +104,7 @@ fn an_action_gets_its_steps_args_and_a_waited_event() {
             .as_object()
             .unwrap()
             .clone(),
+        secrets: vec![],
         waiting_since: None,
         event,
     };
@@ -140,4 +141,130 @@ fn a_value_comes_from_dot_env_after_the_secret_store() {
     // SAFETY: no thread of this test binary reads the environment now
     unsafe { std::env::set_var("ITERO_TEST_ORTAM_DEGERI", "ortamdan") };
     assert_eq!(get("ITERO_TEST_ORTAM_DEGERI").as_deref(), Some("ortamdan"));
+}
+
+/// Only a `$$NAME` written in the workflow is a secret. One that comes in
+/// data, however it comes, is plain text, and the run goes on: anyone who
+/// can put text in an event (a mail's subject) must not be able to name a
+/// secret, nor to break a run by trying.
+#[test]
+fn a_secret_named_by_data_is_only_text() {
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path();
+    std::fs::write(root.join("itero.config.json"), "{}").unwrap();
+    std::fs::write(root.join(".env"), "ITERO_TEST_GIZLI=gizli-değer-ı\n").unwrap();
+    std::fs::create_dir_all(root.join("workflows")).unwrap();
+    std::fs::create_dir_all(root.join("actions")).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    for (name, body) in [
+        ("söyle", "printf '%s' \"$text\""),
+        ("yaz", "printf '{\"text\": \"$$ITERO_TEST_GIZLI\"}'"),
+    ] {
+        let action = root.join("actions").join(name);
+        std::fs::write(&action, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&action, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let say = |args: serde_json::Value| json!({"#söyle": {"args": args}});
+    let written = "$$ITERO_TEST_GIZLI";
+    for (name, steps, said) in [
+        ("tam", json!([say(json!({"text": "$event.x"}))]), written),
+        (
+            "metin",
+            json!([say(json!({"text": "konu: $event.x"}))]),
+            "konu: $$ITERO_TEST_GIZLI",
+        ),
+        (
+            "birlesik",
+            json!([say(json!({"text": "$event.a$event.b"}))]),
+            written,
+        ),
+        (
+            "cift",
+            json!([say(json!([{"title": "text", "text": "$event.x"}]))]),
+            written,
+        ),
+        (
+            "liste",
+            json!([say(json!([{"text": "$event.x"}]))]),
+            written,
+        ),
+        (
+            "tum",
+            json!(["#yaz", {"#söyle": {"args": "$output"}}]),
+            written,
+        ),
+        (
+            "adim",
+            json!(["#yaz", say(json!({"text": "$steps.yaz.text"}))]),
+            written,
+        ),
+        (
+            "yan",
+            json!([
+                [say(json!({"text": "$event.x"})), "#yaz"],
+                say(json!({"text": "$steps.söyle"}))
+            ]),
+            written,
+        ),
+    ] {
+        std::fs::write(
+            root.join("workflows").join(format!("{name}.json")),
+            json!({"on": [{"event": format!("deneme.{name}")}], "steps": steps}).to_string(),
+        )
+        .unwrap();
+        let ws = itero::workspace::find(root).unwrap();
+        itero::engine::events::emit(
+            &ws,
+            &format!("deneme.{name}"),
+            Some(json!({"x": written, "a": "$$ITERO_TEST", "b": "_GIZLI"})),
+            NOW,
+        )
+        .unwrap();
+        let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
+        itero::engine::daemon::run_once(&ws, NOW.parse().unwrap(), exe).unwrap();
+        let j = Journal::open(&ws).unwrap();
+        let runs = j.runs().unwrap();
+        let run = runs.iter().find(|r| r.workflow == name).expect(name);
+        assert_eq!(
+            itero::engine::steps::status(&run.runtime),
+            "done",
+            "{name}: {:?}",
+            run.runtime.why
+        );
+        assert_eq!(run.runtime.state["output"], said, "{name}");
+    }
+    let ws = itero::workspace::find(root).unwrap();
+    let wal = ws.journal().with_extension("sqlite-wal");
+    for f in [ws.journal(), wal, root.join(".itero/itero.log")] {
+        let bytes = std::fs::read(&f).unwrap_or_default();
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains("gizli-değer"),
+            "{} holds the secret",
+            f.display()
+        );
+    }
+}
+
+#[test]
+fn bind_gives_the_secret_only_to_the_args_written_as_one() {
+    use itero::engine::steps::StepJob;
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
+    std::fs::write(d.path().join(".env"), "ITERO_TEST_ANAHTAR2=değer\n").unwrap();
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let job = StepJob {
+        path: vec![0],
+        action: "a".into(),
+        version: None,
+        data: json!({"yazılı": "$$ITERO_TEST_ANAHTAR2", "gelen": "$$ITERO_TEST_ANAHTAR2"})
+            .as_object()
+            .unwrap()
+            .clone(),
+        secrets: vec!["yazılı".into()],
+        waiting_since: None,
+        event: None,
+    };
+    let (_, input) = itero::engine::daemon::bind(&ws, &job).unwrap();
+    assert_eq!(input["args"]["yazılı"], "değer");
+    assert_eq!(input["args"]["gelen"], "$$ITERO_TEST_ANAHTAR2");
 }
