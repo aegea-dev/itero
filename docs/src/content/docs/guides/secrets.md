@@ -1,12 +1,40 @@
 ---
-title: Args and secrets
-description: Where an action's values come from, and how tokens and passwords stay out of files and the journal.
+title: Secrets and environment variables
+description: Where to keep a password, a token or a value that changes from one machine to another, and how an action gets it.
 ---
 
 An action needs values to work with: a host, a list of sites, a password.
 It gets them as its args, written in the step that runs it. Passwords and
 tokens are kept as secrets, out of every file; values that change from one
 machine to another go in the workspace's `.env`.
+
+## In a minute
+
+Keep a value in one of three places:
+
+| Where | For | How |
+|---|---|---|
+| the OS secret store | passwords, tokens, API keys | `itero secret API_KEY`, which asks for it |
+| the workspace's `.env` | values that change from one machine to another | a line `API_URL=https://api.example.com` |
+| the daemon's environment | what its shell has | `export API_URL=...` before `itero daemon` |
+
+Name it as `$$NAME` in a step's args, whichever place it is in:
+
+```json
+{ "#upload": { "args": { "key": "$$API_KEY", "url": "$$API_URL" } } }
+```
+
+The action reads them as its args, `$key` and `$url`. `actions/upload`:
+
+```sh
+#!/bin/sh
+printf 'header = "Authorization: Bearer %s"\n' "$key" |
+  curl -fsS -K - --data-binary @report.json "$url"
+```
+
+The workflow file holds only the names, so it can be shared. A service
+started at login has no variables from your shell but `PATH`
+([Start at login](/guides/service/)): keep values in the store or `.env`.
 
 ## Where a value comes from
 
@@ -96,6 +124,20 @@ A model's server takes its key the same way, as the `key` of an `#ai`
 step: `"key": "$$OPENAI_API_KEY"`
 ([A model behind a URL](/ai/workflows/#a-model-behind-a-url)). itero
 sends it only to that step's `url`.
+
+## What every action sees
+
+An action also inherits the daemon's own environment: `PATH`, `HOME` and
+whatever else its shell exported. So a value you `export` before
+`itero daemon` is visible to every action, named in its args or not. A
+value in the store or in `.env` reaches only the actions whose args name
+it, so prefer those for anything sensitive.
+
+`$$NAME` gives an action the value; what the action then does with it is
+its own. What it prints becomes its result, which is saved in the journal
+and the log, so an action should never print a secret.
+
+## Tests and CI
 
 `ITERO_NO_SECRET_STORE` set keeps itero away from the store: a `$$NAME`
 then comes from `.env` and the environment only, as in tests and CI.

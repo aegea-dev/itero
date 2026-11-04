@@ -45,4 +45,4 @@ IMAP_PASS: kept for workspace quiet-river in the OS secret store
 
 `$$NAME` is looked up in the workspace's own secrets, then the machine's,
 then the workspace's `.env`, then the daemon's environment. See
-[Args and secrets](/guides/secrets/).
+[Secrets and environment variables](/guides/secrets/).

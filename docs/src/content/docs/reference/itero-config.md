@@ -8,8 +8,8 @@ nearest one upwards, as npm does with `package.json`. Every key has a
 default, so `{}` is a whole workspace. The folders keep only the things
 themselves: workflow files, actions, connectors. It says what the
 workspace is and how it runs, never values to work on: those come from
-an event, a step's args, or the workspace's `.env` ([Args and
-secrets](/guides/secrets/)). A workflow reads it, read-only, as `$config`.
+an event, a step's args, or the workspace's `.env` ([Secrets and
+environment variables](/guides/secrets/)). A workflow reads it, read-only, as `$config`.
 
 ```json
 {

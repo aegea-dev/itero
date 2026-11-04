@@ -49,7 +49,7 @@ Each has parts of its own, listed under it.
   ([itero.config.json](/reference/itero-config/)).
 - Holds `workflows/`, `actions/`, `connectors/`.
 - `.env`: the user's own values (`NAME=value`), read as `$$NAME`; a secret
-  may be here or in the OS secret store ([Args and secrets](/guides/secrets/)).
+  may be here or in the OS secret store ([Secrets and environment variables](/guides/secrets/)).
 - Its own state in `.itero/`: journal, log (`itero.log`), port, memory,
   lock.
 - Run by one daemon at a time (a lock on `.itero/daemon.lock`).
@@ -82,7 +82,7 @@ See [Workflows](/guides/workflows/).
 
 - An executable file in `actions/`, any language (`#!/bin/sh`); its name
   is its file name.
-- Gets only its step's args: as environment variables (`$order`), and on
+- Gets only its step's args from the run: as environment variables (`$order`), and on
   stdin as `{"args": {...}}`.
 - A waiting action gets the event that matched it as `$event`.
 - Secrets and `.env` values as `$$NAME` in its args.

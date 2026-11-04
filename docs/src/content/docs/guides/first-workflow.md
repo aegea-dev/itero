@@ -64,7 +64,7 @@ its result, `true` or `false`: the next step has it as `$output`.
 | `"$event.url is down"` | a text with the event's `url` in it |
 | `{ "$output": false }` | holds when the step before printed exactly `false` |
 | `{ "has": "$event.url" }` | holds when the event has a `url` |
-| `"$$TOKEN"` | the secret `TOKEN`, or a value in `.env` ([Args and secrets](/guides/secrets/)) |
+| `"$$TOKEN"` | the secret `TOKEN`, or a value in `.env` ([Secrets and environment variables](/guides/secrets/)) |
 
 A condition is a field and the value it must have; a step whose `on` does
 not hold is skipped.

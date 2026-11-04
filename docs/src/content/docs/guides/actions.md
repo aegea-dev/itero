@@ -27,7 +27,7 @@ curl -fsS "https://carrier.example.com/ship?order=$order" | jq -r '.id'
   variable. A name that cannot be an environment variable, and a value
   over 64 KB (a whole web page, say), are on stdin only: the system would
   refuse to start the action with them. Secrets in its args arrive as
-  their values ([Args and secrets](/guides/secrets/)).
+  their values ([Secrets and environment variables](/guides/secrets/)).
 - **Its args again, as JSON on stdin**: `{"args": {...}}`, each with its
   type (`1042` stays a number).
 - **The event it waited for**, when it runs again after waiting: as
@@ -38,8 +38,9 @@ curl -fsS "https://carrier.example.com/ship?order=$order" | jq -r '.id'
   per workflow (for "the last mail seen").
 - **`$ITERO_WAITING_SINCE`**, when it runs again after waiting.
 
-It runs in the workspace, with the daemon's own `itero` first on its
-`PATH`, so an action can send an event: `itero ws emit` to its own
+It runs in the workspace, and inherits the daemon's environment
+([What every action sees](/guides/secrets/#what-every-action-sees)), with
+the daemon's own `itero` first on its `PATH`, so an action can send an event: `itero ws emit` to its own
 workspace, [`itero emit`](/commands/emit/#every-workspace) to every
 workspace on the machine's list.
 
