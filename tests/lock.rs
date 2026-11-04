@@ -151,3 +151,53 @@ fn any_file_can_be_locked_and_names_its_holder() {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+#[test]
+fn a_jobs_lock_is_refused_while_held_and_free_after() {
+    use itero::engine::lock::take_job;
+    let d = tempfile::tempdir().unwrap();
+    let held = take_job(d.path(), 7).unwrap().expect("free at first");
+    assert!(take_job(d.path(), 7).unwrap().is_none(), "held");
+    assert!(
+        take_job(d.path(), 8).unwrap().is_some(),
+        "each job has its own"
+    );
+    drop(held);
+    // a process this binary starts meanwhile holds a copy for a moment
+    let t = Instant::now();
+    while take_job(d.path(), 7).unwrap().is_none() {
+        assert!(t.elapsed() < Duration::from_secs(1), "not freed");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn the_lock_files_of_jobs_done_are_forgotten_and_every_failure_said() {
+    use itero::engine::lock::{forget_jobs, take_job};
+    let d = tempfile::tempdir().unwrap();
+    for seq in [3, 4, 5, 6, 7] {
+        drop(take_job(d.path(), seq).unwrap().unwrap());
+    }
+    let jobs = d.path().join(".itero/jobs");
+    std::fs::write(jobs.join("notlar.txt"), "").unwrap();
+    let left = || {
+        let mut n: Vec<String> = std::fs::read_dir(&jobs)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        n.sort();
+        n
+    };
+    // 4 still waits; 6 and 7 cannot be told: both said, the rest removed
+    let err = forget_jobs(d.path(), &|seq| match seq {
+        4 => Ok(false),
+        6 | 7 => Err(format!("iş {seq}: bilinmiyor")),
+        _ => Ok(true),
+    })
+    .unwrap_err();
+    assert!(
+        err.contains("iş 6: bilinmiyor") && err.contains("iş 7: bilinmiyor"),
+        "{err}"
+    );
+    assert_eq!(left(), ["4.lock", "6.lock", "7.lock", "notlar.txt"]);
+}
