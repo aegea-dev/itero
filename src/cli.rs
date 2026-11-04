@@ -720,6 +720,10 @@ fn dispatch(cli: Cli) -> Result<()> {
             use crate::engine::daemon;
             let ws = workspace()?;
             let exe = std::env::current_exe()?;
+            // one daemon per journal, one pass too: held for its life
+            let me = daemon::Daemon::current();
+            let lock = crate::engine::lock::take(&ws, &format!("{}, pid {}", me.name, me.pid))
+                .map_err(|e| anyhow!(e))?;
             if once {
                 let at = match &now {
                     Some(t) => t
@@ -733,10 +737,6 @@ fn dispatch(cli: Cli) -> Result<()> {
                 return Ok(());
             }
             use crate::engine::http;
-            // one daemon per journal: held for this daemon's life
-            let me = daemon::Daemon::current();
-            let lock = crate::engine::lock::take(&ws, &format!("{}, pid {}", me.name, me.pid))
-                .map_err(|e| anyhow!(e))?;
             // its port first: a daemon that cannot listen starts nothing
             let listening = if no_serve {
                 None
