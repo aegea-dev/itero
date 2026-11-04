@@ -292,3 +292,157 @@ fn a_watchdog_over_every_workspace_restarts_its_daemon() {
     let second = wait("a new daemon", &|| pid().filter(|p| *p != first));
     assert_ne!(first, second);
 }
+
+#[cfg(unix)]
+mod follows {
+    use super::Group;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    /// A copy of `from` at `dir/itero`, as an install puts one: a new file
+    /// renamed over the old.
+    fn install(dir: &Path, from: &Path) {
+        let tmp = dir.join(".itero.new");
+        std::fs::copy(from, &tmp).unwrap();
+        std::fs::rename(&tmp, dir.join("itero")).unwrap();
+    }
+
+    /// A workspace with no workflows on a free port, and a watchdog over it
+    /// started as `exe`, checking every second, its lines in `log`.
+    fn start(d: &Path, exe: &Path, log: &Path) -> (u16, Group) {
+        use std::os::unix::process::CommandExt;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        std::fs::write(d.join("itero.config.json"), format!("{{\"port\": {port}}}")).unwrap();
+        let mut c = Command::new(exe);
+        c.args([
+            "watchdog",
+            "--check-every",
+            "1",
+            "--log",
+            log.to_str().unwrap(),
+        ])
+        .current_dir(d)
+        .env("ITERO_NO_SECRET_STORE", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+        (port, Group(c.spawn().unwrap()))
+    }
+
+    /// The pid of the daemon answering on `port`.
+    fn daemon(port: u16) -> Option<u64> {
+        let client = itero::net::client(Duration::from_secs(2)).ok()?;
+        let v: serde_json::Value = client
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .send()
+            .ok()?
+            .json()
+            .ok()?;
+        v["pid"].as_u64()
+    }
+
+    fn wait(log: &Path, what: &str, f: &dyn Fn() -> Option<u64>) -> u64 {
+        let until = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(v) = f() {
+                return v;
+            }
+            assert!(
+                Instant::now() < until,
+                "timed out waiting for {what}; the watchdog's log:\n{}",
+                std::fs::read_to_string(log).unwrap_or_default()
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    #[test]
+    fn a_watchdog_runs_the_itero_installed_in_its_place() {
+        let (d, bin, logs) = (
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+        );
+        let itero = Path::new(env!("CARGO_BIN_EXE_itero"));
+        install(bin.path(), itero);
+        let log = logs.path().join("watchdog.log");
+        let (port, mut watchdog) = start(d.path(), &bin.path().join("itero"), &log);
+        let first = wait(&log, "the daemon", &|| daemon(port));
+        install(bin.path(), itero);
+        let second = wait(&log, "the new itero's daemon", &|| {
+            daemon(port).filter(|p| *p != first)
+        });
+        assert_ne!(first, second);
+        let said = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            watchdog.0.try_wait().unwrap().is_none(),
+            "the watchdog ended:\n{said}"
+        );
+        assert!(
+            said.contains("itero changed:") && said.contains("running it"),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_new_file_that_does_not_run_leaves_the_daemon_as_it_was() {
+        use std::os::unix::fs::PermissionsExt;
+        let (d, bin, logs) = (
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+        );
+        install(bin.path(), Path::new(env!("CARGO_BIN_EXE_itero")));
+        let log = logs.path().join("watchdog.log");
+        let (port, _watchdog) = start(d.path(), &bin.path().join("itero"), &log);
+        let first = wait(&log, "the daemon", &|| daemon(port));
+        let tmp = bin.path().join(".itero.new");
+        std::fs::write(&tmp, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&tmp, bin.path().join("itero")).unwrap();
+        // three checks
+        std::thread::sleep(Duration::from_millis(3500));
+        let said = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(daemon(port), Some(first), "{said}");
+        assert_eq!(
+            said.matches("does not run").count(),
+            1,
+            "said once:\n{said}"
+        );
+    }
+
+    #[test]
+    fn a_new_file_a_new_inode_or_a_new_time_is_another_itero() {
+        use itero::engine::watchdog::{Binary, changed};
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("itero");
+        std::fs::write(&f, "bir").unwrap();
+        let old = Binary::now(&f).unwrap();
+        assert!(!changed(&old, &Binary::now(&f).unwrap()), "the same file");
+        // a new file renamed over it: a new inode
+        std::fs::write(d.path().join("yeni"), "bir").unwrap();
+        std::fs::rename(d.path().join("yeni"), &f).unwrap();
+        assert!(changed(&old, &Binary::now(&f).unwrap()), "a new inode");
+        // written in place: a new time
+        let old = Binary::now(&f).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(&f, "iki").unwrap();
+        assert!(changed(&old, &Binary::now(&f).unwrap()), "a new time");
+        // a link moved to another file, as Homebrew does
+        let link = d.path().join("bağ");
+        std::os::unix::fs::symlink(&f, &link).unwrap();
+        let old = Binary::now(&link).unwrap();
+        std::fs::write(d.path().join("başka"), "üç").unwrap();
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(d.path().join("başka"), &link).unwrap();
+        assert!(
+            changed(&old, &Binary::now(&link).unwrap()),
+            "the link moved"
+        );
+    }
+}

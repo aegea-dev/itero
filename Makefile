@@ -21,10 +21,17 @@ build: ## Build the release binary (target/release/itero)
 build-dev: ## Build the debug binary (target/debug/itero)
 	$(CARGO) build
 
+# The tests run with a state and a cache folder of their own, new for each
+# run in the system's temporary folder: never this machine's daemon, its
+# list of workspaces or its port, which change as itero runs here. The
+# template has its X's, which GNU's mktemp needs (BSD's does not).
+ISOLATED = tmp=$$(mktemp -d "$${TMPDIR:-/tmp}/itero-test.XXXXXX") && \
+	XDG_STATE_HOME="$$tmp/state" XDG_CACHE_HOME="$$tmp/cache"
+
 # --no-fail-fast: one failing test binary must not hide the rest.
 .PHONY: test
 test: ## Run the full test suite
-	$(CARGO) test --workspace --no-fail-fast
+	$(ISOLATED) $(CARGO) test --workspace --no-fail-fast
 
 # rustfmt only visits files reachable through `mod`, so `cargo fmt` silently
 # skips a file not yet wired in. Handing every source file to rustfmt closes
@@ -71,7 +78,7 @@ coverage: ## Measure test coverage per file (cargo-llvm-cov), with an HTML repor
 	rustup component add llvm-tools --toolchain $(TOOLCHAIN)
 	if [ -f "$(ITERO_AI_TEST_MODEL)" ]; then export ITERO_AI_TEST_MODEL="$(ITERO_AI_TEST_MODEL)"; \
 	else echo "no Qwen3.5-4B at $(ITERO_AI_TEST_MODEL): itero-ai's engine is not measured"; fi; \
-	$(CARGO) llvm-cov --workspace --no-fail-fast --html
+	$(ISOLATED) $(CARGO) llvm-cov --workspace --no-fail-fast --html
 	$(CARGO) llvm-cov --workspace --no-run
 
 .PHONY: verify
@@ -191,6 +198,15 @@ test-docker: ## Run the tests that need Docker: container actions, IMAP and POP3
 .PHONY: test-formula
 test-formula: ## Install the formula from a local tap (macOS; changes Homebrew, undone after)
 	sh scripts/test-formula.sh
+
+# Every example's own tests (each examples/<name>/test), on the itero just
+# built rather than the one on PATH, with folders of their own as make test
+# has; each one's result is said, then the failing ones. Needs Bun.
+.PHONY: test-examples
+test-examples: build-dev ## Run every example's own tests on the itero just built (needs Bun)
+	@failed=; for t in examples/*/test; do e=$${t%/test}; echo "== $$e"; \
+	  ( cd $$e && $(ISOLATED) ITERO_BIN="$(CURDIR)/target/debug/itero" bun test ) || failed="$$failed $${e#examples/}"; \
+	done; [ -z "$$failed" ] || { echo "examples failing:$$failed" >&2; exit 1; }
 
 .PHONY: install
 install: ## Install itero to ~/.cargo/bin, and on macOS Itero.app to ~/Applications
