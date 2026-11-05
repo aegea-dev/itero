@@ -339,8 +339,11 @@ With `{"count": 3}` as the step before's result and `{"folder":
 - A value inside text is written as itself when it is text, as JSON
   otherwise (`3`, `true`, `[1,2]`). One that is not there, `null` or
   `""` is nothing: `"answer: $output.answer"` is "answer: ".
-- A field's name is letters, digits, `_` or `-`; it ends at anything
-  else: `"$output.count."` is the count and a full stop.
+- A field's name is letters, digits or `_`; it ends at anything else:
+  `"$output.count."` is the count and a full stop, `"$event.from-$event.to"`
+  two values with a dash between.
+- A `_` also finds a field with a `-` there, when there is none by the name as
+  written: `$event.headers.x_github_event` reads a webhook's `x-github-event`.
 - A dot reads a field when the value is an object that has it; otherwise
   the dot is text: `"$event.file.txt"`, with `file` set to `report`, is
   "report.txt".

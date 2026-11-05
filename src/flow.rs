@@ -470,13 +470,27 @@ pub fn holds(on: &On, state: &Map<String, Value>, defined: &dyn Fn(&str) -> bool
     }) && on.equal.iter().all(|(k, v)| lookup(state, k) == Some(v))
 }
 
+/// A field by the name a path writes: that name, else one with a `-` where
+/// it writes `_`. A `-` ends a name inside text, and names from outside hold
+/// them (a webhook's `x-github-event`): `$event.headers.x_github_event`.
+fn field<'o>(o: &'o Map<String, Value>, name: &str) -> Option<&'o Value> {
+    o.get(name).or_else(|| {
+        if !name.contains('_') {
+            return None;
+        }
+        o.iter()
+            .find(|(k, _)| k.contains('-') && k.replace('-', "_") == name)
+            .map(|(_, v)| v)
+    })
+}
+
 /// A value by its path from a root: `event.order`, `output.total`,
 /// `steps.fetch-rates.price`; fields at any depth.
 pub fn lookup<'s>(state: &'s Map<String, Value>, path: &str) -> Option<&'s Value> {
     let mut parts = path.split('.');
     let mut at = state.get(parts.next()?)?;
     for p in parts {
-        at = at.as_object()?.get(p)?;
+        at = field(at.as_object()?, p)?;
     }
     Some(at)
 }
@@ -500,7 +514,7 @@ fn find<'s>(state: &'s Map<String, Value>, path: &str) -> Found<'s> {
     let mut first = true;
     while let Some(p) = parts.next() {
         match at.as_object() {
-            Some(o) => match o.get(p) {
+            Some(o) => match field(o, p) {
                 Some(v) => at = v,
                 None => return Found::Missing,
             },

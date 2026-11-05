@@ -1195,3 +1195,42 @@ fn a_number_names_a_step_that_is_there() {
     let Step::Side(g) = &f.error[0] else { panic!() };
     assert_eq!(g.fail, Some(Fail::Steps(vec!["#c/1".into()])));
 }
+
+/// A name in a path cannot hold a `-`, where it would end the name inside
+/// text; names from outside do, as a webhook's headers.
+#[test]
+fn an_underscore_in_a_path_also_finds_a_dash() {
+    let state = json!({
+        "event": {
+            "headers": { "x-github-event": "push", "çift-tire_alt": 1 },
+            "a-b": "tireli",
+            "c_d": "alt çizgili",
+            "c-d": "tireli",
+            "düz": "metin"
+        }
+    });
+    let state = state.as_object().unwrap().clone();
+    let whole = |path: &str| fill(json!(format!("${path}")), &state);
+    assert_eq!(whole("event.headers.x_github_event"), "push");
+    assert_eq!(whole("event.headers.çift_tire_alt"), 1);
+    assert_eq!(whole("event.a_b"), "tireli");
+    // the name as written comes first
+    assert_eq!(whole("event.c_d"), "alt çizgili");
+    // and it goes one way: no field by that name, nothing else
+    assert_eq!(whole("event.yok_alan"), Value::Null);
+    // inside text too; a `-` still ends a name there
+    assert_eq!(
+        fill(
+            json!("$event.headers.x_github_event: $event.a_b-son"),
+            &state
+        ),
+        "push: tireli-son"
+    );
+    assert_eq!(fill(json!("$event.a-b"), &state), "-b");
+    // and in a condition
+    assert_eq!(
+        flow::lookup(&state, "event.headers.x_github_event"),
+        Some(&json!("push"))
+    );
+    assert_eq!(flow::lookup(&state, "event.düz_yok"), None);
+}
