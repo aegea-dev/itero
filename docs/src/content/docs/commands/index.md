@@ -21,6 +21,7 @@ and every command that prints something takes `--json`.
 | [`secret`](/commands/secret/) | keeps a secret for every workspace, in the OS secret store |
 | [`ai`](/commands/ai/) | the local models `#ai` steps use |
 | [`watch`](/commands/watch/) | for connectors: a line per change to a file or folder |
+| [`webhook`](/commands/webhook/) | for connectors: takes webhooks from outside, each checked against a secret |
 | [`completion`](/commands/completion/) | Tab completion for your shell |
 | [`help`](/commands/help/) | the commands, or one command's options |
 

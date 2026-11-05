@@ -11,7 +11,7 @@ workspace changes or turns them off the same way.
 ## Events from the daemon
 
 Their types start with `itero.`, which only itero may send (a click on a
-notification comes through Itero.app):
+notification comes through Itero.app, a webhook through `itero webhook`):
 
 | Type | When | Data |
 |---|---|---|
@@ -23,6 +23,7 @@ notification comes through Itero.app):
 | `itero.space.full` | `.itero/` is past its `space` limit | `used`, `limit` |
 | `itero.log.full` | the log is past its `log` limit | `path`, `size`, `limit` |
 | `itero.notification.clicked` | a notification from `#notify` was clicked, on macOS ([`#notify`](/guides/actions/#built-in)) | `notification`, `answer`, `workflow`, `data` |
+| `itero.webhook.received` | a webhook passed its check; starts workflows, reaches no waiting step ([Webhooks](/guides/webhooks/)) | `path`, `headers`, `body` |
 | `itero.ai.started` | itero-ai, the local model's server, started for an `#ai` step ([Running and troubleshooting](/ai/running/)) | `socket`, `seconds` |
 | `itero.ai.start.failed` | a start of itero-ai never answered | `why`, `seconds` |
 | `itero.ai.stopped` | it exited after its idle time | `after` |

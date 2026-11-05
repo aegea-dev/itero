@@ -1,0 +1,3 @@
+{ "on": [{ "event": "app.ask" }],
+  "steps": [{ "#ask": { "args": { "to": "$event.to" } } }],
+  "timeout": "1h" }

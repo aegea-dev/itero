@@ -27,13 +27,20 @@ uuid = { version = "~1.28.0", features = ["v7"] }
 # works. ring is installed as the provider in net::client.
 reqwest = { version = "~0.13.5", default-features = false, features = ["blocking", "json", "rustls-no-provider", "http2"] }
 rustls = { version = "~0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+# HMAC for webhooks: already here through rustls
+ring = "~0.17.14"
+base64 = "~0.23.1"
+form_urlencoded = "~1.2.2"
 wait-timeout = "~0.2.1"
 keyring = "~4.2.0"
 rpassword = "~7.5.4"
 croner = "~4.0.1"
 service-manager = "~0.11.0"
 axum = "~0.8.9"
-tokio = { version = "~1.53.1", features = ["rt-multi-thread", "net", "macros", "sync"] }
+tokio = { version = "~1.53.1", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
+# itero webhook's listener: axum's own serve has no limit on a connection
+hyper = { version = "~1.12.0", features = ["http1", "server"] }
+hyper-util = { version = "~0.1.21", features = ["tokio", "service"] }
 # axum's own: a request to /w/<name>/ handed to that workspace's routes
 tower = { version = "~0.5.3", features = ["util"] }
 clap_complete = { version = "~4.6.11", features = ["unstable-dynamic"] }

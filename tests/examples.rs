@@ -181,3 +181,97 @@ fn the_beacon_without_jq_says_it_needs_jq() {
         );
     }
 }
+
+/// A daemon the test started, gone with the test, also when it fails.
+struct Daemon(std::process::Child);
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = (self.0.kill(), self.0.wait());
+    }
+}
+
+/// The workspace's runs of `workflow`.
+fn runs_of(ws: &Path, workflow: &str) -> Vec<serde_json::Value> {
+    let o = itero(ws, &["ws", "wf", "runs", "--json"]);
+    let runs: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    let all = runs.as_array().unwrap().iter();
+    all.filter(|r| r["workflow"] == workflow).cloned().collect()
+}
+
+fn until(what: &str, done: impl Fn() -> bool) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !done() {
+        assert!(std::time::Instant::now() < end, "never: {what}");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn the_webhook_example_forwards_a_reply_to_the_step_waiting_for_it() {
+    use std::io::{Read, Write};
+    let d = tempfile::tempdir().unwrap();
+    let ws = copy("webhook", d.path());
+    std::fs::write(ws.join(".env"), "APP_TOKEN=bir-uzun-gizli-değer\n").unwrap();
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    // the example's connector, on a free port
+    let script = ws.join("connectors/webhook/webhook.listen");
+    let text = std::fs::read_to_string(&script)
+        .unwrap()
+        .replace("8788", &port.to_string());
+    std::fs::write(&script, text).unwrap();
+    let _daemon = Daemon(
+        std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .arg("daemon")
+            .current_dir(&ws)
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    until("it listens", || {
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+    });
+    itero(
+        &ws,
+        &["ws", "emit", "app.ask", r#"{"to": "+905550000000"}"#],
+    );
+    until("the step waits", || {
+        runs_of(&ws, "ask").iter().any(|r| r["status"] == "waiting")
+    });
+    let send = |body: &str| {
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let raw = format!(
+            "POST /app HTTP/1.1\r\nHost: a\r\nAuthorization: Bearer bir-uzun-gizli-değer\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        s.write_all(raw.as_bytes()).unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        assert!(out.starts_with("HTTP/1.1 200"), "{out}");
+    };
+    let reply = r#"{"id": "m1", "from": "+905550000000", "text": "günaydın"}"#;
+    let forwarded = |n: usize| {
+        let forward = runs_of(&ws, "forward");
+        forward.len() == n && forward.iter().all(|r| r["status"] == "done")
+    };
+    send(reply);
+    until("the first delivery's run", || forwarded(1));
+    until("the step has its reply", || {
+        runs_of(&ws, "ask").iter().any(|r| r["status"] == "done")
+    });
+    send(reply); // a service sends again when a delivery failed
+    until("the second delivery's run", || forwarded(2));
+    let log = std::fs::read_to_string(ws.join(".itero/itero.log")).unwrap();
+    let sent = log
+        .lines()
+        .filter(|l| l.contains(r#""type":"app.message.received""#))
+        .count();
+    assert_eq!(sent, 1, "the id was seen: {log}");
+}

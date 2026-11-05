@@ -106,7 +106,8 @@ See [Actions](/guides/actions/).
 - Its stdin closes when the daemon goes: then it stops.
 - Its args come from the `on` entries of the workflows that listen to it;
   its stderr goes to the daemon's (`daemon.log` under the service).
-- `itero watch <path>` for one that watches files.
+- `itero watch <path>` for one that watches files; `itero webhook` for one
+  that takes requests from outside ([Webhooks](/guides/webhooks/)).
 
 See [Connectors](/guides/connectors/).
 
