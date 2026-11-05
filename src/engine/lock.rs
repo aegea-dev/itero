@@ -125,6 +125,15 @@ pub fn take_job(root: &Path, seq: i64) -> Result<Option<File>, String> {
     }
 }
 
+/// Waits, for `wait` at most, until nothing holds job `seq`'s lock. One held
+/// past that is a copy still running: the next pass looks again.
+pub fn wait_for_job(root: &Path, seq: i64, wait: std::time::Duration) {
+    let end = std::time::Instant::now() + wait;
+    while matches!(take_job(root, seq), Ok(None)) && std::time::Instant::now() < end {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 /// Removes the lock files of the jobs that `done` says can never start
 /// again; one that may stays, since a daemon would lock a new file of its
 /// name while a copy holds the old one. Says every file it could not remove

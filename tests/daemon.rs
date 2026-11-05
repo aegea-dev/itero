@@ -73,24 +73,6 @@ impl Ws {
         run_once(&self.ws, now.parse().unwrap(), exe()).unwrap()
     }
 
-    /// Passes until no job waits for a copy of itself to end, as the daemon's
-    /// next pass looks again. A step just killed holds its job's lock until
-    /// its processes are gone, so its next try may not start in this pass.
-    fn pass_all(&self, now: &str) -> Pass {
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        loop {
-            let p = self.pass(now);
-            if p.elsewhere == 0 {
-                return p;
-            }
-            assert!(
-                std::time::Instant::now() < end,
-                "a copy of a job never ended"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-    }
-
     /// When the daemon next has something to do with no message.
     fn next_due(&self, now: &str) -> Option<DateTime<Utc>> {
         next_due(&self.ws, now.parse().unwrap()).unwrap()
@@ -677,7 +659,7 @@ fn a_step_quiet_past_its_limit_is_stopped_and_run_again() {
     ws.action("sessiz", "echo başladı >> denemeler.txt; sleep 30");
     ws.emit("order.placed", json!({"order": 1}));
     let started = std::time::Instant::now();
-    ws.pass_all(NOW);
+    ws.pass(NOW);
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
     assert_eq!(ws.statuses(), vec!["error"]);
     // under load, a try may be stopped before the action's first line
@@ -700,8 +682,8 @@ fn an_actions_own_quiet_overrides_the_workspaces() {
     ws.action("düşünen", "sleep 2; echo düşündü");
     ws.action("sessiz", "sleep 30");
     ws.emit("order.placed", json!({"order": 1}));
-    ws.pass_all(NOW);
-    ws.pass_all(NOW);
+    ws.pass(NOW);
+    ws.pass(NOW);
     assert_eq!(ws.statuses(), vec!["error"]);
     let run = &ws.runs()[0];
     assert_eq!(
@@ -785,7 +767,7 @@ fn a_step_past_its_most_is_stopped_even_while_it_prints() {
         "while true; do echo 'hâlâ çalışıyor' >&2; sleep 0.1; done",
     );
     ws.emit("order.placed", json!({"order": 1}));
-    ws.pass_all(NOW);
+    ws.pass(NOW);
     assert_eq!(ws.statuses(), vec!["error"]);
     assert_eq!(
         ws.runs()[0].runtime.why.as_deref(),
@@ -1916,6 +1898,29 @@ fn a_run_stopped_with_no_daemon_is_stopped_by_the_next() {
         itero::engine::events::stop_run(&ws.ws, "yok", NOW).unwrap(),
         itero::engine::events::StopAsked::Missing
     ));
+}
+
+#[test]
+fn a_killed_step_is_tried_again_in_the_same_pass_once_its_processes_are_gone() {
+    let ws = Ws::with(r#"{"limits": {"quiet": "1s"}}"#);
+    ws.flow(
+        "sessiz",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#sessiz"]}),
+    );
+    // a process in a group of its own outlives the kill by a moment, holding
+    // the job's lock as a process that is dying does
+    ws.action(
+        "sessiz",
+        "perl -e 'setpgrp(0, 0); sleep 2' >/dev/null 2>&1 &\nsleep 30",
+    );
+    ws.emit("order.placed", json!({"order": 1}));
+    let p = ws.pass(NOW);
+    assert_eq!(p.elsewhere, 0, "{:#?}", ws.log());
+    assert_eq!(ws.statuses(), vec!["error"]);
+    assert_eq!(
+        ws.runs()[0].runtime.why.as_deref(),
+        Some("lost 3 times: quiet for 1s")
+    );
 }
 
 #[test]

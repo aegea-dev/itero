@@ -579,6 +579,7 @@ impl<'s, 'e> Workers<'s, 'e> {
         let id = r.event.data["run"].as_str().unwrap_or("").to_string();
         let action = r.event.data["job"]["action"].as_str().unwrap_or("?");
         let (name, root) = (format!("#{action}"), root.to_path_buf());
+        let job_root = root.clone();
         // what the step says last on stderr, while it runs
         let said = Arc::new(move |text: &str| {
             let at = stamp(Utc::now());
@@ -590,6 +591,11 @@ impl<'s, 'e> Workers<'s, 'e> {
                 Err(why) => Err(Failure::Error(why.clone())),
             }))
             .unwrap_or_else(|_| Err(Failure::Error("the worker's runner panicked".into())));
+            // a job lost was killed, and has not ended until its processes
+            // are gone: the next try would find them still holding its lock
+            if matches!(outcome, Err(Failure::Lost(_))) {
+                super::lock::wait_for_job(&job_root, seq, READERS);
+            }
             // the pass holds the receiver until every worker has sent
             let _ = tx.send((seq, outcome));
         });
@@ -1560,7 +1566,8 @@ fn stop(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-/// How long a worker that was killed is given to tell what it said before.
+/// How long a worker that was killed is given to tell what it said before,
+/// and its processes to be gone.
 const READERS: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// How often a running worker looks whether its step was stopped.
