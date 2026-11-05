@@ -1409,6 +1409,7 @@ version = "0.30.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "block2",
  "chrono",
  "chrono-tz",
@@ -1416,6 +1417,7 @@ dependencies = [
  "clap_complete",
  "croner",
  "dispatch2",
+ "form_urlencoded",
  "futures-core",
  "humantime",
  "itero-ai-index",
@@ -1429,6 +1431,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-user-notifications",
  "reqwest",
+ "ring",
  "rpassword",
  "rusqlite",
  "rustls",

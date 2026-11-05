@@ -7,7 +7,8 @@
 //! - its stderr goes to the daemon's log;
 //! - `itero` on its PATH is the daemon's own.
 //!
-//! `itero watch <path>` is there for connectors that watch a file or folder.
+//! `itero watch <path>` is there for connectors that watch a file or folder;
+//! `itero webhook` for those that take requests from outside.
 use crate::flow::Listen;
 use crate::workspace::Workspace;
 use anyhow::{Context, Result};
@@ -17,6 +18,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 pub mod supervise;
+pub mod webhook;
 
 /// A copy of a connector: its file, run with one set of args. The daemon
 /// runs one for each different set the workflows' `on` entries give it.
