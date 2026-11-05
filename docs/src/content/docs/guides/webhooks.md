@@ -31,8 +31,9 @@ public HTTPS address and sends requests on to this port:
 
 - [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/):
   `cloudflared tunnel --url http://127.0.0.1:8788`, for a quick one;
-- [Tailscale Funnel](https://tailscale.com/kb/1223/funnel): `tailscale funnel 8788`,
-  once HTTPS and Funnel are enabled for your tailnet in its admin console;
+- [Tailscale Funnel](https://tailscale.com/kb/1223/funnel): `tailscale funnel 8788`.
+  The first time, enable HTTPS Certificates in its admin console's DNS page; then
+  it prints a link that enables Funnel for your tailnet;
 - [Caddy](https://caddyserver.com/), on a server with a public address:
   `reverse_proxy 127.0.0.1:8788`.
 

@@ -17,12 +17,13 @@ connector, on port 8788:
     itero daemon
 
 Give that port a public HTTPS address. With [Tailscale
-Funnel](https://tailscale.com/kb/1223/funnel), once HTTPS and Funnel are enabled
-for your tailnet in its admin console:
+Funnel](https://tailscale.com/kb/1223/funnel):
 
     tailscale funnel 8788
 
-Point it only at this port, never at the daemon's own. It stops with Ctrl-C.
+The first time, enable HTTPS Certificates in the admin console's DNS page; then
+it prints a link that enables Funnel for your tailnet. Point it only at this
+port, never at the daemon's own. It stops with Ctrl-C.
 
 In the repository's Settings, under Webhooks, add one:
 
