@@ -230,7 +230,13 @@ fn a_child_that_lost_a_race_runs_on_to_its_end_and_its_result_reaches_nothing() 
     w.flow("stok", json!({ "steps": ["raf"] }));
     w.flow("raf", json!({ "steps": ["#yavaş"] }));
     w.action("hızlı", "echo hızlı");
-    w.action("yavaş", "sleep 2; echo geç >> sonuç.log; echo geç");
+    // it ends only after the parent has gone on, however long that takes;
+    // a parent that waited for it would be seen by the order below
+    w.action(
+        "yavaş",
+        "i=0; until grep -q sonra sonuç.log 2>/dev/null || [ $i -ge 300 ]; do \
+         sleep 0.1; i=$((i+1)); done; echo geç >> sonuç.log; echo geç",
+    );
     w.action("sonra", "echo sonra >> sonuç.log");
     w.emit("yarış.başladı", json!({}));
     w.pass();
