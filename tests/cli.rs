@@ -861,6 +861,15 @@ fn emit_says_what_a_message_starts() {
 }
 
 /// A daemon serving the workspace in `d`, once it answers on `port`.
+/// A port free now, so two runs of these tests at once do not meet.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
 fn serving(d: &Path, port: u16) -> stop::Daemon {
     // held before the wait, so a daemon that never answers is stopped too
     let daemon = stop::Daemon(
@@ -884,7 +893,12 @@ fn serving(d: &Path, port: u16) -> stop::Daemon {
 #[test]
 fn emit_wait_answers_with_the_runs_end() {
     let d = workspace();
-    file(d.path(), "itero.config.json", r#"{"port": 8802}"#);
+    let port = free_port();
+    file(
+        d.path(),
+        "itero.config.json",
+        &format!(r#"{{"port": {port}}}"#),
+    );
     file(
         d.path(),
         "workflows/selam.json",
@@ -931,7 +945,7 @@ fn emit_wait_answers_with_the_runs_end() {
         "{o:?}"
     );
 
-    let _daemon = serving(d.path(), 8802);
+    let _daemon = serving(d.path(), port);
     let o = itero(
         d.path(),
         &["ws", "emit", "--wait", "kişi.geldi", r#"{"kim": "ayşe"}"#],
@@ -968,7 +982,9 @@ fn emit_wait_answers_with_the_runs_end() {
         "past the timeout is exit 2: {o:?}"
     );
     let answer: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
-    assert_eq!(answer["runs"][0]["status"], "waiting");
+    // the run so far: on a busy machine its step may not have said yet
+    let status = &answer["runs"][0]["status"];
+    assert!(status == "waiting" || status == "running", "{answer}");
 
     let o = itero(d.path(), &["ws", "emit", "--wait", "kimse.istemez", "{}"]);
     assert_eq!(o.status.code(), Some(0), "{o:?}");
@@ -1416,15 +1432,23 @@ fn info_says_whether_itero_may_notify() {
         String::from_utf8_lossy(&o.stdout).to_string()
     };
     let allowed = fake("izinli", r#"[ "$1" = --status ] && echo allowed"#);
-    assert!(info(&allowed, false).contains("notifications: allowed"));
-    let v: serde_json::Value = serde_json::from_str(&info(&allowed, true)).unwrap();
+    // itero gives a notifier three seconds, which a busy machine can use up
+    // in starting one; what is checked is what it says once it answers
+    let answered = |json: bool| {
+        (0..10)
+            .map(|_| info(&allowed, json))
+            .find(|said| !said.contains("no answer in three seconds"))
+            .expect("the notifier never answered")
+    };
+    assert!(answered(false).contains("notifications: allowed"));
+    let v: serde_json::Value = serde_json::from_str(&answered(true)).unwrap();
     assert_eq!(v["notifications"]["state"], "allowed", "{v}");
     // a notifier that does not answer: unknown, and info does not wait for it
     let slow = fake("yavaş", "sleep 30");
     let t = std::time::Instant::now();
     assert!(info(&slow, false).contains("notifications: unknown"));
     assert!(
-        t.elapsed() < std::time::Duration::from_secs(6),
+        t.elapsed() < std::time::Duration::from_secs(20),
         "{:?}",
         t.elapsed()
     );

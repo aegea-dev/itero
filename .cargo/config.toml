@@ -1,0 +1,6 @@
+# One test at a time: tests start daemons and workers, and side by side they
+# slow each other past what a test waits for, and a process being started
+# holds a copy of every open file, a lock among them, until it runs its own
+# program. It takes the suite from about two minutes to about four.
+[env]
+RUST_TEST_THREADS = "1"
