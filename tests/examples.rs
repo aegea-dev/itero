@@ -369,3 +369,197 @@ fn the_github_webhook_example_tells_of_a_push_once() {
     assert!(!told.contains(secret), "{told}");
     assert_eq!(runs_of(&ws, "tell").len(), 1);
 }
+
+/// A stand-in for an HTTP server: answers each request, in turn, with the
+/// next of `answers` (a status and a body); what it was sent, its head and
+/// body, comes back through the handle.
+fn http_server(
+    answers: Vec<(u16, &'static str)>,
+) -> (u16, std::thread::JoinHandle<Vec<(String, String)>>) {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        let mut got = Vec::new();
+        listener.set_nonblocking(true).unwrap();
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        for (status, body) in answers {
+            // none in 30s: what came so far, for the test to fail on
+            let s = loop {
+                match listener.accept() {
+                    Ok((s, _)) => break s,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() > end {
+                            return got;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            };
+            s.set_nonblocking(false).unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut head = String::new();
+            loop {
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+                head.push_str(&line);
+            }
+            let len = head
+                .lines()
+                .find_map(|l| {
+                    l.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|v| v.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            let mut sent = vec![0; len];
+            r.read_exact(&mut sent).unwrap();
+            let mut w = s;
+            write!(
+                w,
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            got.push((head, String::from_utf8(sent).unwrap()));
+        }
+        got
+    });
+    (port, handle)
+}
+
+/// An example's action run by hand, its env given: whether it succeeded,
+/// its stdout and its stderr.
+fn try_action(ws: &Path, name: &str, env: &[(&str, &str)]) -> (bool, String, String) {
+    let o = std::process::Command::new(ws.join("actions").join(name))
+        .current_dir(ws)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap())
+        .envs(env.iter().copied())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    (
+        o.status.success(),
+        String::from_utf8(o.stdout).unwrap(),
+        String::from_utf8(o.stderr).unwrap(),
+    )
+}
+
+#[test]
+fn the_messages_push_sends_to_its_topic_and_says_why_a_server_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = copy("messages", d.path());
+    let (port, server) = http_server(vec![
+        (200, r#"{"id":"m1","event":"message"}"#),
+        (
+            400,
+            r#"{"code":40007,"error":"invalid priority parameter"}"#,
+        ),
+    ]);
+    let url = format!("http://127.0.0.1:{port}");
+    let env = [
+        ("server", url.as_str()),
+        ("to", "itero-uzun-rastgele-konu"),
+        ("subject", "Uyarı: disk"),
+        ("text", "Disk dolu: \"yüzde 95\"\nikinci satır"),
+        ("token", "tk_gizli"),
+    ];
+    let (ok, out, err) = try_action(&ws, "push", &env);
+    assert!(ok, "{err}");
+    assert_eq!(
+        out.trim(),
+        r#"{"id":"m1","event":"message"}"#,
+        "its answer is the output"
+    );
+    let (ok, _, err) = try_action(&ws, "push", &env);
+    assert!(!ok, "a refusal fails the step");
+    assert!(
+        err.contains("invalid priority parameter"),
+        "and says why: {err}"
+    );
+    let got = server.join().unwrap();
+    assert_eq!(got.len(), 2, "{got:?}");
+    let (head, body) = &got[0];
+    assert!(head.starts_with("POST / HTTP/1.1"), "{head}");
+    assert!(head.contains("Authorization: Bearer tk_gizli"), "{head}");
+    let sent: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({
+            "topic": "itero-uzun-rastgele-konu",
+            "title": "Uyarı: disk",
+            "message": "Disk dolu: \"yüzde 95\"\nikinci satır"
+        })
+    );
+}
+
+#[test]
+fn the_messages_actions_name_every_arg_they_miss_at_once() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = copy("messages", d.path());
+    for (name, says) in [
+        ("send-mail", "send-mail: no host user to text"),
+        ("push", "push: no to text"),
+    ] {
+        let (ok, _, err) = try_action(&ws, name, &[]);
+        assert!(!ok && err.contains(says), "#{name}: {err}");
+    }
+    if cfg!(target_os = "macos") {
+        let (ok, _, err) = try_action(&ws, "imessage", &[("service", "Faks")]);
+        assert!(!ok && err.contains("imessage: no to text"), "{err}");
+        let (ok, _, err) = try_action(
+            &ws,
+            "imessage",
+            &[("to", "a"), ("text", "b"), ("service", "Faks")],
+        );
+        assert!(
+            !ok && err.contains("service is iMessage or SMS, not Faks"),
+            "{err}"
+        );
+    } else {
+        let (ok, _, err) = try_action(&ws, "imessage", &[("to", "a"), ("text", "b")]);
+        assert!(!ok && err.contains("Messages is on macOS only"), "{err}");
+    }
+}
+
+#[test]
+fn the_messages_alert_goes_the_way_its_event_names() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = copy("messages", d.path());
+    let (port, server) = http_server(vec![(200, r#"{"id":"m1"}"#)]);
+    std::fs::write(ws.join(".env"), "NTFY_TOPIC=itero-uzun-rastgele-konu\n").unwrap();
+    // the push step on the stand-in server
+    let file = ws.join("workflows/alert.json");
+    let mut flow: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    flow["steps"][1]["#push"]["args"]["server"] = format!("http://127.0.0.1:{port}").into();
+    std::fs::write(&file, flow.to_string()).unwrap();
+    itero(
+        &ws,
+        &[
+            "ws",
+            "emit",
+            "alert.send",
+            r#"{"via": "push", "subject": "Yedek", "text": "Gece yedeği bitti."}"#,
+        ],
+    );
+    itero(&ws, &["daemon", "--once"]);
+    let got = server.join().unwrap();
+    assert_eq!(got.len(), 1, "one push: {:?}", runs_of(&ws, "alert"));
+    let sent: serde_json::Value = serde_json::from_str(&got[0].1).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({"topic": "itero-uzun-rastgele-konu", "title": "Yedek", "message": "Gece yedeği bitti."})
+    );
+    let runs = runs_of(&ws, "alert");
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(
+        runs[0]["status"], "done",
+        "mail and iMessage were not its way: {runs:?}"
+    );
+}

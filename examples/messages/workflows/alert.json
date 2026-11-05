@@ -1,0 +1,12 @@
+{
+  "on": [{ "event": "alert.send" }],
+  "steps": [
+    { "#send-mail": { "on": [{ "$event.via": "mail" }],
+                      "args": { "host": "smtp.example.com", "user": "me@example.com", "password": "$$SMTP_PASS",
+                                "to": "me@example.com", "subject": "$event.subject", "text": "$event.text" } } },
+    { "#push": { "on": [{ "$event.via": "push" }],
+                 "args": { "to": "$$NTFY_TOPIC", "subject": "$event.subject", "text": "$event.text" } } },
+    { "#imessage": { "on": [{ "$event.via": "imessage" }],
+                     "args": { "to": "+905550000000", "subject": "$event.subject", "text": "$event.text" } } }
+  ]
+}
