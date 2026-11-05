@@ -1,0 +1,32 @@
+#!/bin/sh
+# Sends $text, after $subject if given, to $to (a phone number or an
+# Apple Account's address) through Messages on this Mac: by iMessage, or
+# by SMS through your iPhone when $service is SMS (with Text Message
+# Forwarding on). macOS only. The first time, macOS asks whether the
+# program running it may control Messages.
+[ "$(uname -s)" = Darwin ] || { echo "imessage: Messages is on macOS only" >&2; exit 1; }
+missing=""
+for a in to text; do
+  eval "v=\${$a:-}"
+  [ -n "$v" ] || missing="$missing $a"
+done
+[ -z "$missing" ] || { echo "imessage: no$missing: set it in the step's args" >&2; exit 1; }
+service=${service:-iMessage}
+if [ "$service" != iMessage ] && [ "$service" != SMS ]; then
+  echo "imessage: service is iMessage or SMS, not $service" >&2; exit 1
+fi
+message=$text
+[ -z "${subject:-}" ] || message=$(printf '%s\n\n%s' "$subject" "$text")
+# the texts go to the script as its arguments, never inside its code
+osascript - "$to" "$message" "$service" <<'SCRIPT'
+on run {who, message, kind}
+	tell application "Messages"
+		if kind is "SMS" then
+			set sender to first account whose service type is SMS
+		else
+			set sender to first account whose service type is iMessage
+		end if
+		send message to participant who of sender
+	end tell
+end run
+SCRIPT

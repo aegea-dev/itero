@@ -47,8 +47,14 @@ fn encoded_word(text: &str) -> String {
     format!("=?UTF-8?B?{out}?=")
 }
 
-/// Sends one mail over SMTP.
+/// Sends one mail over SMTP, its subject as an encoded word.
 fn send(host: &str, to: &str, subject: &str) {
+    send_header(host, to, &format!("Subject: {}", encoded_word(subject)));
+}
+
+/// Sends one mail over SMTP with `header` (its subject, as a mail program
+/// wrote it).
+fn send_header(host: &str, to: &str, header: &str) {
     let s = TcpStream::connect((host, SMTP)).unwrap();
     let mut r = BufReader::new(s.try_clone().unwrap());
     let mut w = s;
@@ -73,8 +79,7 @@ fn send(host: &str, to: &str, subject: &str) {
     }
     write!(
         w,
-        "From: gonderen@ornek.test\r\nTo: {to}\r\nSubject: {}\r\n\r\nmerhaba\r\n.\r\n",
-        encoded_word(subject)
+        "From: gonderen@ornek.test\r\nTo: {to}\r\n{header}\r\n\r\nmerhaba\r\n.\r\n"
     )
     .unwrap();
     expect(&mut r, "250");
@@ -211,6 +216,260 @@ fn imap_notifies_mail_that_arrives_after_the_first_check() {
 #[test]
 fn pop3_notifies_mail_that_arrives_after_the_first_check() {
     notifies_new_mail("pop3-alert", POP3);
+}
+
+/// Subjects as mail programs write them, each the newest of its check:
+/// the header as sent, and the subject the notification shows.
+const SUBJECTS: &[(&str, &str)] = &[
+    // a long one: split into two encoded words, on two lines
+    (
+        "Subject: =?UTF-8?B?SGFmdGFsxLFrIHRvcGxhbnTEsSBub3RsYXLEsTog?=\r\n =?UTF-8?B?w6dhcsWfYW1iYSBzYWF0IMO8w6d0ZQ==?=",
+        "Haftalık toplantı notları: çarşamba saat üçte",
+    ),
+    // Q encoding, in lower case; the space between two words is not text
+    (
+        "Subject: =?utf-8?q?=C3=87ay_saati?= =?utf-8?q?_ba=C5=9Flad=C4=B1?=",
+        "Çay saati başladı",
+    ),
+    // plain text around an encoded word
+    (
+        "Subject: Re: =?UTF-8?B?U2lwYXJpxZ8=?= (2)",
+        "Re: Sipariş (2)",
+    ),
+    // another charset: Ş is 0xDE in ISO-8859-9
+    ("Subject: =?ISO-8859-9?Q?=DEeker?=", "Şeker"),
+    // the header's name in capitals, and a tab in the text
+    (
+        "SUBJECT: Fiyat \"50\" \\ yüzde\tson",
+        "Fiyat \"50\" \\ yüzde son",
+    ),
+    // none at all
+    ("X-Note: konu yok", "(no subject)"),
+];
+
+/// Each subject in `SUBJECTS` is shown whole, by `workflow`.
+fn reads_subjects_as_written(workflow: &str, port: u16) {
+    let Some(host) = server() else { return };
+    let d = tempfile::tempdir().unwrap();
+    let user = format!("konu-{}@ornek.test", uuid::Uuid::now_v7());
+    let log = d.path().join("bildirim.log");
+    let ws = example(d.path(), workflow, port, &user, &host);
+    send(&host, &user, "Eski posta"); // GreenMail makes the account
+    pass(&ws, "2026-10-16T10:01:00Z", &log);
+    pass(&ws, "2026-10-16T10:05:10Z", &log); // first check: where the mailbox is
+    let mut wrong = Vec::new();
+    for (i, (header, subject)) in SUBJECTS.iter().enumerate() {
+        send_header(&host, &user, header);
+        pass(&ws, &format!("2026-10-16T11:{:02}:10Z", i * 5), &log);
+        let last = shown(&log).lines().last().unwrap_or_default().to_string();
+        let want = format!("Mail\t1 new: {subject}");
+        if last != want {
+            wrong.push(format!("{header:?}\n  wanted {want:?}\n  shown  {last:?}"));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{}\n{}",
+        wrong.join("\n"),
+        state(&ws, workflow)
+    );
+    assert_eq!(failed_runs(&ws), "", "no run failed");
+}
+
+#[test]
+fn imap_reads_subjects_as_mail_programs_write_them() {
+    reads_subjects_as_written("imap-alert", IMAP);
+}
+
+#[test]
+fn pop3_reads_subjects_as_mail_programs_write_them() {
+    reads_subjects_as_written("pop3-alert", POP3);
+}
+
+/// RFC 2047 encoded words in `text`, decoded (UTF-8, B or Q, as
+/// send-mail writes them); the whitespace between two of them dropped.
+fn decode_words(text: &str) -> String {
+    let mut out = Vec::new();
+    let mut rest = text;
+    let mut after_word = false;
+    while let Some(start) = rest.find("=?") {
+        let Some(len) = rest[start + 2..]
+            .match_indices("?=")
+            .map(|(i, _)| i)
+            .find(|i| rest[start + 2..start + 2 + i].matches('?').count() == 2)
+        else {
+            break;
+        };
+        let (pre, word) = (&rest[..start], &rest[start + 2..start + 2 + len]);
+        if !(after_word && pre.trim().is_empty()) {
+            out.extend_from_slice(pre.as_bytes());
+        }
+        let parts: Vec<&str> = word.splitn(3, '?').collect();
+        assert!(parts[0].eq_ignore_ascii_case("utf-8"), "{word}");
+        if parts[1].eq_ignore_ascii_case("b") {
+            out.extend(from_base64(parts[2]));
+        } else {
+            out.extend(from_quoted(&parts[2].replace('_', " ")));
+        }
+        after_word = true;
+        rest = &rest[start + 2 + len + 2..];
+    }
+    out.extend_from_slice(rest.as_bytes());
+    String::from_utf8(out).unwrap()
+}
+
+fn from_base64(text: &str) -> Vec<u8> {
+    const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let (mut bits, mut n, mut out) = (0u32, 0, Vec::new());
+    for c in text.bytes() {
+        let Some(v) = B64.iter().position(|b| *b == c) else {
+            continue;
+        };
+        bits = (bits << 6) | v as u32;
+        n += 6;
+        if n >= 8 {
+            n -= 8;
+            out.push((bits >> n) as u8);
+            bits &= (1 << n) - 1;
+        }
+    }
+    out
+}
+
+/// Quoted-printable: `=XX` is a byte, `=` at a line's end joins it to the
+/// next.
+fn from_quoted(text: &str) -> Vec<u8> {
+    let text = text.replace("=\r\n", "");
+    let b = text.as_bytes();
+    let (mut i, mut out) = (0, Vec::new());
+    while i < b.len() {
+        let hex = b
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok());
+        if b[i] == b'='
+            && let Some(v) = hex.and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(v);
+            i += 3;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    out
+}
+
+/// The one mail in `user`'s inbox, as the server keeps it.
+fn fetched(host: &str, user: &str) -> String {
+    let o = std::process::Command::new("curl")
+        .args(["-sS", "--fail", "-u", &format!("{user}:x")])
+        .arg(format!("imap://{host}:{IMAP}/INBOX;UID=1"))
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{o:?}");
+    String::from_utf8(o.stdout).unwrap()
+}
+
+/// A header's value, its folded lines joined.
+fn header_of(mail: &str, name: &str) -> Option<String> {
+    let head = mail.split("\r\n\r\n").next().unwrap();
+    let mut value: Option<String> = None;
+    let mut on = false;
+    for line in head.split("\r\n") {
+        if line.starts_with([' ', '\t']) {
+            if on {
+                value.as_mut().unwrap().push_str(line);
+            }
+            continue;
+        }
+        on = false;
+        if value.is_none()
+            && line.len() > name.len()
+            && line[..name.len() + 1].eq_ignore_ascii_case(&format!("{name}:"))
+        {
+            value = Some(line[name.len() + 1..].trim_start().to_string());
+            on = true;
+        }
+    }
+    value
+}
+
+/// `send-mail`, as an example has it, sends what any mail program reads:
+/// a subject with Turkish letters too long for one encoded word, lines of
+/// text, a line with only a dot, and a password with a quote and a
+/// backslash, all at once.
+fn send_mail_sends_what_mail_programs_read(example: &str) {
+    let Some(host) = server() else { return };
+    let to = format!("alici-{}@ornek.test", uuid::Uuid::now_v7());
+    let subject = "Haftalık rapor: çarşamba günü saat üçte, ışıklı salonda, öğleden önce";
+    let text = "Satır bir; \"tırnak\"\nsatır iki\n.\nson satır";
+    let action = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join(example)
+        .join("actions/send-mail");
+    let d = tempfile::tempdir().unwrap();
+    let o = std::process::Command::new(&action)
+        .current_dir(d.path())
+        .env("host", &host)
+        .env("port", SMTP.to_string())
+        .env("tls", "false")
+        .env("user", "gonderen@ornek.test")
+        .env("password", "gizli \"şifre\" \\ son")
+        .env("to", &to)
+        .env("subject", subject)
+        .env("text", text)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{example}: {o:?}");
+    let mail = fetched(&host, &to);
+    let mut wrong = Vec::new();
+    match header_of(&mail, "Subject") {
+        Some(s) if decode_words(&s) == subject => {
+            for word in s.split_whitespace() {
+                if word.len() > 75 {
+                    wrong.push(format!("an encoded word over 75 characters: {word}"));
+                }
+            }
+        }
+        other => wrong.push(format!("subject: {other:?}")),
+    }
+    for (name, want) in [("From", "gonderen@ornek.test"), ("To", to.as_str())] {
+        if header_of(&mail, name).as_deref() != Some(want) {
+            wrong.push(format!("{name}: {:?}", header_of(&mail, name)));
+        }
+    }
+    if header_of(&mail, "Date").is_none() {
+        wrong.push("no Date".into());
+    }
+    // the text's part: its headers, then the text up to the boundary
+    let lower = mail.to_ascii_lowercase();
+    if !lower.contains("content-type: text/plain; charset=utf-8") {
+        wrong.push("no text/plain in UTF-8".into());
+    }
+    let mark = "content-transfer-encoding: quoted-printable\r\n\r\n";
+    let body = match lower.find(mark) {
+        Some(at) => mail[at + mark.len()..].split("\r\n--").next().unwrap(),
+        None => {
+            wrong.push("not quoted-printable".into());
+            ""
+        }
+    };
+    let body = String::from_utf8(from_quoted(body)).unwrap_or_default();
+    if body.trim_end() != text.replace('\n', "\r\n") {
+        wrong.push(format!("body: {body:?}"));
+    }
+    assert!(wrong.is_empty(), "{example}: {}\n{mail}", wrong.join("\n"));
+}
+
+#[test]
+fn the_messages_send_mail_sends_what_mail_programs_read() {
+    send_mail_sends_what_mail_programs_read("messages");
+}
+
+#[test]
+fn the_page_digest_send_mail_sends_what_mail_programs_read() {
+    send_mail_sends_what_mail_programs_read("page-digest");
 }
 
 /// The gmail example, copied into `d`: its connector pointed at the test

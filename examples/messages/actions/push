@@ -1,0 +1,24 @@
+#!/bin/sh
+# Sends $text, titled $subject if given, as a push notification to the
+# ntfy topic $to: on ntfy.sh, or on the ntfy server at $server. Anyone who
+# knows a topic on ntfy.sh can read it: a long random name keeps it yours.
+# $token, if set, is an access token for a server that asks for one; it
+# goes to curl on stdin, never on its command line. Needs jq.
+command -v jq >/dev/null || { echo "push: needs jq: https://jqlang.org/download/" >&2; exit 1; }
+missing=""
+for a in to text; do
+  eval "v=\${$a:-}"
+  [ -n "$v" ] || missing="$missing $a"
+done
+[ -z "$missing" ] || { echo "push: no$missing: set it in the step's args" >&2; exit 1; }
+
+body=$(mktemp) || exit 1
+trap 'rm -f "$body"' EXIT
+jq -n --arg topic "$to" --arg title "${subject:-}" --arg message "$text" \
+  '{topic: $topic, message: $message} + (if $title == "" then {} else {title: $title} end)' > "$body"
+# the server's answer is the step's output; on a refusal it says why
+answer=$({ [ -z "${token:-}" ] || printf 'header = "Authorization: Bearer %s"\n' "$token"; } |
+  curl -sS --fail-with-body --max-time 30 -K - -H 'Content-Type: application/json' \
+    --data-binary "@$body" "${server:-https://ntfy.sh}/") ||
+  { printf 'push: %s\n' "$answer" >&2; exit 1; }
+printf '%s\n' "$answer"
