@@ -184,6 +184,8 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
   into a folder the daemon watches.
 - [`examples/webhook`](examples/webhook): replies from your own app reach
   the step waiting for them, through one workflow that forwards every webhook.
+- [`examples/github-webhook`](examples/github-webhook): a push to a GitHub
+  repository is a notification on this machine, through a tunnel.
 - [`examples/pomodoro`](examples/pomodoro): a pomodoro session of the
   length an event says, with a notification once it is over.
 - [`examples/languages`][languages]: actions in Python (uv), Node,

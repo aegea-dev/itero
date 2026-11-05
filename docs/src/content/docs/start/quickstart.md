@@ -75,6 +75,7 @@ run it from login on: `itero workspace add`, then `itero service install`
   notification, its answer posted back), `order`, `page-digest`,
   `page-summary` and `ai-mail` (a local model), `photos`, `pomodoro` (a
   notification once a session's time is over), `webhook` (a reply from your
-  own app, brought to the step waiting for it), `languages`
+  own app, brought to the step waiting for it), `github-webhook` (a push to a
+  repository, as a notification), `languages`
   (actions in Python, Node, Bun and Docker) and `terraform` (a k3d cluster
   with a web app, rolled back when a step fails).
