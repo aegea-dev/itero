@@ -576,3 +576,39 @@ fn a_job_is_done_once_handled_or_forgotten_and_not_while_it_waits() {
     assert!(j.job_done(jobs[1].seq).unwrap(), "handled");
     assert!(j.job_done(999).unwrap(), "forgotten");
 }
+
+/// Processes opening one journal that does not exist yet, as a daemon and
+/// `itero ws emit` do when a workspace starts: each must wait its turn.
+#[cfg(unix)]
+#[test]
+fn processes_opening_a_new_journal_at_once_all_succeed() {
+    use std::process::{Command, Stdio};
+    let mut failures = vec![];
+    for _ in 0..40 {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
+        let children: Vec<_> = (0..8)
+            .map(|_| {
+                Command::new(env!("CARGO_BIN_EXE_itero"))
+                    .args(["ws", "emit", "sipariş.verildi", "{}"])
+                    .current_dir(d.path())
+                    .env("ITERO_NO_SECRET_STORE", "1")
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
+        for c in children {
+            let o = c.wait_with_output().unwrap();
+            if !o.status.success() {
+                failures.push(String::from_utf8_lossy(&o.stderr).into_owned());
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} failed: {failures:#?}",
+        failures.len()
+    );
+}
