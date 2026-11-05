@@ -1,0 +1,2 @@
+#!/bin/sh
+exec itero webhook --port 8788 --hook /github:hmac:GITHUB_WEBHOOK_SECRET

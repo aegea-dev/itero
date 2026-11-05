@@ -1,0 +1,4 @@
+{ "on": [{ "event": "github.pushed" }],
+  "steps": [{ "#notify": { "args": {
+    "title": "$event.repository",
+    "text": "$event.branch, by $event.by: $event.commit" } } }] }

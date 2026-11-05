@@ -275,3 +275,97 @@ fn the_webhook_example_forwards_a_reply_to_the_step_waiting_for_it() {
         .count();
     assert_eq!(sent, 1, "the id was seen: {log}");
 }
+
+/// `body`, signed as GitHub signs it, to `port`: its status.
+fn github_delivery(port: u16, secret: &str, event: &str, id: &str, body: &str) -> u16 {
+    use std::io::{Read, Write};
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret.as_bytes());
+    let hex: String = ring::hmac::sign(&key, body.as_bytes())
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let raw = format!(
+        "POST /github HTTP/1.1\r\nHost: a\r\nContent-Type: application/json\r\nX-GitHub-Event: {event}\r\nX-GitHub-Delivery: {id}\r\nX-Hub-Signature-256: sha256={hex}\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    s.write_all(raw.as_bytes()).unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    out.split(' ').nth(1).unwrap().parse().unwrap()
+}
+
+#[test]
+fn the_github_webhook_example_tells_of_a_push_once() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = copy("github-webhook", d.path());
+    let secret = "bir-uzun-gizli-değer";
+    std::fs::write(ws.join(".env"), format!("GITHUB_WEBHOOK_SECRET={secret}\n")).unwrap();
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let script = ws.join("connectors/webhook/webhook.listen");
+    let text = std::fs::read_to_string(&script)
+        .unwrap()
+        .replace("8788", &port.to_string());
+    std::fs::write(&script, text).unwrap();
+    let told = ws.join("bildirim.log");
+    let _daemon = Daemon(
+        std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .arg("daemon")
+            .current_dir(&ws)
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .env("ITERO_NOTIFY_LOG", &told)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    until("it listens", || {
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+    });
+    // what GitHub sends when the hook is made: nothing to tell
+    assert_eq!(
+        github_delivery(port, secret, "ping", "d-0", r#"{"zen": "sade"}"#),
+        200
+    );
+    until("the ping's run", || {
+        runs_of(&ws, "forward")
+            .iter()
+            .any(|r| r["status"] == "done")
+    });
+    // a commit's message is a stranger's text: a $$NAME or $event in it stays text
+    let push = r#"{"ref": "refs/heads/ana", "repository": {"full_name": "örnek/depo"},
+                   "pusher": {"name": "kişi"},
+                   "head_commit": {"message": "düzeltme $$GITHUB_WEBHOOK_SECRET $event.ref"}}"#;
+    assert_eq!(github_delivery(port, secret, "push", "d-1", push), 200);
+    until("the push is told", || told.is_file());
+    // GitHub's Redeliver sends the same delivery again
+    assert_eq!(github_delivery(port, secret, "push", "d-1", push), 200);
+    until("every delivery's run", || {
+        let forward = runs_of(&ws, "forward");
+        forward.len() == 3 && forward.iter().all(|r| r["status"] == "done")
+    });
+    // signed with something else: nothing comes of it
+    assert_eq!(
+        github_delivery(port, "başka-bir-gizli-değer", "push", "d-2", push),
+        401
+    );
+    until("the told workflow ended", || {
+        !runs_of(&ws, "tell").is_empty()
+            && runs_of(&ws, "tell").iter().all(|r| r["status"] == "done")
+    });
+    let told = std::fs::read_to_string(&told).unwrap();
+    assert_eq!(told.lines().count(), 1, "{told}");
+    assert!(told.starts_with("örnek/depo\t"), "{told}");
+    assert!(
+        told.contains("ana, by kişi: düzeltme $$GITHUB_WEBHOOK_SECRET $event.ref"),
+        "{told}"
+    );
+    assert!(!told.contains(secret), "{told}");
+    assert_eq!(runs_of(&ws, "tell").len(), 1);
+}

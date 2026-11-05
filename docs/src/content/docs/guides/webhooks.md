@@ -17,7 +17,9 @@ exec itero webhook --port 8788 \
   --hook /app:token:APP_WEBHOOK_TOKEN
 ```
 
-The daemon starts it, starts it again if it ends, and `/health` shows it.
+The daemon starts it, starts it again if it ends, and `/health` shows it. Give
+it no args from a workflow's `on`: that runs a second copy of the connector, on
+the same port.
 Keep its secrets as [secrets](/guides/secrets/) or in `.env`: `--hook` holds
 only their names. It does not start while a secret is missing or shorter than
 16 bytes, and says which, so there is no webhook without a check.
@@ -29,7 +31,8 @@ public HTTPS address and sends requests on to this port:
 
 - [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/):
   `cloudflared tunnel --url http://127.0.0.1:8788`, for a quick one;
-- [Tailscale Funnel](https://tailscale.com/kb/1223/funnel): `tailscale funnel 8788`;
+- [Tailscale Funnel](https://tailscale.com/kb/1223/funnel): `tailscale funnel 8788`,
+  once HTTPS and Funnel are enabled for your tailnet in its admin console;
 - [Caddy](https://caddyserver.com/), on a server with a public address:
   `reverse_proxy 127.0.0.1:8788`.
 
@@ -80,7 +83,9 @@ Its data:
 ```
 
 - `headers`, in lower case, without `authorization`, `cookie`,
-  `proxy-authorization` and the hook's own signature.
+  `proxy-authorization` and the hook's own signature. A `-` ends a name in a
+  workflow, so write `_` for it: `$event.headers.x_github_event` reads
+  `x-github-event`.
 - `body`: the JSON itself; for a form, an object of texts, a field sent twice
   a list; anything else as text.
 
@@ -118,7 +123,9 @@ esac
 ```
 
 So a service's shape, nested lists and all, stays in one place, and everything
-else reads `$event.from`. `examples/webhook` is this, working.
+else reads `$event.from`. `examples/webhook` is this, working, to try with
+`curl`; `examples/github-webhook` is GitHub's pushes through a tunnel, as a
+notification.
 
 ## Waiting for a reply
 

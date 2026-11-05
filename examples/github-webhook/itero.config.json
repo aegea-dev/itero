@@ -1,0 +1,4 @@
+{
+  "name": "github-webhook",
+  "description": "A push to a GitHub repository is a notification on this machine"
+}
