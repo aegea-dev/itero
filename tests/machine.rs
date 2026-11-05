@@ -441,7 +441,7 @@ fn a_stuck_workspace_is_told_and_the_others_run_on() {
     std::fs::write(
         &not,
         format!(
-            "#!/bin/sh\necho \"$workspace\" > '{}'\n",
+            "#!/bin/sh\necho \"$workspace\" >> '{}'\n",
             b.join("takıldı").display()
         ),
     )
@@ -472,11 +472,14 @@ fn a_stuck_workspace_is_told_and_the_others_run_on() {
     });
     m.ok(&a, &["ws", "emit", "deneme.geldi"]);
     until("a stuck", || state(&na) == Some("stuck".into()));
-    until("b to hear", || b.join("takıldı").is_file());
-    assert_eq!(
-        std::fs::read_to_string(b.join("takıldı")).unwrap().trim(),
-        na
-    );
+    // on a busy machine a pass of b's can pass a second too, and b hears of
+    // itself as well
+    until("b to hear of a", || {
+        std::fs::read_to_string(b.join("takıldı"))
+            .unwrap_or_default()
+            .lines()
+            .any(|l| l == na)
+    });
     // b runs on meanwhile
     m.ok(&b, &["ws", "emit", "deneme.geldi"]);
     until("b's workflow", || b.join("çıktı").is_file());

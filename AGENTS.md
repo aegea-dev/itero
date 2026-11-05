@@ -84,6 +84,7 @@ when it touches the mail examples or connectors, `make test-docker`.
 - Prefer Makefile targets where they exist.
 - Verify with emitting event and running workflow before claiming work is complete.
 - Tests come first: write the failing unit/integration test, then implement the feature or fix (TDD).
+- Tests run one at a time (`.cargo/config.toml`), and each works in its own temporary folder. A test waits for what it checks, never for a fixed time: a busy machine makes anything slow.
 - Work each ticket in its own git worktree under .claude/worktrees/.
 - A change to how the engine handles events, runs or jobs updates model/ in the same PR, and make model and make model-test pass.
 - .claude/worktrees/ is shared: never modify or delete a worktree you did not create.
