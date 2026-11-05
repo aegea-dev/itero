@@ -189,16 +189,15 @@ impl Webhook {
                 "cannot listen on {host}:{port}: {e} (another webhook on this port? a workflow giving this connector args runs a second copy of it)"
             )
         })?;
+        // the port bound: with 0, the one the OS gave
+        let at = listener.local_addr()?;
         if !host.is_loopback() {
             eprintln!(
-                "itero webhook: {host}:{port} takes requests from other machines, not encrypted: put a proxy with TLS in front"
+                "itero webhook: {at} takes requests from other machines, not encrypted: put a proxy with TLS in front"
             );
         }
         let paths: Vec<&str> = found.iter().map(|h| h.path.as_str()).collect();
-        eprintln!(
-            "itero webhook: listening on {host}:{port}: {}",
-            paths.join(" ")
-        );
+        eprintln!("itero webhook: listening on {at}: {}", paths.join(" "));
         Ok(Webhook {
             ws,
             hooks: found,

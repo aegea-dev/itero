@@ -2,7 +2,7 @@
 //! them as `itero.webhook.received`.
 #![cfg(unix)]
 use serde_json::{Value, json};
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
@@ -330,6 +330,8 @@ fn free_port() -> u16 {
 struct Listener {
     child: Child,
     port: u16,
+    /// Its stderr, past the line that told the port.
+    err: BufReader<std::process::ChildStderr>,
 }
 
 impl Drop for Listener {
@@ -340,24 +342,21 @@ impl Drop for Listener {
 }
 
 impl Listener {
-    /// Ends it, and what it said on stderr.
+    /// Ends it, and what it said on stderr after that line.
     fn said(&mut self) -> String {
         drop(self.child.stdin.take());
         let mut err = String::new();
-        self.child
-            .stderr
-            .take()
-            .unwrap()
-            .read_to_string(&mut err)
-            .unwrap();
+        self.err.read_to_string(&mut err).unwrap();
         err
     }
 }
 
-fn listen(d: &Path, extra: &[&str], envs: &[(&str, &str)]) -> Listener {
-    let port = free_port();
-    let child = Command::new(env!("CARGO_BIN_EXE_itero"))
-        .args(["webhook", "--port", &port.to_string()])
+/// On a port the OS gives: a free port asked for first could be another
+/// test's by the time it is bound, and that test's listener answer for this
+/// one. What it said before that line goes in `told`, for the tests of it.
+fn listen_telling(d: &Path, extra: &[&str], envs: &[(&str, &str)]) -> (Listener, String) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_itero"))
+        .args(["webhook", "--port", "0"])
         .args(extra)
         .current_dir(d)
         .env("ITERO_NO_SECRET_STORE", "1")
@@ -366,12 +365,25 @@ fn listen(d: &Path, extra: &[&str], envs: &[(&str, &str)]) -> Listener {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let end = Instant::now() + Duration::from_secs(10);
-    while TcpStream::connect(("127.0.0.1", port)).is_err() {
-        assert!(Instant::now() < end, "never listened");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    Listener { child, port }
+    let mut err = BufReader::new(child.stderr.take().unwrap());
+    let mut told = String::new();
+    let port = loop {
+        let mut line = String::new();
+        assert!(
+            err.read_line(&mut line).unwrap() > 0,
+            "never listened: {told}"
+        );
+        if let Some(rest) = line.split("listening on ").nth(1) {
+            let at = rest.split(':').nth(1).unwrap();
+            break at.trim().parse().unwrap();
+        }
+        told.push_str(&line);
+    };
+    (Listener { child, port, err }, told)
+}
+
+fn listen(d: &Path, extra: &[&str], envs: &[(&str, &str)]) -> Listener {
+    listen_telling(d, extra, envs).0
 }
 
 /// Sends a request as written; its status and body.
@@ -718,4 +730,116 @@ fn two_listeners_run_as_connectors_of_one_daemon() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+#[test]
+fn a_flood_on_one_hook_leaves_the_others_answering() {
+    let d = tempfile::tempdir().unwrap();
+    let l = hooked(d.path());
+    // 32 requests that never finish their bodies hold /kargo's places
+    let mut held = vec![];
+    for _ in 0..32 {
+        let mut s = TcpStream::connect(("127.0.0.1", l.port)).unwrap();
+        s.write_all(b"POST /kargo HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\nbir")
+            .unwrap();
+        held.push(s);
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    let sign = signed(LONG, "{}");
+    let kargo = post("/kargo", &[JSON_TYPE, ("X-Hub-Signature-256", &sign)], "{}");
+    assert_eq!(send(l.port, &kargo).0, 503);
+    let token = format!("Bearer {LONG}");
+    let other = post("/uygulama", &[JSON_TYPE, ("Authorization", &token)], "{}");
+    assert_eq!(send(l.port, &other).0, 200, "another hook goes on");
+    drop(held);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(send(l.port, &kargo).0, 200, "the places come back");
+}
+
+#[test]
+fn a_body_over_the_limit_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let l = hooked(d.path());
+    let big = "ş".repeat(3 * 1024 * 1024); // past 5 MiB in bytes
+    let sign = signed(LONG, &big);
+    let raw = post(
+        "/kargo",
+        &[
+            ("Content-Type", "text/plain"),
+            ("X-Hub-Signature-256", &sign),
+        ],
+        &big,
+    );
+    let mut s = TcpStream::connect(("127.0.0.1", l.port)).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    let _ = s.write_all(&raw); // it may close while this writes
+    let mut out = vec![];
+    let _ = s.read_to_end(&mut out);
+    let out = String::from_utf8_lossy(&out);
+    assert!(
+        out.starts_with("HTTP/1.1 413"),
+        "{}",
+        out.lines().next().unwrap_or("")
+    );
+    assert!(saved(d.path()).is_empty());
+}
+
+#[test]
+fn a_connection_that_stays_is_dropped() {
+    let d = tempfile::tempdir().unwrap();
+    file(d.path(), "itero.config.json", "{}");
+    file(d.path(), ".env", &format!("KARGO={LONG}\n"));
+    let l = listen(
+        d.path(),
+        &["--hook", "/kargo:hmac:KARGO"],
+        &[("ITERO_WEBHOOK_LIFE_SECS", "1")],
+    );
+    for first in [&b""[..], &b"POST /kargo HTTP/1.1\r\nHost:"[..]] {
+        let mut s = TcpStream::connect(("127.0.0.1", l.port)).unwrap();
+        s.write_all(first).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let began = Instant::now();
+        let mut out = vec![];
+        let _ = s.read_to_end(&mut out);
+        assert!(began.elapsed() < Duration::from_secs(4), "still open");
+    }
+}
+
+#[test]
+fn a_refusal_is_told_once_and_holds_nothing_of_the_stranger_s() {
+    let d = tempfile::tempdir().unwrap();
+    let mut l = hooked(d.path());
+    for _ in 0..50 {
+        send(
+            l.port,
+            &post(
+                "/kargo",
+                &[("X-Hub-Signature-256", "sha256=gizli-değil")],
+                "gövde-metni",
+            ),
+        );
+        send(l.port, &post("/yabancı-yol", &[], ""));
+    }
+    let err = l.said();
+    let lines: Vec<&str> = err.lines().collect();
+    assert_eq!(lines.len(), 2, "{err}");
+    for hidden in ["gizli-değil", "gövde-metni", "yabancı-yol"] {
+        assert!(!err.contains(hidden), "{hidden}: {err}");
+    }
+}
+
+#[test]
+fn another_address_is_the_user_s_and_is_warned_about() {
+    let d = tempfile::tempdir().unwrap();
+    file(d.path(), "itero.config.json", "{}");
+    file(d.path(), ".env", &format!("KARGO={LONG}\n"));
+    let (l, told) = listen_telling(
+        d.path(),
+        &["--host", "0.0.0.0", "--hook", "/kargo:hmac:KARGO"],
+        &[],
+    );
+    let sign = signed(LONG, "{}");
+    let raw = post("/kargo", &[JSON_TYPE, ("X-Hub-Signature-256", &sign)], "{}");
+    assert_eq!(send(l.port, &raw).0, 200);
+    assert!(told.contains("not encrypted"), "{told}");
 }

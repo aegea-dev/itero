@@ -107,15 +107,13 @@ async fn receive(State(s): State<Arc<Server>>, req: Request) -> Response {
     let Ok(body) = to_bytes(body, BODY_MAX).await else {
         return s.refuse(&hook.path, StatusCode::PAYLOAD_TOO_LARGE, "a body too big");
     };
-    let given = parts
-        .headers
-        .get(hook.check.header())
-        .and_then(|v| v.to_str().ok());
-    let host = parts
-        .headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    // as UTF-8: to_str takes only ASCII, and a token may be any text
+    let text = |name: &str| {
+        let value = parts.headers.get(name)?;
+        std::str::from_utf8(value.as_bytes()).ok()
+    };
+    let given = text(hook.check.header());
+    let host = text(header::HOST.as_str()).unwrap_or("");
     let query = parts.uri.path_and_query().map_or("", |q| q.as_str());
     let url = format!("https://{host}{query}");
     if !check::passes(hook.check, &hook.secret, given, &url, &body) {
