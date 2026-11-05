@@ -28,10 +28,14 @@ struct Place {
     places: Arc<Semaphore>,
 }
 
-/// Refusals seen, by path and why, told at most once in `TELL_EVERY`. The
-/// keys are this server's own words, so a stranger cannot grow them.
+/// A refusal's path and why.
+type Refusal = (String, &'static str);
+
+/// Refusals seen: when each was last told, and how many since. Told at most
+/// once in `TELL_EVERY`. The keys are this server's own words, so a stranger
+/// cannot grow them.
 #[derive(Default)]
-struct Told(Mutex<HashMap<(String, &'static str), (Option<Instant>, u64)>>);
+struct Told(Mutex<HashMap<Refusal, (Option<Instant>, u64)>>);
 
 impl Told {
     fn tell(&self, path: &str, why: &'static str) {
