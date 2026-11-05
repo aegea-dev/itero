@@ -159,3 +159,158 @@ fn a_check_goes_by_its_name() {
     assert_eq!(Check::named("twilio"), Some(Check::Twilio));
     assert_eq!(Check::named("github"), None);
 }
+
+use axum::http::{HeaderMap, HeaderValue};
+use itero::connectors::webhook::{BadBody, Hook, event_data, hooks};
+
+const LONG: &str = "bir-uzun-gizli-değer";
+
+fn told(given: &[&str], set: &[(&str, &str)]) -> Result<Vec<Hook>, Vec<String>> {
+    let given: Vec<String> = given.iter().map(|s| s.to_string()).collect();
+    hooks(&given, &|n| {
+        set.iter()
+            .find(|(k, _)| *k == n)
+            .map(|(_, v)| v.to_string())
+    })
+}
+
+#[test]
+fn hooks_are_a_path_a_check_and_a_secret_s_name() {
+    let Ok(h) = told(
+        &["/kargo:hmac:KARGO", "/uygulama:token:UYGULAMA"],
+        &[("KARGO", LONG), ("UYGULAMA", LONG)],
+    ) else {
+        panic!("refused");
+    };
+    assert_eq!(h[0].path, "/kargo");
+    assert_eq!(h[0].check, Check::Hmac);
+    assert_eq!(h[0].secret, LONG);
+    assert_eq!(h[1].check, Check::Token);
+}
+
+#[test]
+fn every_problem_with_the_hooks_is_told_at_once_and_no_value() {
+    let Err(e) = told(&[], &[]) else {
+        panic!("no hook, and it started");
+    };
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert!(e[0].contains("--hook"), "{e:?}");
+    let given = [
+        "yolsuz",            // not three parts
+        "kargo:hmac:KARGO",  // no leading /
+        "/a:açık:KARGO",     // no such check
+        "/b:hmac:KAR-GO",    // not a secret's name
+        "/c:hmac:YOK",       // not set
+        "/d:hmac:KISA",      // too short
+        "/e?x=1:hmac:KARGO", // a query is no path
+        "/f:hmac:KARGO",
+        "/f:token:KARGO", // a repeated path
+    ];
+    let Err(e) = told(&given, &[("KARGO", LONG), ("KISA", "kısa")]) else {
+        panic!("all those, and it started");
+    };
+    assert_eq!(e.len(), 8, "{e:#?}");
+    for needle in [
+        "yolsuz", "kargo:", "açık", "KAR-GO", "YOK", "KISA", "/e?x", "/f",
+    ] {
+        assert!(e.iter().any(|p| p.contains(needle)), "{needle}: {e:#?}");
+    }
+    assert!(!e.join("\n").contains("kısa"), "a value told: {e:#?}");
+}
+
+fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
+    let mut h = HeaderMap::new();
+    for (k, v) in pairs {
+        h.append(*k, HeaderValue::from_str(v).unwrap());
+    }
+    h
+}
+
+#[test]
+fn the_event_has_the_path_the_headers_and_the_body() {
+    let h = headers(&[
+        ("content-type", "application/json; charset=utf-8"),
+        ("user-agent", "kargo/1"),
+    ]);
+    let v = event_data(
+        "/kargo",
+        Check::Hmac,
+        &h,
+        r#"{"şehir": "İzmir"}"#.as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(v["path"], "/kargo");
+    assert_eq!(v["body"]["şehir"], "İzmir");
+    assert_eq!(v["headers"]["user-agent"], "kargo/1");
+    assert_eq!(v.as_object().unwrap().len(), 3);
+}
+
+#[test]
+fn what_proves_a_request_is_never_saved() {
+    let h = headers(&[
+        ("content-type", "text/plain"),
+        ("authorization", "Bearer gizli"),
+        ("cookie", "a=b"),
+        ("proxy-authorization", "gizli"),
+        ("x-hub-signature-256", "sha256=ab"),
+        ("x-twilio-signature", "ab"),
+    ]);
+    for check in [Check::Token, Check::Hmac, Check::Twilio] {
+        let v = event_data("/a", check, &h, b"merhaba").unwrap();
+        let text = v.to_string();
+        assert!(
+            !text.contains("gizli") && !text.contains("cookie"),
+            "{text}"
+        );
+        assert!(v["headers"].get(check.header()).is_none(), "{text}");
+    }
+}
+
+#[test]
+fn a_repeated_header_is_joined() {
+    let h = headers(&[
+        ("content-type", "text/plain"),
+        ("x-yol", "a"),
+        ("x-yol", "b"),
+    ]);
+    let v = event_data("/a", Check::Hmac, &h, b"").unwrap();
+    assert_eq!(v["headers"]["x-yol"], "a, b");
+}
+
+#[test]
+fn a_body_is_json_a_form_or_text() {
+    let form = headers(&[("content-type", "application/x-www-form-urlencoded")]);
+    let v = event_data(
+        "/a",
+        Check::Twilio,
+        &form,
+        "From=%2B90&Body=g%C3%BCnayd%C4%B1n&M=1&M=2&M=3".as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(
+        v["body"],
+        json!({"From": "+90", "Body": "günaydın", "M": ["1", "2", "3"]})
+    );
+    let text = headers(&[("content-type", "text/plain")]);
+    assert_eq!(
+        event_data("/a", Check::Hmac, &text, "günaydın".as_bytes()).unwrap()["body"],
+        "günaydın"
+    );
+    assert_eq!(
+        event_data("/a", Check::Hmac, &HeaderMap::new(), b"x").unwrap()["body"],
+        "x"
+    );
+    let js = headers(&[("content-type", "application/json")]);
+    assert_eq!(
+        event_data("/a", Check::Hmac, &js, b"[1]").unwrap()["body"],
+        json!([1])
+    );
+    assert!(matches!(
+        event_data("/a", Check::Hmac, &js, b"{bozuk"),
+        Err(BadBody::NotJson)
+    ));
+    assert!(matches!(
+        event_data("/a", Check::Hmac, &text, &[0xff, 0xfe]),
+        Err(BadBody::NotText)
+    ));
+}
