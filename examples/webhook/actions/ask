@@ -1,0 +1,9 @@
+#!/bin/sh
+# Sends a question (here you would call your app), then waits for the reply
+# from that number. The reply is this step's result.
+if [ -n "${event:-}" ]; then
+  echo "$event"
+  exit 0
+fi
+jq -c '{from: .args.to}'
+exit 75

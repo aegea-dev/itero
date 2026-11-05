@@ -1,0 +1,2 @@
+{ "on": [{ "event": "itero.webhook.received" }],
+  "steps": [{ "#forward-webhook": { "args": { "path": "$event.path", "body": "$event.body" } } }] }
