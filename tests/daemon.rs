@@ -1901,6 +1901,29 @@ fn a_run_stopped_with_no_daemon_is_stopped_by_the_next() {
 }
 
 #[test]
+fn a_killed_step_is_tried_again_in_the_same_pass_once_its_processes_are_gone() {
+    let ws = Ws::with(r#"{"limits": {"quiet": "1s"}}"#);
+    ws.flow(
+        "sessiz",
+        json!({"on": [{ "event": "order.placed" }], "steps": ["#sessiz"]}),
+    );
+    // a process in a group of its own outlives the kill by a moment, holding
+    // the job's lock as a process that is dying does
+    ws.action(
+        "sessiz",
+        "perl -e 'setpgrp(0, 0); sleep 2' >/dev/null 2>&1 &\nsleep 30",
+    );
+    ws.emit("order.placed", json!({"order": 1}));
+    let p = ws.pass(NOW);
+    assert_eq!(p.elsewhere, 0, "{:#?}", ws.log());
+    assert_eq!(ws.statuses(), vec!["error"]);
+    assert_eq!(
+        ws.runs()[0].runtime.why.as_deref(),
+        Some("lost 3 times: quiet for 1s")
+    );
+}
+
+#[test]
 fn a_job_a_copy_of_which_still_runs_waits_uncounted_until_it_ends() {
     let ws = Ws::new();
     ws.flow(
