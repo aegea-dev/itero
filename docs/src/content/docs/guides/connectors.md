@@ -12,6 +12,7 @@ and its data, a JSON object. An event comes from one of these:
   the machine's list);
 - **a connector**: a program that keeps running and prints a line for
   each new thing it sees (a new mail, a sensor reading);
+- **a service outside the machine**: a [webhook](/guides/webhooks/);
 - **a schedule**: `"on": [{ "schedule": "0 9 * * *" }]` in a workflow;
 - **a file that changed**: `"on": [{ "path": "~/Pictures/inbox" }]`;
 - **itero itself**: `itero.run.error` when a run breaks, and others

@@ -28,6 +28,10 @@ by pointing a name of its own at 127.0.0.1 (DNS rebinding). `POST /events`
 takes only `application/json` (415 otherwise): a page on another site
 cannot post one without a preflight, which is never granted.
 
+A service outside the machine comes in through
+[`itero webhook`](/guides/webhooks/), on a port of its own. Never point a
+tunnel at this API: it can stop runs.
+
 ## GET /health
 
 ```json

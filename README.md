@@ -152,7 +152,7 @@ a name stays its file name, and `itero ws which <name>` says where it is.
 
 Commands at the top level are the machine's: `itero daemon`, `itero service
 install|status|start|stop|restart|uninstall`, `itero info`, `itero emit`, `itero secret`,
-`itero ai`, `itero watch`, `itero completion`. Everything about one workspace
+`itero ai`, `itero watch`, `itero webhook`, `itero completion`. Everything about one workspace
 is under `itero ws`, in its folder or with `--ws <name>`: `add|list|remove`,
 `info`, `check`, `which`, `emit <type> '<data>'`, `secret`, `wf list|runs|stop`,
 `ac list|errors`, `cn list`, `ev list|cancel`.
@@ -182,6 +182,8 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
   this machine, with a notification for the urgent ones.
 - [`examples/photos`][photos]: a thumbnail for each photo dropped
   into a folder the daemon watches.
+- [`examples/webhook`](examples/webhook): replies from your own app reach
+  the step waiting for them, through one workflow that forwards every webhook.
 - [`examples/pomodoro`](examples/pomodoro): a pomodoro session of the
   length an event says, with a notification once it is over.
 - [`examples/languages`][languages]: actions in Python (uv), Node,
