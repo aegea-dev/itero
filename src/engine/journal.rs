@@ -211,7 +211,7 @@ pub struct Identity {
 pub fn read_id(ws: &Workspace) -> Result<String> {
     let read = || -> Result<String> {
         let db = Connection::open_with_flags(ws.journal(), OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        db.busy_timeout(std::time::Duration::from_secs(5))?;
+        db.busy_timeout(BUSY_WAIT)?;
         let t: String =
             db.query_row("SELECT value FROM meta WHERE key = 'workspace'", [], |r| {
                 r.get(0)
@@ -222,6 +222,29 @@ pub fn read_id(ws: &Workspace) -> Result<String> {
         Ok(id) => Ok(id),
         Err(e) if busy(&e) => Err(e.context(format!("{} is busy", ws.journal().display()))),
         Err(_) => Ok(Journal::open(ws)?.workspace()?.id),
+    }
+}
+
+/// How long a process waits for another's hold on the journal.
+const BUSY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Puts the journal in WAL mode. A new one is not in it yet, and two
+/// processes may make it at once: the switch takes an exclusive lock with
+/// one try, never waiting as `busy_timeout` does, so the wait is here. A
+/// journal already in WAL mode changes nothing and takes no such lock.
+fn write_ahead(db: &Connection) -> Result<()> {
+    let end = std::time::Instant::now() + BUSY_WAIT;
+    loop {
+        match db.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                let e = anyhow::Error::from(e);
+                if !busy(&e) || std::time::Instant::now() >= end {
+                    return Err(e);
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
@@ -370,8 +393,8 @@ impl Journal {
         std::fs::create_dir_all(path.parent().expect("a folder"))?;
         let mut db =
             Connection::open(&path).with_context(|| format!("cannot open {}", path.display()))?;
-        db.busy_timeout(std::time::Duration::from_secs(5))?;
-        db.pragma_update(None, "journal_mode", "WAL")?;
+        db.busy_timeout(BUSY_WAIT)?;
+        write_ahead(&db)?;
         db.pragma_update(None, "synchronous", "FULL")?;
         // immediate: two processes opening at once make it one after the other
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
