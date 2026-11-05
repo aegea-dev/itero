@@ -24,8 +24,8 @@ impl std::fmt::Display for EmitError {
 
 impl std::error::Error for EmitError {}
 
-/// The start of the types of the daemon's own messages, `itero.run.error`:
-/// workflows may run on them, and only the daemon sends them.
+/// The start of the types of itero's own messages, `itero.run.error`:
+/// workflows may run on them, and only itero sends them.
 pub const OWN: &str = "itero.";
 
 /// Types the engine sends itself: from outside they would forge a worker's
@@ -45,6 +45,11 @@ pub const PATH_CHANGED: &str = "itero.path.changed";
 /// "workflow", "data"}`, saved by Itero.app through `itero
 /// notification-clicked`. Itero's own, so nothing from outside fakes one.
 pub const NOTIFICATION_CLICKED: &str = "itero.notification.clicked";
+
+/// A webhook that passed its check: `{"path", "headers", "body"}`, saved by
+/// `itero webhook`. Itero's own, so nothing here fakes one and, as with the
+/// daemon's other messages, its data (a stranger's) reaches no waiting step.
+pub const WEBHOOK_RECEIVED: &str = "itero.webhook.received";
 
 /// itero-ai, the local model's server, answers on its socket:
 /// `{"socket", "seconds"}`, how long it took from its start.
@@ -76,6 +81,14 @@ pub fn notification_clicked(ws: &Workspace, data: Value, now: &str) -> anyhow::R
         anyhow::bail!("a click names its notification: {{\"notification\": \"<id>\", ...}}");
     }
     let e = own(NOTIFICATION_CLICKED, data, now);
+    Journal::open(ws)?.publish(&e)?;
+    Ok(e.id)
+}
+
+/// Saves a webhook that passed its check. Returns the message's id.
+pub fn webhook_received(ws: &Workspace, data: Value, now: &str) -> anyhow::Result<String> {
+    let subject = journal::subject("app");
+    let e = Envelope::new("webhook", WEBHOOK_RECEIVED, &subject, now, None, data);
     Journal::open(ws)?.publish(&e)?;
     Ok(e.id)
 }
