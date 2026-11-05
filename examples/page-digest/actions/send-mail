@@ -1,10 +1,75 @@
 #!/bin/sh
-# Mails $text to $to through $host (SMTP over TLS). The password goes to
-# curl on stdin, never on its command line.
-mail=$(mktemp) || exit 1
-trap 'rm -f "$mail"' EXIT
-printf 'From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s\r\n' \
-  "$user" "$to" "${subject:-itero}" "$text" > "$mail"
-printf 'user = "%s:%s"\n' "$user" "$password" |
-  curl -fsS --max-time 60 -K - --ssl-reqd "smtps://$host" \
-    --mail-from "$user" --mail-rcpt "$to" --upload-file "$mail"
+# Mails $text to $to, its subject $subject, from $user through the SMTP
+# server $host: TLS from the start on port 465 (the default), STARTTLS on
+# any other $port, none with tls set to false (a test server). Without a
+# password it does not log in. The password goes to curl on stdin, never
+# on its command line.
+missing=""
+for a in host user to text; do
+  eval "v=\${$a:-}"
+  [ -n "$v" ] || missing="$missing $a"
+done
+[ -z "$missing" ] || { echo "send-mail: no$missing: set it in the step's args" >&2; exit 1; }
+port=${port:-465}
+if [ "${tls:-true}" = false ]; then
+  url="smtp://$host:$port"; secure=""
+elif [ "$port" = 465 ]; then
+  url="smtps://$host:$port"; secure="--ssl-reqd"
+else
+  url="smtp://$host:$port"; secure="--ssl-reqd"
+fi
+
+# a text in curl's config: a backslash and a quote escaped
+quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# a header's text on one line: a line break in it would start a header
+oneline() { printf '%s' "$1" | LC_ALL=C tr '\r\n\t' '   '; }
+# a header's text as encoded words (RFC 2047) when it is not ASCII: each
+# at most 75 characters, never cutting a letter in two
+encode() {
+  oneline "$1" | LC_ALL=C awk '
+    BEGIN {
+      B = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+      for (i = 1; i < 256; i++) ord[sprintf("%c", i)] = i
+    }
+    function base64(s,   i, n, len, a, b, c, out) {
+      out = ""; len = length(s)
+      for (i = 1; i <= len; i += 3) {
+        a = ord[substr(s, i, 1)]
+        b = i + 1 <= len ? ord[substr(s, i + 1, 1)] : 0
+        c = i + 2 <= len ? ord[substr(s, i + 2, 1)] : 0
+        n = a * 65536 + b * 256 + c
+        out = out substr(B, int(n / 262144) + 1, 1) substr(B, int(n / 4096) % 64 + 1, 1)
+        out = out (i + 1 <= len ? substr(B, int(n / 64) % 64 + 1, 1) : "=")
+        out = out (i + 2 <= len ? substr(B, n % 64 + 1, 1) : "=")
+      }
+      return out
+    }
+    function word(w) { return "=?UTF-8?B?" base64(w) "?=" }
+    { s = $0 }
+    END {
+      plain = 1
+      for (i = 1; i <= length(s); i++) if (ord[substr(s, i, 1)] >= 128) plain = 0
+      if (plain) { printf "%s", s; exit }
+      # 45 bytes at most a word (60 in base64): a new one starts at a
+      # letter once 42 are taken, as a letter is up to 4 bytes
+      out = ""; w = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (length(w) >= 42 && (ord[c] < 128 || ord[c] >= 192)) { out = out word(w) " "; w = "" }
+        w = w c
+      }
+      printf "%s", out word(w)
+    }'
+}
+
+body=$(mktemp) || exit 1
+trap 'rm -f "$body"' EXIT
+# its lines end in CRLF, as mail's do; quoted-printable keeps them
+printf '%s\n' "$text" | tr -d '\r' | awk '{ printf "%s\r\n", $0 }' > "$body"
+{ [ -z "${password:-}" ] || printf 'user = "%s:%s"\n' "$(quote "$user")" "$(quote "$password")"; } |
+  curl -sS --max-time 60 -K - $secure "$url" \
+    --mail-from "$user" --mail-rcpt "$to" \
+    -H "Subject: $(encode "${subject:-itero}")" \
+    -H "From: $(oneline "$user")" -H "To: $(oneline "$to")" \
+    -H "Date: $(LC_ALL=C date '+%a, %d %b %Y %H:%M:%S %z')" \
+    -F "=<$body;type=text/plain; charset=utf-8;encoder=quoted-printable"

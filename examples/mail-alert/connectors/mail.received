@@ -1,23 +1,77 @@
 #!/bin/sh
 # Tells itero about each new mail in the local mailbox, as it arrives: one
-# line per mail, with its sender and subject. It notes the last mail it
-# told about, so a restart tells nothing twice; on its first start it only
-# notes where the mailbox is.
+# line per mail, with its sender and subject as mail programs show them.
+# It notes the last mail it told about, so a restart tells nothing twice;
+# on its first start it only notes where the mailbox is.
 mailbox="/var/mail/$USER"
 seen=".itero/mail.received.seen"
 all=".itero/mail.received.all"
+tab=$(printf '\t')
 mkdir -p .itero
 
-esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# a header's encoded words (RFC 2047) decoded: UTF-8 here, another
+# charset through iconv; the space between two words is not text
+decode() {
+  LC_ALL=C awk '
+    BEGIN {
+      B = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+      for (i = 0; i < 64; i++) val[substr(B, i + 1, 1)] = i
+      H = "0123456789abcdef"
+    }
+    function base64(s,   i, c, bits, n, out) {
+      bits = 0; n = 0; out = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (!(c in val)) continue
+        bits = bits * 64 + val[c]; n += 6
+        if (n >= 8) { n -= 8; out = out sprintf("%c", int(bits / 2 ^ n)); bits = bits % (2 ^ n) }
+      }
+      return out
+    }
+    function quoted(s,   out, h) {
+      gsub(/_/, " ", s); out = ""
+      while (match(s, /=[0-9A-Fa-f][0-9A-Fa-f]/)) {
+        h = tolower(substr(s, RSTART + 1, 2))
+        out = out substr(s, 1, RSTART - 1) sprintf("%c", (index(H, substr(h, 1, 1)) - 1) * 16 + index(H, substr(h, 2, 1)) - 1)
+        s = substr(s, RSTART + 3)
+      }
+      return out s
+    }
+    {
+      v = $0; out = ""; after = 0
+      while (match(v, /=\?[^?]*\?[BbQq]\?[^?]*\?=/)) {
+        pre = substr(v, 1, RSTART - 1); w = substr(v, RSTART, RLENGTH); v = substr(v, RSTART + RLENGTH)
+        if (!(after && pre ~ /^[ \t]*$/)) out = out pre
+        after = 1
+        split(w, p, "?"); cs = tolower(p[2]); sub(/\*.*/, "", cs)
+        text = toupper(p[3]) == "B" ? base64(p[4]) : quoted(p[4])
+        if (cs == "utf-8" || cs == "us-ascii") { out = out text; continue }
+        if (cs !~ /^[a-z0-9_.:-]+$/) { out = out w; continue }
+        printf "%s", out; out = ""; fflush()
+        printf "%s", text | ("iconv -f " cs " -t UTF-8")
+        close("iconv -f " cs " -t UTF-8")
+      }
+      print out v
+    }'
+}
+# a text as a JSON string's inside: a tab as a space, other control
+# characters dropped
+json() { printf '%s' "$1" | LC_ALL=C tr '\t' ' ' | LC_ALL=C tr -d '\000-\037' | LC_ALL=C sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 check() {
   [ -s "$mailbox" ] || return 0
-  # each mail: its "From " line, From: and Subject:, tab separated
+  # each mail: its "From " line, From: and Subject:, tab separated; only
+  # its headers, their folded lines joined
   awk '
-    /^From / { if (id != "") print id "\t" from "\t" subj; id = $0; from = ""; subj = ""; next }
-    /^From: / && from == "" { from = substr($0, 7) }
-    /^Subject: / && subj == "" { subj = substr($0, 10) }
-    END { if (id != "") print id "\t" from "\t" subj }
+    function out() { gsub(/\t/, " ", from); gsub(/\t/, " ", subj); print id "\t" from "\t" subj }
+    /^From / { if (id != "") out(); id = $0; from = ""; subj = ""; head = 1; on = ""; next }
+    !head { next }
+    /^$/ { head = 0; next }
+    /^[ \t]/ { if (on == "from") from = from $0; else if (on == "subj") subj = subj $0; next }
+    { on = ""; name = tolower($0) }
+    from == "" && name ~ /^from:/ { from = substr($0, 6); sub(/^[ \t]+/, "", from); on = "from" }
+    subj == "" && name ~ /^subject:/ { subj = substr($0, 9); sub(/^[ \t]+/, "", subj); on = "subj" }
+    END { if (id != "") out() }
   ' "$mailbox" > "$all"
   last=$(cat "$seen" 2>/dev/null)
   if [ -z "$last" ]; then
@@ -31,8 +85,13 @@ check() {
     new=$(cat "$all")
   fi
   [ -n "$new" ] || return 0
-  printf '%s\n' "$new" | while IFS="$(printf '\t')" read -r id from subj; do
-    printf '{"from": "%s", "subject": "%s"}\n' "$(esc "$from")" "$(esc "$subj")"
+  # split by hand: read would join two tabs around an empty field
+  printf '%s\n' "$new" | while IFS= read -r line; do
+    rest=${line#*"$tab"}
+    from=$(printf '%s\n' "${rest%%"$tab"*}" | decode)
+    subj=$(printf '%s\n' "${rest#*"$tab"}" | decode)
+    [ -n "$subj" ] || subj="(no subject)"
+    printf '{"from": "%s", "subject": "%s"}\n' "$(json "$from")" "$(json "$subj")"
   done
   tail -n 1 "$all" | cut -f 1 > "$seen"
 }

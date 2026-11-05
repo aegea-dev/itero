@@ -5,15 +5,70 @@
 # command line.
 scheme=pop3; [ "$tls" = true ] && scheme=pop3s
 url="$scheme://$host:$port"
-esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-ask() { printf 'user = "%s:%s"\n' "$(esc "$user")" "$(esc "$password")" | curl -fsS -K - "$@"; }
-# a subject as sent: =?UTF-8?B?...?= is decoded
-decode() {
-  case "$1" in
-    =\?[Uu][Tt][Ff]-8\?[Bb]\?*\?=) printf '%s' "$1" | sed 's/^=?[^?]*?[Bb]?//; s/?=$//' | base64 -d ;;
-    *) printf '%s' "$1" ;;
-  esac
+# a text in curl's config: a backslash and a quote escaped
+quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+ask() { printf 'user = "%s:%s"\n' "$(quote "$user")" "$(quote "$password")" | curl -fsS -K - "$@"; }
+# a header's value, from a mail's header lines: its name in any case, its
+# folded lines joined
+field() {
+  tr -d '\r' | awk -v name="$1" '
+    BEGIN { name = tolower(name) ":" }
+    /^$/ { exit }
+    /^[ \t]/ { if (on) value = value $0; next }
+    { on = 0 }
+    !found && tolower(substr($0, 1, length(name))) == name {
+      value = substr($0, length(name) + 1); sub(/^[ \t]+/, "", value); on = 1; found = 1
+    }
+    END { print value }'
 }
+# a header's encoded words (RFC 2047) decoded: UTF-8 here, another
+# charset through iconv; the space between two words is not text
+decode() {
+  LC_ALL=C awk '
+    BEGIN {
+      B = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+      for (i = 0; i < 64; i++) val[substr(B, i + 1, 1)] = i
+      H = "0123456789abcdef"
+    }
+    function base64(s,   i, c, bits, n, out) {
+      bits = 0; n = 0; out = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (!(c in val)) continue
+        bits = bits * 64 + val[c]; n += 6
+        if (n >= 8) { n -= 8; out = out sprintf("%c", int(bits / 2 ^ n)); bits = bits % (2 ^ n) }
+      }
+      return out
+    }
+    function quoted(s,   out, h) {
+      gsub(/_/, " ", s); out = ""
+      while (match(s, /=[0-9A-Fa-f][0-9A-Fa-f]/)) {
+        h = tolower(substr(s, RSTART + 1, 2))
+        out = out substr(s, 1, RSTART - 1) sprintf("%c", (index(H, substr(h, 1, 1)) - 1) * 16 + index(H, substr(h, 2, 1)) - 1)
+        s = substr(s, RSTART + 3)
+      }
+      return out s
+    }
+    {
+      v = $0; out = ""; after = 0
+      while (match(v, /=\?[^?]*\?[BbQq]\?[^?]*\?=/)) {
+        pre = substr(v, 1, RSTART - 1); w = substr(v, RSTART, RLENGTH); v = substr(v, RSTART + RLENGTH)
+        if (!(after && pre ~ /^[ \t]*$/)) out = out pre
+        after = 1
+        split(w, p, "?"); cs = tolower(p[2]); sub(/\*.*/, "", cs)
+        text = toupper(p[3]) == "B" ? base64(p[4]) : quoted(p[4])
+        if (cs == "utf-8" || cs == "us-ascii") { out = out text; continue }
+        if (cs !~ /^[a-z0-9_.:-]+$/) { out = out w; continue }
+        printf "%s", out; out = ""; fflush()
+        printf "%s", text | ("iconv -f " cs " -t UTF-8")
+        close("iconv -f " cs " -t UTF-8")
+      }
+      print out v
+    }'
+}
+# a text as a JSON string's inside: a tab as a space, other control
+# characters dropped
+json() { printf '%s' "$1" | LC_ALL=C tr '\t' ' ' | LC_ALL=C tr -d '\000-\037' | LC_ALL=C sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 # "number uid", one line per mail
 list=$(ask "$url/" -X UIDL) || exit 1
@@ -31,5 +86,7 @@ fi
 [ -n "$new" ] || exit 0
 n=$(printf '%s\n' "$new" | wc -l | tr -d ' ')
 newest=$(printf '%s\n' "$new" | tail -n 1 | cut -d ' ' -f 1)
-subject=$(ask "$url/$newest" -X "TOP $newest 0" | tr -d '\r' | sed -n 's/^Subject: //p' | head -n 1)
-printf '{"new": %s, "subject": "%s"}\n' "$n" "$(esc "$(decode "$subject")")"
+header=$(ask "$url/$newest" -X "TOP $newest 0") || exit 1
+subject=$(printf '%s\n' "$header" | field subject | decode)
+[ -n "$subject" ] || subject="(no subject)"
+printf '{"new": %s, "subject": "%s"}\n' "$n" "$(json "$subject")"
