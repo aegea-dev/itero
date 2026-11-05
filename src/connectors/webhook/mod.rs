@@ -2,6 +2,7 @@
 //! secret, and saves them as `itero.webhook.received`. A server of its own,
 //! apart from the daemon's API: it has only the paths it is given.
 pub mod check;
+mod serve;
 
 use axum::http::{HeaderMap, header};
 use check::Check;
@@ -163,4 +164,50 @@ pub fn event_data(
         kept.insert(name.as_str().to_string(), Value::String(values.join(", ")));
     }
     Ok(json!({ "path": path, "headers": kept, "body": body }))
+}
+
+/// `itero webhook`, ready to take requests.
+pub struct Webhook {
+    ws: crate::workspace::Workspace,
+    hooks: Vec<Hook>,
+    listener: std::net::TcpListener,
+}
+
+impl Webhook {
+    /// Reads the secrets and binds the port: what can go wrong goes wrong
+    /// here.
+    pub fn new(
+        ws: crate::workspace::Workspace,
+        host: std::net::IpAddr,
+        port: u16,
+        given: &[String],
+    ) -> anyhow::Result<Webhook> {
+        let found = hooks(given, &|n| crate::engine::secrets::get_in(&ws, n))
+            .map_err(|problems| anyhow::anyhow!(problems.join("\n")))?;
+        let listener = std::net::TcpListener::bind((host, port)).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot listen on {host}:{port}: {e} (another webhook on this port? a workflow giving this connector args runs a second copy of it)"
+            )
+        })?;
+        if !host.is_loopback() {
+            eprintln!(
+                "itero webhook: {host}:{port} takes requests from other machines, not encrypted: put a proxy with TLS in front"
+            );
+        }
+        let paths: Vec<&str> = found.iter().map(|h| h.path.as_str()).collect();
+        eprintln!(
+            "itero webhook: listening on {host}:{port}: {}",
+            paths.join(" ")
+        );
+        Ok(Webhook {
+            ws,
+            hooks: found,
+            listener,
+        })
+    }
+
+    /// Takes requests until the process ends.
+    pub fn run(self) -> anyhow::Result<()> {
+        serve::serve(self.ws, self.hooks, self.listener)
+    }
 }

@@ -37,7 +37,10 @@ rpassword = "~7.5.4"
 croner = "~4.0.1"
 service-manager = "~0.11.0"
 axum = "~0.8.9"
-tokio = { version = "~1.53.1", features = ["rt-multi-thread", "net", "macros", "sync"] }
+tokio = { version = "~1.53.1", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
+# itero webhook's listener: axum's own serve has no limit on a connection
+hyper = { version = "~1.12.0", features = ["http1", "server"] }
+hyper-util = { version = "~0.1.21", features = ["tokio", "service"] }
 # axum's own: a request to /w/<name>/ handed to that workspace's routes
 tower = { version = "~0.5.3", features = ["util"] }
 clap_complete = { version = "~4.6.11", features = ["unstable-dynamic"] }

@@ -1420,6 +1420,8 @@ dependencies = [
  "form_urlencoded",
  "futures-core",
  "humantime",
+ "hyper",
+ "hyper-util",
  "itero-ai-index",
  "keyring",
  "keyring-core",

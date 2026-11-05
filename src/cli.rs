@@ -149,6 +149,18 @@ pub enum Cmd {
     },
     /// For connectors: print a line each time a file or folder changes
     Watch { path: std::path::PathBuf },
+    /// For connectors: take webhooks from outside, each checked against a secret
+    Webhook {
+        /// The address to listen on; a tunnel or proxy on this machine reaches 127.0.0.1
+        #[arg(long, default_value = "127.0.0.1")]
+        host: std::net::IpAddr,
+        /// The port to listen on
+        #[arg(long)]
+        port: u16,
+        /// A path, its check (token, hmac or twilio) and its secret's name: /github:hmac:GITHUB_SECRET
+        #[arg(long = "hook", value_name = "PATH:CHECK:NAME")]
+        hooks: Vec<String>,
+    },
     /// Keeps `itero daemon` running: restarts it when it exits, stops
     /// answering or a pass hangs (what the service runs)
     #[command(hide = true)]
@@ -587,6 +599,14 @@ fn ignore_sigpipe() {
 
 /// Wakes the running daemon for a message saved in the journal; the
 /// message is kept either way, so a failure is said, not fatal.
+/// The daemon going away closes stdin: a command a connector runs then ends.
+fn end_with_stdin() {
+    std::thread::spawn(|| {
+        let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
+        std::process::exit(0);
+    });
+}
+
 fn nudge(ws: &crate::workspace::Workspace, now: &str) {
     if let Err(e) = crate::engine::events::nudge(ws, now) {
         eprintln!(
@@ -924,13 +944,14 @@ fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Info { json } => top::machine_info(json)?,
         Cmd::Watch { path } => {
             let watch = crate::connectors::Watch::new(&path)?;
-            // the daemon going away closes stdin: then the connector using
-            // this stops it
-            std::thread::spawn(|| {
-                let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
-                std::process::exit(0);
-            });
+            end_with_stdin();
             watch.run(&mut std::io::stdout().lock())?;
+        }
+        Cmd::Webhook { host, port, hooks } => {
+            let webhook =
+                crate::connectors::webhook::Webhook::new(workspace()?, host, port, &hooks)?;
+            end_with_stdin();
+            webhook.run()?;
         }
         Cmd::Service { cmd } => {
             use crate::engine::service;
