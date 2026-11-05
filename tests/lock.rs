@@ -16,6 +16,17 @@ fn workspace(d: &Path) -> itero::workspace::Workspace {
     itero::workspace::find(d).unwrap()
 }
 
+/// Waits for a lock just let go to be free. It is free at once, but a
+/// process this test binary is starting meanwhile (the other tests' daemons)
+/// holds a copy of the file until it runs its own program.
+fn until_free(ws: &itero::workspace::Workspace) {
+    let t = Instant::now();
+    while itero::engine::lock::held(ws).unwrap() {
+        assert!(t.elapsed() < Duration::from_secs(5), "still held");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 #[test]
 fn held_says_whether_a_daemon_runs_it_and_takes_nothing() {
     let d = tempfile::tempdir().unwrap();
@@ -32,7 +43,7 @@ fn held_says_whether_a_daemon_runs_it_and_takes_nothing() {
         "sakin-nehir, pid 1"
     );
     drop(first);
-    assert!(!itero::engine::lock::held(&ws).unwrap());
+    until_free(&ws);
     // a daemon starting while a command asks (holding the lock shared
     // for an instant, here 50 ms) still takes it, trying again
     use std::os::fd::AsRawFd;
@@ -60,17 +71,8 @@ fn a_second_lock_on_one_workspace_is_refused_naming_the_first() {
     let err = itero::engine::lock::take(&ws, "başka").err().unwrap();
     assert!(err.contains("sakin-nehir, pid 1"), "{err}");
     drop(first);
-    // free at once, but a process this test binary starts meanwhile (the
-    // other test's daemons) holds a copy of the file until it runs its own
-    // program: a few milliseconds
-    let t = Instant::now();
-    loop {
-        match itero::engine::lock::take(&ws, "başka") {
-            Ok(_) => break,
-            Err(e) => assert!(t.elapsed() < Duration::from_secs(1), "{e}"),
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    until_free(&ws);
+    assert!(itero::engine::lock::take(&ws, "başka").is_ok());
 }
 
 #[test]
