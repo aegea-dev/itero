@@ -77,9 +77,13 @@ jobs:
           # nothing later in the job pushes or fetches with this token
           persist-credentials: false
 
-      - name: Add the target
+      # one at a time: on macOS the two are the same target, and rustup
+      # given it twice downloads it twice at once and fails
+      - name: Add the targets
         shell: bash
-        run: rustup target add ${{ matrix.target }} ${{ matrix.ai_target }}
+        run: |
+          rustup target add ${{ matrix.target }}
+          rustup target add ${{ matrix.ai_target }}
 
       # musl-gcc builds the C in itero's static musl build (ring, SQLite)
       - name: Install musl's C compiler
