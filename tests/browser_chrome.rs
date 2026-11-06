@@ -55,3 +55,17 @@ fn chromium_on_path_is_found_when_there_is_no_chrome() {
         exe
     );
 }
+
+#[test]
+fn a_chrome_left_running_on_the_profile_is_stopped_first() {
+    let exe = chrome::find().expect("these tests need Chrome");
+    let d = tempfile::tempdir().unwrap();
+    let profile = d.path().join("profil");
+    let mut first = chrome::launch(&exe, Mode::Headless, &profile).unwrap();
+    // as a daemon that ended without stopping it leaves it
+    let mut second = chrome::launch(&exe, Mode::Headless, &profile).unwrap();
+    assert!(first.child.wait().is_ok(), "the first one ended");
+    assert_ne!(first.port, second.port);
+    second.child.kill().unwrap();
+    second.child.wait().unwrap();
+}

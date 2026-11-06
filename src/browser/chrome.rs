@@ -96,6 +96,7 @@ const START: Duration = Duration::from_secs(20);
 /// pages, prompts or bars.
 pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String> {
     std::fs::create_dir_all(profile).map_err(|e| format!("{}: {e}", profile.display()))?;
+    stop_left_over(profile)?;
     let active = profile.join("DevToolsActivePort");
     // one left by a Chrome that ended is not this one's
     match std::fs::remove_file(&active) {
@@ -144,4 +145,53 @@ pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// A Chrome still running on `profile`, left by a daemon that ended
+/// without stopping it: one Chrome per profile, so the new one would
+/// hand over to it and end. Chrome names its process in the profile's
+/// `SingletonLock` (`host-pid`); it is stopped only when its command line
+/// names this profile.
+fn stop_left_over(profile: &Path) -> Result<(), String> {
+    let Ok(target) = std::fs::read_link(profile.join("SingletonLock")) else {
+        return Ok(());
+    };
+    let Some(pid) = target
+        .to_string_lossy()
+        .rsplit('-')
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+    else {
+        return Ok(());
+    };
+    let ours = format!("--user-data-dir={}", profile.display());
+    let running = |pid: u32| {
+        Command::new("ps")
+            .args(["-o", "command=", "-p", &pid.to_string()])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains(&ours))
+            .unwrap_or(false)
+    };
+    if !running(pid) {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    // SAFETY: kill only sends a signal, to a Chrome running on itero's own
+    // profile, as its command line says
+    unsafe {
+        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+    }
+    let end = Instant::now() + Duration::from_secs(5);
+    while running(pid) {
+        if Instant::now() > end {
+            return Err(format!(
+                "a Chrome left running on {} (pid {pid}) did not stop",
+                profile.display()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Ok(())
 }
