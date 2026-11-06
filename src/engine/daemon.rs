@@ -1426,6 +1426,7 @@ fn tell(log: &Log, who: &Who, r: &Recorded, answer: &StepAnswer) {
             "run.ended",
             who.line(json!({ "status": steps::status(&answer.runtime), "why": why })),
         );
+        crate::browser::keeper::Keeper::global().end_run(&run.id);
     }
 }
 
@@ -1538,6 +1539,21 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
     if file == Path::new(worker::AI) && crate::ai::step::needs_itero_ai(&env)? {
         let socket = crate::ai::keeper::Keeper::global().socket(ws)?;
         env.insert("ITERO_AI_SOCKET".into(), socket.display().to_string());
+    }
+    // the built-in #browser acts on its run's tab in the daemon's Chrome
+    if file == Path::new(worker::BROWSER) {
+        let headless = match env.get("headless").map(String::as_str) {
+            None => None,
+            Some("true") => Some(true),
+            Some("false") => Some(false),
+            Some(other) => return Err(format!("#browser: headless is true or false, not {other}")),
+        };
+        let given = crate::browser::keeper::Keeper::global().tab_for_run(ws, run_id, headless)?;
+        env.insert("ITERO_BROWSER_TAB".into(), given.ws);
+        env.insert("ITERO_BROWSER_MODE".into(), given.mode.name().into());
+        env.insert("ITERO_BROWSER_RUN".into(), run_id.into());
+        let at: Vec<String> = job.path.iter().map(|n| n.to_string()).collect();
+        env.insert("ITERO_BROWSER_STEP".into(), at.join("."));
     }
     Ok(StepRun {
         file,

@@ -109,6 +109,7 @@ async fn health(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
         "last_error": h.last_error,
         "connectors": h.connectors,
         "ai": crate::ai::keeper::Keeper::global().health(),
+        "browser": crate::browser::keeper::Keeper::global().health(),
     })))
 }
 
@@ -442,6 +443,7 @@ async fn machine_health(State(s): State<MachineShared>) -> Json<Value> {
         "daemon": d,
         "workspaces": s.machine.health(),
         "ai": crate::ai::keeper::Keeper::global().health(),
+        "browser": crate::browser::keeper::Keeper::global().health(),
     }))
 }
 

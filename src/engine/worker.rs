@@ -634,6 +634,10 @@ pub const ROLL_LOG: &str = "roll-log";
 /// The built-in `#ai`: asks the local model (`crate::ai::step`).
 pub const AI: &str = "ai";
 
+/// The built-in `#browser`: drives the daemon's Chrome
+/// (`crate::browser::step`).
+pub const BROWSER: &str = "browser";
+
 /// The built-in `#find-models`: the models already on the machine, into
 /// the index itero-ai reads (`crate::ai::find`).
 pub const FIND_MODELS: &str = "find-models";

@@ -1,8 +1,9 @@
 //! The browser: the user's real Chrome, driven over the DevTools
 //! Protocol (CDP). The daemon keeps it (`keeper`); a `#browser` step acts
-//! on its run's tab (`step`).
+//! on its run's tab.
 pub mod cdp;
 pub mod chrome;
+pub mod keeper;
 
 use std::path::PathBuf;
 
