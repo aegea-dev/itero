@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 const METIN: &str = r#"<!doctype html><html lang="tr"><title>Sipariş</title>
 <h1>Sipariş</h1>
-<p>Kargo   yarın gelir.</p><p>Kargo yarın gelir.</p>
+<p>Kargo <b>yarın</b>   gelir.</p><p>Kargo yarın gelir.</p>
 <a href="/çıkış">Çıkış</a>
 <button>Gönder</button>
 <label>Ad <input name="ad"></label>
@@ -69,8 +69,9 @@ fn the_page_reads_as_a_person_sees_it() {
     let got = text::from_tree(tree["nodes"].as_array().unwrap());
     assert_eq!(
         got,
-        // a field's label reads before it, as a person sees it
-        "# Sipariş\nKargo yarın gelir.\n[Çıkış]\n[button: Gönder]\nAd\n[Ad: ___]"
+        // a paragraph is one line, its bold word in it; a field reads
+        // with its label, as a person sees them
+        "# Sipariş\nKargo yarın gelir.\n[Çıkış]\n[button: Gönder]\nAd [Ad: ___]"
     );
 }
 

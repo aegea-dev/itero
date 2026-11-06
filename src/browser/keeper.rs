@@ -41,6 +41,9 @@ struct Failures {
 struct RunTab {
     mode: Mode,
     tab: Tab,
+    /// Tabs the run had before it followed one a click opened: closed
+    /// with it.
+    others: Vec<Tab>,
     ws: Workspace,
 }
 
@@ -96,7 +99,11 @@ impl Keeper {
         headless: Option<bool>,
     ) -> Result<Given, String> {
         let mut s = self.lock();
-        if let Some(t) = s.runs.get(run) {
+        if let Some(t) = s.runs.get_mut(run) {
+            // a step that followed a tab its click opened left it here
+            if let Some(next) = take_followed(run) {
+                t.others.push(std::mem::replace(&mut t.tab, next));
+            }
             let asked = headless.map(|h| chrome::choose(Some(h)));
             if let Some(m) = asked
                 && m != t.mode
@@ -124,6 +131,7 @@ impl Keeper {
             RunTab {
                 mode,
                 tab,
+                others: vec![],
                 ws: ws.clone(),
             },
         );
@@ -197,13 +205,18 @@ impl Keeper {
     /// Closes run `run`'s tab, when it has one.
     pub fn end_run(&self, run: &str) {
         let mut s = self.lock();
-        let Some(t) = s.runs.remove(run) else {
+        let Some(mut t) = s.runs.remove(run) else {
             return;
         };
+        if let Some(last) = take_followed(run) {
+            t.others.push(last);
+        }
         let has_tabs = s.runs.values().any(|r| r.mode == t.mode);
         if let Some(c) = s.chromes.get_mut(&t.mode) {
-            if let Err(e) = cdp::close_tab(c.port, &t.tab.id) {
-                eprintln!("itero: the browser tab of run {run}: {e}");
+            for tab in t.others.iter().chain([&t.tab]) {
+                if let Err(e) = cdp::close_tab(c.port, &tab.id) {
+                    eprintln!("itero: the browser tab of run {run}: {e}");
+                }
             }
             if !has_tabs {
                 c.idle_since = Some(Instant::now());
@@ -312,6 +325,27 @@ impl Keeper {
             crate::ai::keeper::publish(ws, kind, data);
         }
     }
+}
+
+/// Where a step leaves the tab its run follows now: the step runs in a
+/// worker, apart from the daemon that keeps the tabs.
+pub fn followed_file(run: &str) -> anyhow::Result<std::path::PathBuf> {
+    Ok(crate::machine::state_dir()?
+        .join("browser")
+        .join("followed")
+        .join(run))
+}
+
+/// The tab a step of run `run` followed, taken.
+fn take_followed(run: &str) -> Option<Tab> {
+    let path = followed_file(run).ok()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let v: Value = serde_json::from_str(&text).ok()?;
+    Some(Tab {
+        id: v["id"].as_str()?.into(),
+        ws: v["ws"].as_str()?.into(),
+    })
 }
 
 /// `IDLE`, or for a test `ITERO_TEST_BROWSER_IDLE_SECS`.

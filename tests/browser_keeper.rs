@@ -60,6 +60,7 @@ fn a_tab_per_run_closed_when_the_run_is_gone_and_chrome_stopped_when_idle() {
     std::fs::write(root.join("itero.config.json"), "{}").unwrap();
     let ws = itero::workspace::find(&root).unwrap();
     let k = Keeper::global();
+    let _stop = StopChrome;
 
     let a = k.tab_for_run(&ws, "koşu-1", Some(true)).unwrap();
     assert_eq!(a.mode, Mode::Headless);
@@ -97,4 +98,13 @@ fn a_tab_per_run_closed_when_the_run_is_gone_and_chrome_stopped_when_idle() {
             .send()
             .is_err()
     );
+}
+
+/// Stops the keeper's Chrome however the test ends.
+struct StopChrome;
+
+impl Drop for StopChrome {
+    fn drop(&mut self) {
+        Keeper::global().stop();
+    }
 }

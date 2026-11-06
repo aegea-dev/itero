@@ -15,6 +15,25 @@ pub fn from_tree(nodes: &[Value]) -> String {
     if let Some(root) = nodes.first() {
         walk(root, &by_id, &mut lines);
     }
+    tidy(lines)
+}
+
+/// The text of the part of the page that is DOM node `backend`, or
+/// `None` when the tree has no node for it.
+pub fn from_subtree(nodes: &[Value], backend: i64) -> Option<String> {
+    let by_id: HashMap<&str, &Value> = nodes
+        .iter()
+        .filter_map(|n| Some((n["nodeId"].as_str()?, n)))
+        .collect();
+    let start = nodes
+        .iter()
+        .find(|n| n["backendDOMNodeId"].as_i64() == Some(backend))?;
+    let mut lines = Vec::new();
+    walk(start, &by_id, &mut lines);
+    Some(tidy(lines))
+}
+
+fn tidy(lines: Vec<String>) -> String {
     let mut out: Vec<String> = Vec::new();
     for l in lines {
         if l.is_empty() || out.last() == Some(&l) {
@@ -24,6 +43,19 @@ pub fn from_tree(nodes: &[Value]) -> String {
     }
     out.join("\n")
 }
+
+/// What reads as one line, however it is marked up inside.
+const ONE_LINE: [&str; 9] = [
+    "paragraph",
+    "listitem",
+    "cell",
+    "gridcell",
+    "columnheader",
+    "rowheader",
+    "caption",
+    "LabelText",
+    "label",
+];
 
 fn name(n: &Value) -> String {
     n["name"]["value"]
@@ -51,7 +83,16 @@ fn walk(n: &Value, by_id: &HashMap<&str, &Value>, out: &mut Vec<String>) {
             out.push(shape(&v));
         }
     };
-    match n["role"]["value"].as_str().unwrap_or_default() {
+    let role = n["role"]["value"].as_str().unwrap_or_default();
+    if ONE_LINE.contains(&role) {
+        // a paragraph's bold word or link is part of its line
+        let mut inside = Vec::new();
+        children(&mut inside);
+        let line: Vec<String> = inside.into_iter().filter(|l| !l.is_empty()).collect();
+        out.push(line.join(" "));
+        return;
+    }
+    match role {
         "StaticText" => named(&|v| v.to_string(), out),
         "heading" => named(&|v| format!("# {v}"), out),
         "link" => named(&|v| format!("[{v}]"), out),

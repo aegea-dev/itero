@@ -4,6 +4,8 @@
 pub mod cdp;
 pub mod chrome;
 pub mod keeper;
+pub mod page;
+pub mod step;
 pub mod target;
 pub mod text;
 

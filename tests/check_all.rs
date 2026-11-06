@@ -166,3 +166,39 @@ fn the_steps_of_a_workflow_with_mistakes_are_checked_too() {
     assert!(err.contains("it needs $message ("), "{err}");
     assert!(err.contains("7 errors"), "{err}");
 }
+
+#[test]
+fn ws_check_says_every_problem_of_every_browser_step() {
+    let d = tempfile::tempdir().unwrap();
+    file(d.path(), "itero.config.json", "{}");
+    file(
+        d.path(),
+        "workflows/tarayıcı.json",
+        r##"{ "on": [{ "event": "sayfa.istendi" }], "steps": [
+        { "#browser": { "args": { "open": "ftp://örnek", "click": "Gönder" } } },
+        { "#browser": { "args": { "type": "ışık", "timeout": 0 } } },
+        { "#browser": { "args": { "open": "$event.url", "bekle": 3 } } } ] }"##,
+    );
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let name = itero::engine::journal::Journal::open(&ws)
+        .unwrap()
+        .workspace()
+        .unwrap()
+        .name;
+    let o = ws_check(d.path(), false);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    for line in [
+        format!(
+            "error: #browser: one action per step, not open and click; open is an http or https address, not \"ftp://örnek\" ({name}/workflows/tarayıcı/steps/#browser/1)\n"
+        ),
+        format!(
+            "error: #browser: type needs into: the field to type in; timeout is seconds, more than 0 and at most 3600, not 0 ({name}/workflows/tarayıcı/steps/#browser/2)\n"
+        ),
+        "warning: #browser takes ".to_string(),
+        "2 errors, 1 warning\n".to_string(),
+    ] {
+        assert!(err.contains(&line), "{line}\n{err}");
+    }
+    assert!(err.contains("not bekle"), "{err}");
+}
