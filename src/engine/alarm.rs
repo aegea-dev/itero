@@ -245,7 +245,8 @@ mod linux {
             if let Some(at) = at {
                 // the wall clock's time: on resume it has moved on by the
                 // sleep, and a time it passed goes off at once
-                spec.it_value.tv_sec = at.timestamp() as libc::time_t;
+                // as the field's own type: libc deprecates naming time_t on musl
+                spec.it_value.tv_sec = at.timestamp() as _;
                 spec.it_value.tv_nsec = at.timestamp_subsec_nanos() as libc::c_long;
                 if spec.it_value.tv_sec <= 0 {
                     // a time before 1970 would disarm it: go off at once
