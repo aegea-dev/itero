@@ -17,6 +17,10 @@ const SIPARIS: &str = r#"<!doctype html><title>Sipariş</title>
 <form action="/ara"><label>Ara <input name="q"></label></form>
 <style>#alt{display:none}#menü:hover #alt{display:block}</style>
 <div id="menü" style="width:200px">Menü<div id="alt"><a href="/x">Alt menü</a></div></div>
+<a href="/tartışma" id="yerinde">Tartışma</a>
+<script>document.getElementById('yerinde').addEventListener('click', e => {
+  e.preventDefault(); history.pushState({}, '', '/tartışma');
+  setTimeout(() => { document.title = 'Tartışma'; document.body.innerHTML = '<p>Yorumlar</p>' }, 100) })</script>
 <script>setTimeout(() => { const p = document.createElement('p'); p.textContent = 'Sonuç'; document.body.append(p) }, 1000)</script>
 "#;
 
@@ -103,7 +107,7 @@ fn open_wait_find_and_read() {
     let text = o["text"].as_str().unwrap();
     assert_eq!(
         text,
-        "# Sipariş\nKargo yarın gelir.\n[Çıkış]\n[Yeni sekme]\n[button: Gönder]\nAra [Ara: ___]\nMenü\nSonuç"
+        "# Sipariş\nKargo yarın gelir.\n[Çıkış]\n[Yeni sekme]\n[button: Gönder]\nAra [Ara: ___]\nMenü\n[Tartışma]\nSonuç"
     );
     let o = step(&t, json!({ "read": "html" })).unwrap();
     assert!(
@@ -152,6 +156,28 @@ fn click_hover_type_and_key() {
     assert!(
         o["url"].as_str().unwrap().contains("q=%C4%B1%C5%9F%C4%B1k"),
         "{o}"
+    );
+}
+
+#[test]
+fn a_click_that_changes_the_page_in_place_does_not_wait_for_a_load() {
+    let (c, w) = (test_chrome::start(), site());
+    let t = tab(&c);
+    step(&t, json!({ "open": w.url("/sipariş") })).unwrap();
+    let started = std::time::Instant::now();
+    let o = step(&t, json!({ "click": "Tartışma", "timeout": 5 })).unwrap();
+    assert!(
+        started.elapsed().as_secs_f64() < 4.0,
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(
+        o["url"].as_str().unwrap().ends_with("/tart%C4%B1%C5%9Fma"),
+        "{o}"
+    );
+    assert_eq!(
+        step(&t, json!({ "wait": "Yorumlar" })).unwrap()["found"],
+        true
     );
 }
 

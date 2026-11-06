@@ -79,12 +79,17 @@ pub fn follow(cdp: &mut Cdp, until: Instant) -> Result<(), String> {
     if e["method"] == "Page.navigatedWithinDocument" {
         return Ok(());
     }
-    // the new document's loader comes with its navigation
+    // it started: a new document, whose loader comes with its navigation;
+    // or the same one changed in place (pushState), with no load to come
     let nav = cdp
         .wait_event(until, &mut |e| {
-            e["method"] == "Page.frameNavigated" && e["params"]["frame"]["id"] == main
+            (e["method"] == "Page.frameNavigated" && e["params"]["frame"]["id"] == main)
+                || (e["method"] == "Page.navigatedWithinDocument" && e["params"]["frameId"] == main)
         })
         .map_err(|_| "the page did not finish loading".to_string())?;
+    if nav["method"] == "Page.navigatedWithinDocument" {
+        return Ok(());
+    }
     let loader = nav["params"]["frame"]["loaderId"]
         .as_str()
         .unwrap_or_default()
