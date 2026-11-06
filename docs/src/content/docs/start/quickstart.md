@@ -74,7 +74,8 @@ run it from login on: `itero workspace add`, then `itero service install`
   `gmail` (new mail pushed as it arrives), `notify-api` (an app's
   notification, its answer posted back), `order`, `page-digest`,
   `messages` (an alert by mail, push notification or iMessage),
-  `page-summary` and `ai-mail` (a local model), `photos`, `pomodoro` (a
+  `page-summary` and `ai-mail` (a local model), `reddit-top` (a page read
+  and clicked through in Chrome), `photos`, `pomodoro` (a
   notification once a session's time is over), `webhook` (a reply from your
   own app, brought to the step waiting for it), `github-webhook` (a push to a
   repository, as a notification), `languages`

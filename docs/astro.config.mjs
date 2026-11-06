@@ -89,6 +89,7 @@ export default defineConfig({
 						{ label: 'Actions ■', slug: 'guides/actions' },
 						{ label: 'Connectors ▲', slug: 'guides/connectors' },
 						{ label: 'Webhooks', slug: 'guides/webhooks' },
+						{ label: 'The browser', slug: 'guides/browser' },
 						{ label: 'Secrets and environment variables', slug: 'guides/secrets' },
 						{ label: 'The log, IDs and names', slug: 'guides/log' },
 						{ label: "The daemon's own workflows", slug: 'guides/maintenance' },
