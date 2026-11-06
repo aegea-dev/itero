@@ -4,6 +4,8 @@
 pub mod cdp;
 pub mod chrome;
 pub mod keeper;
+pub mod target;
+pub mod text;
 
 use std::path::PathBuf;
 
