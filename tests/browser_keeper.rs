@@ -75,8 +75,9 @@ fn a_tab_per_run_closed_when_the_run_is_gone_and_chrome_stopped_when_idle() {
 
     // the daemon ends a run: its tab goes, the other stays
     k.end_run("koşu-1");
-    let open = pages(port);
-    assert!(!open.contains(&a.ws) && open.contains(&b.ws), "{open:?}");
+    // Chrome answers the close before the tab is gone
+    until("koşu-1's tab closed", || !pages(port).contains(&a.ws));
+    assert!(pages(port).contains(&b.ws));
 
     // a run the journal does not know (gone, or ended unseen): its tab is
     // closed by the keeper's own look
