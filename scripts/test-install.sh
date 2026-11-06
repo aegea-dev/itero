@@ -13,7 +13,16 @@ fail() {
 	exit 1
 }
 
-make -s -C "$root" dist TAG="$tag" DIST="$tmp/rel/$tag" >/dev/null
+if [ "$(uname)" = Linux ]; then
+	# the Linux release is the static musl build; a release from before it
+	# has only the glibc one, which the script installs instead
+	musl="$(uname -m)-unknown-linux-musl"
+	old=v0.0.0-eski
+	make -s -C "$root" dist TAG="$tag" TARGET="$musl" DIST="$tmp/rel/$tag" >/dev/null
+	make -s -C "$root" dist TAG="$old" TARGET="$(uname -m)-unknown-linux-gnu" DIST="$tmp/rel/$old" >/dev/null
+else
+	make -s -C "$root" dist TAG="$tag" DIST="$tmp/rel/$tag" >/dev/null
+fi
 
 # a good install
 if ! HOME="$tmp/ev" ITERO_INSTALL_BASE_URL="file://$tmp/rel" \
@@ -22,6 +31,32 @@ if ! HOME="$tmp/ev" ITERO_INSTALL_BASE_URL="file://$tmp/rel" \
 	fail "install"
 fi
 "$tmp/bin/itero" --version | grep -q itero || fail "the installed itero does not run"
+if [ "$(uname)" = Linux ]; then
+	grep -qF "($musl)" "$tmp/out" || {
+		cat "$tmp/out"
+		fail "Linux did not get the musl build"
+	}
+	# a release with no musl build: its glibc one, said so
+	if ! HOME="$tmp/ev4" ITERO_INSTALL_BASE_URL="file://$tmp/rel" \
+		sh "$root/docs/public/install" --version "$old" --to "$tmp/bin4" >"$tmp/out4" 2>&1; then
+		cat "$tmp/out4"
+		fail "install of a release without a musl build"
+	fi
+	grep -q "has no musl build" "$tmp/out4" || {
+		cat "$tmp/out4"
+		fail "the glibc build was installed without a word"
+	}
+	"$tmp/bin4/itero" --version | grep -q itero || fail "the glibc itero does not run"
+	# no answer at all (nothing listens on port 9) is no missing musl build
+	if HOME="$tmp/ev5" ITERO_INSTALL_BASE_URL="http://127.0.0.1:9" \
+		sh "$root/docs/public/install" --version "$tag" --to "$tmp/bin5" >"$tmp/out5" 2>&1; then
+		fail "an install with no server succeeded"
+	fi
+	if grep -q "has no musl build" "$tmp/out5"; then
+		cat "$tmp/out5"
+		fail "no answer was taken for a release without a musl build"
+	fi
+fi
 # no service in this HOME: a first install restarts nothing
 if grep -q "Restarted the service\|still runs the itero" "$tmp/out"; then
 	cat "$tmp/out"

@@ -3,9 +3,13 @@ title: Install
 description: Install itero with Homebrew, the install script, or from source.
 ---
 
-itero runs on macOS (Apple Silicon and Intel) and Linux (x86_64 and
-aarch64) with glibc 2.34 or later: Ubuntu 22.04, Debian 12,
-RHEL and Rocky 9, Fedora 36 and later. Alpine (musl) is not supported.
+itero runs on macOS (Apple Silicon and Intel) and on Linux (x86_64 and
+aarch64), any distribution: its Linux build is one static binary, Alpine
+included. itero's own name lookups (a remote `#ai` URL, for one) use
+`/etc/hosts` and DNS only: a `.local` name or an LDAP hostname does not
+resolve there. Your actions are programs of their own and keep the
+system's. The local model's server, `itero-ai`, needs glibc 2.34 or later
+(Ubuntu 22.04, Debian 12, RHEL 9 and later).
 
 ## Homebrew
 

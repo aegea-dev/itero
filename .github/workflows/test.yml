@@ -31,7 +31,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -72,6 +72,15 @@ jobs:
 
       - name: Tests
         run: make test
+
+      # The Linux release is a static musl build: itero's tests on it too.
+      # musl-gcc (musl-tools) builds the C in it.
+      - name: Tests on musl
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+          rustup target add x86_64-unknown-linux-musl
+          make test-musl
 
   # Container actions and the IMAP, POP3 and Gmail tests against GreenMail:
   # they need Docker, which the Linux runner has and the macOS one does not.

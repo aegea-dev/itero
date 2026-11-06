@@ -48,17 +48,23 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
+            ai_target: aarch64-apple-darwin
             os: macos-latest
           # cross built on the Apple Silicon runner: Rust targets Intel Macs
           # from there, and codesign signs either
           - target: x86_64-apple-darwin
+            ai_target: x86_64-apple-darwin
             os: macos-latest
-          # the oldest Ubuntu runners: built here, itero needs glibc 2.34, so
-          # it runs on Ubuntu 22.04, Debian 12, RHEL 9 and later.
-          # Built on 24.04 it needed glibc 2.39.
-          - target: x86_64-unknown-linux-gnu
+          # itero: one static musl build per architecture, for any Linux.
+          # itero-ai: glibc, built on the oldest Ubuntu runners, so it needs
+          # glibc 2.34 (Ubuntu 22.04, Debian 12, RHEL 9 and later); built on
+          # 24.04 it needed glibc 2.39. Each builds on its own architecture:
+          # musl-gcc does not cross build ring's C.
+          - target: x86_64-unknown-linux-musl
+            ai_target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
-          - target: aarch64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-musl
+            ai_target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm
     runs-on: ${{ matrix.os }}
     permissions:
@@ -73,7 +79,13 @@ jobs:
 
       - name: Add the target
         shell: bash
-        run: rustup target add ${{ matrix.target }}
+        run: rustup target add ${{ matrix.target }} ${{ matrix.ai_target }}
+
+      # musl-gcc builds the C in itero's static musl build (ring, SQLite)
+      - name: Install musl's C compiler
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
 
       # make dist writes THIRD-PARTY-LICENSES with it. Not cached: a cache made
       # on one tag is not restored on the next.
@@ -89,7 +101,7 @@ jobs:
       # llama.cpp from source (cmake is on every runner)
       - name: Build itero-ai's archive and its checksum
         shell: bash
-        run: make dist-ai TAG="$GITHUB_REF_NAME" TARGET=${{ matrix.target }}
+        run: make dist-ai TAG="$GITHUB_REF_NAME" TARGET=${{ matrix.ai_target }}
 
       - name: Upload them to the draft release
         shell: bash
@@ -144,9 +156,11 @@ jobs:
           mkdir -p /tmp/tap/Formula
           for name in itero itero-ai; do
             sha() { awk '{print $1}' "/tmp/sums/$name-$tag-$1.sha256"; }
+            # itero's Linux build is musl, itero-ai's glibc
+            libc=musl; [ "$name" = itero-ai ] && libc=gnu
             # the file's order: macOS arm, macOS intel, Linux intel, Linux arm
             python3 - "$name" "$version" "$(sha aarch64-apple-darwin)" "$(sha x86_64-apple-darwin)" \
-              "$(sha x86_64-unknown-linux-gnu)" "$(sha aarch64-unknown-linux-gnu)" <<'PY'
+              "$(sha x86_64-unknown-linux-$libc)" "$(sha aarch64-unknown-linux-$libc)" <<'PY'
           import re, sys, pathlib
           name, version, *shas = sys.argv[1:7]
           s = pathlib.Path(f"packaging/homebrew/{name}.rb").read_text()
