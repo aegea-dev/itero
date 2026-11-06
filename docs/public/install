@@ -81,9 +81,10 @@ detect_target() {
 		esac
 		;;
 	Linux)
+		# one static build for any Linux: musl, glibc or none
 		case "$arch" in
-		x86_64 | amd64) printf 'x86_64-unknown-linux-gnu\n' ;;
-		aarch64 | arm64) printf 'aarch64-unknown-linux-gnu\n' ;;
+		x86_64 | amd64) printf 'x86_64-unknown-linux-musl\n' ;;
+		aarch64 | arm64) printf 'aarch64-unknown-linux-musl\n' ;;
 		*) err "unsupported architecture on Linux: $arch (itero publishes x86_64 and aarch64)" ;;
 		esac
 		;;
@@ -109,7 +110,9 @@ HTTP_CODE=""
 fetch() {
 	# $1 url, $2 destination path
 	if [ "$DL" = "curl" ]; then
-		HTTP_CODE="$(curl -sL -o "$2" -w '%{http_code}' "$1" 2>/dev/null || printf '000\n')"
+		# curl prints 000 itself when it gets no answer, and exits non-zero
+		HTTP_CODE="$(curl -sL -o "$2" -w '%{http_code}' "$1" 2>/dev/null)" || true
+		[ -n "$HTTP_CODE" ] || HTTP_CODE=000
 		case "$HTTP_CODE" in
 		200) return 0 ;;
 		# file:// reports 000, and only the test seam uses it
@@ -370,15 +373,30 @@ main() {
 		tag="$(latest_tag)"
 	fi
 
+	tmp="$(mktemp -d)"
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmp'" EXIT INT TERM
+
+	# A release from before the musl build has only the glibc one: its
+	# checksum is not there (404; a missing file:// in the test seam).
+	case "$target" in
+	*-linux-musl)
+		if ! fetch "$BASE_URL/$tag/itero-$tag-$target.sha256" "$tmp/musl.sha256"; then
+			case "$HTTP_CODE" in
+			404 | 000 | "")
+				target="${target%-musl}-gnu"
+				say "itero $tag has no musl build; installing its glibc build, which needs glibc 2.34 or later"
+				;;
+			esac
+		fi
+		;;
+	esac
+
 	archive="itero-$tag-$target.tar.gz"
 	# the checksum is named after the archive's stem, not "<archive>.sha256"
 	sums="itero-$tag-$target.sha256"
 	url="$BASE_URL/$tag/$archive"
 	sums_url="$BASE_URL/$tag/$sums"
-
-	tmp="$(mktemp -d)"
-	# shellcheck disable=SC2064
-	trap "rm -rf '$tmp'" EXIT INT TERM
 
 	say "Installing itero $tag ($target)"
 
