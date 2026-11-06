@@ -33,6 +33,18 @@ ISOLATED = tmp=$$(mktemp -d "$${TMPDIR:-/tmp}/itero-test.XXXXXX") && \
 test: ## Run the full test suite
 	$(ISOLATED) $(CARGO) test --workspace --no-fail-fast
 
+# itero's own tests on the static musl build the Linux release ships (Linux
+# only; musl-gcc, from musl-tools, builds the C in it). itero-ai stays a
+# glibc build: built as usual and put beside the musl itero, the pair a
+# Linux install has, for the tests that start it.
+MUSL = $(shell uname -m)-unknown-linux-musl
+.PHONY: test-musl
+test-musl: ## Run itero's tests on the static musl build (Linux, needs musl-tools)
+	$(CARGO) build -p itero-ai
+	mkdir -p $(TARGET_DIR)/$(MUSL)/debug
+	cp $(TARGET_DIR)/debug/itero-ai $(TARGET_DIR)/$(MUSL)/debug/itero-ai
+	$(ISOLATED) $(CARGO) test -p itero --target $(MUSL) --no-fail-fast
+
 # rustfmt only visits files reachable through `mod`, so `cargo fmt` silently
 # skips a file not yet wired in. Handing every source file to rustfmt closes
 # that blind spot.
