@@ -47,6 +47,15 @@ if [ "$(uname)" = Linux ]; then
 		fail "the glibc build was installed without a word"
 	}
 	"$tmp/bin4/itero" --version | grep -q itero || fail "the glibc itero does not run"
+	# no answer at all (nothing listens on port 9) is no missing musl build
+	if HOME="$tmp/ev5" ITERO_INSTALL_BASE_URL="http://127.0.0.1:9" \
+		sh "$root/docs/public/install" --version "$tag" --to "$tmp/bin5" >"$tmp/out5" 2>&1; then
+		fail "an install with no server succeeded"
+	fi
+	if grep -q "has no musl build" "$tmp/out5"; then
+		cat "$tmp/out5"
+		fail "no answer was taken for a release without a musl build"
+	fi
 fi
 # no service in this HOME: a first install restarts nothing
 if grep -q "Restarted the service\|still runs the itero" "$tmp/out"; then

@@ -124,7 +124,10 @@ fetch() {
 		esac
 	else
 		HTTP_CODE=""
-		wget -q -O "$2" "$1" 2>/dev/null
+		wget -q -O "$2" "$1" 2>/dev/null && return 0
+		# 8: the server answered with an error, as for a missing file
+		[ "$?" = 8 ] && HTTP_CODE=error
+		return 1
 	fi
 }
 
@@ -377,13 +380,14 @@ main() {
 	# shellcheck disable=SC2064
 	trap "rm -rf '$tmp'" EXIT INT TERM
 
-	# A release from before the musl build has only the glibc one: its
-	# checksum is not there (404; a missing file:// in the test seam).
+	# A release from before the musl build has only the glibc one: the
+	# server says its musl checksum is not there (404; wget's error; a
+	# missing file in the file:// test seam). No answer at all is not that.
 	case "$target" in
 	*-linux-musl)
 		if ! fetch "$BASE_URL/$tag/itero-$tag-$target.sha256" "$tmp/musl.sha256"; then
-			case "$HTTP_CODE" in
-			404 | 000 | "")
+			case "$HTTP_CODE:$BASE_URL" in
+			404:* | error:* | 000:file://*)
 				target="${target%-musl}-gnu"
 				say "itero $tag has no musl build; installing its glibc build, which needs glibc 2.34 or later"
 				;;
