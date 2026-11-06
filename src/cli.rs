@@ -759,6 +759,8 @@ fn dispatch(cli: Cli) -> Result<()> {
                     None => chrono::Utc::now(),
                 };
                 let pass = daemon::run_once(&ws, at, &exe);
+                // a Chrome a #browser step started ends with the pass
+                crate::browser::keeper::Keeper::global().stop();
                 report(&pass, None);
                 pass?;
                 return Ok(());

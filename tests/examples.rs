@@ -563,3 +563,81 @@ fn the_messages_alert_goes_the_way_its_event_names() {
         "mail and iMessage were not its way: {runs:?}"
     );
 }
+
+#[test]
+fn the_reddit_example_opens_the_top_post_and_sums_up_its_discussion() {
+    #[path = "common/fake_ai.rs"]
+    mod fake_ai;
+    #[path = "common/web.rs"]
+    mod web;
+    let d = tempfile::tempdir().unwrap();
+    let ws = copy("reddit-top", d.path());
+    let w = web::serve(vec![
+        web::html(
+            "/r/rust/",
+            r#"<!doctype html><title>r/rust</title><h1>r/rust</h1>
+            <article><a href="/r/rust/comments/0/kurallar">Kurallar: önce okuyun</a> (sabit)</article>
+            <article><a href="/r/rust/comments/1/servo">Servo 0.7 çıktı</a></article>
+            <article><a href="/r/rust/comments/2/derleyici">Derleyici hızlandı</a></article>"#,
+        ),
+        web::html(
+            "/r/rust/comments/1/servo",
+            r#"<!doctype html><title>Servo 0.7 çıktı : r/rust</title><h1>Servo 0.7 çıktı</h1>
+            <p>Yeni sürüm daha çok siteyi açıyor.</p><p>Yorum: harika haber.</p>"#,
+        ),
+    ]);
+    let sock = d.path().join("ai.sock");
+    let fake = fake_ai::serve(&sock, Some(r#"{"title": "Servo 0.7 çıktı"}"#));
+    let notes = d.path().join("bildirim.log");
+    let state = d.path().join("durum");
+    let run = |args: &[&str]| {
+        let o = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .args(args)
+            .current_dir(&ws)
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .env("XDG_STATE_HOME", &state)
+            .env("ITERO_AI_SOCKET", &sock)
+            .env("ITERO_NOTIFY_LOG", &notes)
+            .env("ITERO_TEST_BROWSER_HEADLESS", "1")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{args:?}: {o:?}");
+        o
+    };
+    let event = serde_json::json!({ "url": w.url("/r/rust/") }).to_string();
+    run(&["ws", "emit", "subreddit.asked", &event]);
+    run(&["daemon", "--once"]);
+    let runs = runs_of(&ws, "top");
+    assert_eq!(runs[0]["status"], "done", "{runs:?}");
+    // the click went to the post the model named, not the pinned one
+    let asked = w.requests.lock().unwrap().clone();
+    assert!(
+        asked.iter().any(|p| p.contains("/comments/1/")),
+        "{asked:?}"
+    );
+    assert!(
+        !asked.iter().any(|p| p.contains("/comments/0/")),
+        "{asked:?}"
+    );
+    // the model was given the discussion as text
+    let reqs = fake.requests.lock().unwrap();
+    let second = reqs[1]["messages"].to_string();
+    assert!(
+        second.contains("Yeni sürüm daha çok siteyi açıyor."),
+        "{second}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&notes).unwrap(),
+        "Servo 0.7 çıktı : r/rust\t{\"title\": \"Servo 0.7 çıktı\"}\n"
+    );
+    // the daemon that ran once leaves no Chrome behind
+    let left = std::process::Command::new("pgrep")
+        .args(["-f", &state.display().to_string()])
+        .output()
+        .unwrap();
+    assert!(
+        left.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&left.stdout)
+    );
+}

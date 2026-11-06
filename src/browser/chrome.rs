@@ -77,6 +77,8 @@ pub fn choose(headless: Option<bool>) -> Mode {
     match headless {
         Some(true) => Mode::Headless,
         Some(false) => Mode::Window,
+        // tests never open a window on the screen of whoever runs them
+        None if std::env::var_os("ITERO_TEST_BROWSER_HEADLESS").is_some() => Mode::Headless,
         None if has_screen() => Mode::Window,
         None => Mode::Headless,
     }

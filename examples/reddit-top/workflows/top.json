@@ -1,0 +1,15 @@
+{
+  "on": [{ "event": "subreddit.asked" }, { "has": "$event.url" }],
+  "steps": [
+    { "#browser": { "args": { "open": "$event.url" } } },
+    { "#browser": { "args": { "read": "text" } } },
+    { "#ai": { "args": { "model": "unsloth/Qwen3.5-4B-GGUF",
+                         "message": "This is a subreddit's page as text; links are in [brackets]. Give the title of the first post that is not pinned and not an ad, exactly as it is written.\n\n$output.text",
+                         "fields": { "title": "text" } } } },
+    { "#browser": { "args": { "click": "$output.title" } } },
+    { "#browser": { "args": { "read": "text" } } },
+    { "#ai": { "args": { "model": "unsloth/Qwen3.5-4B-GGUF",
+                         "message": "Sum up this discussion in two short sentences: what the post says, and what the comments think.\n\n$output.text" } } },
+    { "#notify": { "args": { "title": "$steps.browser/3.title", "text": "$output" } } }
+  ]
+}

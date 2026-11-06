@@ -1,0 +1,4 @@
+{
+  "name": "reddit-top",
+  "description": "A subreddit's top post and its discussion, summed up by a model on this machine, as a notification"
+}
