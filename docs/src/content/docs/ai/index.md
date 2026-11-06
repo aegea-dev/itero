@@ -49,8 +49,9 @@ or its archive, `itero-ai-<version>-<target>.tar.gz`, from the
 
 - **macOS:** on Apple silicon the model runs on the GPU (Metal). Intel
   Macs have a build too, not measured.
-- **Linux:** the model runs on the CPU, which is slower. The x86_64
-  build does not use AVX2 yet.
+- **Linux:** glibc 2.34 or later (Ubuntu 22.04, Debian 12, RHEL 9 and
+  later), so not Alpine. The model runs on the CPU, which is slower. The
+  x86_64 build does not use AVX2 yet.
 - **Memory:** about the model file's size, plus room for its context.
   Qwen3.5-4B at 4 bits takes about 5.5 GB in all.
 
