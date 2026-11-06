@@ -45,6 +45,8 @@ hyper-util = { version = "~0.1.21", features = ["tokio", "service"] }
 tower = { version = "~0.5.3", features = ["util"] }
 clap_complete = { version = "~4.6.11", features = ["unstable-dynamic"] }
 itero-ai-index = { path = "itero-ai-index" }
+# the browser: CDP over a WebSocket on 127.0.0.1, so no TLS
+tungstenite = { version = "~0.30.0", default-features = false, features = ["handshake"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "~0.2.190"
