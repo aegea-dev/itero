@@ -238,11 +238,7 @@ fn a_human_check_fails_a_headless_step_at_once_and_is_notified() {
 #[test]
 fn a_human_check_in_a_window_waits_until_it_is_gone() {
     notify_log();
-    // the check goes after a second, as when a person has solved it
-    let page = format!(
-        r#"{PAGE}{}<script>setTimeout(() => document.querySelector('iframe').remove(), 1000)</script>"#,
-        frame(POPUP, SHOWN)
-    );
+    let page = format!("{PAGE}{}", frame(POPUP, SHOWN));
     let (c, w) = (
         test_chrome::start(),
         web::serve(vec![web::html("/bekle", &page)]),
@@ -252,6 +248,13 @@ fn a_human_check_in_a_window_waits_until_it_is_gone() {
     let o = browser::step_as(&t, "window", json!({ "open": w.url("/bekle") }), &|s| {
         if let Some(s) = s {
             said.lock().unwrap().push(s.to_string());
+            // once the step waits, the check goes, as when a person has
+            // solved it
+            let mut page =
+                itero::browser::cdp::Cdp::connect(&t.ws, std::time::Duration::from_secs(5))
+                    .unwrap();
+            page.eval("document.querySelector('iframe')?.remove(), 1")
+                .unwrap();
         }
     })
     .unwrap();
