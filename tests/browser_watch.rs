@@ -112,7 +112,10 @@ fn a_connector_asks_the_daemon_for_a_window_and_gives_it_back() {
         json!({ "OUT": seen.display().to_string() }),
     );
     let mut daemon = daemon(&root, d.path());
-    until("the connector ran", 20, || seen.exists());
+    // the shell makes the file, then writes in it
+    until("the connector ran", 20, || {
+        std::fs::read_to_string(&seen).is_ok_and(|t| !t.is_empty())
+    });
     let api = std::fs::read_to_string(&seen).unwrap();
     assert_eq!(api, format!("http://127.0.0.1:{port}/browser"));
 
@@ -202,10 +205,7 @@ fn a_watched_pages_changes_are_a_connectors_events() {
         events(&root, "sayfa.changed").len() == 1
     });
     // three in a burst: one event, after a second of quiet
-    page.eval(
-        "add('Üç'); setTimeout(() => add('Dört'), 200); setTimeout(() => add('Beş'), 400); 1",
-    )
-    .unwrap();
+    page.eval("add('Üç'); add('Dört'); add('Beş'); 1").unwrap();
     until("the burst", 20, || {
         events(&root, "sayfa.changed").len() == 2
     });

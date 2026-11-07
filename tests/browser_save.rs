@@ -48,8 +48,20 @@ fn a_page_is_saved_as_its_files_as_they_came() {
     let (w, png, font) = site();
     let t = tab(c.port);
     step(&t, json!({ "open": w.url("/sipariş") })).unwrap();
-    // the font is asked for once the text needs it
+    // the font is asked for once the text needs it: waited for, from a
+    // connection of the test's own
     step(&t, json!({ "wait": "Değişti" })).unwrap();
+    let mut page =
+        itero::browser::cdp::Cdp::connect(&t.ws, std::time::Duration::from_secs(10)).unwrap();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while page
+        .eval("document.fonts.ready.then(() => performance.getEntriesByType('resource').some(e => e.name.includes('.woff2') && e.responseEnd > 0))")
+        .unwrap()
+        != json!(true)
+    {
+        assert!(std::time::Instant::now() < end, "the font never loaded");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
     let o = step(&t, json!({ "save": "kayıt" })).unwrap();
     let host = format!("127.0.0.1:{}", w.port);
     let dir = t.root.path().join("kayıt").join(&host);

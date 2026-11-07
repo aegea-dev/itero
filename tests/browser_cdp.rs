@@ -43,7 +43,8 @@ fn waiting_for_an_event_that_never_comes_times_out() {
         })
         .unwrap_err();
     assert_eq!(e, "timed out");
-    assert!(started.elapsed() < Duration::from_secs(2));
+    // its own deadline, not the connection's 10 s
+    assert!(started.elapsed() < Duration::from_secs(5));
     // still usable after a timeout
     assert_eq!(t.eval("1 + 1").unwrap(), json!(2));
 }

@@ -39,6 +39,24 @@ fn pages(port: u16) -> Vec<String> {
         .collect()
 }
 
+/// A run started in `ws`'s journal, under way: its id.
+fn run(ws: &Workspace) -> String {
+    let flows = serde_json::json!({ "tarayıcı": { "on": [{ "event": "sayfa.açıldı" }], "steps": ["#browser"] } });
+    Journal::open(ws)
+        .unwrap()
+        .start_run(
+            &itero::engine::journal::Start {
+                workflow: "tarayıcı".into(),
+                flows: serde_json::from_value(flows).unwrap(),
+                input: serde_json::json!({}),
+                cause: None,
+            },
+            "2026-11-07T10:00:00Z",
+            None,
+        )
+        .unwrap()
+}
+
 fn until(what: &str, mut ok: impl FnMut() -> bool) {
     let end = Instant::now() + Duration::from_secs(15);
     while !ok() {
@@ -62,12 +80,15 @@ fn a_tab_per_run_closed_when_the_run_is_gone_and_chrome_stopped_when_idle() {
     let k = Keeper::global();
     let _stop = StopChrome;
 
-    let a = k.tab_for_run(&ws, "koşu-1", Some(true)).unwrap();
+    // runs the journal has, under way: the keeper's own look leaves their
+    // tabs open, however slow the test is
+    let (one, two) = (run(&ws), run(&ws));
+    let a = k.tab_for_run(&ws, &one, Some(true)).unwrap();
     assert_eq!(a.mode, Mode::Headless);
-    assert_eq!(k.tab_for_run(&ws, "koşu-1", None).unwrap(), a);
-    let e = k.tab_for_run(&ws, "koşu-1", Some(false)).unwrap_err();
+    assert_eq!(k.tab_for_run(&ws, &one, None).unwrap(), a);
+    let e = k.tab_for_run(&ws, &one, Some(false)).unwrap_err();
     assert!(e.contains("headless") && e.contains("window"), "{e}");
-    let b = k.tab_for_run(&ws, "koşu-2", Some(true)).unwrap();
+    let b = k.tab_for_run(&ws, &two, Some(true)).unwrap();
     assert_ne!(a.ws, b.ws);
     // each run's page is in front in a window of its own: a page behind
     // another tab is not drawn, and a click never reaches it
@@ -85,14 +106,23 @@ fn a_tab_per_run_closed_when_the_run_is_gone_and_chrome_stopped_when_idle() {
     assert!(open.contains(&a.ws) && open.contains(&b.ws), "{open:?}");
 
     // the daemon ends a run: its tab goes, the other stays
-    k.end_run("koşu-1");
+    k.end_run(&one);
     // Chrome answers the close before the tab is gone
-    until("koşu-1's tab closed", || !pages(port).contains(&a.ws));
+    until("the first run's tab closed", || {
+        !pages(port).contains(&a.ws)
+    });
     assert!(pages(port).contains(&b.ws));
 
     // a run the journal does not know (gone, or ended unseen): its tab is
     // closed by the keeper's own look
-    until("koşu-2's tab closed", || !pages(port).contains(&b.ws));
+    let gone = k.tab_for_run(&ws, "koşu-yok", Some(true)).unwrap();
+    until("the unknown run's tab closed", || {
+        !pages(port).contains(&gone.ws)
+    });
+    k.end_run(&two);
+    until("the second run's tab closed", || {
+        !pages(port).contains(&b.ws)
+    });
     assert_eq!(k.health().unwrap()["tabs"], 0);
 
     // no tab for the idle time: Chrome is stopped and says so

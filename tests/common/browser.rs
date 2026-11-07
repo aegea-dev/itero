@@ -84,9 +84,13 @@ fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
 /// loaded and the watcher has had a moment to look.
 pub fn watched(state: &std::path::Path, path: &str) -> itero::browser::cdp::Cdp {
     let active = state.join("itero/browser/headless/DevToolsActivePort");
-    wait_until("Chrome started", || active.exists());
-    let port = std::fs::read_to_string(&active).unwrap();
-    let port = port.lines().next().unwrap().trim().to_string();
+    // Chrome makes the file, then writes its port in it
+    let mut port = String::new();
+    wait_until("Chrome said its port", || {
+        let text = std::fs::read_to_string(&active).unwrap_or_default();
+        port = text.lines().next().unwrap_or_default().trim().to_string();
+        port.parse::<u16>().is_ok()
+    });
     let mut ws = String::new();
     wait_until("the page opened", || {
         let list: Value = itero::net::client(std::time::Duration::from_secs(10))
