@@ -3,21 +3,54 @@
 //! and what the action found or read.
 use super::blockers::{self, Blocker};
 use super::cdp::Cdp;
-use super::page;
 use super::target::{self, Target};
+use super::{inspect, network, page, save};
 use crate::engine::worker::{Failure, Note, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
 /// The args `#browser` reads.
-pub const ARGS: [&str; 12] = [
-    "open", "wait", "find", "read", "in", "click", "hover", "type", "into", "key", "headless",
+pub const ARGS: [&str; 21] = [
+    "open",
+    "wait",
+    "find",
+    "read",
+    "in",
+    "click",
+    "hover",
+    "type",
+    "into",
+    "key",
+    "inspect",
+    "screenshot",
+    "full",
+    "scroll",
+    "save",
+    "width",
+    "height",
+    "headless",
     "timeout",
+    "responses",
+    "cookie_values",
 ];
 
+/// The actions that load something, with which `responses` goes.
+const LOADS: [&str; 5] = ["open", "wait", "click", "key", "inspect"];
+
 /// The actions: one per step.
-pub const ACTIONS: [&str; 8] = [
-    "open", "wait", "find", "read", "click", "hover", "type", "key",
+pub const ACTIONS: [&str; 12] = [
+    "open",
+    "wait",
+    "find",
+    "read",
+    "click",
+    "hover",
+    "type",
+    "key",
+    "inspect",
+    "screenshot",
+    "scroll",
+    "save",
 ];
 
 /// How long an action waits for a page or a target with no `timeout`.
@@ -44,21 +77,28 @@ pub fn check(args: &Value) -> Result<(), String> {
         .filter(|k| a.contains_key(*k))
         .collect();
     match actions.as_slice() {
-        [] => problems.push(format!(
-            "a step does one of {} or key",
-            ACTIONS[..ACTIONS.len() - 1].join(", ")
-        )),
+        [] => problems.push(format!("a step does one of {}", or_list(&ACTIONS))),
         [_] => {}
         many => problems.push(format!("one action per step, not {}", many.join(" and "))),
     }
     let is = |k: &str| a.get(k).filter(|v| !later(v));
-    if let Some(v) = is("open") {
-        match v.as_str() {
-            Some(u) if u.starts_with("http://") || u.starts_with("https://") => {}
-            _ => problems.push(format!("open is an http or https address, not {v}")),
+    for k in ["open", "inspect"] {
+        if let Some(v) = is(k) {
+            match v.as_str() {
+                Some(u) if u.starts_with("http://") || u.starts_with("https://") => {}
+                _ => problems.push(format!("{k} is an http or https address, not {v}")),
+            }
         }
     }
-    for k in ["wait", "find", "click", "hover", "in", "into"] {
+    if a.contains_key("cookie_values") && !a.contains_key("inspect") {
+        problems.push("cookie_values goes with inspect".into());
+    }
+    if let Some(v) = is("cookie_values")
+        && !v.is_boolean()
+    {
+        problems.push(format!("cookie_values is true or false, not {v}"));
+    }
+    for k in ["wait", "find", "click", "hover", "in", "into", "scroll"] {
         if let Some(v) = is(k)
             && let Err(e) = Target::parse(v)
         {
@@ -71,8 +111,35 @@ pub fn check(args: &Value) -> Result<(), String> {
     {
         problems.push(format!("read is \"text\" or \"html\", not {v}"));
     }
-    if a.contains_key("in") && !a.contains_key("read") {
-        problems.push("in goes with read".into());
+    if a.contains_key("in") && !a.contains_key("read") && !a.contains_key("screenshot") {
+        problems.push("in goes with read or screenshot".into());
+    }
+    if let Some(v) = is("screenshot") {
+        let ok = v.as_str().is_some_and(|f| {
+            let f = f.to_ascii_lowercase();
+            [".png", ".jpg", ".jpeg"].iter().any(|e| f.ends_with(e))
+        });
+        if !ok {
+            problems.push(format!("screenshot is a .png, .jpg or .jpeg file, not {v}"));
+        }
+    }
+    if let Some(v) = is("save")
+        && v.as_str().is_none_or(|p| p.trim().is_empty())
+    {
+        problems.push(format!(
+            "save is a file ending in .mhtml or a folder, not {v}"
+        ));
+    }
+    if a.contains_key("full") && !a.contains_key("screenshot") {
+        problems.push("full goes with screenshot".into());
+    }
+    if let Some(v) = is("full")
+        && !v.is_boolean()
+    {
+        problems.push(format!("full is true or false, not {v}"));
+    }
+    if a.contains_key("full") && a.contains_key("in") {
+        problems.push("full and in do not go together".into());
     }
     match (a.contains_key("type"), a.contains_key("into")) {
         (true, false) => problems.push("type needs into: the field to type in".into()),
@@ -88,6 +155,24 @@ pub fn check(args: &Value) -> Result<(), String> {
         let names: Vec<&str> = page::KEYS.iter().map(|k| k.0).collect();
         if !v.as_str().is_some_and(|k| names.contains(&k)) {
             problems.push(format!("key is one of {}, not {v}", names.join(", ")));
+        }
+    }
+    if a.contains_key("responses") && !LOADS.iter().any(|k| a.contains_key(*k)) {
+        problems.push(format!("responses goes with {}", or_list(&LOADS)));
+    }
+    if let Some(v) = is("responses")
+        && v.as_str().is_none_or(|t| t.is_empty())
+    {
+        problems.push(format!("responses is a text a URL contains, not {v}"));
+    }
+    if a.contains_key("width") != a.contains_key("height") {
+        problems.push("width and height go together".into());
+    }
+    for k in ["width", "height"] {
+        if let Some(v) = is(k)
+            && !v.as_u64().is_some_and(|n| (200..=8000).contains(&n))
+        {
+            problems.push(format!("{k} is whole pixels from 200 to 8000, not {v}"));
         }
     }
     if let Some(v) = is("headless")
@@ -106,6 +191,15 @@ pub fn check(args: &Value) -> Result<(), String> {
         Ok(())
     } else {
         Err(problems.join("; "))
+    }
+}
+
+/// `a, b, c or d`.
+fn or_list(words: &[&str]) -> String {
+    match words {
+        [] => String::new(),
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
     }
 }
 
@@ -131,6 +225,17 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
     let until = Instant::now() + timeout;
     let mut cdp = Cdp::connect(tab, TIMEOUT).map_err(fail)?;
     page::prepare(&mut cdp).map_err(fail)?;
+    if let (Some(w), Some(h)) = (
+        a.get("width").and_then(Value::as_u64),
+        a.get("height").and_then(Value::as_u64),
+    ) {
+        page::resize(tab, w, h).map_err(fail)?;
+    }
+    let wanted = a.get("responses").and_then(Value::as_str);
+    // inspect turns the Network events on itself, before its page loads
+    if wanted.is_some() && !a.contains_key("inspect") {
+        network::start(&mut cdp).map_err(fail)?;
+    }
     let mut out = Map::new();
     let acted = act(
         &mut cdp,
@@ -141,10 +246,18 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         told,
         &mut out,
     );
+    if let Err(why) = &acted {
+        return Err(fail(failed(&mut cdp, why.clone(), r)));
+    }
+    if let Some(text) = wanted {
+        // what this step's page loaded; a tab a click opened is not
+        // recorded
+        let got = network::responses(&mut cdp, text, until).map_err(fail)?;
+        out.insert("responses".into(), json!(got));
+    }
     let mut cdp = match acted {
         Ok(Some(new)) => new,
-        Ok(None) => cdp,
-        Err(why) => return Err(fail(failed(&mut cdp, why, r))),
+        _ => cdp,
     };
     let (url, title) = page::about(&mut cdp).map_err(fail)?;
     out.insert("url".into(), json!(url));
@@ -169,7 +282,7 @@ fn failed(cdp: &mut Cdp, why: String, r: &StepRun) -> String {
             .map_or("step", String::as_str)
     );
     let shown = std::path::Path::new(".itero").join("browser").join(name);
-    match page::screenshot(cdp, &r.root.join(&shown)) {
+    match page::screenshot(cdp, &r.root.join(&shown), page::Shot::View) {
         Ok(()) => msg.push_str(&format!("; screenshot: {}", shown.display())),
         Err(e) => msg.push_str(&format!("; no screenshot: {e}")),
     }
@@ -368,6 +481,11 @@ fn act(
     if let Some(url) = a.get("open").and_then(Value::as_str) {
         page::load(cdp, url, until)?;
         blocked(cdp, r, w, told, out)?;
+    } else if let Some(url) = a.get("inspect").and_then(Value::as_str) {
+        inspect::load(cdp, url, until)?;
+        blocked(cdp, r, w, told, out)?;
+        let values = a.get("cookie_values") == Some(&json!(true));
+        out.insert("inspect".into(), inspect::facts(cdp, values)?);
     } else if a.contains_key("wait") {
         wait_for(cdp, &target_of(a, "wait")?, until, timeout)?;
         out.insert("found".into(), json!(true));
@@ -431,6 +549,38 @@ fn act(
         }
         page::follow(cdp, until)?;
         blocked(cdp, r, w, told, out)?;
+    } else if let Some(file) = a.get("screenshot").and_then(Value::as_str) {
+        let shot = if a.get("full") == Some(&json!(true)) {
+            page::Shot::Full
+        } else if a.contains_key("in") {
+            page::Shot::Element(wait_for(cdp, &target_of(a, "in")?, until, timeout)?.backend)
+        } else {
+            page::Shot::View
+        };
+        // the workspace's, or absolute
+        let path = r.root.join(file);
+        page::screenshot(cdp, &path, shot)?;
+        out.insert("file".into(), json!(path.display().to_string()));
+    } else if let Some(to) = a.get("save").and_then(Value::as_str) {
+        // the workspace's, or absolute
+        let path = r.root.join(to);
+        if to.to_ascii_lowercase().ends_with(".mhtml") {
+            save::mhtml(cdp, &path)?;
+            out.insert("file".into(), json!(path.display().to_string()));
+        } else {
+            let s = save::files(cdp, &path)?;
+            out.insert("folder".into(), json!(path.display().to_string()));
+            out.insert("files".into(), json!(s.files));
+            out.insert("failed".into(), json!(s.failed));
+            if !s.fetched_again.is_empty() {
+                out.insert("fetched_again".into(), json!(s.fetched_again));
+            }
+        }
+    } else if a.contains_key("scroll") {
+        let t = target_of(a, "scroll")?;
+        let f = wait_for(cdp, &t, until, timeout)?;
+        target::scroll_to(cdp, f.backend)
+            .map_err(|e| format!("cannot scroll to {}: {e}", t.describe()))?;
     } else if a.contains_key("hover") {
         let t = target_of(a, "hover")?;
         let f = wait_for(cdp, &t, until, timeout)?;

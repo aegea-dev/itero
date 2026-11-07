@@ -25,7 +25,7 @@ pub fn prepare(cdp: &mut Cdp) -> Result<(), String> {
 /// as single-page sites do, then until its network is almost quiet (at
 /// most `QUIET`).
 pub fn load(cdp: &mut Cdp, url: &str, until: Instant) -> Result<(), String> {
-    cdp.events();
+    cdp.events("Page.");
     let r = cdp.send("Page.navigate", json!({ "url": url }))?;
     if let Some(why) = r["errorText"].as_str().filter(|w| !w.is_empty()) {
         return Err(format!("{url}: {why}"));
@@ -122,9 +122,10 @@ pub fn ready(cdp: &mut Cdp, until: Instant) -> Result<(), String> {
 }
 
 /// The mouse to (x, y), then a left click: as a person's, not a script's.
-/// Events kept from before are dropped: `follow` reads the click's own.
+/// The page's events kept from before are dropped: `follow` reads the
+/// click's own.
 pub fn click(cdp: &mut Cdp, x: f64, y: f64) -> Result<(), String> {
-    cdp.events();
+    cdp.events("Page.");
     mouse(cdp, "mouseMoved", x, y)?;
     mouse(cdp, "mousePressed", x, y)?;
     mouse(cdp, "mouseReleased", x, y)
@@ -157,10 +158,10 @@ pub const KEYS: [(&str, &str, i64, &str); 12] = [
     ("End", "End", 35, ""),
 ];
 
-/// Presses `name`, one of `KEYS`. Events kept from before are dropped,
-/// as by `click`.
+/// Presses `name`, one of `KEYS`. The page's events kept from before are
+/// dropped, as by `click`.
 pub fn key(cdp: &mut Cdp, name: &str) -> Result<(), String> {
-    cdp.events();
+    cdp.events("Page.");
     let (key, code, vk, text) = KEYS
         .iter()
         .find(|k| k.0 == name)
@@ -189,6 +190,19 @@ fn browser(tab_ws: &str) -> Result<(Cdp, String), String> {
         .ok_or("not a tab's address")?;
     let id = tab_ws.rsplit('/').next().unwrap_or_default().to_string();
     Ok((super::cdp::browser(port)?, id))
+}
+
+/// Resizes the window of the tab at `tab_ws` to `width` by `height`
+/// pixels, as a person would drag it.
+pub fn resize(tab_ws: &str, width: u64, height: u64) -> Result<(), String> {
+    let (mut b, id) = browser(tab_ws)?;
+    let w = b.send("Browser.getWindowForTarget", json!({ "targetId": id }))?;
+    b.send(
+        "Browser.setWindowBounds",
+        json!({ "windowId": w["windowId"],
+                "bounds": { "width": width, "height": height, "windowState": "normal" } }),
+    )
+    .map(|_| ())
 }
 
 /// The page tabs open now, by id.
@@ -234,18 +248,70 @@ pub fn opened(tab_ws: &str, before: &[String]) -> Result<Option<Tab>, String> {
     }
 }
 
-/// The page as a PNG, to `path`.
-pub fn screenshot(cdp: &mut Cdp, path: &Path) -> Result<(), String> {
+/// What a screenshot shows.
+pub enum Shot {
+    /// The view, as the page is scrolled.
+    View,
+    /// The whole page, past the view.
+    Full,
+    /// One element (its backend node), scrolled into view.
+    Element(i64),
+}
+
+/// A picture of the page to `path`: JPEG for a `.jpg` or `.jpeg` file,
+/// else PNG.
+pub fn screenshot(cdp: &mut Cdp, path: &Path, shot: Shot) -> Result<(), String> {
     use base64::Engine;
-    let r = cdp.send("Page.captureScreenshot", json!({ "format": "png" }))?;
+    let jpeg = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg"));
+    let mut p = json!({ "format": if jpeg { "jpeg" } else { "png" } });
+    match shot {
+        Shot::View => {}
+        Shot::Full => {
+            let m = cdp.send("Page.getLayoutMetrics", json!({}))?;
+            let size = &m["cssContentSize"];
+            p["captureBeyondViewport"] = json!(true);
+            p["clip"] = json!({ "x": 0, "y": 0, "width": size["width"], "height": size["height"], "scale": 1 });
+        }
+        Shot::Element(backend) => {
+            super::target::scroll_to(cdp, backend)?;
+            let b = cdp
+                .send("DOM.getBoxModel", json!({ "backendNodeId": backend }))
+                .map_err(|_| "it is not shown on the page".to_string())?;
+            let q: Vec<f64> = b["model"]["border"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_f64)
+                .collect();
+            if q.len() != 8 {
+                return Err("it has no box on the page".into());
+            }
+            // the box is in the view's coordinates, a clip in the page's
+            let m = cdp.send("Page.getLayoutMetrics", json!({}))?;
+            let (sx, sy) = (
+                m["cssVisualViewport"]["pageX"].as_f64().unwrap_or(0.0),
+                m["cssVisualViewport"]["pageY"].as_f64().unwrap_or(0.0),
+            );
+            let xs = [q[0], q[2], q[4], q[6]];
+            let ys = [q[1], q[3], q[5], q[7]];
+            let min = |v: &[f64]| v.iter().copied().fold(f64::INFINITY, f64::min);
+            let max = |v: &[f64]| v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            p["clip"] = json!({ "x": min(&xs) + sx, "y": min(&ys) + sy,
+                "width": max(&xs) - min(&xs), "height": max(&ys) - min(&ys), "scale": 1 });
+        }
+    }
+    let r = cdp.send("Page.captureScreenshot", p)?;
     let data = r["data"].as_str().ok_or("no screenshot")?;
-    let png = base64::engine::general_purpose::STANDARD
+    let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|e| e.to_string())?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    std::fs::write(path, png).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// The page's address and title.

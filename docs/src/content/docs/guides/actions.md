@@ -151,8 +151,8 @@ rolls the log, and `#find-models` finds the models on the machine; the
 built-in workflows use them
 ([The daemon's own workflows](/guides/maintenance/)). `#ai` asks a
 model, on this machine or behind a URL ([#ai in a workflow](/ai/workflows/)).
-`#browser` opens, reads and clicks through pages in Chrome
-([The browser](/guides/browser/)).
+`#browser` opens, reads, clicks through, inspects, photographs and
+saves pages in Chrome ([The browser](/guides/browser/)).
 
 A workspace action of the same name is used instead of a built-in one.
 

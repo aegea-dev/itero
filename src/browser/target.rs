@@ -204,16 +204,22 @@ fn text_of(cdp: &mut Cdp, backend: i64) -> Result<String, String> {
 /// How long a page is given to settle after scrolling.
 const SETTLE: Duration = Duration::from_millis(300);
 
-/// Where to click `backend`: scrolled into view, measured after the page
-/// settled, and checked to be what lies at that point (itself, inside
-/// it, or a link to the same place laid over it); else what covers it.
-pub fn point(cdp: &mut Cdp, backend: i64) -> Result<(f64, f64), String> {
+/// Scrolls the element into view, then lets the page settle.
+pub fn scroll_to(cdp: &mut Cdp, backend: i64) -> Result<(), String> {
     cdp.send(
         "DOM.scrollIntoViewIfNeeded",
         json!({ "backendNodeId": backend }),
     )
     .map_err(|_| "it is not shown on the page".to_string())?;
     std::thread::sleep(SETTLE);
+    Ok(())
+}
+
+/// Where to click `backend`: scrolled into view, measured after the page
+/// settled, and checked to be what lies at that point (itself, inside
+/// it, or a link to the same place laid over it); else what covers it.
+pub fn point(cdp: &mut Cdp, backend: i64) -> Result<(f64, f64), String> {
+    scroll_to(cdp, backend)?;
     let m = cdp
         .send("DOM.getBoxModel", json!({ "backendNodeId": backend }))
         .map_err(|_| "it is not shown on the page".to_string())?;

@@ -186,9 +186,138 @@ fn every_problem_with_the_args_is_said_at_once() {
     assert!(e.contains("type needs into"), "{e}");
     let e = itero::browser::step::check(&json!({})).unwrap_err();
     assert!(
-        e.contains("a step does one of open, wait, find, read, click, hover, type or key"),
+        e.contains("a step does one of open, wait, find, read, click, hover, type, key, inspect, screenshot, scroll or save"),
         "{e}"
     );
     // known only in a run
     itero::browser::step::check(&json!({ "open": "$output.url" })).unwrap();
+}
+
+const UZUN: &str = r#"<!doctype html><title>Uzun</title><style>body{margin:0}</style>
+<div id="kutu" style="width:120px;height:40px;background:#6C8EEF">Kutu</div>
+<div style="height:3000px">Işık</div><p id="dip">Dip</p>"#;
+
+/// A PNG's width and height, from its header.
+fn png_size(bytes: &[u8]) -> (u32, u32) {
+    assert_eq!(&bytes[1..4], b"PNG");
+    let n = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+    (n(16), n(20))
+}
+
+/// What the page says now, from a connection of the test's own.
+fn ask(t: &browser::Tab, expr: &str) -> serde_json::Value {
+    itero::browser::cdp::Cdp::connect(&t.ws, std::time::Duration::from_secs(5))
+        .unwrap()
+        .eval(expr)
+        .unwrap()
+}
+
+#[test]
+fn screenshots_of_the_view_the_whole_page_or_one_element() {
+    let (c, w) = (
+        test_chrome::start(),
+        web::serve(vec![web::html("/uzun", UZUN)]),
+    );
+    let t = tab(c.port);
+    step(&t, json!({ "open": w.url("/uzun") })).unwrap();
+    let (vw, vh) = (
+        ask(&t, "innerWidth").as_u64().unwrap() as u32,
+        ask(&t, "innerHeight").as_u64().unwrap() as u32,
+    );
+
+    let o = step(&t, json!({ "screenshot": "resimler/görünüm.png" })).unwrap();
+    let file = t.root.path().join("resimler/görünüm.png");
+    assert_eq!(o["file"], file.display().to_string(), "{o}");
+    assert_eq!(png_size(&std::fs::read(&file).unwrap()), (vw, vh));
+
+    step(
+        &t,
+        json!({ "screenshot": "resimler/tüm.png", "full": true }),
+    )
+    .unwrap();
+    let (fw, fh) = png_size(&std::fs::read(t.root.path().join("resimler/tüm.png")).unwrap());
+    // the page's whole width, also where a scrollbar takes room (Linux)
+    assert_eq!(fw, vw);
+    assert!(fh > 3000, "{fh}");
+
+    step(
+        &t,
+        json!({ "screenshot": "resimler/kutu.png", "in": { "css": "#kutu" } }),
+    )
+    .unwrap();
+    assert_eq!(
+        png_size(&std::fs::read(t.root.path().join("resimler/kutu.png")).unwrap()),
+        (120, 40)
+    );
+
+    let abs = t.root.path().join("başka/görünüm.jpg");
+    step(&t, json!({ "screenshot": abs.display().to_string() })).unwrap();
+    assert_eq!(&std::fs::read(&abs).unwrap()[..2], [0xFF, 0xD8]);
+}
+
+#[test]
+fn scroll_brings_a_target_into_view() {
+    let (c, w) = (
+        test_chrome::start(),
+        web::serve(vec![web::html("/uzun", UZUN)]),
+    );
+    let t = tab(c.port);
+    step(&t, json!({ "open": w.url("/uzun") })).unwrap();
+    assert_eq!(ask(&t, "scrollY"), 0);
+    step(&t, json!({ "scroll": "Dip" })).unwrap();
+    assert!(ask(&t, "scrollY").as_f64().unwrap() > 2000.0);
+}
+
+#[test]
+fn screenshot_args_are_checked_at_once() {
+    let e = itero::browser::step::check(&json!({
+        "screenshot": "x.gif", "full": "evet", "in": "Kutu"
+    }))
+    .unwrap_err();
+    for says in [
+        "screenshot is a .png, .jpg or .jpeg file, not \"x.gif\"",
+        "full is true or false",
+        "full and in do not go together",
+    ] {
+        assert!(e.contains(says), "{says}: {e}");
+    }
+    let e =
+        itero::browser::step::check(&json!({ "open": "https://a.b", "full": true, "in": "Kutu" }))
+            .unwrap_err();
+    for says in [
+        "full goes with screenshot",
+        "in goes with read or screenshot",
+    ] {
+        assert!(e.contains(says), "{says}: {e}");
+    }
+}
+
+#[test]
+fn width_and_height_resize_the_runs_window_first() {
+    let (c, w) = (
+        test_chrome::start(),
+        web::serve(vec![web::html("/uzun", UZUN)]),
+    );
+    let t = tab(c.port);
+    let o = step(
+        &t,
+        json!({ "open": w.url("/uzun"), "width": 1024, "height": 700 }),
+    )
+    .unwrap();
+    assert_eq!(o["title"], "Uzun");
+    assert_eq!(ask(&t, "outerWidth"), 1024);
+    assert_eq!(ask(&t, "outerHeight"), 700);
+    let inner = ask(&t, "innerWidth").as_u64().unwrap();
+    assert!(inner > 900 && inner <= 1024, "{inner}");
+}
+
+#[test]
+fn width_and_height_are_checked_at_once() {
+    let e = itero::browser::step::check(&json!({ "read": "text", "width": 50 })).unwrap_err();
+    for says in [
+        "width and height go together",
+        "width is whole pixels from 200 to 8000, not 50",
+    ] {
+        assert!(e.contains(says), "{says}: {e}");
+    }
 }

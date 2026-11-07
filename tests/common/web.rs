@@ -11,7 +11,7 @@ pub struct Page {
     pub path: String,
     pub status: u16,
     pub headers: Vec<(String, String)>,
-    pub body: String,
+    pub body: Vec<u8>,
 }
 
 /// An HTML page at `path`.
@@ -20,17 +20,22 @@ pub fn html(path: &str, body: &str) -> Page {
         path: path.into(),
         status: 200,
         headers: vec![("Content-Type".into(), "text/html; charset=utf-8".into())],
-        body: body.into(),
+        body: body.as_bytes().to_vec(),
     }
 }
 
 /// Any page, with its content type.
 pub fn file(path: &str, content_type: &str, body: &str) -> Page {
+    bytes(path, content_type, body.as_bytes())
+}
+
+/// A file of any bytes (an image, a font), with its content type.
+pub fn bytes(path: &str, content_type: &str, body: &[u8]) -> Page {
     Page {
         path: path.into(),
         status: 200,
         headers: vec![("Content-Type".into(), content_type.into())],
-        body: body.into(),
+        body: body.to_vec(),
     }
 }
 
@@ -76,7 +81,7 @@ pub fn serve(pages: Vec<Page>) -> Web {
                     .find(|p| p.path == path || percent_decode(&p.path) == percent_decode(path));
                 let (status, headers, body) = match page {
                     Some(p) => (p.status, p.headers.clone(), p.body.clone()),
-                    None => (404, vec![], "yok".into()),
+                    None => (404, vec![], b"yok".to_vec()),
                 };
                 let mut out = format!(
                     "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n",
@@ -86,8 +91,9 @@ pub fn serve(pages: Vec<Page>) -> Web {
                     out.push_str(&format!("{k}: {v}\r\n"));
                 }
                 out.push_str("\r\n");
-                out.push_str(&body);
-                let _ = s.write_all(out.as_bytes());
+                let mut all = out.into_bytes();
+                all.extend_from_slice(&body);
+                let _ = s.write_all(&all);
             });
         }
     });
