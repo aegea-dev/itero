@@ -36,10 +36,12 @@ pub struct Machine {
     idle: Mutex<BTreeMap<String, (Entry, Idle)>>,
     /// One sync at a time.
     syncing: Mutex<()>,
+    /// The port the machine's API is served on, when it is.
+    port: Option<u16>,
 }
 
 impl Machine {
-    pub fn new(exe: PathBuf, report: Report) -> Machine {
+    pub fn new(exe: PathBuf, report: Report, port: Option<u16>) -> Machine {
         Machine {
             scans: Mutex::new(None),
             exe,
@@ -47,6 +49,7 @@ impl Machine {
             running: Mutex::new(BTreeMap::new()),
             idle: Mutex::new(BTreeMap::new()),
             syncing: Mutex::new(()),
+            port,
         }
     }
 
@@ -128,7 +131,7 @@ impl Machine {
                 }
             }
         };
-        Running::start(ws, &self.exe, held, self.report, true).map_err(|err| Idle {
+        Running::start(ws, &self.exe, held, self.report, true, self.port).map_err(|err| Idle {
             state: "failed",
             why: format!("{err:#}"),
         })

@@ -702,9 +702,14 @@ fn dispatch(cli: Cli) -> Result<()> {
             };
             crate::ai::keeper::Keeper::global().for_machine();
             crate::browser::keeper::Keeper::global().for_machine();
+            let served = match &listener {
+                Some(l) => Some(l.local_addr()?.port()),
+                None => None,
+            };
             let machine = std::sync::Arc::new(crate::engine::machine::Machine::new(
                 std::env::current_exe()?,
                 report,
+                served,
             ));
             {
                 let machine = machine.clone();
@@ -772,8 +777,18 @@ fn dispatch(cli: Cli) -> Result<()> {
             } else {
                 Some(http::listen(&ws)?)
             };
-            let running =
-                crate::engine::running::Running::start(ws.clone(), &exe, lock, report, false)?;
+            let served = match &listening {
+                Some((l, _)) => Some(l.local_addr()?.port()),
+                None => None,
+            };
+            let running = crate::engine::running::Running::start(
+                ws.clone(),
+                &exe,
+                lock,
+                report,
+                false,
+                served,
+            )?;
             if let Some((_, Some(note))) = &listening {
                 running
                     .log

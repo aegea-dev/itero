@@ -92,6 +92,7 @@ fn run_it(ws: &itero::workspace::Workspace) -> Health {
         &health,
         &log(ws),
         &Default::default(),
+        None,
     );
     health.into_inner().unwrap()
 }
@@ -149,6 +150,7 @@ fn a_connector_that_cannot_start_is_given_up_on_with_why() {
         &health,
         &log(&ws),
         &Default::default(),
+        None,
     );
     let h = health.into_inner().unwrap();
     let s = &h.connectors["deneme.başladı"];

@@ -38,7 +38,7 @@ fn a_workspace_started_then_stopped_leaves_nothing_running() {
     let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
 
     let held = lock::take(&ws, "deneme").unwrap();
-    let r = Running::start(ws.clone(), exe, held, |_, _| {}, false).unwrap();
+    let r = Running::start(ws.clone(), exe, held, |_, _| {}, false, None).unwrap();
     until("the connector to run", || r.connector_pids().len() == 1);
     until("the first pass", || {
         r.engine.health.lock().unwrap().passes >= 1
@@ -126,7 +126,7 @@ fn a_connector_runs_once_for_each_set_of_args_the_workflows_give_it() {
     assert_eq!(copies.len(), 2, "the same args share one: {copies:#?}");
     let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
     let held = lock::take(&ws, "deneme").unwrap();
-    let r = Running::start(ws.clone(), exe, held, |_, _| {}, false).unwrap();
+    let r = Running::start(ws.clone(), exe, held, |_, _| {}, false, None).unwrap();
     until("both copies to send", || sent(&ws).len() == 2);
     let got = sent(&ws);
     assert_eq!(got[0].0, r#"connector/kutu.geldi?{"KUTU":"destek"}"#);

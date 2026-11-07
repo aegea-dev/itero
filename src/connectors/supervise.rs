@@ -109,10 +109,15 @@ fn once(
     wake: &Sender<()>,
     log: &Log,
     stop: &Stop,
+    api: Option<&str>,
 ) -> anyhow::Result<String> {
     let j = Journal::open(ws)?;
-    let env = crate::engine::daemon::connector_env(ws, &s.listen.kind, &s.listen.args)
+    let mut env = crate::engine::daemon::connector_env(ws, &s.listen.kind, &s.listen.args)
         .map_err(anyhow::Error::msg)?;
+    if let Some(api) = api {
+        // where `itero browser watch` asks for its window
+        env.insert("ITERO_BROWSER_API".into(), format!("{api}browser"));
+    }
     let mut child = Command::new(&s.file)
         .current_dir(&ws.root)
         .envs(env)
@@ -155,7 +160,8 @@ fn once(
 }
 
 /// Runs a connector until it is given up on, or `stop` is set (its
-/// process is then asked to end).
+/// process is then asked to end). `api` is the daemon's address, when it
+/// serves.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     ws: &Workspace,
@@ -166,6 +172,7 @@ pub fn run(
     health: &Mutex<Health>,
     log: &Log,
     stop: &Stop,
+    api: Option<&str>,
 ) {
     let name = s.name();
     let mut ends: Vec<Instant> = vec![];
@@ -180,7 +187,7 @@ pub fn run(
             h.restarts = ends.len();
         });
         log.write("connector.started", json!({ "connector": name }));
-        let ended = match once(ws, exe, s, wake, log, stop) {
+        let ended = match once(ws, exe, s, wake, log, stop, api) {
             Ok(status) => status,
             Err(e) => format!("error: {e:#}"),
         };
