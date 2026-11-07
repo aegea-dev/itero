@@ -290,3 +290,33 @@ fn screenshot_args_are_checked_at_once() {
         assert!(e.contains(says), "{says}: {e}");
     }
 }
+
+#[test]
+fn width_and_height_resize_the_runs_window_first() {
+    let (c, w) = (
+        test_chrome::start(),
+        web::serve(vec![web::html("/uzun", UZUN)]),
+    );
+    let t = tab(c.port);
+    let o = step(
+        &t,
+        json!({ "open": w.url("/uzun"), "width": 1024, "height": 700 }),
+    )
+    .unwrap();
+    assert_eq!(o["title"], "Uzun");
+    assert_eq!(ask(&t, "outerWidth"), 1024);
+    assert_eq!(ask(&t, "outerHeight"), 700);
+    let inner = ask(&t, "innerWidth").as_u64().unwrap();
+    assert!(inner > 900 && inner <= 1024, "{inner}");
+}
+
+#[test]
+fn width_and_height_are_checked_at_once() {
+    let e = itero::browser::step::check(&json!({ "read": "text", "width": 50 })).unwrap_err();
+    for says in [
+        "width and height go together",
+        "width is whole pixels from 200 to 8000, not 50",
+    ] {
+        assert!(e.contains(says), "{says}: {e}");
+    }
+}

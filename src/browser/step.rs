@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
 /// The args `#browser` reads.
-pub const ARGS: [&str; 18] = [
+pub const ARGS: [&str; 20] = [
     "open",
     "wait",
     "find",
@@ -25,6 +25,8 @@ pub const ARGS: [&str; 18] = [
     "screenshot",
     "full",
     "scroll",
+    "width",
+    "height",
     "headless",
     "timeout",
     "responses",
@@ -154,6 +156,16 @@ pub fn check(args: &Value) -> Result<(), String> {
     {
         problems.push(format!("responses is a text a URL contains, not {v}"));
     }
+    if a.contains_key("width") != a.contains_key("height") {
+        problems.push("width and height go together".into());
+    }
+    for k in ["width", "height"] {
+        if let Some(v) = is(k)
+            && !v.as_u64().is_some_and(|n| (200..=8000).contains(&n))
+        {
+            problems.push(format!("{k} is whole pixels from 200 to 8000, not {v}"));
+        }
+    }
     if let Some(v) = is("headless")
         && !v.is_boolean()
     {
@@ -204,6 +216,12 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
     let until = Instant::now() + timeout;
     let mut cdp = Cdp::connect(tab, TIMEOUT).map_err(fail)?;
     page::prepare(&mut cdp).map_err(fail)?;
+    if let (Some(w), Some(h)) = (
+        a.get("width").and_then(Value::as_u64),
+        a.get("height").and_then(Value::as_u64),
+    ) {
+        page::resize(tab, w, h).map_err(fail)?;
+    }
     let wanted = a.get("responses").and_then(Value::as_str);
     // inspect turns the Network events on itself, before its page loads
     if wanted.is_some() && !a.contains_key("inspect") {

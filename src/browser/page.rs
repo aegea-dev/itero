@@ -192,6 +192,19 @@ fn browser(tab_ws: &str) -> Result<(Cdp, String), String> {
     Ok((super::cdp::browser(port)?, id))
 }
 
+/// Resizes the window of the tab at `tab_ws` to `width` by `height`
+/// pixels, as a person would drag it.
+pub fn resize(tab_ws: &str, width: u64, height: u64) -> Result<(), String> {
+    let (mut b, id) = browser(tab_ws)?;
+    let w = b.send("Browser.getWindowForTarget", json!({ "targetId": id }))?;
+    b.send(
+        "Browser.setWindowBounds",
+        json!({ "windowId": w["windowId"],
+                "bounds": { "width": width, "height": height, "windowState": "normal" } }),
+    )
+    .map(|_| ())
+}
+
 /// The page tabs open now, by id.
 pub fn tabs(tab_ws: &str) -> Result<Vec<String>, String> {
     let (mut b, _) = browser(tab_ws)?;
