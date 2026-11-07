@@ -14,6 +14,16 @@ pub struct Log {
 }
 
 impl Log {
+    /// The log of the workspace at `root`, for a step writing to it from
+    /// its worker; none outside a workspace.
+    pub fn of_root(root: &std::path::Path) -> Option<Log> {
+        let ws = crate::workspace::find(root).ok()?;
+        let id = super::journal::Journal::open(&ws)
+            .and_then(|j| j.workspace())
+            .ok()?;
+        Some(Log::new(&ws, &id.id))
+    }
+
     /// The log of `ws`, whose identity is `workspace`, written by this
     /// daemon's life.
     pub fn new(ws: &Workspace, workspace: &str) -> Log {

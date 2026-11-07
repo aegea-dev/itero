@@ -107,7 +107,9 @@ fn mouse(cdp: &mut Cdp, kind: &str, x: f64, y: f64) -> Result<(), String> {
 }
 
 /// The mouse to (x, y), then a left click: as a person's, not a script's.
+/// Events kept from before are dropped: `follow` reads the click's own.
 pub fn click(cdp: &mut Cdp, x: f64, y: f64) -> Result<(), String> {
+    cdp.events();
     mouse(cdp, "mouseMoved", x, y)?;
     mouse(cdp, "mousePressed", x, y)?;
     mouse(cdp, "mouseReleased", x, y)
@@ -140,8 +142,10 @@ pub const KEYS: [(&str, &str, i64, &str); 12] = [
     ("End", "End", 35, ""),
 ];
 
-/// Presses `name`, one of `KEYS`.
+/// Presses `name`, one of `KEYS`. Events kept from before are dropped,
+/// as by `click`.
 pub fn key(cdp: &mut Cdp, name: &str) -> Result<(), String> {
+    cdp.events();
     let (key, code, vk, text) = KEYS
         .iter()
         .find(|k| k.0 == name)

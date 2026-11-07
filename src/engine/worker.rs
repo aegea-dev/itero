@@ -396,7 +396,7 @@ fn commands(n: &Note, macos: bool, app: Option<PathBuf>) -> Vec<(PathBuf, Vec<St
 /// A desktop notification, through the first of `notifiers` there is. With
 /// `ITERO_NOTIFY_LOG` set, a line is appended to that file instead: the
 /// title, the text, then `Note::fields` as `name=value`, tab separated.
-fn show(n: &Note) -> Result<(), String> {
+pub(crate) fn show(n: &Note) -> Result<(), String> {
     if let Some(u) = &n.url
         && !openable(u)
     {

@@ -1,10 +1,11 @@
 //! The built-in `#browser`: one action on the run's tab in the daemon's
 //! Chrome. Its `$output` is always the page (`url`, `title`) and the mode,
 //! and what the action found or read.
+use super::blockers::{self, Blocker};
 use super::cdp::Cdp;
 use super::page;
 use super::target::{self, Target};
-use crate::engine::worker::{Failure, Outcome, StepRun};
+use crate::engine::worker::{Failure, Note, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
@@ -165,6 +166,62 @@ fn failed(cdp: &mut Cdp, why: String, r: &StepRun) -> String {
     msg
 }
 
+/// After a page loads: a banner rejected is logged; one that is not is
+/// shown to the user, and `$output.blocked` says it may be in the way.
+fn blocked(
+    cdp: &mut Cdp,
+    r: &StepRun,
+    until: Instant,
+    out: &mut Map<String, Value>,
+) -> Result<(), String> {
+    let mut kinds = vec![];
+    for b in blockers::check(cdp, until)? {
+        match b {
+            Blocker::Consent {
+                tool,
+                cleared: true,
+            } => {
+                let (url, _) = page::about(cdp)?;
+                if let Some(log) = crate::engine::log::Log::of_root(&r.root) {
+                    log.write(
+                        "browser.consent",
+                        json!({ "workflow": r.workflow, "tool": tool, "url": url }),
+                    );
+                }
+            }
+            Blocker::Consent { tool, .. } => {
+                let (url, _) = page::about(cdp)?;
+                let host = url.split('/').nth(2).unwrap_or(&url).to_string();
+                let banner = match tool {
+                    Some(t) => format!("a {t} cookie banner"),
+                    None => "a cookie banner".into(),
+                };
+                tell(
+                    r,
+                    format!("{host} shows {banner} itero cannot close: it may be in the way"),
+                    &url,
+                )?;
+                kinds.push("consent");
+            }
+        }
+    }
+    if !kinds.is_empty() {
+        out.insert("blocked".into(), json!(kinds));
+    }
+    Ok(())
+}
+
+/// A notification about the page at `url`, from the step's workflow.
+fn tell(r: &StepRun, text: String, url: &str) -> Result<(), String> {
+    crate::engine::worker::show(&Note {
+        title: "itero: #browser".into(),
+        subtitle: Some(r.workflow.clone()),
+        text,
+        url: Some(url.into()).filter(|u: &String| crate::engine::worker::openable(u)),
+        ..Note::default()
+    })
+}
+
 /// The target, waiting for it until `until`.
 fn wait_for(
     cdp: &mut Cdp,
@@ -204,6 +261,7 @@ fn act(
 ) -> Result<Option<Cdp>, String> {
     if let Some(url) = a.get("open").and_then(Value::as_str) {
         page::load(cdp, url, until)?;
+        blocked(cdp, r, until, out)?;
     } else if a.contains_key("wait") {
         wait_for(cdp, &target_of(a, "wait")?, until, timeout)?;
         out.insert("found".into(), json!(true));
@@ -262,9 +320,11 @@ fn act(
             // what it opened may still be loading
             let _ = next.eval("new Promise(r => document.readyState === 'complete' ? r() : addEventListener('load', () => r()))");
             out.insert("new_tab".into(), json!(true));
+            blocked(&mut next, r, until, out)?;
             return Ok(Some(next));
         }
         page::follow(cdp, until)?;
+        blocked(cdp, r, until, out)?;
     } else if a.contains_key("hover") {
         let t = target_of(a, "hover")?;
         let f = wait_for(cdp, &t, until, timeout)?;
