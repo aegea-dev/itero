@@ -5,12 +5,12 @@ use super::blockers::{self, Blocker};
 use super::cdp::Cdp;
 use super::target::{self, Target};
 use super::{inspect, network, page, save};
-use crate::engine::worker::{Failure, Note, Outcome, StepRun};
+use crate::engine::worker::{Failure, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
 /// The args `#browser` reads.
-pub const ARGS: [&str; 21] = [
+pub const ARGS: [&str; 22] = [
     "open",
     "wait",
     "find",
@@ -32,6 +32,7 @@ pub const ARGS: [&str; 21] = [
     "timeout",
     "responses",
     "cookie_values",
+    "tab",
 ];
 
 /// The actions that load something, with which `responses` goes.
@@ -175,6 +176,13 @@ pub fn check(args: &Value) -> Result<(), String> {
             problems.push(format!("{k} is whole pixels from 200 to 8000, not {v}"));
         }
     }
+    if let Some(v) = is("tab")
+        && !v.as_str().is_some_and(|t| t.starts_with("ws://"))
+    {
+        problems.push(format!(
+            "tab is a window's address (ws://...), as $event.tab gives it, not {v}"
+        ));
+    }
     if let Some(v) = is("headless")
         && !v.is_boolean()
     {
@@ -222,6 +230,14 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         .and_then(Value::as_f64)
         .map(Duration::from_secs_f64)
         .unwrap_or(TIMEOUT);
+    // a watched window: steps of different runs take turns on it, and a
+    // step's timeout counts from its turn
+    let _turn = match a.get("tab") {
+        Some(_) => {
+            Some(take_turn(tab, Instant::now() + Duration::from_secs(r.most)).map_err(fail)?)
+        }
+        None => None,
+    };
     let until = Instant::now() + timeout;
     let mut cdp = Cdp::connect(tab, TIMEOUT).map_err(fail)?;
     page::prepare(&mut cdp).map_err(fail)?;
@@ -266,6 +282,32 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         out.insert("mode".into(), json!(m));
     }
     Ok(Outcome::Done(Value::Object(out)))
+}
+
+/// The turn of a step on the watched window `tab`, until `end`: a lock on
+/// a file named for the window, held while the step runs.
+fn take_turn(tab: &str, end: Instant) -> Result<crate::engine::lock::DaemonLock, String> {
+    use crate::engine::lock::{Refused, take_file};
+    let id = tab.rsplit('/').next().unwrap_or_default();
+    let file = crate::machine::state_dir()
+        .map_err(|e| format!("{e:#}"))?
+        .join("browser")
+        .join("turns")
+        .join(id);
+    let me = format!("a #browser step, pid {}", std::process::id());
+    loop {
+        match take_file(&file, &me) {
+            Ok(held) => return Ok(held),
+            Err(Refused::Held(who)) if Instant::now() < end => {
+                let _ = who;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(Refused::Held(who)) => {
+                return Err(format!("the watched window stayed busy with {who}"));
+            }
+            Err(Refused::Failed(why)) => return Err(why),
+        }
+    }
 }
 
 /// Why a step failed, with the page it was on and a screenshot of it.
@@ -321,10 +363,10 @@ fn blocked(
             }
             Blocker::Captcha { kind, .. } => {
                 let (url, _) = page::about(cdp)?;
-                let host = host_of(&url);
+                let host = blockers::host_of(&url);
                 if r.env.get("ITERO_BROWSER_MODE").map(String::as_str) != Some("window") {
-                    tell(
-                        r,
+                    blockers::notify(
+                        &r.workflow,
                         format!(
                             "{host} shows a human check ({kind}), which cannot be solved headless"
                         ),
@@ -336,14 +378,19 @@ fn blocked(
                     ));
                 }
                 cdp.send("Page.bringToFront", json!({}))?;
-                tell(
-                    r,
+                blockers::notify(
+                    &r.workflow,
                     format!(
                         "{host} shows a human check ({kind}): solve it in the Chrome window, and the run goes on"
                     ),
                     &url,
                 )?;
-                solved(cdp, &host, r, told)?;
+                blockers::solved(
+                    cdp,
+                    &host,
+                    Instant::now() + Duration::from_secs(r.most),
+                    told,
+                )?;
                 // what the page shows once it is solved, as after a load
                 let again = Wait {
                     until: Instant::now() + w.timeout,
@@ -366,13 +413,13 @@ fn blocked(
             }
             Blocker::Consent { tool, .. } => {
                 let (url, _) = page::about(cdp)?;
-                let host = host_of(&url);
+                let host = blockers::host_of(&url);
                 let banner = match tool {
                     Some(t) => format!("a {t} cookie banner"),
                     None => "a cookie banner".into(),
                 };
-                tell(
-                    r,
+                blockers::notify(
+                    &r.workflow,
                     format!("{host} shows {banner} itero cannot close: it may be in the way"),
                     &url,
                 )?;
@@ -384,60 +431,6 @@ fn blocked(
         out.insert("blocked".into(), json!(kinds));
     }
     Ok(())
-}
-
-/// The host of `url`, with its port: what the user knows a site by.
-fn host_of(url: &str) -> String {
-    url.split('/').nth(2).unwrap_or(url).to_string()
-}
-
-/// How often the user is told the step still waits for them.
-const STILL: Duration = Duration::from_secs(60);
-
-/// Waits for the human check on the page to go, as long as the step may
-/// run (the workspace's `limits.most`), saying so in its progress each
-/// minute. A page going elsewhere, as when the check is passed, cannot be
-/// asked for a moment; one that cannot be asked for a minute has failed.
-fn solved(
-    cdp: &mut Cdp,
-    host: &str,
-    r: &StepRun,
-    told: &(dyn Fn(Option<&str>) + Sync),
-) -> Result<(), String> {
-    let started = Instant::now();
-    let end = started + Duration::from_secs(r.most);
-    let mut said: Option<Instant> = None;
-    let mut asked = Instant::now();
-    loop {
-        if said.is_none_or(|t| t.elapsed() >= STILL) {
-            let minutes = started.elapsed().as_secs() / 60;
-            told(Some(&format!(
-                "waiting for a human check on {host} ({minutes} min)"
-            )));
-            said = Some(Instant::now());
-        }
-        match blockers::human_check(cdp) {
-            Ok(None) => return Ok(()),
-            Ok(Some(_)) => asked = Instant::now(),
-            Err(e) if asked.elapsed() > STILL => return Err(e),
-            Err(_) => {}
-        }
-        if Instant::now() > end {
-            return Err(format!("nobody solved the human check on {host}"));
-        }
-        std::thread::sleep(Duration::from_secs(1));
-    }
-}
-
-/// A notification about the page at `url`, from the step's workflow.
-fn tell(r: &StepRun, text: String, url: &str) -> Result<(), String> {
-    crate::engine::worker::show(&Note {
-        title: "itero: #browser".into(),
-        subtitle: Some(r.workflow.clone()),
-        text,
-        url: Some(url.into()).filter(|u: &String| crate::engine::worker::openable(u)),
-        ..Note::default()
-    })
 }
 
 /// The target, waiting for it until `until`.
@@ -531,14 +524,17 @@ fn act(
         let before = page::tabs(tab)?;
         page::click(cdp, x, y)?;
         if let Some(new) = page::opened(tab, &before)? {
-            // the run goes on in the tab the click opened
-            let run = r.env.get("ITERO_BROWSER_RUN").ok_or("no run")?;
-            let file = super::keeper::followed_file(run).map_err(|e| format!("{e:#}"))?;
-            if let Some(dir) = file.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            // the run goes on in the tab the click opened; on a watched
+            // window, only this step does
+            if !a.contains_key("tab") {
+                let run = r.env.get("ITERO_BROWSER_RUN").ok_or("no run")?;
+                let file = super::keeper::followed_file(run).map_err(|e| format!("{e:#}"))?;
+                if let Some(dir) = file.parent() {
+                    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+                }
+                std::fs::write(&file, json!({ "id": new.id, "ws": new.ws }).to_string())
+                    .map_err(|e| format!("{}: {e}", file.display()))?;
             }
-            std::fs::write(&file, json!({ "id": new.id, "ws": new.ws }).to_string())
-                .map_err(|e| format!("{}: {e}", file.display()))?;
             let mut next = Cdp::connect(&new.ws, TIMEOUT)?;
             page::prepare(&mut next)?;
             // what it opened may still be loading

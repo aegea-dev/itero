@@ -184,3 +184,7 @@ A file dropped into `~/Inbox` is told once: `["invoice.pdf"]`.
 changes, calm for half a second: for a connector that wants the same
 events as a `path` in `on`. `examples/photos` makes a thumbnail of each
 photo dropped into its `inbox/`.
+
+`itero browser watch <url>` does the same for a page in Chrome: a line
+when a part of it changes or appears, when it goes elsewhere, or when it
+receives JSON ([Watching a page](/guides/browser/#watching-a-page)).

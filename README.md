@@ -185,6 +185,8 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
 - [`examples/reddit-top`](examples/reddit-top): a subreddit's top post
   opened in Chrome, its discussion summed up by a model on this machine,
   as a notification.
+- [`examples/page-watch`](examples/page-watch): a notification each time
+  the newest post on Hacker News changes, seen on the page in Chrome.
 - [`examples/photos`][photos]: a thumbnail for each photo dropped
   into a folder the daemon watches.
 - [`examples/webhook`](examples/webhook): replies from your own app reach

@@ -1,5 +1,13 @@
 //! The examples: each reads as a workspace, and the order example runs.
 #![cfg(unix)]
+#[path = "common/browser.rs"]
+mod browser;
+#[path = "common/fake_ai.rs"]
+mod fake_ai;
+#[path = "common/stop.rs"]
+mod stop;
+#[path = "common/web.rs"]
+mod web;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -566,10 +574,6 @@ fn the_messages_alert_goes_the_way_its_event_names() {
 
 #[test]
 fn the_reddit_example_opens_the_top_post_and_sums_up_its_discussion() {
-    #[path = "common/fake_ai.rs"]
-    mod fake_ai;
-    #[path = "common/web.rs"]
-    mod web;
     let d = tempfile::tempdir().unwrap();
     let ws = copy("reddit-top", d.path());
     let w = web::serve(vec![
@@ -639,5 +643,55 @@ fn the_reddit_example_opens_the_top_post_and_sums_up_its_discussion() {
         left.stdout.is_empty(),
         "{}",
         String::from_utf8_lossy(&left.stdout)
+    );
+}
+
+#[test]
+fn the_page_watch_example_tells_each_change_of_the_newest_post() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = copy("page-watch", d.path());
+    let w = web::serve(vec![web::html(
+        "/newest",
+        r#"<!doctype html><title>New Links | Hacker News</title><table>
+        <tr class="athing"><td><span class="titleline"><a href="/a">Işık hızında derleme</a></span></td></tr>
+        </table><script>window.post = t => { const tr = document.createElement('tr'); tr.className = 'athing';
+          tr.innerHTML = '<td><span class="titleline"><a href="/b">' + t + '</a></span></td>';
+          document.querySelector('table').prepend(tr); };</script>"#,
+    )]);
+    let file = ws.join("workflows/newest.json");
+    let mut flow: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    flow["on"][0]["args"]["URL"] = w.url("/newest").into();
+    std::fs::write(&file, flow.to_string()).unwrap();
+    let notes = d.path().join("bildirim.log");
+    let state = d.path().join("durum");
+    let _daemon = stop::Daemon(
+        std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .arg("daemon")
+            .current_dir(&ws)
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .env("XDG_STATE_HOME", &state)
+            .env("ITERO_NOTIFY_LOG", &notes)
+            .env("ITERO_TEST_BROWSER_OFFLINE", "1")
+            .spawn()
+            .unwrap(),
+    );
+    let mut page = browser::watched(&state, "/newest");
+    page.eval("post('Yeni bir dil çıktı'); 1").unwrap();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::fs::read_to_string(&notes)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        assert!(std::time::Instant::now() < end, "no notification");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    assert_eq!(
+        std::fs::read_to_string(&notes).unwrap(),
+        format!(
+            "Newest on Hacker News\tYeni bir dil çıktı\turl={}\n",
+            w.url("/newest")
+        )
     );
 }

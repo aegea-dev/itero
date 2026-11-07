@@ -15,7 +15,7 @@ pub fn start(cdp: &mut Cdp) -> Result<(), String> {
 }
 
 /// Whether `url`, as it came or percent-decoded, contains `text`.
-fn matches(url: &str, text: &str) -> bool {
+pub fn matches(url: &str, text: &str) -> bool {
     url.contains(text) || decode(url).contains(text)
 }
 
@@ -40,7 +40,8 @@ fn decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn is_json(mime: &str) -> bool {
+/// Whether a response's MIME type is JSON's.
+pub fn is_json(mime: &str) -> bool {
     let m = mime.to_ascii_lowercase();
     m == "application/json" || m == "text/json" || m.ends_with("+json")
 }
@@ -88,28 +89,27 @@ pub fn responses(cdp: &mut Cdp, text: &str, until: Instant) -> Result<Vec<Value>
             });
         }
         let mut item = json!({ "url": url, "status": status });
-        match cdp.send("Network.getResponseBody", json!({ "requestId": id })) {
-            Ok(b) => {
-                let body = b["body"].as_str().unwrap_or_default();
-                let text = if b["base64Encoded"] == true {
-                    use base64::Engine;
-                    base64::engine::general_purpose::STANDARD
-                        .decode(body)
-                        .map(|v| String::from_utf8_lossy(&v).into_owned())
-                        .map_err(|e| e.to_string())
-                } else {
-                    Ok(body.to_string())
-                };
-                match text
-                    .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string()))
-                {
-                    Ok(v) => item["json"] = v,
-                    Err(e) => item["error"] = json!(format!("not JSON: {e}")),
-                }
-            }
+        match json_body(cdp, &id) {
+            Ok(v) => item["json"] = v,
             Err(e) => item["error"] = json!(e),
         }
         out.push(item);
     }
     Ok(out)
+}
+
+/// The body of response `id` as JSON, while Chrome still has it.
+pub fn json_body(cdp: &mut Cdp, id: &str) -> Result<Value, String> {
+    let b = cdp.send("Network.getResponseBody", json!({ "requestId": id }))?;
+    let body = b["body"].as_str().unwrap_or_default();
+    let text = if b["base64Encoded"] == true {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .map(|v| String::from_utf8_lossy(&v).into_owned())
+            .map_err(|e| e.to_string())?
+    } else {
+        body.to_string()
+    };
+    serde_json::from_str(&text).map_err(|e| format!("not JSON: {e}"))
 }

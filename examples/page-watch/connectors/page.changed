@@ -1,0 +1,5 @@
+#!/bin/sh
+# Keeps the page open in the daemon's Chrome, loads it again each minute
+# (Hacker News changes only when loaded), and prints a line each time the
+# target's text changes: one page.changed event each.
+exec itero browser watch "$URL" --changed "$TARGET" --reload 60 --headless

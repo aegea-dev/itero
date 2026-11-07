@@ -51,8 +51,57 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16) -> Router {
         .route("/runs/{id}", get(run))
         .route("/runs/{id}/stop", post(stop_run))
         .route("/workflows", get(workflows))
+        .route("/browser/tabs", post(open_watch))
+        .route("/browser/tabs/{id}", delete(close_watch))
         .layer(middleware::from_fn_with_state(s.clone(), local_only))
         .with_state(s)
+}
+
+/// `POST /browser/tabs`, `{"headless": true}` or `{}`: a browser window
+/// for a connector to watch (`itero browser watch`), answered with its
+/// `id`, `ws` (its DevTools address) and `mode`.
+async fn open_watch(
+    State(s): State<Shared>,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Result<Reply, Reply> {
+    let Json(b) = body.map_err(|r| fail(r.status(), r.body_text()))?;
+    let headless = match b.get("headless") {
+        None | Some(Value::Null) => None,
+        Some(Value::Bool(h)) => Some(*h),
+        Some(v) => {
+            return Err(fail(
+                StatusCode::BAD_REQUEST,
+                format!("headless is true or false, not {v}"),
+            ));
+        }
+    };
+    let ws = (*s.ws).clone();
+    let opened = tokio::task::spawn_blocking(move || {
+        crate::browser::keeper::Keeper::global().open_watch(&ws, headless)
+    })
+    .await
+    .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|why| fail(StatusCode::INTERNAL_SERVER_ERROR, why))?;
+    let (mode, tab) = opened;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "id": tab.id, "ws": tab.ws, "mode": mode.name() })),
+    ))
+}
+
+/// `DELETE /browser/tabs/{id}`: the watched window given back, closed.
+async fn close_watch(Path(id): Path<String>) -> Result<Reply, Reply> {
+    let closed = tokio::task::spawn_blocking(move || {
+        crate::browser::keeper::Keeper::global().close_watch(&id)
+    })
+    .await
+    .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|why| fail(StatusCode::INTERNAL_SERVER_ERROR, why))?;
+    if closed {
+        Ok((StatusCode::OK, Json(json!({ "closed": true }))))
+    } else {
+        Err(fail(StatusCode::NOT_FOUND, "no such watched window"))
+    }
 }
 
 /// Refuses a request whose Host is not this server's own address: a web

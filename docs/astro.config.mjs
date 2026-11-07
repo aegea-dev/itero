@@ -76,6 +76,7 @@ export default defineConfig({
 						},
 						{ label: 'ai', slug: 'commands/ai' },
 						{ label: 'watch', slug: 'commands/watch' },
+						{ label: 'browser watch', slug: 'commands/browser' },
 						{ label: 'webhook', slug: 'commands/webhook' },
 						{ label: 'completion', slug: 'commands/completion' },
 						{ label: 'help', slug: 'commands/help' },
