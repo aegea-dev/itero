@@ -254,3 +254,19 @@ fn inspect_args_are_checked() {
         .unwrap_err();
     assert!(e.contains("cookie_values goes with inspect"), "{e}");
 }
+
+#[test]
+fn a_page_that_paints_after_it_loads_has_its_first_paint() {
+    // nothing to see until a second after the load, as on a slow machine
+    let w = web::serve(vec![web::html(
+        "/geç",
+        r#"<!doctype html><title>Geç</title><body style="visibility:hidden"><h1>Işık</h1>
+<script>addEventListener('load', () => setTimeout(() => document.body.style.visibility = 'visible', 1000))</script></body>"#,
+    )]);
+    let c = test_chrome::start();
+    let t = tab(c.port);
+    let o = step(&t, json!({ "inspect": w.url("/geç") })).unwrap();
+    let timing = &o["inspect"]["timing"];
+    let fcp = timing["first_contentful_paint_ms"].as_f64();
+    assert!(fcp.is_some_and(|ms| ms >= 1000.0), "{timing}");
+}
