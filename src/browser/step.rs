@@ -4,13 +4,13 @@
 use super::blockers::{self, Blocker};
 use super::cdp::Cdp;
 use super::target::{self, Target};
-use super::{network, page};
+use super::{inspect, network, page};
 use crate::engine::worker::{Failure, Note, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
 /// The args `#browser` reads.
-pub const ARGS: [&str; 13] = [
+pub const ARGS: [&str; 15] = [
     "open",
     "wait",
     "find",
@@ -21,17 +21,19 @@ pub const ARGS: [&str; 13] = [
     "type",
     "into",
     "key",
+    "inspect",
     "headless",
     "timeout",
     "responses",
+    "cookie_values",
 ];
 
 /// The actions that load something, with which `responses` goes.
-const LOADS: [&str; 4] = ["open", "wait", "click", "key"];
+const LOADS: [&str; 5] = ["open", "wait", "click", "key", "inspect"];
 
 /// The actions: one per step.
-pub const ACTIONS: [&str; 8] = [
-    "open", "wait", "find", "read", "click", "hover", "type", "key",
+pub const ACTIONS: [&str; 9] = [
+    "open", "wait", "find", "read", "click", "hover", "type", "key", "inspect",
 ];
 
 /// How long an action waits for a page or a target with no `timeout`.
@@ -58,19 +60,26 @@ pub fn check(args: &Value) -> Result<(), String> {
         .filter(|k| a.contains_key(*k))
         .collect();
     match actions.as_slice() {
-        [] => problems.push(format!(
-            "a step does one of {} or key",
-            ACTIONS[..ACTIONS.len() - 1].join(", ")
-        )),
+        [] => problems.push(format!("a step does one of {}", or_list(&ACTIONS))),
         [_] => {}
         many => problems.push(format!("one action per step, not {}", many.join(" and "))),
     }
     let is = |k: &str| a.get(k).filter(|v| !later(v));
-    if let Some(v) = is("open") {
-        match v.as_str() {
-            Some(u) if u.starts_with("http://") || u.starts_with("https://") => {}
-            _ => problems.push(format!("open is an http or https address, not {v}")),
+    for k in ["open", "inspect"] {
+        if let Some(v) = is(k) {
+            match v.as_str() {
+                Some(u) if u.starts_with("http://") || u.starts_with("https://") => {}
+                _ => problems.push(format!("{k} is an http or https address, not {v}")),
+            }
         }
+    }
+    if a.contains_key("cookie_values") && !a.contains_key("inspect") {
+        problems.push("cookie_values goes with inspect".into());
+    }
+    if let Some(v) = is("cookie_values")
+        && !v.is_boolean()
+    {
+        problems.push(format!("cookie_values is true or false, not {v}"));
     }
     for k in ["wait", "find", "click", "hover", "in", "into"] {
         if let Some(v) = is(k)
@@ -163,7 +172,8 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
     let mut cdp = Cdp::connect(tab, TIMEOUT).map_err(fail)?;
     page::prepare(&mut cdp).map_err(fail)?;
     let wanted = a.get("responses").and_then(Value::as_str);
-    if wanted.is_some() {
+    // inspect turns the Network events on itself, before its page loads
+    if wanted.is_some() && !a.contains_key("inspect") {
         network::start(&mut cdp).map_err(fail)?;
     }
     let mut out = Map::new();
@@ -411,6 +421,11 @@ fn act(
     if let Some(url) = a.get("open").and_then(Value::as_str) {
         page::load(cdp, url, until)?;
         blocked(cdp, r, w, told, out)?;
+    } else if let Some(url) = a.get("inspect").and_then(Value::as_str) {
+        inspect::load(cdp, url, until)?;
+        blocked(cdp, r, w, told, out)?;
+        let values = a.get("cookie_values") == Some(&json!(true));
+        out.insert("inspect".into(), inspect::facts(cdp, values)?);
     } else if a.contains_key("wait") {
         wait_for(cdp, &target_of(a, "wait")?, until, timeout)?;
         out.insert("found".into(), json!(true));

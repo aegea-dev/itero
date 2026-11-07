@@ -139,6 +139,15 @@ impl Cdp {
         }
     }
 
+    /// A copy of the events kept so far of a domain (`prefix`), left kept.
+    pub fn kept(&self, prefix: &str) -> Vec<Value> {
+        self.queued
+            .iter()
+            .filter(|e| e["method"].as_str().is_some_and(|m| m.starts_with(prefix)))
+            .cloned()
+            .collect()
+    }
+
     /// The events kept so far of a domain (`prefix`, as `"Page."`), taken;
     /// the others stay kept.
     pub fn events(&mut self, prefix: &str) -> Vec<Value> {
