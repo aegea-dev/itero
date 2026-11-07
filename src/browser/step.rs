@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
 /// The args `#browser` reads.
-pub const ARGS: [&str; 15] = [
+pub const ARGS: [&str; 18] = [
     "open",
     "wait",
     "find",
@@ -22,6 +22,9 @@ pub const ARGS: [&str; 15] = [
     "into",
     "key",
     "inspect",
+    "screenshot",
+    "full",
+    "scroll",
     "headless",
     "timeout",
     "responses",
@@ -32,8 +35,18 @@ pub const ARGS: [&str; 15] = [
 const LOADS: [&str; 5] = ["open", "wait", "click", "key", "inspect"];
 
 /// The actions: one per step.
-pub const ACTIONS: [&str; 9] = [
-    "open", "wait", "find", "read", "click", "hover", "type", "key", "inspect",
+pub const ACTIONS: [&str; 11] = [
+    "open",
+    "wait",
+    "find",
+    "read",
+    "click",
+    "hover",
+    "type",
+    "key",
+    "inspect",
+    "screenshot",
+    "scroll",
 ];
 
 /// How long an action waits for a page or a target with no `timeout`.
@@ -81,7 +94,7 @@ pub fn check(args: &Value) -> Result<(), String> {
     {
         problems.push(format!("cookie_values is true or false, not {v}"));
     }
-    for k in ["wait", "find", "click", "hover", "in", "into"] {
+    for k in ["wait", "find", "click", "hover", "in", "into", "scroll"] {
         if let Some(v) = is(k)
             && let Err(e) = Target::parse(v)
         {
@@ -94,8 +107,28 @@ pub fn check(args: &Value) -> Result<(), String> {
     {
         problems.push(format!("read is \"text\" or \"html\", not {v}"));
     }
-    if a.contains_key("in") && !a.contains_key("read") {
-        problems.push("in goes with read".into());
+    if a.contains_key("in") && !a.contains_key("read") && !a.contains_key("screenshot") {
+        problems.push("in goes with read or screenshot".into());
+    }
+    if let Some(v) = is("screenshot") {
+        let ok = v.as_str().is_some_and(|f| {
+            let f = f.to_ascii_lowercase();
+            [".png", ".jpg", ".jpeg"].iter().any(|e| f.ends_with(e))
+        });
+        if !ok {
+            problems.push(format!("screenshot is a .png, .jpg or .jpeg file, not {v}"));
+        }
+    }
+    if a.contains_key("full") && !a.contains_key("screenshot") {
+        problems.push("full goes with screenshot".into());
+    }
+    if let Some(v) = is("full")
+        && !v.is_boolean()
+    {
+        problems.push(format!("full is true or false, not {v}"));
+    }
+    if a.contains_key("full") && a.contains_key("in") {
+        problems.push("full and in do not go together".into());
     }
     match (a.contains_key("type"), a.contains_key("into")) {
         (true, false) => problems.push("type needs into: the field to type in".into()),
@@ -222,7 +255,7 @@ fn failed(cdp: &mut Cdp, why: String, r: &StepRun) -> String {
             .map_or("step", String::as_str)
     );
     let shown = std::path::Path::new(".itero").join("browser").join(name);
-    match page::screenshot(cdp, &r.root.join(&shown)) {
+    match page::screenshot(cdp, &r.root.join(&shown), page::Shot::View) {
         Ok(()) => msg.push_str(&format!("; screenshot: {}", shown.display())),
         Err(e) => msg.push_str(&format!("; no screenshot: {e}")),
     }
@@ -489,6 +522,23 @@ fn act(
         }
         page::follow(cdp, until)?;
         blocked(cdp, r, w, told, out)?;
+    } else if let Some(file) = a.get("screenshot").and_then(Value::as_str) {
+        let shot = if a.get("full") == Some(&json!(true)) {
+            page::Shot::Full
+        } else if a.contains_key("in") {
+            page::Shot::Element(wait_for(cdp, &target_of(a, "in")?, until, timeout)?.backend)
+        } else {
+            page::Shot::View
+        };
+        // the workspace's, or absolute
+        let path = r.root.join(file);
+        page::screenshot(cdp, &path, shot)?;
+        out.insert("file".into(), json!(path.display().to_string()));
+    } else if a.contains_key("scroll") {
+        let t = target_of(a, "scroll")?;
+        let f = wait_for(cdp, &t, until, timeout)?;
+        target::scroll_to(cdp, f.backend)
+            .map_err(|e| format!("cannot scroll to {}: {e}", t.describe()))?;
     } else if a.contains_key("hover") {
         let t = target_of(a, "hover")?;
         let f = wait_for(cdp, &t, until, timeout)?;

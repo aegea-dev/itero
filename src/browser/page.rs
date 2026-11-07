@@ -235,18 +235,70 @@ pub fn opened(tab_ws: &str, before: &[String]) -> Result<Option<Tab>, String> {
     }
 }
 
-/// The page as a PNG, to `path`.
-pub fn screenshot(cdp: &mut Cdp, path: &Path) -> Result<(), String> {
+/// What a screenshot shows.
+pub enum Shot {
+    /// The view, as the page is scrolled.
+    View,
+    /// The whole page, past the view.
+    Full,
+    /// One element (its backend node), scrolled into view.
+    Element(i64),
+}
+
+/// A picture of the page to `path`: JPEG for a `.jpg` or `.jpeg` file,
+/// else PNG.
+pub fn screenshot(cdp: &mut Cdp, path: &Path, shot: Shot) -> Result<(), String> {
     use base64::Engine;
-    let r = cdp.send("Page.captureScreenshot", json!({ "format": "png" }))?;
+    let jpeg = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg"));
+    let mut p = json!({ "format": if jpeg { "jpeg" } else { "png" } });
+    match shot {
+        Shot::View => {}
+        Shot::Full => {
+            let m = cdp.send("Page.getLayoutMetrics", json!({}))?;
+            let size = &m["cssContentSize"];
+            p["captureBeyondViewport"] = json!(true);
+            p["clip"] = json!({ "x": 0, "y": 0, "width": size["width"], "height": size["height"], "scale": 1 });
+        }
+        Shot::Element(backend) => {
+            super::target::scroll_to(cdp, backend)?;
+            let b = cdp
+                .send("DOM.getBoxModel", json!({ "backendNodeId": backend }))
+                .map_err(|_| "it is not shown on the page".to_string())?;
+            let q: Vec<f64> = b["model"]["border"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_f64)
+                .collect();
+            if q.len() != 8 {
+                return Err("it has no box on the page".into());
+            }
+            // the box is in the view's coordinates, a clip in the page's
+            let m = cdp.send("Page.getLayoutMetrics", json!({}))?;
+            let (sx, sy) = (
+                m["cssVisualViewport"]["pageX"].as_f64().unwrap_or(0.0),
+                m["cssVisualViewport"]["pageY"].as_f64().unwrap_or(0.0),
+            );
+            let xs = [q[0], q[2], q[4], q[6]];
+            let ys = [q[1], q[3], q[5], q[7]];
+            let min = |v: &[f64]| v.iter().copied().fold(f64::INFINITY, f64::min);
+            let max = |v: &[f64]| v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            p["clip"] = json!({ "x": min(&xs) + sx, "y": min(&ys) + sy,
+                "width": max(&xs) - min(&xs), "height": max(&ys) - min(&ys), "scale": 1 });
+        }
+    }
+    let r = cdp.send("Page.captureScreenshot", p)?;
     let data = r["data"].as_str().ok_or("no screenshot")?;
-    let png = base64::engine::general_purpose::STANDARD
+    let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|e| e.to_string())?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    std::fs::write(path, png).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// The page's address and title.
