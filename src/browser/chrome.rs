@@ -115,6 +115,10 @@ pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String
         .args([
             "--disable-features=Translate",
             "--hide-crash-restore-bubble",
+            // a window Chrome takes as covered (by another run's, or by
+            // another app on the screen) is not drawn, and input to its
+            // page waits for a frame that never comes
+            "--disable-backgrounding-occluded-windows",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())

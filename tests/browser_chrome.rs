@@ -2,6 +2,8 @@
 //! these fail saying so.
 #[path = "common/chrome.rs"]
 mod test_chrome;
+#[path = "common/web.rs"]
+mod web;
 use itero::browser::{Mode, chrome};
 use std::path::PathBuf;
 
@@ -122,4 +124,28 @@ fn preferences_that_are_not_json_are_an_error_naming_the_file() {
     std::fs::write(profile.join("Default/Preferences"), "{ yarım").unwrap();
     let e = chrome::write_prefs(&profile).unwrap_err();
     assert!(e.contains("Default/Preferences"), "{e}");
+}
+
+#[test]
+fn every_window_is_drawn_however_many_are_open() {
+    // a window Chrome takes as covered by others is not drawn, and input
+    // to its page waits for a frame that never comes
+    let c = test_chrome::start();
+    let w = web::serve(vec![web::html(
+        "/sayfa",
+        "<!doctype html><title>Sayfa</title><h1>Işık</h1><p style=\"height:2000px\">Uzun bir sayfa</p>",
+    )]);
+    for n in 1..=4 {
+        let tab = itero::browser::cdp::new_window(c.port, &w.url("/sayfa")).unwrap();
+        let mut page =
+            itero::browser::cdp::Cdp::connect(&tab.ws, std::time::Duration::from_secs(10)).unwrap();
+        // Chrome works out which windows are covered a moment after a
+        // page is drawn
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let drawn = page.eval(
+            "Promise.race([new Promise(r => requestAnimationFrame(() => r(true))), \
+             new Promise(r => setTimeout(() => r(false), 2000))])",
+        );
+        assert_eq!(drawn, Ok(serde_json::json!(true)), "window {n}");
+    }
 }
