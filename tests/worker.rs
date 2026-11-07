@@ -144,10 +144,12 @@ printf '{"n": %s, "since": "%s"}' "$n" "$ITERO_WAITING_SINCE""#,
     #[test]
     fn each_line_an_action_prints_on_stderr_is_told_as_it_comes() {
         let d = tempfile::tempdir().unwrap();
+        // lines in one write, then a line in two writes
         let f = action(
             d.path(),
             "uzun",
-            "echo 'adım 1' >&2; sleep 0.2; printf 'adım 2\\nadım 3\\n' >&2; sleep 0.2; echo bitti",
+            "echo 'adım 1' >&2; sleep 0.2; printf 'adım 2\\nadım 3\\n' >&2; sleep 0.2; \
+             printf 'adı' >&2; sleep 0.2; printf 'm 4\\n' >&2; sleep 0.2; echo bitti",
         );
         let told = std::sync::Mutex::new(vec![]);
         let out = worker::run_step_telling(&step(d.path(), f, &[], json!({})), &|line| {
@@ -156,7 +158,24 @@ printf '{"n": %s, "since": "%s"}' "$n" "$ITERO_WAITING_SINCE""#,
             }
         });
         assert_eq!(done(out), "bitti");
-        assert_eq!(*told.lock().unwrap(), ["adım 1", "adım 3"]);
+        // the pipe hands over what was written in reads of any size: a
+        // piece's last whole line is told, so "adım 2" is told only when it
+        // came apart from "adım 3"; never a piece of a line
+        let told = told.into_inner().unwrap();
+        let printed = ["adım 1", "adım 2", "adım 3", "adım 4"];
+        let order: Vec<usize> = told
+            .iter()
+            .map(|l| {
+                printed
+                    .iter()
+                    .position(|p| p == l)
+                    .unwrap_or_else(|| panic!("never printed: {l:?} in {told:?}"))
+            })
+            .collect();
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "{told:?}");
+        for must in ["adım 1", "adım 3", "adım 4"] {
+            assert!(told.iter().any(|l| l == must), "{must}: {told:?}");
+        }
     }
 
     #[test]
