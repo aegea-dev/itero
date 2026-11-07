@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct Page {
     pub path: String,
+    // a header `X-Test-Delay-Ms` makes the server wait that long before
+    // it answers; it is not sent
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
@@ -79,10 +81,14 @@ pub fn serve(pages: Vec<Page>) -> Web {
                 let page = pages
                     .iter()
                     .find(|p| p.path == path || percent_decode(&p.path) == percent_decode(path));
-                let (status, headers, body) = match page {
+                let (status, mut headers, body) = match page {
                     Some(p) => (p.status, p.headers.clone(), p.body.clone()),
                     None => (404, vec![], b"yok".to_vec()),
                 };
+                if let Some(at) = headers.iter().position(|h| h.0 == "X-Test-Delay-Ms") {
+                    let ms: u64 = headers.remove(at).1.parse().unwrap();
+                    std::thread::sleep(std::time::Duration::from_millis(ms));
+                }
                 let mut out = format!(
                     "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n",
                     body.len()

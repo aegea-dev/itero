@@ -47,48 +47,57 @@ pub fn is_json(mime: &str) -> bool {
 }
 
 /// The JSON responses whose URL contains `text`, of the Network events
-/// kept since `start`, in the order they came: `url`, `status`, and
-/// `json` (or `error` when the body is not JSON after all). One not
-/// finished yet is waited for until `until`.
+/// kept since `start`, in the order they were asked for: `url`, `status`,
+/// and `json` (or `error` when the body is not JSON after all). A request
+/// the page has sent and not had its answer to yet is waited for until
+/// `until`, its answer then kept if it is JSON.
 pub fn responses(cdp: &mut Cdp, text: &str, until: Instant) -> Result<Vec<Value>, String> {
-    let events = cdp.events("Network.");
-    let wanted: Vec<(String, String, Value)> = events
-        .iter()
-        .filter(|e| e["method"] == "Network.responseReceived")
-        .filter_map(|e| {
-            let r = &e["params"]["response"];
-            let url = r["url"].as_str()?;
-            (matches(url, text) && is_json(r["mimeType"].as_str().unwrap_or_default())).then(|| {
-                (
-                    e["params"]["requestId"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
-                    url.to_string(),
-                    r["status"].clone(),
-                )
-            })
-        })
-        .collect();
-    let finished = |id: &str| {
-        events.iter().any(|e| {
-            matches!(
-                e["method"].as_str(),
-                Some("Network.loadingFinished" | "Network.loadingFailed")
-            ) && e["params"]["requestId"] == id
-        })
+    let mut events = cdp.events("Network.");
+    let of = |events: &[Value], method: &str, id: &str| {
+        events
+            .iter()
+            .find(|e| e["method"] == method && e["params"]["requestId"] == id)
+            .cloned()
     };
-    let mut out = vec![];
-    for (id, url, status) in wanted {
-        if !finished(&id) {
-            let _ = cdp.wait_event(until, &mut |e| {
-                matches!(
-                    e["method"].as_str(),
-                    Some("Network.loadingFinished" | "Network.loadingFailed")
-                ) && e["params"]["requestId"] == id.as_str()
-            });
+    let ended = |e: &Value, id: &str| {
+        matches!(
+            e["method"].as_str(),
+            Some("Network.loadingFinished" | "Network.loadingFailed")
+        ) && e["params"]["requestId"] == id
+    };
+    // every request the text matches, once each, in the order sent
+    let mut asked: Vec<String> = vec![];
+    for e in events
+        .iter()
+        .filter(|e| e["method"] == "Network.requestWillBeSent")
+    {
+        let url = e["params"]["request"]["url"].as_str().unwrap_or_default();
+        let id = e["params"]["requestId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        if matches(url, text) && !asked.contains(&id) {
+            asked.push(id);
         }
-        let mut item = json!({ "url": url, "status": status });
+    }
+    let mut out = vec![];
+    for id in asked {
+        if !events.iter().any(|e| ended(e, &id)) {
+            // still on its way: its answer and its end, kept as they come
+            let wait = cdp.wait_event(until, &mut |e| ended(e, &id));
+            events.extend(cdp.events("Network."));
+            if let Ok(e) = wait {
+                events.push(e);
+            }
+        }
+        let Some(got) = of(&events, "Network.responseReceived", &id) else {
+            continue;
+        };
+        let r = &got["params"]["response"];
+        if !is_json(r["mimeType"].as_str().unwrap_or_default()) {
+            continue;
+        }
+        let mut item = json!({ "url": r["url"], "status": r["status"] });
         match json_body(cdp, &id) {
             Ok(v) => item["json"] = v,
             Err(e) => item["error"] = json!(e),

@@ -270,3 +270,20 @@ fn a_page_that_paints_after_it_loads_has_its_first_paint() {
     let fcp = timing["first_contentful_paint_ms"].as_f64();
     assert!(fcp.is_some_and(|ms| ms >= 1000.0), "{timing}");
 }
+
+#[test]
+fn json_still_on_its_way_when_the_page_has_loaded_is_waited_for() {
+    let mut slow = web::file("/api/yavaş", "application/json", r#"{"geç": true}"#);
+    slow.headers.push(("X-Test-Delay-Ms".into(), "3000".into()));
+    let w = web::serve(vec![
+        web::html(
+            "/bekle",
+            "<!doctype html><title>Bekle</title><script>addEventListener('load', () => fetch('/api/yavaş'))</script>",
+        ),
+        slow,
+    ]);
+    let c = test_chrome::start();
+    let t = tab(c.port);
+    let o = step(&t, json!({ "open": w.url("/bekle"), "responses": "yavaş" })).unwrap();
+    assert_eq!(o["responses"][0]["json"], json!({"geç": true}), "{o}");
+}
