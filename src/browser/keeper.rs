@@ -182,6 +182,11 @@ impl Keeper {
         Ok((mode, tab))
     }
 
+    /// The mode of the watched window `id`, while it is open.
+    pub fn watch_mode(&self, id: &str) -> Option<Mode> {
+        self.lock().watches.get(id).map(|w| w.0)
+    }
+
     /// Closes the watched window `id`; false when there is none.
     pub fn close_watch(&self, id: &str) -> Result<bool, String> {
         let mut s = self.lock();

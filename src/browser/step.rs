@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
 /// The args `#browser` reads.
-pub const ARGS: [&str; 21] = [
+pub const ARGS: [&str; 22] = [
     "open",
     "wait",
     "find",
@@ -32,6 +32,7 @@ pub const ARGS: [&str; 21] = [
     "timeout",
     "responses",
     "cookie_values",
+    "tab",
 ];
 
 /// The actions that load something, with which `responses` goes.
@@ -175,6 +176,13 @@ pub fn check(args: &Value) -> Result<(), String> {
             problems.push(format!("{k} is whole pixels from 200 to 8000, not {v}"));
         }
     }
+    if let Some(v) = is("tab")
+        && !v.as_str().is_some_and(|t| t.starts_with("ws://"))
+    {
+        problems.push(format!(
+            "tab is a window's address (ws://...), as $event.tab gives it, not {v}"
+        ));
+    }
     if let Some(v) = is("headless")
         && !v.is_boolean()
     {
@@ -222,6 +230,14 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         .and_then(Value::as_f64)
         .map(Duration::from_secs_f64)
         .unwrap_or(TIMEOUT);
+    // a watched window: steps of different runs take turns on it, and a
+    // step's timeout counts from its turn
+    let _turn = match a.get("tab") {
+        Some(_) => {
+            Some(take_turn(tab, Instant::now() + Duration::from_secs(r.most)).map_err(fail)?)
+        }
+        None => None,
+    };
     let until = Instant::now() + timeout;
     let mut cdp = Cdp::connect(tab, TIMEOUT).map_err(fail)?;
     page::prepare(&mut cdp).map_err(fail)?;
@@ -266,6 +282,32 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         out.insert("mode".into(), json!(m));
     }
     Ok(Outcome::Done(Value::Object(out)))
+}
+
+/// The turn of a step on the watched window `tab`, until `end`: a lock on
+/// a file named for the window, held while the step runs.
+fn take_turn(tab: &str, end: Instant) -> Result<crate::engine::lock::DaemonLock, String> {
+    use crate::engine::lock::{Refused, take_file};
+    let id = tab.rsplit('/').next().unwrap_or_default();
+    let file = crate::machine::state_dir()
+        .map_err(|e| format!("{e:#}"))?
+        .join("browser")
+        .join("turns")
+        .join(id);
+    let me = format!("a #browser step, pid {}", std::process::id());
+    loop {
+        match take_file(&file, &me) {
+            Ok(held) => return Ok(held),
+            Err(Refused::Held(who)) if Instant::now() < end => {
+                let _ = who;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(Refused::Held(who)) => {
+                return Err(format!("the watched window stayed busy with {who}"));
+            }
+            Err(Refused::Failed(why)) => return Err(why),
+        }
+    }
 }
 
 /// Why a step failed, with the page it was on and a screenshot of it.
@@ -482,14 +524,17 @@ fn act(
         let before = page::tabs(tab)?;
         page::click(cdp, x, y)?;
         if let Some(new) = page::opened(tab, &before)? {
-            // the run goes on in the tab the click opened
-            let run = r.env.get("ITERO_BROWSER_RUN").ok_or("no run")?;
-            let file = super::keeper::followed_file(run).map_err(|e| format!("{e:#}"))?;
-            if let Some(dir) = file.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            // the run goes on in the tab the click opened; on a watched
+            // window, only this step does
+            if !a.contains_key("tab") {
+                let run = r.env.get("ITERO_BROWSER_RUN").ok_or("no run")?;
+                let file = super::keeper::followed_file(run).map_err(|e| format!("{e:#}"))?;
+                if let Some(dir) = file.parent() {
+                    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+                }
+                std::fs::write(&file, json!({ "id": new.id, "ws": new.ws }).to_string())
+                    .map_err(|e| format!("{}: {e}", file.display()))?;
             }
-            std::fs::write(&file, json!({ "id": new.id, "ws": new.ws }).to_string())
-                .map_err(|e| format!("{}: {e}", file.display()))?;
             let mut next = Cdp::connect(&new.ws, TIMEOUT)?;
             page::prepare(&mut next)?;
             // what it opened may still be loading

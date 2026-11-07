@@ -27,6 +27,19 @@ fn free_port() -> u16 {
 /// A workspace on `port` whose connector `kind` runs `script`, started
 /// by a workflow `on` it with `args`.
 fn workspace(d: &Path, port: u16, kind: &str, script: &str, args: Value) -> std::path::PathBuf {
+    let steps = json!([{ "#notify": { "args": { "text": "$event.what" } } }]);
+    workspace_with(d, port, kind, script, args, steps)
+}
+
+/// `workspace`, its workflow doing `steps`.
+fn workspace_with(
+    d: &Path,
+    port: u16,
+    kind: &str,
+    script: &str,
+    args: Value,
+    steps: Value,
+) -> std::path::PathBuf {
     let root = d.join("çalışma");
     std::fs::create_dir_all(root.join("workflows")).unwrap();
     std::fs::create_dir_all(root.join("connectors")).unwrap();
@@ -43,7 +56,7 @@ fn workspace(d: &Path, port: u16, kind: &str, script: &str, args: Value) -> std:
         root.join("workflows/izle.json"),
         json!({
             "on": [{ "event": kind, "args": args }],
-            "steps": [{ "#notify": { "args": { "text": "$event.text" } } }]
+            "steps": steps
         })
         .to_string(),
     )
@@ -326,4 +339,104 @@ fn what_appears_and_the_json_a_page_loads_are_events_too() {
     assert_eq!(response["json"], json!({ "başlık": "Işık" }));
     assert_eq!(response["response_url"], w.url("/api/haber?n=1"));
     assert_eq!(response["url"], w.url("/haber"));
+}
+
+#[test]
+fn a_step_acts_on_the_watched_window() {
+    let d = tempfile::tempdir().unwrap();
+    let w = web::serve(vec![web::html("/liste", LISTE)]);
+    let root = workspace_with(
+        d.path(),
+        free_port(),
+        "sayfa.changed",
+        "#!/bin/sh\nexec itero browser watch \"$URL\" --changed Liste --headless\n",
+        json!({ "URL": w.url("/liste") }),
+        json!([{ "#browser": { "args": { "read": "text", "in": "Liste", "tab": "$event.tab" } } }]),
+    );
+    let _daemon = daemon(&root, d.path());
+    let mut page = watched(&d.path().join("durum"), "/liste");
+    page.eval("add('İki')").unwrap();
+    let ws = itero::workspace::find(&root).unwrap();
+    let ran = || {
+        itero::engine::journal::Journal::open(&ws)
+            .unwrap()
+            .runs()
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.workflow == "izle" && r.runtime.ended.is_some())
+            .collect::<Vec<_>>()
+    };
+    until("the run", 30, || !ran().is_empty());
+    let run = &ran()[0];
+    let state = serde_json::to_string(&run.runtime).unwrap();
+    assert_eq!(
+        itero::engine::steps::status(&run.runtime),
+        "done",
+        "{state}"
+    );
+    // the page the connector watches, read where it is
+    assert!(state.contains("Bir\\nİki"), "{state}");
+    // no window of the run's own was opened
+    let active = d
+        .path()
+        .join("durum/itero/browser/headless/DevToolsActivePort");
+    let port = std::fs::read_to_string(active).unwrap();
+    let list: Value = client()
+        .get(format!(
+            "http://127.0.0.1:{}/json/list",
+            port.lines().next().unwrap().trim()
+        ))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    let pages = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["type"] == "page")
+        .count();
+    // Chrome's first page and the watched one
+    assert_eq!(pages, 2, "{list}");
+}
+
+#[path = "common/browser.rs"]
+mod browser;
+#[path = "common/chrome.rs"]
+mod test_chrome;
+
+#[test]
+fn steps_on_one_watched_window_take_turns() {
+    let state = tempfile::tempdir().unwrap();
+    // SAFETY: the only test of this binary that runs steps in-process
+    unsafe { std::env::set_var("XDG_STATE_HOME", state.path()) };
+    let c = test_chrome::start();
+    let t = browser::tab(c.port);
+    let w = web::serve(vec![web::html("/liste", LISTE)]);
+    browser::step(&t, json!({ "open": w.url("/liste") })).unwrap();
+    // each waits a second for what never comes
+    let slow = json!({ "wait": "Yok", "timeout": 1, "tab": t.ws });
+    let started = Instant::now();
+    std::thread::scope(|s| {
+        let a = s.spawn(|| browser::step(&t, slow.clone()));
+        let b = s.spawn(|| browser::step(&t, slow.clone()));
+        assert!(a.join().unwrap().is_err());
+        assert!(b.join().unwrap().is_err());
+    });
+    // each gives up just short of its second: at once they would end
+    // together, in turn one after the other
+    assert!(
+        started.elapsed() >= Duration::from_millis(1500),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn tab_is_a_windows_address() {
+    let e = itero::browser::step::check(&json!({ "read": "text", "tab": "http://x" })).unwrap_err();
+    assert!(
+        e.contains("tab is a window's address (ws://...), as $event.tab gives it"),
+        "{e}"
+    );
 }

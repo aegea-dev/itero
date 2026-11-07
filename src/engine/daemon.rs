@@ -1548,9 +1548,23 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
             Some("false") => Some(false),
             Some(other) => return Err(format!("#browser: headless is true or false, not {other}")),
         };
-        let given = crate::browser::keeper::Keeper::global().tab_for_run(ws, run_id, headless)?;
-        env.insert("ITERO_BROWSER_TAB".into(), given.ws);
-        env.insert("ITERO_BROWSER_MODE".into(), given.mode.name().into());
+        let keeper = crate::browser::keeper::Keeper::global();
+        let (tab, mode) = match env.get("tab") {
+            // a window a connector watches (`$event.tab`), not the run's own
+            Some(tab) => {
+                let id = tab.rsplit('/').next().unwrap_or_default();
+                let mode = keeper.watch_mode(id).ok_or_else(|| {
+                    format!("#browser: tab {tab} is not a window itero browser watch keeps open")
+                })?;
+                (tab.clone(), mode)
+            }
+            None => {
+                let given = keeper.tab_for_run(ws, run_id, headless)?;
+                (given.ws, given.mode)
+            }
+        };
+        env.insert("ITERO_BROWSER_TAB".into(), tab);
+        env.insert("ITERO_BROWSER_MODE".into(), mode.name().into());
         env.insert("ITERO_BROWSER_RUN".into(), run_id.into());
         let at: Vec<String> = job.path.iter().map(|n| n.to_string()).collect();
         env.insert("ITERO_BROWSER_STEP".into(), at.join("."));
