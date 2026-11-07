@@ -124,7 +124,9 @@ pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     if mode == Mode::Headless {
-        c.arg("--headless");
+        // nobody scrolls by hand there; where a scrollbar takes room
+        // (Linux), a whole-page screenshot would lose its width
+        c.args(["--headless", "--hide-scrollbars"]);
     }
     if std::env::var_os("ITERO_TEST_BROWSER_OFFLINE").is_some() {
         // a test's Chrome reaches only the test's own server

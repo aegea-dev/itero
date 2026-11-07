@@ -236,6 +236,7 @@ fn screenshots_of_the_view_the_whole_page_or_one_element() {
     )
     .unwrap();
     let (fw, fh) = png_size(&std::fs::read(t.root.path().join("resimler/tüm.png")).unwrap());
+    // the page's whole width, also where a scrollbar takes room (Linux)
     assert_eq!(fw, vw);
     assert!(fh > 3000, "{fh}");
 
