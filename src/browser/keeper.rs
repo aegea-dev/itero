@@ -1,5 +1,6 @@
-//! The daemon's Chromes: started when a `#browser` step needs one, a tab
-//! for each run, closed when the run ends; a Chrome with no tab for
+//! The daemon's Chromes: started when a `#browser` step needs one, a
+//! window for each run (its page always in front, so drawn and clickable),
+//! closed when the run ends; a Chrome with no run's tab for
 //! `IDLE` exits. At most two, one windowed and one headless, as one
 //! Chrome is either. One that ends badly is started again only after a
 //! pause that doubles each time, and given up on after too many, as
@@ -89,7 +90,8 @@ impl Keeper {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The tab of run `run`, opened now when it has none, in the Chrome of
+    /// The tab of run `run`, opened now in a window of its own when it has
+    /// none, in the Chrome of
     /// the mode asked (`headless`), started when none runs. A run's tab
     /// stays in the mode its first step chose.
     pub fn tab_for_run(
@@ -121,7 +123,7 @@ impl Keeper {
         }
         let mode = chrome::choose(headless);
         let port = self.chrome(&mut s, ws, mode)?;
-        let tab = cdp::new_tab(port, "about:blank")?;
+        let tab = cdp::new_window(port, "about:blank")?;
         let given = Given {
             ws: tab.ws.clone(),
             mode,

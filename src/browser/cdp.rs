@@ -177,16 +177,28 @@ fn http(method: reqwest::Method, port: u16, path: &str) -> Result<String, String
     }
 }
 
-/// Opens a tab on `url` in the Chrome on `port`.
-pub fn new_tab(port: u16, url: &str) -> Result<Tab, String> {
-    let body = http(reqwest::Method::PUT, port, &format!("/json/new?{url}"))?;
+/// The browser's own connection, for the Chrome on `port`.
+pub fn browser(port: u16) -> Result<Cdp, String> {
+    let body = http(reqwest::Method::GET, port, "/json/version")?;
     let v: Value = serde_json::from_str(&body).map_err(|e| format!("the browser said: {e}"))?;
+    let ws = v["webSocketDebuggerUrl"]
+        .as_str()
+        .ok_or("the browser gave no address")?;
+    Cdp::connect(ws, Duration::from_secs(10))
+}
+
+/// Opens `url` in a new window of the Chrome on `port`, so the page is in
+/// front and drawn: a page behind another tab is not, and a click on it
+/// lands on an old layout or nowhere.
+pub fn new_window(port: u16, url: &str) -> Result<Tab, String> {
+    let r = browser(port)?.send(
+        "Target.createTarget",
+        json!({ "url": url, "newWindow": true }),
+    )?;
+    let id = r["targetId"].as_str().ok_or("the browser gave no tab id")?;
     Ok(Tab {
-        id: v["id"].as_str().ok_or("the browser gave no tab id")?.into(),
-        ws: v["webSocketDebuggerUrl"]
-            .as_str()
-            .ok_or("the browser gave no tab address")?
-            .into(),
+        id: id.into(),
+        ws: format!("ws://127.0.0.1:{port}/devtools/page/{id}"),
     })
 }
 

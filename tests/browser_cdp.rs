@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 #[test]
 fn commands_events_and_errors_on_one_tab() {
     let c = test_chrome::start();
-    let tab = cdp::new_tab(c.port, "about:blank").unwrap();
+    let tab = cdp::new_window(c.port, "about:blank").unwrap();
     let mut t = Cdp::connect(&tab.ws, Duration::from_secs(10)).unwrap();
     t.send("Page.enable", json!({})).unwrap();
     t.send(
@@ -34,7 +34,7 @@ fn commands_events_and_errors_on_one_tab() {
 #[test]
 fn waiting_for_an_event_that_never_comes_times_out() {
     let c = test_chrome::start();
-    let tab = cdp::new_tab(c.port, "about:blank").unwrap();
+    let tab = cdp::new_window(c.port, "about:blank").unwrap();
     let mut t = Cdp::connect(&tab.ws, Duration::from_secs(10)).unwrap();
     let started = Instant::now();
     let e = t

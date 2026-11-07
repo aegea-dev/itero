@@ -159,24 +159,17 @@ pub fn key(cdp: &mut Cdp, name: &str) -> Result<(), String> {
     .map(|_| ())
 }
 
-/// The browser's own connection, beside a tab's: its address from the
-/// tab's (`ws://host/devtools/page/<id>`).
+/// The browser's own connection, beside a tab's, and the tab's id: both
+/// from the tab's address (`ws://127.0.0.1:<port>/devtools/page/<id>`).
 fn browser(tab_ws: &str) -> Result<(Cdp, String), String> {
-    let host = tab_ws
+    let port = tab_ws
         .strip_prefix("ws://")
         .and_then(|r| r.split('/').next())
+        .and_then(|h| h.rsplit(':').next())
+        .and_then(|p| p.parse().ok())
         .ok_or("not a tab's address")?;
     let id = tab_ws.rsplit('/').next().unwrap_or_default().to_string();
-    let c = crate::net::client(Duration::from_secs(10)).map_err(|e| e.to_string())?;
-    let v: Value = c
-        .get(format!("http://{host}/json/version"))
-        .send()
-        .and_then(|r| r.json())
-        .map_err(|e| format!("the browser: {e}"))?;
-    let ws = v["webSocketDebuggerUrl"]
-        .as_str()
-        .ok_or("the browser gave no address")?;
-    Ok((Cdp::connect(ws, Duration::from_secs(10))?, id))
+    Ok((super::cdp::browser(port)?, id))
 }
 
 /// The page tabs open now, by id.

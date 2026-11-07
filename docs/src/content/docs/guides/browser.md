@@ -6,7 +6,7 @@ description: The built-in #browser opens, reads and clicks through pages in your
 `#browser` drives Chrome, the real one installed on the machine: it opens
 a page, waits for it, reads it, finds things on it, clicks, hovers and
 types, as a person does. A step does one of these; the steps of a run act
-on the same tab, one after another.
+on the same page, one after another, in a Chrome window of the run's own.
 
 ```json
 { "steps": [
@@ -103,8 +103,9 @@ not pinned.
 ## New tabs
 
 A click that opens a tab (a link that opens in a new one) is followed:
-the run's next steps act on the new tab, and `$output.new_tab` is
-`true`. The run's tabs are closed when it ends.
+the tab opens in front in the run's window, the run's next steps act on
+it, and `$output.new_tab` is `true`. The run's window and tabs are
+closed when it ends.
 
 ## When a step fails
 

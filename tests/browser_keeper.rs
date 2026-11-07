@@ -69,6 +69,16 @@ fn a_tab_per_run_closed_when_the_run_is_gone_and_chrome_stopped_when_idle() {
     assert!(e.contains("headless") && e.contains("window"), "{e}");
     let b = k.tab_for_run(&ws, "koşu-2", Some(true)).unwrap();
     assert_ne!(a.ws, b.ws);
+    // each run's page is in front in a window of its own: a page behind
+    // another tab is not drawn, and a click never reaches it
+    for t in [&a.ws, &b.ws] {
+        let mut c = itero::browser::cdp::Cdp::connect(t, Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            c.eval("document.visibilityState").unwrap(),
+            "visible",
+            "{t}"
+        );
+    }
     let port = k.port(Mode::Headless).unwrap();
     assert!(d.path().join("durum/itero/browser/headless").is_dir());
     let open = pages(port);
