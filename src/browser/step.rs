@@ -124,7 +124,7 @@ pub fn check(args: &Value) -> Result<(), String> {
         }
     }
     if let Some(v) = is("save")
-        && !v.as_str().is_some_and(|p| !p.trim().is_empty())
+        && v.as_str().is_none_or(|p| p.trim().is_empty())
     {
         problems.push(format!(
             "save is a file ending in .mhtml or a folder, not {v}"
@@ -161,7 +161,7 @@ pub fn check(args: &Value) -> Result<(), String> {
         problems.push(format!("responses goes with {}", or_list(&LOADS)));
     }
     if let Some(v) = is("responses")
-        && !v.as_str().is_some_and(|t| !t.is_empty())
+        && v.as_str().is_none_or(|t| t.is_empty())
     {
         problems.push(format!("responses is a text a URL contains, not {v}"));
     }
