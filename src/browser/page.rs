@@ -56,35 +56,68 @@ fn settle(cdp: &mut Cdp, loader: &str, until: Instant) -> Result<(), String> {
     Ok(())
 }
 
+/// The page's main frame: its own, not an ad's or a widget's.
+fn main_frame(cdp: &mut Cdp) -> Result<Value, String> {
+    let tree = cdp.send("Page.getFrameTree", json!({}))?;
+    Ok(tree["frameTree"]["frame"]["id"].clone())
+}
+
+/// Whether `e` is the main frame starting to go somewhere.
+fn starts(e: &Value, main: &Value) -> bool {
+    matches!(
+        e["method"].as_str(),
+        Some(
+            "Page.frameStartedNavigating"
+                | "Page.frameStartedLoading"
+                | "Page.navigatedWithinDocument"
+        )
+    ) && e["params"]["frameId"] == *main
+}
+
 /// After a click or a key: when the page starts going somewhere within
 /// `MAYBE_GOES`, waits for it as `load` does.
 pub fn follow(cdp: &mut Cdp, until: Instant) -> Result<(), String> {
-    let tree = cdp.send("Page.getFrameTree", json!({}))?;
-    let main = tree["frameTree"]["frame"]["id"].clone();
+    let main = main_frame(cdp)?;
     let soon = (Instant::now() + MAYBE_GOES).min(until);
-    // the page's own frame, not an ad's or a widget's
-    let went = cdp.wait_event(soon, &mut |e| {
-        matches!(
-            e["method"].as_str(),
-            Some(
-                "Page.frameStartedNavigating"
-                    | "Page.frameStartedLoading"
-                    | "Page.navigatedWithinDocument"
-            )
-        ) && e["params"]["frameId"] == main
+    match cdp.wait_event(soon, &mut |e| starts(e, &main)) {
+        Ok(e) => went(cdp, &main, e, until),
+        Err(_) => Ok(()),
+    }
+}
+
+/// After a click: a window it opened (a link opening in a new tab, a
+/// pop-up), waited for until `until`, as Chrome may take a while to make
+/// it; else the page followed as `follow` does.
+pub fn after_click(
+    cdp: &mut Cdp,
+    tab_ws: &str,
+    before: &[String],
+    until: Instant,
+) -> Result<Option<Tab>, String> {
+    let main = main_frame(cdp)?;
+    let soon = (Instant::now() + MAYBE_GOES).min(until);
+    let first = cdp.wait_event(soon, &mut |e| {
+        e["method"] == "Page.windowOpen" || starts(e, &main)
     });
-    let Ok(e) = went else {
-        return Ok(());
-    };
+    match first {
+        Ok(e) if e["method"] == "Page.windowOpen" => opened(tab_ws, before, until).map(Some),
+        Ok(e) => went(cdp, &main, e, until).map(|()| None),
+        Err(_) => Ok(None),
+    }
+}
+
+/// The page started going somewhere (`e`): a new document, whose loader
+/// comes with its navigation, waited for as `load` does; or the same one
+/// changed in place (pushState), with no load to come.
+fn went(cdp: &mut Cdp, main: &Value, e: Value, until: Instant) -> Result<(), String> {
     if e["method"] == "Page.navigatedWithinDocument" {
         return Ok(());
     }
-    // it started: a new document, whose loader comes with its navigation;
-    // or the same one changed in place (pushState), with no load to come
     let nav = cdp
         .wait_event(until, &mut |e| {
-            (e["method"] == "Page.frameNavigated" && e["params"]["frame"]["id"] == main)
-                || (e["method"] == "Page.navigatedWithinDocument" && e["params"]["frameId"] == main)
+            (e["method"] == "Page.frameNavigated" && e["params"]["frame"]["id"] == *main)
+                || (e["method"] == "Page.navigatedWithinDocument"
+                    && e["params"]["frameId"] == *main)
         })
         .map_err(|_| "the page did not finish loading".to_string())?;
     if nav["method"] == "Page.navigatedWithinDocument" {
@@ -218,11 +251,10 @@ pub fn tabs(tab_ws: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// A tab the page of `tab_ws` opened that was not in `before`, within a
-/// moment.
-pub fn opened(tab_ws: &str, before: &[String]) -> Result<Option<Tab>, String> {
+/// The tab the page of `tab_ws` opened, not in `before`, once Chrome has
+/// made it: waited for until `until`.
+fn opened(tab_ws: &str, before: &[String], until: Instant) -> Result<Tab, String> {
     let (mut b, me) = browser(tab_ws)?;
-    let end = Instant::now() + MAYBE_GOES;
     loop {
         let r = b.send("Target.getTargets", json!({}))?;
         let new = r["targetInfos"].as_array().into_iter().flatten().find(|t| {
@@ -236,13 +268,13 @@ pub fn opened(tab_ws: &str, before: &[String]) -> Result<Option<Tab>, String> {
                 .strip_prefix("ws://")
                 .and_then(|r| r.split('/').next())
                 .unwrap_or_default();
-            return Ok(Some(Tab {
+            return Ok(Tab {
                 ws: format!("ws://{host}/devtools/page/{id}"),
                 id,
-            }));
+            });
         }
-        if Instant::now() > end {
-            return Ok(None);
+        if Instant::now() > until {
+            return Err("the click opened a tab that never came".into());
         }
         std::thread::sleep(Duration::from_millis(100));
     }

@@ -523,7 +523,7 @@ fn act(
         })?;
         let before = page::tabs(tab)?;
         page::click(cdp, x, y)?;
-        if let Some(new) = page::opened(tab, &before)? {
+        if let Some(new) = page::after_click(cdp, tab, &before, until)? {
             // the run goes on in the tab the click opened; on a watched
             // window, only this step does
             if !a.contains_key("tab") {
@@ -543,7 +543,6 @@ fn act(
             blocked(&mut next, r, w, told, out)?;
             return Ok(Some(next));
         }
-        page::follow(cdp, until)?;
         blocked(cdp, r, w, told, out)?;
     } else if let Some(file) = a.get("screenshot").and_then(Value::as_str) {
         let shot = if a.get("full") == Some(&json!(true)) {
