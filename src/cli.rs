@@ -217,6 +217,9 @@ pub enum BrowserCmd {
         /// A line for each JSON response whose address contains the text
         #[arg(long, value_name = "TEXT")]
         responses: Vec<String>,
+        /// Load the page again every so many seconds, for one that changes only when loaded
+        #[arg(long, value_name = "SECONDS")]
+        reload: Option<u64>,
         /// In a headless Chrome, not a window
         #[arg(long)]
         headless: bool,
@@ -635,6 +638,11 @@ fn browser_watch(o: crate::browser::watch::Options) -> Result<()> {
     if let Some((api, id)) = given.lock().unwrap_or_else(|e| e.into_inner()).take() {
         watch::close(&api, &id);
     }
+    if ran.is_err() {
+        // a daemon stopping ends its Chrome before it closes our stdin:
+        // give it the moment, so its stop is quiet, not an error
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
     ran.map_err(|e| anyhow!(e))
 }
 
@@ -878,6 +886,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                     appeared,
                     navigated,
                     responses,
+                    reload,
                     headless,
                 },
         } => browser_watch(crate::browser::watch::Options {
@@ -886,6 +895,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             appeared,
             navigated,
             responses,
+            reload,
             headless,
         })?,
         Cmd::Completion { shell } => complete::script(shell, command),

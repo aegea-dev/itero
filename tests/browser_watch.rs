@@ -171,37 +171,6 @@ const LISTE: &str = r#"<!doctype html><title>Liste</title>
 <ul aria-label="Liste"><li>Bir</li></ul>
 <script>window.add = t => { const li = document.createElement('li'); li.textContent = t; document.querySelector('ul').append(li); };</script>"#;
 
-/// The watched page, from a connection of the test's own, once it has
-/// loaded and the watcher has had a moment to look.
-fn watched(state: &Path, path: &str) -> itero::browser::cdp::Cdp {
-    let active = state.join("itero/browser/headless/DevToolsActivePort");
-    until("Chrome started", 30, || active.exists());
-    let port = std::fs::read_to_string(&active).unwrap();
-    let port = port.lines().next().unwrap().trim().to_string();
-    let mut ws = String::new();
-    until("the page opened", 30, || {
-        let list: Value = client()
-            .get(format!("http://127.0.0.1:{port}/json/list"))
-            .send()
-            .and_then(|r| r.json())
-            .unwrap_or(json!([]));
-        ws = list
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|t| t["url"].as_str().unwrap_or_default().ends_with(path))
-            .map(|t| t["webSocketDebuggerUrl"].as_str().unwrap().to_string())
-            .unwrap_or_default();
-        !ws.is_empty()
-    });
-    let mut c = itero::browser::cdp::Cdp::connect(&ws, Duration::from_secs(10)).unwrap();
-    until("the page loaded", 30, || {
-        c.eval("document.readyState").unwrap_or_default() == "complete"
-    });
-    std::thread::sleep(Duration::from_millis(1500));
-    c
-}
-
 /// The events of `kind` the daemon took, their data.
 fn events(root: &Path, kind: &str) -> Vec<Value> {
     let ws = itero::workspace::find(root).unwrap();
@@ -227,7 +196,7 @@ fn a_watched_pages_changes_are_a_connectors_events() {
         json!({ "URL": w.url("/liste") }),
     );
     let daemon = daemon(&root, d.path());
-    let mut page = watched(&d.path().join("durum"), "/liste");
+    let mut page = browser::watched(&d.path().join("durum"), "/liste");
     page.eval("add('İki')").unwrap();
     until("the first change", 20, || {
         events(&root, "sayfa.changed").len() == 1
@@ -323,7 +292,7 @@ fn what_appears_and_the_json_a_page_loads_are_events_too() {
         json!({ "URL": w.url("/haber") }),
     );
     let _daemon = daemon(&root, d.path());
-    let mut page = watched(&d.path().join("durum"), "/haber");
+    let mut page = browser::watched(&d.path().join("durum"), "/haber");
     page.eval("go(); 1").unwrap();
     until("two events", 20, || events(&root, "haber.oldu").len() == 2);
     let got = events(&root, "haber.oldu");
@@ -354,7 +323,7 @@ fn a_step_acts_on_the_watched_window() {
         json!([{ "#browser": { "args": { "read": "text", "in": "Liste", "tab": "$event.tab" } } }]),
     );
     let _daemon = daemon(&root, d.path());
-    let mut page = watched(&d.path().join("durum"), "/liste");
+    let mut page = browser::watched(&d.path().join("durum"), "/liste");
     page.eval("add('İki')").unwrap();
     let ws = itero::workspace::find(&root).unwrap();
     let ran = || {
@@ -439,4 +408,53 @@ fn tab_is_a_windows_address() {
         e.contains("tab is a window's address (ws://...), as $event.tab gives it"),
         "{e}"
     );
+}
+
+#[test]
+fn a_page_that_changes_only_when_reloaded_is_reloaded_and_compared() {
+    let d = tempfile::tempdir().unwrap();
+    // each load counts one more visit: a static page, new on each reload
+    let w = web::serve(vec![web::html(
+        "/sayaç",
+        r#"<!doctype html><title>Sayaç</title><p id="ziyaret"></p>
+<script>const n = Number(localStorage.n || 0) + 1; localStorage.n = n;
+document.getElementById('ziyaret').textContent = 'Ziyaret ' + n;</script>"#,
+    )]);
+    let root = workspace(
+        d.path(),
+        free_port(),
+        "sayac.changed",
+        "#!/bin/sh\nexec itero browser watch \"$URL\" --changed '{\"css\": \"#ziyaret\"}' --navigated --reload 2 --headless\n",
+        json!({ "URL": w.url("/sayaç") }),
+    );
+    let _daemon = daemon(&root, d.path());
+    until("two reloads seen", 30, || {
+        events(&root, "sayac.changed").len() >= 2
+    });
+    let got = events(&root, "sayac.changed");
+    // its own reloads are not news: changes only
+    assert!(got.iter().all(|e| e["what"] == "changed"), "{got:?}");
+    assert_eq!(got[0]["previous"], "Ziyaret 1", "{got:?}");
+    assert_eq!(got[0]["text"], "Ziyaret 2", "{got:?}");
+    assert_eq!(got[1]["previous"], "Ziyaret 2", "{got:?}");
+    assert_eq!(got[1]["text"], "Ziyaret 3", "{got:?}");
+}
+
+#[test]
+fn reload_is_whole_seconds() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+        .args([
+            "browser",
+            "watch",
+            "https://ışık.example/",
+            "--navigated",
+            "--reload",
+            "0",
+        ])
+        .env("ITERO_BROWSER_API", "http://127.0.0.1:9/browser")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let e = String::from_utf8_lossy(&out.stderr);
+    assert!(e.contains("--reload is whole seconds, at least 1"), "{e}");
 }

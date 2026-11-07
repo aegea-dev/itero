@@ -18,6 +18,9 @@ pub struct Options {
     pub appeared: Vec<String>,
     pub navigated: bool,
     pub responses: Vec<String>,
+    /// Seconds between reloads, for a page that changes only when it is
+    /// loaded again.
+    pub reload: Option<u64>,
     pub headless: bool,
 }
 
@@ -54,6 +57,9 @@ fn check(o: &Options) -> Result<(Vec<Value>, Vec<Value>), String> {
     if o.changed.is_empty() && o.appeared.is_empty() && !o.navigated && o.responses.is_empty() {
         problems.push("watch for one of --changed, --appeared, --navigated or --responses".into());
     }
+    if o.reload == Some(0) {
+        problems.push("--reload is whole seconds, at least 1".into());
+    }
     let mut parse = |all: &[String]| -> Vec<Value> {
         all.iter()
             .filter_map(|t| target(t).map_err(|e| problems.push(e)).ok())
@@ -69,13 +75,14 @@ fn check(o: &Options) -> Result<(Vec<Value>, Vec<Value>), String> {
 
 /// The script put in every document of the tab, in itero's world: it
 /// finds each target as a step does (a name: the element labelled or
-/// titled so, else one showing that text; or a CSS selector), and after
-/// `QUIET_MS` of quiet tells what changed and what appeared.
+/// titled so, else one showing that text; or a CSS selector), and reports
+/// what each shows (its text, or null when it is not there) once the page
+/// is ready and after each `QUIET_MS` of quiet. What changed is worked out
+/// by `Seen`, so it holds across a reload, which starts a new document.
 fn script(changed: &[Value], appeared: &[Value]) -> String {
     format!(
         r#"(() => {{
   const changed = {changed}, appeared = {appeared};
-  const send = o => {BINDING}(JSON.stringify(o));
   const byName = name => {{
     for (const e of document.querySelectorAll('[aria-label],[title]'))
       if (e.getAttribute('aria-label') === name || e.getAttribute('title') === name) return e;
@@ -87,24 +94,14 @@ fn script(changed: &[Value], appeared: &[Value]) -> String {
   }};
   const find = t => typeof t === 'string' ? byName(t) : document.querySelector(t.css);
   const text = e => e ? (e.innerText ?? e.textContent ?? '').trim() : null;
-  const last = new Map(), here = new Map();
-  const look = first => {{
-    changed.forEach((t, i) => {{
-      const now = text(find(t));
-      if (!first && now !== null && last.has(i) && now !== last.get(i))
-        send({{ what: 'changed', target: t, text: now, previous: last.get(i) }});
-      if (now !== null) last.set(i, now);
-    }});
-    appeared.forEach((t, i) => {{
-      const e = find(t);
-      if (!first && e && !here.get(i)) send({{ what: 'appeared', target: t, text: text(e) }});
-      here.set(i, !!e);
-    }});
-  }};
+  const look = () => {BINDING}(JSON.stringify({{
+    changed: changed.map(t => text(find(t))),
+    appeared: appeared.map(t => text(find(t))),
+  }}));
   let timer;
   const start = () => {{
-    look(true);
-    new MutationObserver(() => {{ clearTimeout(timer); timer = setTimeout(() => look(false), {QUIET_MS}); }})
+    look();
+    new MutationObserver(() => {{ clearTimeout(timer); timer = setTimeout(look, {QUIET_MS}); }})
       .observe(document, {{ subtree: true, childList: true, characterData: true, attributes: true }});
   }};
   if (document.readyState === 'loading') addEventListener('DOMContentLoaded', start); else start();
@@ -112,6 +109,59 @@ fn script(changed: &[Value], appeared: &[Value]) -> String {
         changed = json!(changed),
         appeared = json!(appeared),
     )
+}
+
+/// What the targets showed last, kept across documents: the lines a new
+/// report makes.
+struct Seen {
+    changed: Vec<(Value, Option<String>)>,
+    appeared: Vec<(Value, Option<bool>)>,
+}
+
+impl Seen {
+    fn new(changed: &[Value], appeared: &[Value]) -> Seen {
+        Seen {
+            changed: changed.iter().map(|t| (t.clone(), None)).collect(),
+            appeared: appeared.iter().map(|t| (t.clone(), None)).collect(),
+        }
+    }
+
+    /// The lines for `report` (`{changed: [text|null], appeared:
+    /// [text|null]}`): a text other than the last one known; a target there
+    /// that was known not to be. A target not there keeps its last text;
+    /// the first report is what there is to compare with.
+    fn lines(&mut self, report: &Value) -> Vec<Map<String, Value>> {
+        let mut out = vec![];
+        for (i, (target, last)) in self.changed.iter_mut().enumerate() {
+            let Some(now) = report["changed"][i].as_str() else {
+                continue;
+            };
+            if let Some(before) = last.as_deref()
+                && before != now
+            {
+                out.push(Map::from_iter([
+                    ("what".into(), json!("changed")),
+                    ("target".into(), target.clone()),
+                    ("text".into(), json!(now)),
+                    ("previous".into(), json!(before)),
+                ]));
+            }
+            *last = Some(now.to_string());
+        }
+        for (i, (target, was)) in self.appeared.iter_mut().enumerate() {
+            let now = &report["appeared"][i];
+            let here = !now.is_null();
+            if here && *was == Some(false) {
+                out.push(Map::from_iter([
+                    ("what".into(), json!("appeared")),
+                    ("target".into(), target.clone()),
+                    ("text".into(), now.clone()),
+                ]));
+            }
+            *was = Some(here);
+        }
+        out
+    }
 }
 
 /// The daemon's browser API, as a connector is given it.
@@ -245,9 +295,22 @@ pub fn run(o: Options, opened: impl FnOnce(&str, &str)) -> Result<(), String> {
     // the page's own load is not news
     cdp.events("Page.");
     let mut loading = false;
+    let mut seen = Seen::new(&changed, &appeared);
+    let every = o.reload.map(Duration::from_secs);
+    let mut next_reload = every.map(|e| Instant::now() + e);
+    // a load itero asked for (`--reload`) is not news
+    let mut reloading = false;
     // the JSON responses asked for, by request id, until they have loaded
     let mut wanted: Vec<(String, String)> = vec![];
     loop {
+        if let Some(at) = next_reload
+            && Instant::now() >= at
+            && !loading
+        {
+            cdp.send("Page.reload", json!({}))?;
+            reloading = true;
+            next_reload = every.map(|e| Instant::now() + e);
+        }
         let e = match cdp.wait_event(Instant::now() + Duration::from_secs(1), &mut |_| true) {
             Ok(e) => e,
             Err(why) if why == "timed out" => continue,
@@ -256,10 +319,11 @@ pub fn run(o: Options, opened: impl FnOnce(&str, &str)) -> Result<(), String> {
         let p = &e["params"];
         match e["method"].as_str().unwrap_or_default() {
             "Runtime.bindingCalled" if p["name"] == BINDING => {
-                let line: Map<String, Value> =
-                    serde_json::from_str(p["payload"].as_str().unwrap_or("{}"))
-                        .map_err(|e| format!("the page's watcher said: {e}"))?;
-                print(&mut cdp, &tab, line)?;
+                let report: Value = serde_json::from_str(p["payload"].as_str().unwrap_or("{}"))
+                    .map_err(|e| format!("the page's watcher said: {e}"))?;
+                for line in seen.lines(&report) {
+                    print(&mut cdp, &tab, line)?;
+                }
             }
             "Page.frameNavigated"
                 if p["frame"]["id"] == main && p["frame"]["parentId"].is_null() =>
@@ -269,7 +333,7 @@ pub fn run(o: Options, opened: impl FnOnce(&str, &str)) -> Result<(), String> {
             "Page.loadEventFired" if loading => {
                 loading = false;
                 blocked(&mut cdp, &from)?;
-                if o.navigated {
+                if o.navigated && !std::mem::take(&mut reloading) {
                     print(
                         &mut cdp,
                         &tab,
