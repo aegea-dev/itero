@@ -798,7 +798,7 @@ pub fn run_step_telling(
         return crate::ai::find::run(r);
     }
     if r.file == Path::new(BROWSER) {
-        return crate::browser::step::run(r);
+        return crate::browser::step::run(r, told);
     }
     if let Some(dir) = r.memory.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;

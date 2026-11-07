@@ -113,7 +113,9 @@ fn fail(why: impl std::fmt::Display) -> Failure {
     Failure::Error(format!("#browser: {why}"))
 }
 
-pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
+/// Runs the step; what it says while it waits for a person goes to `told`,
+/// its progress.
+pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome, Failure> {
     let args = r.input.get("args").cloned().unwrap_or(json!({}));
     check(&args).map_err(fail)?;
     let a = args.as_object().cloned().unwrap_or_default();
@@ -130,7 +132,15 @@ pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
     let mut cdp = Cdp::connect(tab, TIMEOUT).map_err(fail)?;
     page::prepare(&mut cdp).map_err(fail)?;
     let mut out = Map::new();
-    let acted = act(&mut cdp, &a, until, timeout, tab, r, &mut out);
+    let acted = act(
+        &mut cdp,
+        &a,
+        Wait { until, timeout },
+        tab,
+        r,
+        told,
+        &mut out,
+    );
     let mut cdp = match acted {
         Ok(Some(new)) => new,
         Ok(None) => cdp,
@@ -166,17 +176,69 @@ fn failed(cdp: &mut Cdp, why: String, r: &StepRun) -> String {
     msg
 }
 
+/// How long an action waits: until `until`, its `timeout` from when it
+/// started.
+#[derive(Clone, Copy)]
+struct Wait {
+    until: Instant,
+    timeout: Duration,
+}
+
 /// After a page loads: a banner rejected is logged; one that is not is
-/// shown to the user, and `$output.blocked` says it may be in the way.
+/// shown to the user, and `$output.blocked` says it may be in the way. A
+/// check sitting in a form is `$output.captcha`. A human check in the way
+/// fails a headless step at once; in a window, its page is brought to the
+/// front, the user is told, and the step waits for a person to solve it,
+/// then looks again.
 fn blocked(
     cdp: &mut Cdp,
     r: &StepRun,
-    until: Instant,
+    w: Wait,
+    told: &(dyn Fn(Option<&str>) + Sync),
     out: &mut Map<String, Value>,
 ) -> Result<(), String> {
     let mut kinds = vec![];
-    for b in blockers::check(cdp, until)? {
+    for b in blockers::check(cdp, w.until)? {
         match b {
+            Blocker::Captcha {
+                kind,
+                in_the_way: false,
+            } => {
+                out.insert("captcha".into(), json!(kind));
+            }
+            Blocker::Captcha { kind, .. } => {
+                let (url, _) = page::about(cdp)?;
+                let host = host_of(&url);
+                if r.env.get("ITERO_BROWSER_MODE").map(String::as_str) != Some("window") {
+                    tell(
+                        r,
+                        format!(
+                            "{host} shows a human check ({kind}), which cannot be solved headless"
+                        ),
+                        &url,
+                    )?;
+                    return Err(format!(
+                        "{host} shows a human check ({kind}): it cannot be solved headless; \
+                         give the run's first #browser step headless: false"
+                    ));
+                }
+                cdp.send("Page.bringToFront", json!({}))?;
+                tell(
+                    r,
+                    format!(
+                        "{host} shows a human check ({kind}): solve it in the Chrome window, and the run goes on"
+                    ),
+                    &url,
+                )?;
+                solved(cdp, &host, r, told)?;
+                // what the page shows once it is solved, as after a load
+                let again = Wait {
+                    until: Instant::now() + w.timeout,
+                    ..w
+                };
+                page::ready(cdp, again.until)?;
+                return blocked(cdp, r, again, told, out);
+            }
             Blocker::Consent {
                 tool,
                 cleared: true,
@@ -191,7 +253,7 @@ fn blocked(
             }
             Blocker::Consent { tool, .. } => {
                 let (url, _) = page::about(cdp)?;
-                let host = url.split('/').nth(2).unwrap_or(&url).to_string();
+                let host = host_of(&url);
                 let banner = match tool {
                     Some(t) => format!("a {t} cookie banner"),
                     None => "a cookie banner".into(),
@@ -209,6 +271,49 @@ fn blocked(
         out.insert("blocked".into(), json!(kinds));
     }
     Ok(())
+}
+
+/// The host of `url`, with its port: what the user knows a site by.
+fn host_of(url: &str) -> String {
+    url.split('/').nth(2).unwrap_or(url).to_string()
+}
+
+/// How often the user is told the step still waits for them.
+const STILL: Duration = Duration::from_secs(60);
+
+/// Waits for the human check on the page to go, as long as the step may
+/// run (the workspace's `limits.most`), saying so in its progress each
+/// minute. A page going elsewhere, as when the check is passed, cannot be
+/// asked for a moment; one that cannot be asked for a minute has failed.
+fn solved(
+    cdp: &mut Cdp,
+    host: &str,
+    r: &StepRun,
+    told: &(dyn Fn(Option<&str>) + Sync),
+) -> Result<(), String> {
+    let started = Instant::now();
+    let end = started + Duration::from_secs(r.most);
+    let mut said: Option<Instant> = None;
+    let mut asked = Instant::now();
+    loop {
+        if said.is_none_or(|t| t.elapsed() >= STILL) {
+            let minutes = started.elapsed().as_secs() / 60;
+            told(Some(&format!(
+                "waiting for a human check on {host} ({minutes} min)"
+            )));
+            said = Some(Instant::now());
+        }
+        match blockers::human_check(cdp) {
+            Ok(None) => return Ok(()),
+            Ok(Some(_)) => asked = Instant::now(),
+            Err(e) if asked.elapsed() > STILL => return Err(e),
+            Err(_) => {}
+        }
+        if Instant::now() > end {
+            return Err(format!("nobody solved the human check on {host}"));
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
 }
 
 /// A notification about the page at `url`, from the step's workflow.
@@ -253,15 +358,16 @@ fn target_of(a: &Map<String, Value>, k: &str) -> Result<Target, String> {
 fn act(
     cdp: &mut Cdp,
     a: &Map<String, Value>,
-    until: Instant,
-    timeout: Duration,
+    w: Wait,
     tab: &str,
     r: &StepRun,
+    told: &(dyn Fn(Option<&str>) + Sync),
     out: &mut Map<String, Value>,
 ) -> Result<Option<Cdp>, String> {
+    let Wait { until, timeout } = w;
     if let Some(url) = a.get("open").and_then(Value::as_str) {
         page::load(cdp, url, until)?;
-        blocked(cdp, r, until, out)?;
+        blocked(cdp, r, w, told, out)?;
     } else if a.contains_key("wait") {
         wait_for(cdp, &target_of(a, "wait")?, until, timeout)?;
         out.insert("found".into(), json!(true));
@@ -318,13 +424,13 @@ fn act(
             let mut next = Cdp::connect(&new.ws, TIMEOUT)?;
             page::prepare(&mut next)?;
             // what it opened may still be loading
-            let _ = next.eval("new Promise(r => document.readyState === 'complete' ? r() : addEventListener('load', () => r()))");
+            page::ready(&mut next, until)?;
             out.insert("new_tab".into(), json!(true));
-            blocked(&mut next, r, until, out)?;
+            blocked(&mut next, r, w, told, out)?;
             return Ok(Some(next));
         }
         page::follow(cdp, until)?;
-        blocked(cdp, r, until, out)?;
+        blocked(cdp, r, w, told, out)?;
     } else if a.contains_key("hover") {
         let t = target_of(a, "hover")?;
         let f = wait_for(cdp, &t, until, timeout)?;

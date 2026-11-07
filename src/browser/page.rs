@@ -106,6 +106,21 @@ fn mouse(cdp: &mut Cdp, kind: &str, x: f64, y: f64) -> Result<(), String> {
     cdp.send("Input.dispatchMouseEvent", p).map(|_| ())
 }
 
+/// Waits, until `until`, for the page to have loaded: one that is going
+/// elsewhere has no document to ask for a moment, and is asked again.
+pub fn ready(cdp: &mut Cdp, until: Instant) -> Result<(), String> {
+    let loaded = "new Promise(r => document.readyState === 'complete' ? r(true) : addEventListener('load', () => r(true)))";
+    loop {
+        match cdp.eval(loaded) {
+            Ok(_) => return Ok(()),
+            Err(e) if Instant::now() > until => {
+                return Err(format!("the page did not finish loading: {e}"));
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(200)),
+        }
+    }
+}
+
 /// The mouse to (x, y), then a left click: as a person's, not a script's.
 /// Events kept from before are dropped: `follow` reads the click's own.
 pub fn click(cdp: &mut Cdp, x: f64, y: f64) -> Result<(), String> {

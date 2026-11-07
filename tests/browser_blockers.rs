@@ -153,6 +153,13 @@ fn a_banner_itero_cannot_reject_is_notified_and_said_in_the_output() {
             web::html("/bilinmeyen", &unknown),
             web::html("/sourcepoint", &sourcepoint),
             web::html("/temiz", PAGE),
+            // a banner already answered, slid out of the view: not on top
+            web::html(
+                "/kapalı",
+                &format!(
+                    r#"{PAGE}<div style="{FIXED};transform:translateY(300%)"><p>Çerezleri kullanıyoruz</p><button>Kabul et</button></div>"#
+                ),
+            ),
             // a consent tool's own site: its sticky menu speaks of cookies,
             // with no answer to give
             web::html(
@@ -175,7 +182,7 @@ fn a_banner_itero_cannot_reject_is_notified_and_said_in_the_output() {
             assert!(n.iter().any(|l| l.contains(tool)), "{n:?}");
         }
     }
-    for path in ["/temiz", "/menü"] {
+    for path in ["/temiz", "/menü", "/kapalı"] {
         let t = tab(c.port);
         let o = step(&t, json!({ "open": w.url(path) })).unwrap();
         assert!(o.get("blocked").is_none(), "{path}: {o}");
@@ -183,6 +190,132 @@ fn a_banner_itero_cannot_reject_is_notified_and_said_in_the_output() {
     assert!(
         !notified(w.port)
             .iter()
-            .any(|l| l.contains("/temiz") || l.contains("/men"))
+            .any(|l| l.contains("/temiz") || l.contains("/men") || l.contains("/kapal"))
     );
+}
+
+/// A page with a human check's frame, pointing where a real one does: the
+/// test Chrome resolves no host but 127.0.0.1, so nothing is fetched.
+fn frame(src: &str, style: &str) -> String {
+    format!(r#"<iframe src="{src}" title="reCAPTCHA" style="{style}"></iframe>"#)
+}
+
+const POPUP: &str = "https://www.google.com/recaptcha/api2/bframe?hl=tr&k=deneme";
+const SHOWN: &str = "position:fixed;top:50px;left:50px;width:400px;height:580px;border:0";
+
+#[test]
+fn a_human_check_fails_a_headless_step_at_once_and_is_notified() {
+    notify_log();
+    let (c, w) = (
+        test_chrome::start(),
+        web::serve(vec![
+            web::html(
+                "/insan",
+                "<!doctype html><title>Prove your humanity</title><p>Devam etmek için doğrulayın</p>",
+            ),
+            web::html("/açılır", &format!("{PAGE}{}", frame(POPUP, SHOWN))),
+            web::html("/bağlantı", &format!(r#"{PAGE}<a href="/insan">Giriş</a>"#)),
+        ]),
+    );
+    for path in ["/insan", "/açılır"] {
+        let t = tab(c.port);
+        let started = std::time::Instant::now();
+        let e = step(&t, json!({ "open": w.url(path) })).unwrap_err();
+        assert!(started.elapsed().as_secs() < 10, "{path}: at once");
+        assert!(e.contains("cannot be solved headless"), "{path}: {e}");
+        assert!(e.contains(&format!("127.0.0.1:{}", w.port)), "{e}");
+    }
+    // after a click too
+    let t = tab(c.port);
+    step(&t, json!({ "open": w.url("/bağlantı") })).unwrap();
+    let e = step(&t, json!({ "click": "Giriş" })).unwrap_err();
+    assert!(e.contains("cannot be solved headless"), "{e}");
+    let n = notified(w.port);
+    assert_eq!(n.len(), 3, "{n:?}");
+    assert!(n.iter().all(|l| l.contains("human check")), "{n:?}");
+}
+
+#[test]
+fn a_human_check_in_a_window_waits_until_it_is_gone() {
+    notify_log();
+    // the check goes after a second, as when a person has solved it
+    let page = format!(
+        r#"{PAGE}{}<script>setTimeout(() => document.querySelector('iframe').remove(), 1000)</script>"#,
+        frame(POPUP, SHOWN)
+    );
+    let (c, w) = (
+        test_chrome::start(),
+        web::serve(vec![web::html("/bekle", &page)]),
+    );
+    let t = tab(c.port);
+    let said = std::sync::Mutex::new(vec![]);
+    let o = browser::step_as(&t, "window", json!({ "open": w.url("/bekle") }), &|s| {
+        if let Some(s) = s {
+            said.lock().unwrap().push(s.to_string());
+        }
+    })
+    .unwrap();
+    assert!(o.get("blocked").is_none(), "{o}");
+    let said = said.into_inner().unwrap();
+    assert!(
+        said.iter().any(|s| s.contains(&format!(
+            "waiting for a human check on 127.0.0.1:{}",
+            w.port
+        ))),
+        "{said:?}"
+    );
+    let n = notified(w.port);
+    assert_eq!(n.len(), 1, "{n:?}");
+    assert!(n[0].contains("human check"), "{n:?}");
+}
+
+#[test]
+fn a_check_that_sits_in_a_form_is_said_and_the_step_goes_on() {
+    notify_log();
+    let widgets = [
+        (
+            "reCAPTCHA",
+            "https://www.google.com/recaptcha/api2/anchor?ar=1&k=deneme&size=normal",
+        ),
+        (
+            "hCaptcha",
+            "https://newassets.hcaptcha.com/captcha/v1/abc/static/hcaptcha.html#frame=checkbox&id=0",
+        ),
+        (
+            "Turnstile",
+            "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv0/0/abc/light/normal",
+        ),
+    ];
+    let pages: Vec<web::Page> = widgets
+        .iter()
+        .map(|(kind, src)| {
+            web::html(
+                &format!("/{kind}"),
+                &format!(
+                    r#"{PAGE}<form><label>E-posta <input name="e"></label>{}<button>Gönder</button></form>"#,
+                    frame(src, "width:300px;height:78px;border:0")
+                ),
+            )
+        })
+        .chain([web::html(
+            "/görünmez",
+            &format!(
+                "{PAGE}{}",
+                frame(
+                    "https://www.google.com/recaptcha/api2/anchor?ar=1&k=deneme&size=invisible",
+                    "width:256px;height:60px;border:0"
+                )
+            ),
+        )])
+        .collect();
+    let (c, w) = (test_chrome::start(), web::serve(pages));
+    for (kind, _) in widgets {
+        let t = tab(c.port);
+        let o = step(&t, json!({ "open": w.url(&format!("/{kind}")) })).unwrap();
+        assert_eq!(o["captcha"], kind, "{o}");
+    }
+    let t = tab(c.port);
+    let o = step(&t, json!({ "open": w.url("/görünmez") })).unwrap();
+    assert!(o.get("captcha").is_none(), "{o}");
+    assert_eq!(notified(w.port), Vec::<String>::new());
 }

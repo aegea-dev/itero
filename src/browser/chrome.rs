@@ -126,6 +126,10 @@ pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String
     if mode == Mode::Headless {
         c.arg("--headless");
     }
+    if std::env::var_os("ITERO_TEST_BROWSER_OFFLINE").is_some() {
+        // a test's Chrome reaches only the test's own server
+        c.arg("--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1");
+    }
     #[cfg(target_os = "linux")]
     // SAFETY: geteuid has no preconditions
     if unsafe { libc::geteuid() } == 0 {
