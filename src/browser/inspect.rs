@@ -245,8 +245,8 @@ fn libraries(in_page: &Value, urls: &[&str]) -> Vec<Value> {
 }
 
 /// What the page itself knows: meta tags, libraries by their globals,
-/// timing from its `performance` entries (largest contentful paint and
-/// layout shift read back with `buffered`).
+/// timing from its `performance` entries (paints and layout shift read
+/// back with `buffered`, the first contentful paint waited for).
 const PAGE_FACTS: &str = r#"(async () => {
   const attr = (sel, a) => document.querySelector(sel)?.getAttribute(a) ?? null;
   const tags = prefix => Object.fromEntries([...document.querySelectorAll(`meta[property^="${prefix}:"],meta[name^="${prefix}:"]`)]
@@ -272,7 +272,12 @@ const PAGE_FACTS: &str = r#"(async () => {
   if (typeof w.gtag === 'function' || typeof w.ga === 'function') add('Google Analytics');
   if (w.google_tag_manager) add('Google Tag Manager');
   const nav = performance.getEntriesByType('navigation')[0];
-  const fcp = performance.getEntriesByName('first-contentful-paint')[0];
+  // a page painted after its load (a slow machine, content shown late)
+  // is waited for, up to 3 s: one that paints no content has none
+  const fcp = await new Promise(r => {
+    try { new PerformanceObserver(l => { const e = l.getEntries().find(e => e.name === 'first-contentful-paint'); if (e) r(e); })
+      .observe({ type: 'paint', buffered: true }); } catch (e) { r(null); }
+    setTimeout(() => r(null), 3000); });
   const buffered = type => new Promise(r => {
     try { new PerformanceObserver(l => r(l.getEntries())).observe({ type, buffered: true }); } catch (e) { r([]); }
     setTimeout(() => r([]), 200); });
