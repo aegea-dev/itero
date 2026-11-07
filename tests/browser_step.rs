@@ -186,7 +186,7 @@ fn every_problem_with_the_args_is_said_at_once() {
     assert!(e.contains("type needs into"), "{e}");
     let e = itero::browser::step::check(&json!({})).unwrap_err();
     assert!(
-        e.contains("a step does one of open, wait, find, read, click, hover, type, key, inspect, screenshot or scroll"),
+        e.contains("a step does one of open, wait, find, read, click, hover, type, key, inspect, screenshot, scroll or save"),
         "{e}"
     );
     // known only in a run

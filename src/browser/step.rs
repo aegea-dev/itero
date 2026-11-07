@@ -4,13 +4,13 @@
 use super::blockers::{self, Blocker};
 use super::cdp::Cdp;
 use super::target::{self, Target};
-use super::{inspect, network, page};
+use super::{inspect, network, page, save};
 use crate::engine::worker::{Failure, Note, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
 /// The args `#browser` reads.
-pub const ARGS: [&str; 20] = [
+pub const ARGS: [&str; 21] = [
     "open",
     "wait",
     "find",
@@ -25,6 +25,7 @@ pub const ARGS: [&str; 20] = [
     "screenshot",
     "full",
     "scroll",
+    "save",
     "width",
     "height",
     "headless",
@@ -37,7 +38,7 @@ pub const ARGS: [&str; 20] = [
 const LOADS: [&str; 5] = ["open", "wait", "click", "key", "inspect"];
 
 /// The actions: one per step.
-pub const ACTIONS: [&str; 11] = [
+pub const ACTIONS: [&str; 12] = [
     "open",
     "wait",
     "find",
@@ -49,6 +50,7 @@ pub const ACTIONS: [&str; 11] = [
     "inspect",
     "screenshot",
     "scroll",
+    "save",
 ];
 
 /// How long an action waits for a page or a target with no `timeout`.
@@ -120,6 +122,13 @@ pub fn check(args: &Value) -> Result<(), String> {
         if !ok {
             problems.push(format!("screenshot is a .png, .jpg or .jpeg file, not {v}"));
         }
+    }
+    if let Some(v) = is("save")
+        && !v.as_str().is_some_and(|p| !p.trim().is_empty())
+    {
+        problems.push(format!(
+            "save is a file ending in .mhtml or a folder, not {v}"
+        ));
     }
     if a.contains_key("full") && !a.contains_key("screenshot") {
         problems.push("full goes with screenshot".into());
@@ -552,6 +561,21 @@ fn act(
         let path = r.root.join(file);
         page::screenshot(cdp, &path, shot)?;
         out.insert("file".into(), json!(path.display().to_string()));
+    } else if let Some(to) = a.get("save").and_then(Value::as_str) {
+        // the workspace's, or absolute
+        let path = r.root.join(to);
+        if to.to_ascii_lowercase().ends_with(".mhtml") {
+            save::mhtml(cdp, &path)?;
+            out.insert("file".into(), json!(path.display().to_string()));
+        } else {
+            let s = save::files(cdp, &path)?;
+            out.insert("folder".into(), json!(path.display().to_string()));
+            out.insert("files".into(), json!(s.files));
+            out.insert("failed".into(), json!(s.failed));
+            if !s.fetched_again.is_empty() {
+                out.insert("fetched_again".into(), json!(s.fetched_again));
+            }
+        }
     } else if a.contains_key("scroll") {
         let t = target_of(a, "scroll")?;
         let f = wait_for(cdp, &t, until, timeout)?;

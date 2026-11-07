@@ -98,7 +98,7 @@ fn site() -> web::Web {
             path: "/eski".into(),
             status: 301,
             headers: vec![("Location".into(), "/".into())],
-            body: String::new(),
+            body: Vec::new(),
         },
         home,
         web::file("/stil.css", "text/css", "h1 { color: #E57373 }"),
