@@ -139,9 +139,15 @@ impl Cdp {
         }
     }
 
-    /// The events kept so far, taken.
-    pub fn events(&mut self) -> Vec<Value> {
-        self.queued.drain(..).collect()
+    /// The events kept so far of a domain (`prefix`, as `"Page."`), taken;
+    /// the others stay kept.
+    pub fn events(&mut self, prefix: &str) -> Vec<Value> {
+        let (taken, kept): (VecDeque<Value>, VecDeque<Value>) = self
+            .queued
+            .drain(..)
+            .partition(|e| e["method"].as_str().is_some_and(|m| m.starts_with(prefix)));
+        self.queued = kept;
+        taken.into()
     }
 
     /// The value of a JavaScript expression in the page, its promise

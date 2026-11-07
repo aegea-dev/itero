@@ -3,17 +3,31 @@
 //! and what the action found or read.
 use super::blockers::{self, Blocker};
 use super::cdp::Cdp;
-use super::page;
 use super::target::{self, Target};
+use super::{network, page};
 use crate::engine::worker::{Failure, Note, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
 /// The args `#browser` reads.
-pub const ARGS: [&str; 12] = [
-    "open", "wait", "find", "read", "in", "click", "hover", "type", "into", "key", "headless",
+pub const ARGS: [&str; 13] = [
+    "open",
+    "wait",
+    "find",
+    "read",
+    "in",
+    "click",
+    "hover",
+    "type",
+    "into",
+    "key",
+    "headless",
     "timeout",
+    "responses",
 ];
+
+/// The actions that load something, with which `responses` goes.
+const LOADS: [&str; 4] = ["open", "wait", "click", "key"];
 
 /// The actions: one per step.
 pub const ACTIONS: [&str; 8] = [
@@ -90,6 +104,14 @@ pub fn check(args: &Value) -> Result<(), String> {
             problems.push(format!("key is one of {}, not {v}", names.join(", ")));
         }
     }
+    if a.contains_key("responses") && !LOADS.iter().any(|k| a.contains_key(*k)) {
+        problems.push(format!("responses goes with {}", or_list(&LOADS)));
+    }
+    if let Some(v) = is("responses")
+        && !v.as_str().is_some_and(|t| !t.is_empty())
+    {
+        problems.push(format!("responses is a text a URL contains, not {v}"));
+    }
     if let Some(v) = is("headless")
         && !v.is_boolean()
     {
@@ -106,6 +128,15 @@ pub fn check(args: &Value) -> Result<(), String> {
         Ok(())
     } else {
         Err(problems.join("; "))
+    }
+}
+
+/// `a, b, c or d`.
+fn or_list(words: &[&str]) -> String {
+    match words {
+        [] => String::new(),
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
     }
 }
 
@@ -131,6 +162,10 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
     let until = Instant::now() + timeout;
     let mut cdp = Cdp::connect(tab, TIMEOUT).map_err(fail)?;
     page::prepare(&mut cdp).map_err(fail)?;
+    let wanted = a.get("responses").and_then(Value::as_str);
+    if wanted.is_some() {
+        network::start(&mut cdp).map_err(fail)?;
+    }
     let mut out = Map::new();
     let acted = act(
         &mut cdp,
@@ -141,10 +176,18 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         told,
         &mut out,
     );
+    if let Err(why) = &acted {
+        return Err(fail(failed(&mut cdp, why.clone(), r)));
+    }
+    if let Some(text) = wanted {
+        // what this step's page loaded; a tab a click opened is not
+        // recorded
+        let got = network::responses(&mut cdp, text, until).map_err(fail)?;
+        out.insert("responses".into(), json!(got));
+    }
     let mut cdp = match acted {
         Ok(Some(new)) => new,
-        Ok(None) => cdp,
-        Err(why) => return Err(fail(failed(&mut cdp, why, r))),
+        _ => cdp,
     };
     let (url, title) = page::about(&mut cdp).map_err(fail)?;
     out.insert("url".into(), json!(url));

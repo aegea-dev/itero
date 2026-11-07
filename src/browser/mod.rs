@@ -5,6 +5,7 @@ pub mod blockers;
 pub mod cdp;
 pub mod chrome;
 pub mod keeper;
+pub mod network;
 pub mod page;
 pub mod step;
 pub mod target;

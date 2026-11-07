@@ -25,7 +25,7 @@ pub fn prepare(cdp: &mut Cdp) -> Result<(), String> {
 /// as single-page sites do, then until its network is almost quiet (at
 /// most `QUIET`).
 pub fn load(cdp: &mut Cdp, url: &str, until: Instant) -> Result<(), String> {
-    cdp.events();
+    cdp.events("Page.");
     let r = cdp.send("Page.navigate", json!({ "url": url }))?;
     if let Some(why) = r["errorText"].as_str().filter(|w| !w.is_empty()) {
         return Err(format!("{url}: {why}"));
@@ -122,9 +122,10 @@ pub fn ready(cdp: &mut Cdp, until: Instant) -> Result<(), String> {
 }
 
 /// The mouse to (x, y), then a left click: as a person's, not a script's.
-/// Events kept from before are dropped: `follow` reads the click's own.
+/// The page's events kept from before are dropped: `follow` reads the
+/// click's own.
 pub fn click(cdp: &mut Cdp, x: f64, y: f64) -> Result<(), String> {
-    cdp.events();
+    cdp.events("Page.");
     mouse(cdp, "mouseMoved", x, y)?;
     mouse(cdp, "mousePressed", x, y)?;
     mouse(cdp, "mouseReleased", x, y)
@@ -157,10 +158,10 @@ pub const KEYS: [(&str, &str, i64, &str); 12] = [
     ("End", "End", 35, ""),
 ];
 
-/// Presses `name`, one of `KEYS`. Events kept from before are dropped,
-/// as by `click`.
+/// Presses `name`, one of `KEYS`. The page's events kept from before are
+/// dropped, as by `click`.
 pub fn key(cdp: &mut Cdp, name: &str) -> Result<(), String> {
-    cdp.events();
+    cdp.events("Page.");
     let (key, code, vk, text) = KEYS
         .iter()
         .find(|k| k.0 == name)
