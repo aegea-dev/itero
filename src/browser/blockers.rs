@@ -267,3 +267,58 @@ fn reject_with(cdp: &mut Cdp, shown: &str, reject: &str, until: Instant) -> Resu
     }
     Ok(false)
 }
+
+/// The host of `url`, with its port: what the user knows a site by.
+pub fn host_of(url: &str) -> String {
+    url.split('/').nth(2).unwrap_or(url).to_string()
+}
+
+/// How often the user is told itero still waits for them.
+const STILL: Duration = Duration::from_secs(60);
+
+/// Waits until `end` for the human check on the page to go, saying so to
+/// `told` (a step's progress) each minute. A page going elsewhere, as when
+/// the check is passed, cannot be asked for a moment; one that cannot be
+/// asked for a minute has failed.
+pub fn solved(
+    cdp: &mut Cdp,
+    host: &str,
+    end: Instant,
+    told: &(dyn Fn(Option<&str>) + Sync),
+) -> Result<(), String> {
+    let started = Instant::now();
+    let mut said: Option<Instant> = None;
+    let mut asked = Instant::now();
+    loop {
+        if said.is_none_or(|t| t.elapsed() >= STILL) {
+            let minutes = started.elapsed().as_secs() / 60;
+            told(Some(&format!(
+                "waiting for a human check on {host} ({minutes} min)"
+            )));
+            said = Some(Instant::now());
+        }
+        match human_check(cdp) {
+            Ok(None) => return Ok(()),
+            Ok(Some(_)) => asked = Instant::now(),
+            Err(e) if asked.elapsed() > STILL => return Err(e),
+            Err(_) => {}
+        }
+        if Instant::now() > end {
+            return Err(format!("nobody solved the human check on {host}"));
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+/// A notification about a blocker on the page at `url`; `from` is the
+/// workflow (or the connector) it came up in.
+pub fn notify(from: &str, text: String, url: &str) -> Result<(), String> {
+    use crate::engine::worker::{Note, openable, show};
+    show(&Note {
+        title: "itero: #browser".into(),
+        subtitle: Some(from.into()),
+        text,
+        url: Some(url.into()).filter(|u: &String| openable(u)),
+        ..Note::default()
+    })
+}

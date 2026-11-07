@@ -70,3 +70,44 @@ pub fn logged(t: &Tab, event: &str) -> Vec<Value> {
         .filter(|l| l["event"] == event)
         .collect()
 }
+
+/// Until `ok`, for 30 seconds at most.
+fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !ok() {
+        assert!(std::time::Instant::now() < end, "never: {what}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// The watched page, from a connection of the test's own, once it has
+/// loaded and the watcher has had a moment to look.
+pub fn watched(state: &std::path::Path, path: &str) -> itero::browser::cdp::Cdp {
+    let active = state.join("itero/browser/headless/DevToolsActivePort");
+    wait_until("Chrome started", || active.exists());
+    let port = std::fs::read_to_string(&active).unwrap();
+    let port = port.lines().next().unwrap().trim().to_string();
+    let mut ws = String::new();
+    wait_until("the page opened", || {
+        let list: Value = itero::net::client(std::time::Duration::from_secs(10))
+            .unwrap()
+            .get(format!("http://127.0.0.1:{port}/json/list"))
+            .send()
+            .and_then(|r| r.json())
+            .unwrap_or(serde_json::json!([]));
+        ws = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["url"].as_str().unwrap_or_default().ends_with(path))
+            .map(|t| t["webSocketDebuggerUrl"].as_str().unwrap().to_string())
+            .unwrap_or_default();
+        !ws.is_empty()
+    });
+    let mut c = itero::browser::cdp::Cdp::connect(&ws, std::time::Duration::from_secs(10)).unwrap();
+    wait_until("the page loaded", || {
+        c.eval("document.readyState").unwrap_or_default() == "complete"
+    });
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    c
+}

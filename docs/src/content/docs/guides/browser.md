@@ -170,6 +170,42 @@ Other libraries are not guessed: `files` lists every script, for `#ai`
 or you to read. `robots.txt`, `sitemap.xml` and `llms.txt` are fetched
 plainly, without the browser's cookies.
 
+## Watching a page
+
+A page that changes by itself, a list of messages, a price, an order's
+status, can start a workflow when it does. `itero browser watch` keeps it
+open in a window of the daemon's Chrome and prints a line for each change,
+so a [connector](/guides/connectors/) is one line, named for what its
+events mean:
+
+```sh
+#!/bin/sh
+# connectors/page.list.changed
+exec itero browser watch "$URL" --changed "$TARGET"
+```
+
+```json
+{ "on": [{ "event": "page.list.changed",
+           "args": { "URL": "https://shop.example/orders", "TARGET": "Orders" } }],
+  "steps": [{ "#notify": { "args": { "title": "$event.title", "text": "$event.text" } } }] }
+```
+
+`--changed` tells a target's new text (`text`, and `previous`) after a
+second of quiet, so a burst of changes is one event; `--appeared`, a
+target coming onto the page; `--navigated`, the page going elsewhere or
+reloading; `--responses`, the JSON it receives
+([`itero browser watch`](/commands/browser/)). Most pages, a news list, a
+shop, a status page, change only when loaded: `--reload 60` loads the page
+again each minute and compares what the targets show with before. The watching is done in a
+JavaScript world of its own in the page, which the page's scripts do not
+see. Blockers are dealt with as a step's are, and a human check holds the
+events until you have solved it.
+
+Each event has `tab`, the window's address. A `#browser` step with
+`"tab": "$event.tab"` acts on that page instead of opening its own: read
+the new message, answer it. Steps of different runs on one window take
+turns, and a step's `timeout` counts from its turn.
+
 ## Blockers
 
 After `open`, and after a click that loads a page, the step looks at

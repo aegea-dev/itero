@@ -44,9 +44,17 @@ impl Running {
         lock: DaemonLock,
         report: Report,
         machine: bool,
+        port: Option<u16>,
     ) -> Result<Running> {
         let me = super::journal::Journal::open(&ws)?.workspace()?;
         let log = Log::new(&ws, &me.id);
+        // the API the connectors are told of: the machine's, under the
+        // workspace's name, or the workspace daemon's own; none when the
+        // daemon does not serve
+        let api = port.map(|p| match machine {
+            true => format!("http://127.0.0.1:{p}/ws/{}/", me.name),
+            false => format!("http://127.0.0.1:{p}/"),
+        });
         let connectors = crate::connectors::copies(&ws)?;
         let d = daemon::Daemon::current();
         log.write(
@@ -101,7 +109,7 @@ impl Running {
                 stop.clone(),
             );
             threads.push(std::thread::spawn(move || {
-                run_copies(&ws, &exe, connectors, &engine, &log, &stop)
+                run_copies(&ws, &exe, connectors, &engine, &log, &stop, api)
             }));
         }
         {
@@ -309,16 +317,18 @@ fn run_copies(
     engine: &Arc<Engine>,
     log: &Log,
     stop: &Arc<Stop>,
+    api: Option<String>,
 ) {
     type Runs = Vec<(crate::connectors::Copy, Arc<Stop>, JoinHandle<()>)>;
     let start = |copy: crate::connectors::Copy, runs: &mut Runs| {
         let mine = stop.under();
-        let (ws, exe, engine, log, s) = (
+        let (ws, exe, engine, log, s, api) = (
             ws.clone(),
             exe.to_path_buf(),
             engine.clone(),
             log.clone(),
             mine.clone(),
+            api.clone(),
         );
         let c = copy.clone();
         let t = std::thread::spawn(move || {
@@ -333,6 +343,7 @@ fn run_copies(
                 &engine.health,
                 &log,
                 &s,
+                api.as_deref(),
             );
         });
         runs.push((copy, mine, t));

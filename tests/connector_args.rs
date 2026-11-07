@@ -52,6 +52,7 @@ fn run_it(ws: &itero::workspace::Workspace, args: serde_json::Value) -> String {
         &health,
         &log,
         &Default::default(),
+        None,
     );
     let h = health.into_inner().unwrap();
     h.connectors[&connector.name()].last_exit.clone().unwrap()

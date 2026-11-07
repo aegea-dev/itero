@@ -53,7 +53,17 @@ struct State {
     chromes: HashMap<Mode, Running>,
     failures: HashMap<Mode, Failures>,
     runs: HashMap<String, RunTab>,
+    /// Windows connectors watch (`itero browser watch`), by tab id: open
+    /// until given back, or until their Chrome or the daemon ends.
+    watches: HashMap<String, (Mode, Tab)>,
     looking: bool,
+}
+
+impl State {
+    /// Whether a run or a connector still uses `mode`'s Chrome.
+    fn in_use(&self, mode: Mode) -> bool {
+        self.runs.values().any(|r| r.mode == mode) || self.watches.values().any(|w| w.0 == mode)
+    }
 }
 
 pub struct Keeper {
@@ -140,11 +150,57 @@ impl Keeper {
         if let Some(c) = s.chromes.get_mut(&mode) {
             c.idle_since = None;
         }
+        self.look_from_now(&mut s);
+        Ok(given)
+    }
+
+    /// The keeper's look, started once.
+    fn look_from_now(&'static self, s: &mut State) {
         if !s.looking {
             s.looking = true;
             std::thread::spawn(|| Keeper::global().look());
         }
-        Ok(given)
+    }
+
+    /// A window for a connector to watch (`itero browser watch`), in the
+    /// Chrome of the mode asked, started when none runs. It keeps its
+    /// Chrome up until it is given back (`close_watch`).
+    pub fn open_watch(
+        &'static self,
+        ws: &Workspace,
+        headless: Option<bool>,
+    ) -> Result<(Mode, Tab), String> {
+        let mut s = self.lock();
+        let mode = chrome::choose(headless);
+        let port = self.chrome(&mut s, ws, mode)?;
+        let tab = cdp::new_window(port, "about:blank")?;
+        s.watches.insert(tab.id.clone(), (mode, tab.clone()));
+        if let Some(c) = s.chromes.get_mut(&mode) {
+            c.idle_since = None;
+        }
+        self.look_from_now(&mut s);
+        Ok((mode, tab))
+    }
+
+    /// The mode of the watched window `id`, while it is open.
+    pub fn watch_mode(&self, id: &str) -> Option<Mode> {
+        self.lock().watches.get(id).map(|w| w.0)
+    }
+
+    /// Closes the watched window `id`; false when there is none.
+    pub fn close_watch(&self, id: &str) -> Result<bool, String> {
+        let mut s = self.lock();
+        let Some((mode, tab)) = s.watches.remove(id) else {
+            return Ok(false);
+        };
+        let in_use = s.in_use(mode);
+        if let Some(c) = s.chromes.get_mut(&mode) {
+            cdp::close_tab(c.port, &tab.id)?;
+            if !in_use {
+                c.idle_since = Some(Instant::now());
+            }
+        }
+        Ok(true)
     }
 
     /// The port of `mode`'s Chrome, started now when none runs.
@@ -213,7 +269,7 @@ impl Keeper {
         if let Some(last) = take_followed(run) {
             t.others.push(last);
         }
-        let has_tabs = s.runs.values().any(|r| r.mode == t.mode);
+        let has_tabs = s.in_use(t.mode);
         if let Some(c) = s.chromes.get_mut(&t.mode) {
             for tab in t.others.iter().chain([&t.tab]) {
                 if let Err(e) = cdp::close_tab(c.port, &tab.id) {
@@ -268,6 +324,7 @@ impl Keeper {
                         };
                         let c = s.chromes.remove(&mode).expect("listed");
                         s.runs.retain(|_, r| r.mode != mode);
+                        s.watches.retain(|_, w| w.0 != mode);
                         let f = s.failures.entry(mode).or_default();
                         f.pause =
                             (f.pause * 2).clamp(self.policy.first_pause, self.policy.max_pause);
@@ -307,6 +364,7 @@ impl Keeper {
             "window": state(Mode::Window),
             "headless": state(Mode::Headless),
             "tabs": s.runs.len(),
+            "watched": s.watches.len(),
             "failures": s.failures.values().map(|f| f.at.len()).sum::<usize>(),
         }))
     }
@@ -315,6 +373,7 @@ impl Keeper {
     pub fn stop(&self) {
         let mut s = self.lock();
         s.runs.clear();
+        s.watches.clear();
         for (_, mut c) in s.chromes.drain() {
             stop_child(&mut c.child);
         }

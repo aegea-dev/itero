@@ -149,6 +149,11 @@ pub enum Cmd {
     },
     /// For connectors: print a line each time a file or folder changes
     Watch { path: std::path::PathBuf },
+    /// For connectors: the browser, kept on a page
+    Browser {
+        #[command(subcommand)]
+        cmd: BrowserCmd,
+    },
     /// For connectors: take webhooks from outside, each checked against a secret
     Webhook {
         /// The address to listen on; a tunnel or proxy on this machine reaches 127.0.0.1
@@ -192,6 +197,33 @@ pub enum Shell {
     Bash,
     Zsh,
     Fish,
+}
+
+#[derive(Subcommand)]
+pub enum BrowserCmd {
+    /// For connectors: keep a page open and print a line each time something happens on it
+    Watch {
+        /// The page: an http or https address
+        url: String,
+        /// A line when the target's text changes, after a second of quiet: a name, or {"css": "..."}
+        #[arg(long, value_name = "TARGET")]
+        changed: Vec<String>,
+        /// A line when the target comes onto the page: a name, or {"css": "..."}
+        #[arg(long, value_name = "TARGET")]
+        appeared: Vec<String>,
+        /// A line when the page goes to another address, reloads or changes in place
+        #[arg(long)]
+        navigated: bool,
+        /// A line for each JSON response whose address contains the text
+        #[arg(long, value_name = "TEXT")]
+        responses: Vec<String>,
+        /// Load the page again every so many seconds, for one that changes only when loaded
+        #[arg(long, value_name = "SECONDS")]
+        reload: Option<u64>,
+        /// In a headless Chrome, not a window
+        #[arg(long)]
+        headless: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -585,6 +617,35 @@ fn stop_on_signal(last: impl FnOnce() + Send + 'static) {
     });
 }
 
+/// `itero browser watch`: its window is given back when it is stopped
+/// (SIGTERM, as the daemon stops a connector), when its stdin closes (the
+/// daemon has gone), or when watching fails.
+fn browser_watch(o: crate::browser::watch::Options) -> Result<()> {
+    use crate::browser::watch;
+    let given = std::sync::Arc::new(std::sync::Mutex::new(None::<(String, String)>));
+    let kept = given.clone();
+    let ran = watch::run(o, move |api, id| {
+        *kept.lock().unwrap_or_else(|e| e.into_inner()) = Some((api.into(), id.into()));
+        let (a, i) = (api.to_string(), id.to_string());
+        stop_on_signal(move || watch::close(&a, &i));
+        let (a, i) = (api.to_string(), id.to_string());
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
+            watch::close(&a, &i);
+            std::process::exit(0);
+        });
+    });
+    if let Some((api, id)) = given.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        watch::close(&api, &id);
+    }
+    if ran.is_err() {
+        // a daemon stopping ends its Chrome before it closes our stdin:
+        // give it the moment, so its stop is quiet, not an error
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    ran.map_err(|e| anyhow!(e))
+}
+
 /// Ignores SIGPIPE again, for the commands that write to other processes
 /// (the daemon to its manager and workers, a worker to its action, the
 /// watchdog to the daemon): one that has gone is a write error, already
@@ -702,9 +763,14 @@ fn dispatch(cli: Cli) -> Result<()> {
             };
             crate::ai::keeper::Keeper::global().for_machine();
             crate::browser::keeper::Keeper::global().for_machine();
+            let served = match &listener {
+                Some(l) => Some(l.local_addr()?.port()),
+                None => None,
+            };
             let machine = std::sync::Arc::new(crate::engine::machine::Machine::new(
                 std::env::current_exe()?,
                 report,
+                served,
             ));
             {
                 let machine = machine.clone();
@@ -772,8 +838,18 @@ fn dispatch(cli: Cli) -> Result<()> {
             } else {
                 Some(http::listen(&ws)?)
             };
-            let running =
-                crate::engine::running::Running::start(ws.clone(), &exe, lock, report, false)?;
+            let served = match &listening {
+                Some((l, _)) => Some(l.local_addr()?.port()),
+                None => None,
+            };
+            let running = crate::engine::running::Running::start(
+                ws.clone(),
+                &exe,
+                lock,
+                report,
+                false,
+                served,
+            )?;
             if let Some((_, Some(note))) = &listening {
                 running
                     .log
@@ -802,6 +878,26 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Emit(args) => emit::all(args)?,
+        Cmd::Browser {
+            cmd:
+                BrowserCmd::Watch {
+                    url,
+                    changed,
+                    appeared,
+                    navigated,
+                    responses,
+                    reload,
+                    headless,
+                },
+        } => browser_watch(crate::browser::watch::Options {
+            url,
+            changed,
+            appeared,
+            navigated,
+            responses,
+            reload,
+            headless,
+        })?,
         Cmd::Completion { shell } => complete::script(shell, command),
         Cmd::Workspace { ws, cmd } => {
             let chosen = || workspace::chosen(ws.as_deref());

@@ -1,0 +1,8 @@
+{
+  "on": [{ "event": "page.changed",
+           "args": { "URL": "https://news.ycombinator.com/newest",
+                     "TARGET": { "css": ".athing .titleline" } } }],
+  "steps": [
+    { "#notify": { "args": { "title": "Newest on Hacker News", "text": "$event.text", "url": "$event.url" } } }
+  ]
+}
