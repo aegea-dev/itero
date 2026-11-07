@@ -2,10 +2,11 @@
 # Runs the tests (and clippy) on Linux, in Docker, with the pinned Rust:
 # what macOS cannot check, such as the inotify backend. Arguments go to
 # `cargo test` (`sh scripts/test-linux.sh --test watch`). Builds into
-# target/linux; the crate registry is cached in a Docker volume. jq, cmake
-# and libclang are installed first: the beacon example's actions use jq,
-# as on CI's runner; cmake builds llama.cpp into itero-ai, and libclang
-# makes its Rust bindings.
+# target/linux; the crate registry is cached in a Docker volume. jq, cmake,
+# libclang and chromium are installed first: the beacon example's actions
+# use jq, as on CI's runner; cmake builds llama.cpp into itero-ai, and
+# libclang makes its Rust bindings; the #browser tests drive Chromium
+# (Debian packages Chromium; Chrome would need Google's repository).
 #
 # Docker: the `docker` CLI as configured (set DOCKER_CONTEXT to pick one).
 set -eu
@@ -18,5 +19,5 @@ docker run --rm \
 	-v itero-cargo-registry:/usr/local/cargo/registry \
 	-e CARGO_TARGET_DIR=/src/target/linux \
 	"rust:$toolchain" \
-	sh -c 'apt-get -qq update >/dev/null && apt-get -qq install -y jq cmake libclang-dev >/dev/null &&
+	sh -c 'apt-get -qq update >/dev/null && apt-get -qq install -y jq cmake libclang-dev chromium >/dev/null &&
 		cargo test --workspace --no-fail-fast "$@" && cargo clippy --workspace --all-targets -- -D warnings' sh "$@"

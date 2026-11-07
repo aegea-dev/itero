@@ -634,12 +634,16 @@ pub const ROLL_LOG: &str = "roll-log";
 /// The built-in `#ai`: asks the local model (`crate::ai::step`).
 pub const AI: &str = "ai";
 
+/// The built-in `#browser`: drives the daemon's Chrome
+/// (`crate::browser::step`).
+pub const BROWSER: &str = "browser";
+
 /// The built-in `#find-models`: the models already on the machine, into
 /// the index itero-ai reads (`crate::ai::find`).
 pub const FIND_MODELS: &str = "find-models";
 
 /// The actions itero carries, used when the workspace has none of the name.
-pub const BUILT_IN: [&str; 5] = [NOTIFY, FORGET, ROLL_LOG, AI, FIND_MODELS];
+pub const BUILT_IN: [&str; 6] = [NOTIFY, FORGET, ROLL_LOG, AI, FIND_MODELS, BROWSER];
 
 fn forget(r: &StepRun) -> Result<Outcome, Failure> {
     let failed = |e: anyhow::Error| Failure::Error(format!("#forget: {e:#}"));
@@ -662,9 +666,36 @@ fn forget(r: &StepRun) -> Result<Outcome, Failure> {
     if full {
         j.compact().map_err(failed)?;
     }
+    forget_screenshots(&ws.root, &j).map_err(failed)?;
     let mut out = Map::new();
     out.insert("forgot_before".into(), before.into());
     Ok(Outcome::Done(Value::Object(out)))
+}
+
+/// The screenshots of failed `#browser` steps, `.itero/browser/<run>-<step>.png`,
+/// of runs the journal no longer has.
+fn forget_screenshots(root: &Path, j: &super::journal::Journal) -> anyhow::Result<()> {
+    let dir = root.join(".itero").join("browser");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(anyhow::anyhow!("{}: {e}", dir.display())),
+    };
+    for e in entries {
+        let path = e?.path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        // a run's id is a UUID: 36 characters, then "-<step>.png"
+        let Some(run) = name.get(..36).filter(|_| name.ends_with(".png")) else {
+            continue;
+        };
+        if j.run(run)?.is_none() {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
 }
 
 fn roll_log(r: &StepRun) -> Result<Outcome, Failure> {
@@ -765,6 +796,9 @@ pub fn run_step_telling(
     }
     if r.file == Path::new(FIND_MODELS) {
         return crate::ai::find::run(r);
+    }
+    if r.file == Path::new(BROWSER) {
+        return crate::browser::step::run(r);
     }
     if let Some(dir) = r.memory.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;

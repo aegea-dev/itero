@@ -67,6 +67,16 @@ pub const AI_MODEL_LOADED: &str = "itero.ai.model.loaded";
 /// `{"model", "workflow"}`. The `models` workflow looks for models on it.
 pub const AI_MODEL_MISSING: &str = "itero.ai.model.missing";
 
+/// The daemon started a Chrome for `#browser` steps: `{"mode", "port"}`.
+pub const BROWSER_STARTED: &str = "itero.browser.started";
+/// A Chrome could not start: `{"mode", "why"}`.
+pub const BROWSER_START_FAILED: &str = "itero.browser.start.failed";
+/// A Chrome with no run's tab for a while was stopped: `{"mode", "after"}`
+/// (seconds).
+pub const BROWSER_STOPPED: &str = "itero.browser.stopped";
+/// A Chrome ended by itself: `{"mode", "exit"}`; its runs' tabs are gone.
+pub const BROWSER_FAILED: &str = "itero.browser.failed";
+
 /// A workspace of the machine's daemon has a pass running past its limit:
 /// `{"workspace", "since"}`. Told to every workspace the daemon runs.
 pub const WORKSPACE_STUCK: &str = "itero.workspace.stuck";

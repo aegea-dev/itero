@@ -579,6 +579,7 @@ fn stop_on_signal(last: impl FnOnce() + Send + 'static) {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         crate::ai::keeper::Keeper::global().stop();
+        crate::browser::keeper::Keeper::global().stop();
         last();
         std::process::exit(0);
     });
@@ -700,6 +701,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 Some(crate::engine::http::listen_machine(port)?)
             };
             crate::ai::keeper::Keeper::global().for_machine();
+            crate::browser::keeper::Keeper::global().for_machine();
             let machine = std::sync::Arc::new(crate::engine::machine::Machine::new(
                 std::env::current_exe()?,
                 report,
@@ -757,6 +759,8 @@ fn dispatch(cli: Cli) -> Result<()> {
                     None => chrono::Utc::now(),
                 };
                 let pass = daemon::run_once(&ws, at, &exe);
+                // a Chrome a #browser step started ends with the pass
+                crate::browser::keeper::Keeper::global().stop();
                 report(&pass, None);
                 pass?;
                 return Ok(());

@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod browser;
 pub mod cli;
 pub mod connectors;
 pub mod engine;

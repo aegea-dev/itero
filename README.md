@@ -182,6 +182,9 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
   the daemon's terminal.
 - [`examples/ai-mail`](examples/ai-mail): each mail sorted by a model on
   this machine, with a notification for the urgent ones.
+- [`examples/reddit-top`](examples/reddit-top): a subreddit's top post
+  opened in Chrome, its discussion summed up by a model on this machine,
+  as a notification.
 - [`examples/photos`][photos]: a thumbnail for each photo dropped
   into a folder the daemon watches.
 - [`examples/webhook`](examples/webhook): replies from your own app reach
