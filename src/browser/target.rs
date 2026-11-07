@@ -228,10 +228,12 @@ pub fn point(cdp: &mut Cdp, backend: i64) -> Result<(f64, f64), String> {
     }
     let x = (q[0] + q[2] + q[4] + q[6]) / 4.0;
     let y = (q[1] + q[3] + q[5] + q[7]) / 4.0;
+    // asked of the element's own root: the document names a shadow root's
+    // host, never what is inside it
     let over = call(
         cdp,
         backend,
-        "function(x,y){const h=document.elementFromPoint(x,y);if(!h)return 'nothing';\
+        "function(x,y){const h=this.getRootNode().elementFromPoint(x,y);if(!h)return 'nothing';\
          if(this===h||this.contains(h))return '';\
          const a=this.closest&&this.closest('a[href]'),b=h.closest('a[href]');\
          if(a&&b&&a.href===b.href)return '';\

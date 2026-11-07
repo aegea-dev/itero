@@ -537,11 +537,8 @@ pub(super) fn log_answer(
     took: Duration,
     response: &Value,
 ) {
-    let Ok(ws) = crate::workspace::find(&r.root) else {
-        return;
-    };
-    if let Ok(id) = crate::engine::journal::Journal::open(&ws).and_then(|j| j.workspace()) {
-        crate::engine::log::Log::new(&ws, &id.id).write(
+    if let Some(log) = crate::engine::log::Log::of_root(&r.root) {
+        log.write(
             "ai.answer",
             json!({ "workflow": r.workflow, "at": at, "model": model,
                     "seconds": took.as_secs_f64(), "response": response }),
@@ -572,11 +569,8 @@ fn missing(r: &StepRun, model: &str) {
 
 /// The model's thinking goes to the workspace's log, never into `$output`.
 fn log_thinking(r: &StepRun, thinking: &str) {
-    let Ok(ws) = crate::workspace::find(&r.root) else {
-        return;
-    };
-    if let Ok(id) = crate::engine::journal::Journal::open(&ws).and_then(|j| j.workspace()) {
-        crate::engine::log::Log::new(&ws, &id.id).write(
+    if let Some(log) = crate::engine::log::Log::of_root(&r.root) {
+        log.write(
             "ai.thinking",
             json!({ "workflow": r.workflow, "thinking": thinking }),
         );

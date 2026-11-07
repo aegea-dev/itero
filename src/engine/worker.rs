@@ -396,7 +396,7 @@ fn commands(n: &Note, macos: bool, app: Option<PathBuf>) -> Vec<(PathBuf, Vec<St
 /// A desktop notification, through the first of `notifiers` there is. With
 /// `ITERO_NOTIFY_LOG` set, a line is appended to that file instead: the
 /// title, the text, then `Note::fields` as `name=value`, tab separated.
-fn show(n: &Note) -> Result<(), String> {
+pub(crate) fn show(n: &Note) -> Result<(), String> {
     if let Some(u) = &n.url
         && !openable(u)
     {
@@ -798,7 +798,7 @@ pub fn run_step_telling(
         return crate::ai::find::run(r);
     }
     if r.file == Path::new(BROWSER) {
-        return crate::browser::step::run(r);
+        return crate::browser::step::run(r, told);
     }
     if let Some(dir) = r.memory.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;

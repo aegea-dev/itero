@@ -1,13 +1,14 @@
 //! The built-in `#browser`, run as the worker runs it, on a tab of a
 //! headless Chrome the test starts, against pages served here.
+#[path = "common/browser.rs"]
+mod browser;
 #[path = "common/chrome.rs"]
 mod test_chrome;
 #[path = "common/web.rs"]
 mod web;
-use itero::browser::cdp;
-use itero::engine::worker::{self, Outcome, StepRun};
-use serde_json::{Map, Value, json};
-use std::path::{Path, PathBuf};
+use browser::{step, tab};
+use serde_json::json;
+use std::path::Path;
 
 const SIPARIS: &str = r#"<!doctype html><title>Sipariş</title>
 <h1>Sipariş</h1><p id="kargo">Kargo <b>yarın</b> gelir.</p>
@@ -39,52 +40,10 @@ fn site() -> web::Web {
     ])
 }
 
-struct Tab {
-    ws: String,
-    root: tempfile::TempDir,
-}
-
-fn tab(c: &test_chrome::TestChrome) -> Tab {
-    Tab {
-        ws: cdp::new_tab(c.port, "about:blank").unwrap().ws,
-        root: tempfile::tempdir().unwrap(),
-    }
-}
-
-fn step(t: &Tab, args: Value) -> Result<Value, String> {
-    let mut input = Map::new();
-    input.insert("args".into(), args);
-    let r = StepRun {
-        file: PathBuf::from(worker::BROWSER),
-        root: t.root.path().to_path_buf(),
-        workflow: "tarayıcı".into(),
-        env: [
-            ("ITERO_BROWSER_TAB", t.ws.as_str()),
-            ("ITERO_BROWSER_MODE", "headless"),
-            ("ITERO_BROWSER_RUN", "koşu"),
-            ("ITERO_BROWSER_STEP", "2"),
-        ]
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect(),
-        input,
-        memory: t.root.path().join("hafıza"),
-        waiting_since: None,
-        quiet: 60,
-        most: 60,
-        now: String::new(),
-    };
-    match worker::run_step(&r) {
-        Ok(Outcome::Done(v)) => Ok(v),
-        Ok(other) => panic!("{other:?}"),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
 #[test]
 fn open_wait_find_and_read() {
     let (c, w) = (test_chrome::start(), site());
-    let t = tab(&c);
+    let t = tab(c.port);
     let o = step(&t, json!({ "open": w.url("/sipariş") })).unwrap();
     assert_eq!(o["title"], "Sipariş");
     assert_eq!(o["mode"], "headless");
@@ -121,7 +80,7 @@ fn open_wait_find_and_read() {
 #[test]
 fn what_is_not_there_fails_naming_it_with_a_screenshot() {
     let (c, w) = (test_chrome::start(), site());
-    let t = tab(&c);
+    let t = tab(c.port);
     step(&t, json!({ "open": w.url("/sipariş") })).unwrap();
     let started = std::time::Instant::now();
     let e = step(&t, json!({ "wait": "Yok", "timeout": 1 })).unwrap_err();
@@ -137,7 +96,7 @@ fn what_is_not_there_fails_naming_it_with_a_screenshot() {
 #[test]
 fn click_hover_type_and_key() {
     let (c, w) = (test_chrome::start(), site());
-    let t = tab(&c);
+    let t = tab(c.port);
     step(&t, json!({ "open": w.url("/sipariş") })).unwrap();
     let o = step(&t, json!({ "hover": "Menü" })).unwrap();
     assert_eq!(o["title"], "Sipariş");
@@ -162,7 +121,7 @@ fn click_hover_type_and_key() {
 #[test]
 fn a_click_that_changes_the_page_in_place_does_not_wait_for_a_load() {
     let (c, w) = (test_chrome::start(), site());
-    let t = tab(&c);
+    let t = tab(c.port);
     step(&t, json!({ "open": w.url("/sipariş") })).unwrap();
     let started = std::time::Instant::now();
     let o = step(&t, json!({ "click": "Tartışma", "timeout": 5 })).unwrap();
@@ -188,7 +147,7 @@ fn a_click_that_opens_a_tab_is_followed() {
     // SAFETY: set before any step of this test reads it; the other tests
     // never open a tab with a click
     unsafe { std::env::set_var("XDG_STATE_HOME", state.path()) };
-    let t = tab(&c);
+    let t = tab(c.port);
     step(&t, json!({ "open": w.url("/sipariş") })).unwrap();
     let o = step(&t, json!({ "click": "Yeni sekme" })).unwrap();
     assert_eq!(
@@ -197,7 +156,14 @@ fn a_click_that_opens_a_tab_is_followed() {
     );
     // left for the daemon, which gives the run's next step that tab
     let left = std::fs::read_to_string(state.path().join("itero/browser/followed/koşu")).unwrap();
-    assert!(left.contains("\"ws\""), "{left}");
+    let left: serde_json::Value = serde_json::from_str(&left).unwrap();
+    // in front in the run's window, so the next step's click reaches it
+    let mut next = itero::browser::cdp::Cdp::connect(
+        left["ws"].as_str().unwrap(),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
+    assert_eq!(next.eval("document.visibilityState").unwrap(), "visible");
 }
 
 #[test]

@@ -41,7 +41,7 @@ const ASAGIDA: &str = r#"<!doctype html><title>Aşağıda</title>
 <div style="height:3000px"></div><button>En altta</button>"#;
 
 fn open(c: &test_chrome::TestChrome, url: &str) -> Cdp {
-    let tab = cdp::new_tab(c.port, "about:blank").unwrap();
+    let tab = cdp::new_window(c.port, "about:blank").unwrap();
     let mut t = Cdp::connect(&tab.ws, Duration::from_secs(10)).unwrap();
     t.send("Page.enable", json!({})).unwrap();
     t.send("Page.navigate", json!({ "url": url })).unwrap();

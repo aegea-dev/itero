@@ -106,8 +106,25 @@ fn mouse(cdp: &mut Cdp, kind: &str, x: f64, y: f64) -> Result<(), String> {
     cdp.send("Input.dispatchMouseEvent", p).map(|_| ())
 }
 
+/// Waits, until `until`, for the page to have loaded: one that is going
+/// elsewhere has no document to ask for a moment, and is asked again.
+pub fn ready(cdp: &mut Cdp, until: Instant) -> Result<(), String> {
+    let loaded = "new Promise(r => document.readyState === 'complete' ? r(true) : addEventListener('load', () => r(true)))";
+    loop {
+        match cdp.eval(loaded) {
+            Ok(_) => return Ok(()),
+            Err(e) if Instant::now() > until => {
+                return Err(format!("the page did not finish loading: {e}"));
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(200)),
+        }
+    }
+}
+
 /// The mouse to (x, y), then a left click: as a person's, not a script's.
+/// Events kept from before are dropped: `follow` reads the click's own.
 pub fn click(cdp: &mut Cdp, x: f64, y: f64) -> Result<(), String> {
+    cdp.events();
     mouse(cdp, "mouseMoved", x, y)?;
     mouse(cdp, "mousePressed", x, y)?;
     mouse(cdp, "mouseReleased", x, y)
@@ -140,8 +157,10 @@ pub const KEYS: [(&str, &str, i64, &str); 12] = [
     ("End", "End", 35, ""),
 ];
 
-/// Presses `name`, one of `KEYS`.
+/// Presses `name`, one of `KEYS`. Events kept from before are dropped,
+/// as by `click`.
 pub fn key(cdp: &mut Cdp, name: &str) -> Result<(), String> {
+    cdp.events();
     let (key, code, vk, text) = KEYS
         .iter()
         .find(|k| k.0 == name)
@@ -159,24 +178,17 @@ pub fn key(cdp: &mut Cdp, name: &str) -> Result<(), String> {
     .map(|_| ())
 }
 
-/// The browser's own connection, beside a tab's: its address from the
-/// tab's (`ws://host/devtools/page/<id>`).
+/// The browser's own connection, beside a tab's, and the tab's id: both
+/// from the tab's address (`ws://127.0.0.1:<port>/devtools/page/<id>`).
 fn browser(tab_ws: &str) -> Result<(Cdp, String), String> {
-    let host = tab_ws
+    let port = tab_ws
         .strip_prefix("ws://")
         .and_then(|r| r.split('/').next())
+        .and_then(|h| h.rsplit(':').next())
+        .and_then(|p| p.parse().ok())
         .ok_or("not a tab's address")?;
     let id = tab_ws.rsplit('/').next().unwrap_or_default().to_string();
-    let c = crate::net::client(Duration::from_secs(10)).map_err(|e| e.to_string())?;
-    let v: Value = c
-        .get(format!("http://{host}/json/version"))
-        .send()
-        .and_then(|r| r.json())
-        .map_err(|e| format!("the browser: {e}"))?;
-    let ws = v["webSocketDebuggerUrl"]
-        .as_str()
-        .ok_or("the browser gave no address")?;
-    Ok((Cdp::connect(ws, Duration::from_secs(10))?, id))
+    Ok((super::cdp::browser(port)?, id))
 }
 
 /// The page tabs open now, by id.

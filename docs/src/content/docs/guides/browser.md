@@ -6,7 +6,7 @@ description: The built-in #browser opens, reads and clicks through pages in your
 `#browser` drives Chrome, the real one installed on the machine: it opens
 a page, waits for it, reads it, finds things on it, clicks, hovers and
 types, as a person does. A step does one of these; the steps of a run act
-on the same tab, one after another.
+on the same page, one after another, in a Chrome window of the run's own.
 
 ```json
 { "steps": [
@@ -59,7 +59,8 @@ keep that in mind before logging in to anything there.
 | `type` | types a text into a field, `into` its target | the page |
 | `key` | presses `Enter`, `Escape`, `Tab`, `Backspace`, an arrow, `PageUp`, `PageDown`, `Home` or `End` | the page after it |
 
-The page, in every `$output`: `url`, `title` and `mode`. `timeout`, in
+The page, in every `$output`: `url`, `title` and `mode`; after a page
+loads, `blocked` and `captcha` when there is one (see Blockers). `timeout`, in
 seconds, is how long `open`, `wait`, `click`, `hover` and `type` wait (30
 when not given).
 
@@ -103,8 +104,40 @@ not pinned.
 ## New tabs
 
 A click that opens a tab (a link that opens in a new one) is followed:
-the run's next steps act on the new tab, and `$output.new_tab` is
-`true`. The run's tabs are closed when it ends.
+the tab opens in front in the run's window, the run's next steps act on
+it, and `$output.new_tab` is `true`. The run's window and tabs are
+closed when it ends.
+
+## Blockers
+
+After `open`, and after a click that loads a page, the step looks at
+what is in the way of the page.
+
+- **Chrome's own bars and prompts** never come: itero's Chrome has no
+  translate bar, never offers to save a password, and lets no site ask to
+  send notifications.
+- **Cookie banners of common consent tools** are rejected, with a click
+  on their own reject button, as you would: OneTrust, Cookiebot, Didomi,
+  Usercentrics, Google's and Reddit's. The workspace's log says so
+  (`browser.consent`, with the tool and the page). Sourcepoint's banner
+  is never clicked, since its reject is each site's own, at times a paid
+  subscription.
+- **Any other cookie banner** on top of the page, and Sourcepoint's, is
+  shown to you as a notification, and the step goes on:
+  `$output.blocked` is `["consent"]`, since it may be in the way. Answer
+  it once in the window; the profile keeps your answer.
+- **A human check in the way**, a page that asks you to prove you are a
+  person (Reddit's, Cloudflare's) or a reCAPTCHA or hCaptcha challenge
+  over the page: in a window, itero brings the page to the front and
+  tells you with a notification, and the step waits for you to solve it,
+  for as long as the workspace lets a step run (`most` in its
+  [`limits`](/reference/itero-config/#limits)), saying so in its progress
+  each minute (`itero ws wf runs` shows it). Headless, nobody can
+  solve it: the step fails at once, and you are told. Give the run's
+  first `#browser` step `"headless": false`.
+- **A check that sits in a form** (a reCAPTCHA, hCaptcha or Turnstile
+  box beside a login or a contact form) is not in the way of reading the
+  page: `$output.captcha` names it, and the step goes on.
 
 ## When a step fails
 

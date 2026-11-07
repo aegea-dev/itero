@@ -9,6 +9,9 @@ pub struct TestChrome {
 }
 
 pub fn start() -> TestChrome {
+    // SAFETY: the same value from every test; a test Chrome never reaches
+    // the internet, whatever a fixture page points at
+    unsafe { std::env::set_var("ITERO_TEST_BROWSER_OFFLINE", "1") };
     let exe = chrome::find().expect("these tests need Chrome");
     let profile = tempfile::tempdir().unwrap();
     let l = chrome::launch(&exe, Mode::Headless, profile.path()).unwrap();

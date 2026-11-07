@@ -1,6 +1,7 @@
 //! Which Chrome, and starting it with its own profile and a debugging
 //! port on this machine only.
 use super::Mode;
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -99,6 +100,7 @@ const START: Duration = Duration::from_secs(20);
 pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String> {
     std::fs::create_dir_all(profile).map_err(|e| format!("{}: {e}", profile.display()))?;
     stop_left_over(profile)?;
+    write_prefs(profile)?;
     let active = profile.join("DevToolsActivePort");
     // one left by a Chrome that ended is not this one's
     match std::fs::remove_file(&active) {
@@ -113,12 +115,20 @@ pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String
         .args([
             "--disable-features=Translate",
             "--hide-crash-restore-bubble",
+            // a window Chrome takes as covered (by another run's, or by
+            // another app on the screen) is not drawn, and input to its
+            // page waits for a frame that never comes
+            "--disable-backgrounding-occluded-windows",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     if mode == Mode::Headless {
         c.arg("--headless");
+    }
+    if std::env::var_os("ITERO_TEST_BROWSER_OFFLINE").is_some() {
+        // a test's Chrome reaches only the test's own server
+        c.arg("--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1");
     }
     #[cfg(target_os = "linux")]
     // SAFETY: geteuid has no preconditions
@@ -196,4 +206,51 @@ fn stop_left_over(profile: &Path) -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(100));
     }
     Ok(())
+}
+
+/// What itero sets in a profile's preferences: no translate bar, no offer
+/// to save a password, no site asking to send notifications. Each would
+/// cover the page a step acts on.
+fn quiet() -> Value {
+    json!({
+        "credentials_enable_service": false,
+        "profile": {
+            "password_manager_enabled": false,
+            "default_content_setting_values": { "notifications": 2 }
+        },
+        "translate": { "enabled": false }
+    })
+}
+
+/// `from`'s keys into `into`, objects merged key by key, so every other
+/// key of `into` stays.
+fn merge(into: &mut Value, from: &Value) {
+    match (into, from) {
+        (Value::Object(a), Value::Object(b)) => {
+            for (k, v) in b {
+                merge(a.entry(k.clone()).or_insert(Value::Null), v);
+            }
+        }
+        (a, b) => *a = b.clone(),
+    }
+}
+
+/// Sets `quiet()` in the profile's `Default/Preferences` before each
+/// start, keeping what Chrome or the user put there.
+pub fn write_prefs(profile: &Path) -> Result<(), String> {
+    let path = profile.join("Default").join("Preferences");
+    let shown = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+    let mut prefs = match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| shown(&e))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(e) => return Err(shown(&e)),
+    };
+    if !prefs.is_object() {
+        return Err(shown(&"not a JSON object"));
+    }
+    merge(&mut prefs, &quiet());
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::write(&path, prefs.to_string()).map_err(|e| shown(&e))
 }

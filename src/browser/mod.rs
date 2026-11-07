@@ -1,6 +1,7 @@
 //! The browser: the user's real Chrome, driven over the DevTools
 //! Protocol (CDP). The daemon keeps it (`keeper`); a `#browser` step acts
 //! on its run's tab.
+pub mod blockers;
 pub mod cdp;
 pub mod chrome;
 pub mod keeper;
