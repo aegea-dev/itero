@@ -12,6 +12,7 @@ pub mod save;
 pub mod step;
 pub mod target;
 pub mod text;
+pub mod watch;
 
 use std::path::PathBuf;
 

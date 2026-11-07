@@ -5,7 +5,7 @@ use super::blockers::{self, Blocker};
 use super::cdp::Cdp;
 use super::target::{self, Target};
 use super::{inspect, network, page, save};
-use crate::engine::worker::{Failure, Note, Outcome, StepRun};
+use crate::engine::worker::{Failure, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
@@ -321,10 +321,10 @@ fn blocked(
             }
             Blocker::Captcha { kind, .. } => {
                 let (url, _) = page::about(cdp)?;
-                let host = host_of(&url);
+                let host = blockers::host_of(&url);
                 if r.env.get("ITERO_BROWSER_MODE").map(String::as_str) != Some("window") {
-                    tell(
-                        r,
+                    blockers::notify(
+                        &r.workflow,
                         format!(
                             "{host} shows a human check ({kind}), which cannot be solved headless"
                         ),
@@ -336,14 +336,19 @@ fn blocked(
                     ));
                 }
                 cdp.send("Page.bringToFront", json!({}))?;
-                tell(
-                    r,
+                blockers::notify(
+                    &r.workflow,
                     format!(
                         "{host} shows a human check ({kind}): solve it in the Chrome window, and the run goes on"
                     ),
                     &url,
                 )?;
-                solved(cdp, &host, r, told)?;
+                blockers::solved(
+                    cdp,
+                    &host,
+                    Instant::now() + Duration::from_secs(r.most),
+                    told,
+                )?;
                 // what the page shows once it is solved, as after a load
                 let again = Wait {
                     until: Instant::now() + w.timeout,
@@ -366,13 +371,13 @@ fn blocked(
             }
             Blocker::Consent { tool, .. } => {
                 let (url, _) = page::about(cdp)?;
-                let host = host_of(&url);
+                let host = blockers::host_of(&url);
                 let banner = match tool {
                     Some(t) => format!("a {t} cookie banner"),
                     None => "a cookie banner".into(),
                 };
-                tell(
-                    r,
+                blockers::notify(
+                    &r.workflow,
                     format!("{host} shows {banner} itero cannot close: it may be in the way"),
                     &url,
                 )?;
@@ -384,60 +389,6 @@ fn blocked(
         out.insert("blocked".into(), json!(kinds));
     }
     Ok(())
-}
-
-/// The host of `url`, with its port: what the user knows a site by.
-fn host_of(url: &str) -> String {
-    url.split('/').nth(2).unwrap_or(url).to_string()
-}
-
-/// How often the user is told the step still waits for them.
-const STILL: Duration = Duration::from_secs(60);
-
-/// Waits for the human check on the page to go, as long as the step may
-/// run (the workspace's `limits.most`), saying so in its progress each
-/// minute. A page going elsewhere, as when the check is passed, cannot be
-/// asked for a moment; one that cannot be asked for a minute has failed.
-fn solved(
-    cdp: &mut Cdp,
-    host: &str,
-    r: &StepRun,
-    told: &(dyn Fn(Option<&str>) + Sync),
-) -> Result<(), String> {
-    let started = Instant::now();
-    let end = started + Duration::from_secs(r.most);
-    let mut said: Option<Instant> = None;
-    let mut asked = Instant::now();
-    loop {
-        if said.is_none_or(|t| t.elapsed() >= STILL) {
-            let minutes = started.elapsed().as_secs() / 60;
-            told(Some(&format!(
-                "waiting for a human check on {host} ({minutes} min)"
-            )));
-            said = Some(Instant::now());
-        }
-        match blockers::human_check(cdp) {
-            Ok(None) => return Ok(()),
-            Ok(Some(_)) => asked = Instant::now(),
-            Err(e) if asked.elapsed() > STILL => return Err(e),
-            Err(_) => {}
-        }
-        if Instant::now() > end {
-            return Err(format!("nobody solved the human check on {host}"));
-        }
-        std::thread::sleep(Duration::from_secs(1));
-    }
-}
-
-/// A notification about the page at `url`, from the step's workflow.
-fn tell(r: &StepRun, text: String, url: &str) -> Result<(), String> {
-    crate::engine::worker::show(&Note {
-        title: "itero: #browser".into(),
-        subtitle: Some(r.workflow.clone()),
-        text,
-        url: Some(url.into()).filter(|u: &String| crate::engine::worker::openable(u)),
-        ..Note::default()
-    })
 }
 
 /// The target, waiting for it until `until`.
