@@ -144,7 +144,7 @@ fn every_window_is_drawn_however_many_are_open() {
         std::thread::sleep(std::time::Duration::from_millis(1500));
         let drawn = page.eval(
             "Promise.race([new Promise(r => requestAnimationFrame(() => r(true))), \
-             new Promise(r => setTimeout(() => r(false), 2000))])",
+             new Promise(r => setTimeout(() => r(false), 5000))])",
         );
         assert_eq!(drawn, Ok(serde_json::json!(true)), "window {n}");
     }

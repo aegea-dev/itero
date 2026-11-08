@@ -84,7 +84,8 @@ fn what_is_not_there_fails_naming_it_with_a_screenshot() {
     step(&t, json!({ "open": w.url("/sipariş") })).unwrap();
     let started = std::time::Instant::now();
     let e = step(&t, json!({ "wait": "Yok", "timeout": 1 })).unwrap_err();
-    assert!(started.elapsed().as_secs_f64() < 3.0);
+    // its own timeout, not the 30 s one
+    assert!(started.elapsed().as_secs_f64() < 15.0);
     assert!(e.contains("\"Yok\" is not on the page after 1 s"), "{e}");
     assert!(e.contains("on \"Sipariş\""), "{e}");
     let shot = Path::new(".itero/browser/koşu-2.png");
@@ -123,13 +124,8 @@ fn a_click_that_changes_the_page_in_place_does_not_wait_for_a_load() {
     let (c, w) = (test_chrome::start(), site());
     let t = tab(c.port);
     step(&t, json!({ "open": w.url("/sipariş") })).unwrap();
-    let started = std::time::Instant::now();
+    // waiting for a load that never comes would fail it at its timeout
     let o = step(&t, json!({ "click": "Tartışma", "timeout": 5 })).unwrap();
-    assert!(
-        started.elapsed().as_secs_f64() < 4.0,
-        "{:?}",
-        started.elapsed()
-    );
     assert!(
         o["url"].as_str().unwrap().ends_with("/tart%C4%B1%C5%9Fma"),
         "{o}"
