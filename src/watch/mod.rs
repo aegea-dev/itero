@@ -145,14 +145,25 @@ pub fn run(
     mut emit: impl FnMut(Change) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
     loop {
+        for c in next(backend, d)? {
+            emit(c)?;
+        }
+    }
+}
+
+/// The next changes, debounced: waits until there is at least one. Those
+/// that came while nobody waited were kept by the system, and come now.
+pub fn next(backend: &mut dyn Backend, d: &mut Debouncer) -> std::io::Result<Vec<Change>> {
+    loop {
         let now = Instant::now();
         // nothing pending: wait for good
         let timeout = d.due().map(|at| at.saturating_duration_since(now));
         let changes = backend.wait(timeout)?;
         let now = Instant::now();
         d.add(changes, now);
-        for c in d.take(now) {
-            emit(c)?;
+        let ready = d.take(now);
+        if !ready.is_empty() {
+            return Ok(ready);
         }
     }
 }

@@ -117,4 +117,76 @@ impl Watch {
         })?;
         Ok(())
     }
+
+    /// Runs `command` (a program and its args, no shell) now, the watch
+    /// being set, then again after each change, one run at a time: a
+    /// change during a run gives one more. Its output is this process's.
+    /// A run that cannot start, or ends with an error, ends the watch.
+    pub fn run_command(mut self, command: &[String]) -> Result<()> {
+        let (program, args) = command.split_first().context("no command after --")?;
+        loop {
+            run_once(program, args).with_context(|| format!("`{}`", command.join(" ")))?;
+            crate::watch::next(self.backend.as_mut(), &mut self.debouncer)?;
+        }
+    }
+}
+
+/// The pid of the command's run under way, while it is not yet reaped: so
+/// `end_run` never signals a pid another process may have by then.
+static RUN: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
+
+fn running() -> std::sync::MutexGuard<'static, Option<u32>> {
+    RUN.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Ends the command's run under way, if there is one: `itero watch` is
+/// ending, and leaves nothing behind printing to its connector's output.
+pub fn end_run() {
+    if let Some(pid) = *running() {
+        // SAFETY: a signal to our own child, not reaped while RUN holds it
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    }
+}
+
+fn run_once(program: &str, args: &[String]) -> Result<()> {
+    let mut child = std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .context("cannot start it")?;
+    *running() = Some(child.id());
+    let ended = ended_unreaped(child.id());
+    *running() = None;
+    let status = child.wait()?;
+    ended?;
+    if !status.success() {
+        anyhow::bail!("ended: {status}");
+    }
+    Ok(())
+}
+
+/// Waits for the process `pid` to end, leaving it to be reaped.
+fn ended_unreaped(pid: u32) -> std::io::Result<()> {
+    loop {
+        // SAFETY: siginfo_t is plain data; all zeros is a valid value
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: waits on our own child, into `info`; WNOWAIT leaves it
+        // waitable
+        let r = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        if r == 0 {
+            return Ok(());
+        }
+        let e = std::io::Error::last_os_error();
+        if e.kind() != std::io::ErrorKind::Interrupted {
+            return Err(e);
+        }
+    }
 }
