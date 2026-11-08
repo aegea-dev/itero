@@ -185,6 +185,10 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
 - [`examples/reddit-top`](examples/reddit-top): a subreddit's top post
   opened in Chrome, its discussion summed up by a model on this machine,
   as a notification.
+- [`examples/wiki-stream`](examples/wiki-stream): every edit to a
+  Wikipedia, live from Wikimedia's stream: what each 10 seconds bring, and
+  pages people edit again and again; it resumes where it stopped (also a
+  notebook, for Colab).
 - [`examples/page-watch`](examples/page-watch): a notification each time
   the newest post on Hacker News changes, seen on the page in Chrome.
 - [`examples/photos`][photos]: a thumbnail for each photo dropped

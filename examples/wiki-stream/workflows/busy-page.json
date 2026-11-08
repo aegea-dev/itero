@@ -1,0 +1,7 @@
+{ "on": [{ "event": "wiki.edited" },
+         { "$event.bot": false },
+         { "unique": "$event.id", "for": "1h" },
+         { "at_least": 3, "within": "5m", "per": "$event.url" }],
+  "steps": [{ "#notify": { "args": { "title": "Edited again and again",
+                                     "text": "$event.count edits in 5 minutes by people: $event.per" },
+                           "at_most": "10m", "per": "$event.per" } }] }

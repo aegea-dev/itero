@@ -718,3 +718,97 @@ fn the_page_watch_example_tells_each_change_of_the_newest_post() {
         )
     );
 }
+
+/// A Server-Sent Event of Wikimedia's recent changes, as the stream sends it.
+fn wiki_change(id: &str, at: &str, server: &str, title: &str, bot: bool) -> String {
+    let wiki = server.split('.').next().unwrap().to_string() + "wiki";
+    let data = serde_json::json!({
+        "meta": { "id": id, "dt": at, "uri": format!("https://{server}/wiki/{title}") },
+        "server_name": server, "wiki": wiki, "type": "edit", "title": title,
+        "user": if bot { "Bir-bot" } else { "Ayşe" }, "bot": bot,
+        "length": { "old": 100, "new": 112 }
+    });
+    format!("event: message\nid: [{{\"t\":\"{id}\"}}]\ndata: {data}\n\n")
+}
+
+#[test]
+fn the_wiki_stream_example_tells_ten_seconds_and_a_busy_page_and_resumes() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = copy("wiki-stream", d.path());
+    let page = "Çay_bahçesi";
+    let mut body = String::new();
+    for (i, at) in ["10:00:01", "10:00:02", "10:00:03", "10:00:04"]
+        .iter()
+        .enumerate()
+    {
+        body += &wiki_change(
+            &format!("e-{i}"),
+            &format!("2026-11-08T{at}Z"),
+            "tr.wikipedia.org",
+            page,
+            false,
+        );
+    }
+    body += &wiki_change(
+        "e-bot",
+        "2026-11-08T10:00:05Z",
+        "tr.wikipedia.org",
+        "Başka",
+        true,
+    );
+    // not a Wikipedia: left out
+    body += &wiki_change(
+        "e-data",
+        "2026-11-08T10:00:06Z",
+        "www.wikidata.org",
+        "Q42",
+        false,
+    );
+    // a line that is no JSON: left out
+    body += "data: {bozuk\n\n";
+    // the stream ends; the daemon starts the connector again, which asks
+    // for what came since its last edit, and gets the same again
+    let w = web::serve(vec![web::file(
+        "/v2/stream/recentchange",
+        "text/event-stream",
+        &body,
+    )]);
+    let told = ws.join("bildirim.log");
+    let _daemon = Daemon(
+        std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .args(["daemon", "--no-serve"])
+            .current_dir(&ws)
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .env("ITERO_NOTIFY_LOG", &told)
+            .env("WIKI_STREAM", w.url("/v2/stream/recentchange"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    until("the connector asked again, from its last edit", || {
+        w.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|r| r.ends_with("?since=2026-11-08T10:00:05Z"))
+    });
+    let lines = || std::fs::read_to_string(&told).unwrap_or_default();
+    until("ten seconds told", || {
+        lines().contains("Wikipedia, 10 seconds")
+    });
+    let lines = lines();
+    // five Wikipedia edits, the repeats dropped; one by a bot
+    assert!(
+        lines.contains("5 edits, 1 by bots; most on trwiki 5"),
+        "{lines}"
+    );
+    assert!(
+        lines.contains(&format!(
+            "Edited again and again\t3 edits in 5 minutes by people: https://tr.wikipedia.org/wiki/{page}"
+        )),
+        "{lines}"
+    );
+    assert_eq!(lines.lines().count(), 2, "{lines}");
+}

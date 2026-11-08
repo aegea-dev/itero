@@ -1,0 +1,9 @@
+#!/bin/sh
+# Ten seconds of edits, told in a line: how many, how many by bots, and the
+# three wikis with the most.
+jq -c '.args.edits as $e
+  | ($e | map(select(.bot)) | length) as $bots
+  | ($e | group_by(.wiki) | map({wiki: .[0].wiki, n: length})
+        | sort_by(-.n) | .[:3] | map("\(.wiki) \(.n)") | join(", ")) as $top
+  | {edits: ($e | length), bots: $bots,
+     text: "\($e | length) edits, \($bots) by bots; most on \($top)"}'

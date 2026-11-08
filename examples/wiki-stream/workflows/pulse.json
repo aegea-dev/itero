@@ -1,0 +1,5 @@
+{ "on": [{ "event": "wiki.edited" },
+         { "unique": "$event.id", "for": "1h" },
+         { "batch": { "within": "10s" } }],
+  "steps": [{ "#summarize": { "args": { "edits": "$event.events" } } },
+            { "#notify": { "args": { "title": "Wikipedia, 10 seconds", "text": "$output.text" } } }] }
