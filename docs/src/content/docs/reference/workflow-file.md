@@ -63,6 +63,7 @@ is in its entry in
 | `on` | when it runs, conditions only; otherwise it is skipped |
 | `undo` | what takes it back when a later step breaks: `"#name"`, or `{"#name": {"args": {...}}}`; given this step's result as `$output` |
 | `repeat` | it runs in rounds, each with the one before's `$output`, `$steps` and `$count`: `true`, a number, `"$output.count"`, `"<= 2026-12-31"`, `"> 2026-12-31"` or a cron line ([Repeat](/guides/workflows/#repeat-rounds)); not side by side |
+| `unique` (with `for`), `changed`, `at_most`, and `per` | a window: the step runs only when it lets it through, by the runs of the workflow it let through before; otherwise it is skipped and the run goes on ([A window on a step](/guides/workflows/#a-window-on-a-step)); an action's step, not side by side, not with `repeat` |
 
 | A value | Is |
 |---|---|

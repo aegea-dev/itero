@@ -196,6 +196,27 @@ again goes on where it stopped; the log's `message` line says which
 workflow a window `held` back, and why, and which `kept` it. A schedule's
 run passes no window.
 
+### A window on a step
+
+`unique` (with `for`), `changed` and `at_most`, with `per`, go on a step
+too, beside its `args`: the step runs only when its window lets it
+through, by the runs of the workflow it let through before. Otherwise the
+step is skipped (`step.skipped` in the log, with why), as a step whose
+`on` does not hold, and the run goes on:
+
+```json
+{ "on": [{ "event": "page.changed" }],
+  "steps": ["#save-page",
+            { "#notify": { "args": { "title": "$event.url", "text": "changed" },
+                           "at_most": "1h", "per": "$event.url" } }] }
+```
+
+saves every change, and tells at most one an hour for each page. A step
+that runs again (one that waited for an event, a job tried again) is not
+counted again. A window goes on an action's step, not one side by side
+or repeated: put such a step in a workflow of its own. `batch` and
+`at_least` keep events for a run, so they go in the workflow's `on`.
+
 ## About it: its entry
 
 What a workflow is, apart from its work, is in the workspace's
