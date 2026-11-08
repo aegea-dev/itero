@@ -21,7 +21,7 @@ const OLDEST: i64 = 7;
 /// The steps from each version to the next: `MIGRATIONS[0]` takes `OLDEST`
 /// to the one after, and so on. A step is only ever added, never changed:
 /// a journal on someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 3] = [
+const MIGRATIONS: [&str; 4] = [
     // 8: the tables nothing reads any more
     "DROP TABLE IF EXISTS queued; DROP TABLE IF EXISTS paused;
      DROP TABLE IF EXISTS cursors; DROP TABLE IF EXISTS memory;",
@@ -30,6 +30,8 @@ const MIGRATIONS: [&str; 3] = [
      ALTER TABLE events DROP COLUMN reply; ALTER TABLE runs DROP COLUMN reply;",
     // 10: a workflow used as a step is a run of its own, linked to its parent
     "ALTER TABLE runs ADD COLUMN parent TEXT; ALTER TABLE runs ADD COLUMN parent_path TEXT;",
+    // 11: the windows in a workflow's on, and what they have let through
+    "CREATE TABLE IF NOT EXISTS seen (key TEXT NOT NULL, value TEXT NOT NULL, until TEXT, PRIMARY KEY (key, value));",
 ];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
@@ -110,6 +112,7 @@ CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY AUTOINCREMENT, run TEX
 CREATE TABLE IF NOT EXISTS jobs (seq INTEGER PRIMARY KEY, runs INTEGER NOT NULL, lost TEXT);
 CREATE TABLE IF NOT EXISTS schedules (key TEXT PRIMARY KEY, last TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS seen (key TEXT NOT NULL, value TEXT NOT NULL, until TEXT, PRIMARY KEY (key, value));
 ";
 
 /// An event: the CloudEvents fields, and the event that led to it.
@@ -271,6 +274,100 @@ pub struct Start {
     pub flows: BTreeMap<String, Value>,
     pub input: Value,
     pub cause: Option<String>,
+    /// The windows of its workflow's `on` it must pass, with this event's
+    /// values: all must let it through, and then remember it.
+    pub gates: Vec<Gated>,
+}
+
+/// A window a run's start passes: its key (the workflow, the window, the
+/// `per` value's hash) and what it asks, by the runs it let through.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gated {
+    pub key: String,
+    pub gate: Gate,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Gate {
+    /// No run started with `value` (a hash) that is still remembered;
+    /// remembered until `until`, for good without.
+    Unique {
+        value: String,
+        until: Option<String>,
+    },
+    /// The last run started with another `value` (a hash), or none did.
+    Changed { value: String },
+    /// No run started within its period; the next period ends at `until`.
+    AtMost { until: String },
+}
+
+/// What routing a message did.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Routed {
+    /// The runs started.
+    pub started: Vec<String>,
+    /// The workflows a window held back, each with why.
+    pub held: Vec<(String, String)>,
+}
+
+/// Why a window holds `g` back, by what it let through before; none when it
+/// lets it through.
+fn held_back(tx: &rusqlite::Transaction, g: &Gated, at: &str) -> Result<Option<String>> {
+    Ok(match &g.gate {
+        Gate::Unique { value, .. } => tx
+            .query_row(
+                "SELECT until FROM seen WHERE key = ?1 AND value = ?2",
+                params![g.key, value],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .filter(|until| until.as_deref().is_none_or(|u| u > at))
+            .map(|until| match until {
+                Some(u) => format!("unique: a run started with this value, remembered until {u}"),
+                None => "unique: a run started with this value".into(),
+            }),
+        Gate::Changed { value } => tx
+            .query_row(
+                "SELECT value FROM seen WHERE key = ?1",
+                params![g.key],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .filter(|last| last == value)
+            .map(|_| "changed: the same value as the last run's".into()),
+        Gate::AtMost { .. } => tx
+            .query_row(
+                "SELECT until FROM seen WHERE key = ?1 AND value = ''",
+                params![g.key],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten()
+            .filter(|until| until.as_str() > at)
+            .map(|until| format!("at_most: a run started in this period, which ends at {until}")),
+    })
+}
+
+/// Remembers that `g` let a run through.
+fn let_through(tx: &rusqlite::Transaction, g: &Gated) -> Result<()> {
+    match &g.gate {
+        Gate::Unique { value, until } => tx.execute(
+            "INSERT OR REPLACE INTO seen (key, value, until) VALUES (?1, ?2, ?3)",
+            params![g.key, value, until],
+        )?,
+        Gate::Changed { value } => {
+            tx.execute("DELETE FROM seen WHERE key = ?1", params![g.key])?;
+            tx.execute(
+                "INSERT INTO seen (key, value, until) VALUES (?1, ?2, NULL)",
+                params![g.key, value],
+            )?
+        }
+        Gate::AtMost { until } => tx.execute(
+            "INSERT OR REPLACE INTO seen (key, value, until) VALUES (?1, '', ?2)",
+            params![g.key, until],
+        )?,
+    };
+    Ok(())
 }
 
 impl Start {
@@ -821,18 +918,18 @@ impl Journal {
         Ok(id)
     }
 
-    /// Handles a message for the workspace, `r`: starts each of `starts`,
-    /// copies the message to each run in `waiting`, and marks it handled.
-    /// One transaction, so a message taken again starts and copies nothing
-    /// twice. Nothing started and nothing copied is noted, not an error.
-    /// Returns the runs started.
+    /// Handles a message for the workspace, `r`: starts each of `starts`
+    /// its windows let through (and remembers it), copies the message to
+    /// each run in `waiting`, and marks it handled. One transaction, so a
+    /// message taken again starts, copies and counts nothing twice. Nothing
+    /// started and nothing copied is noted, not an error.
     pub fn route(
         &mut self,
         r: &Recorded,
         starts: &[Start],
         waiting: &[String],
         at: &str,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Routed> {
         let tx = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -845,18 +942,49 @@ impl Journal {
             params![r.seq, at, note],
         )?;
         if marked == 0 {
-            return Ok(vec![]);
+            return Ok(Routed::default());
         }
-        let mut started = vec![];
-        for s in starts {
+        let mut routed = Routed::default();
+        'starts: for s in starts {
+            for g in &s.gates {
+                if let Some(why) = held_back(&tx, g, at)? {
+                    routed.held.push((s.workflow.clone(), why));
+                    continue 'starts;
+                }
+            }
+            for g in &s.gates {
+                let_through(&tx, g)?;
+            }
             let pin = pin(&tx, &s.workflow, &s.flows)?;
-            started.push(insert_run(&tx, s.new_run(&pin, &Runtime::default(), at))?);
+            routed
+                .started
+                .push(insert_run(&tx, s.new_run(&pin, &Runtime::default(), at))?);
+        }
+        if routed.started.is_empty() && waiting.is_empty() && !routed.held.is_empty() {
+            let why: Vec<String> = routed
+                .held
+                .iter()
+                .map(|(w, why)| format!("{w}: {why}"))
+                .collect();
+            tx.execute(
+                "UPDATE events SET note = ?2 WHERE seq = ?1",
+                params![r.seq, format!("held back by a window: {}", why.join("; "))],
+            )?;
         }
         for id in waiting {
             publish(&tx, &copy(&r.event, id, at))?;
         }
         tx.commit()?;
-        Ok(started)
+        Ok(routed)
+    }
+
+    /// Forgets what windows let through that they no longer hold back for:
+    /// `unique` values and `at_most` periods past their end at `now`.
+    pub fn forget_seen(&self, now: &str) -> Result<usize> {
+        Ok(self.db.execute(
+            "DELETE FROM seen WHERE until IS NOT NULL AND until <= ?1",
+            params![now],
+        )?)
     }
 
     /// The events for the workspace no daemon has handled yet, oldest

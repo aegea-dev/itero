@@ -658,6 +658,8 @@ fn forget(r: &StepRun) -> Result<Outcome, Failure> {
     let before = super::daemon::stamp(before);
     let j = super::journal::Journal::open(&ws).map_err(failed)?;
     j.prune(&before).map_err(failed)?;
+    // what windows let through and no longer hold back for
+    j.forget_seen(&r.now).map_err(failed)?;
     // the locks of jobs that can never start again
     super::lock::forget_jobs(&ws.root, &|seq| {
         j.job_done(seq).map_err(|e| format!("{e:#}"))

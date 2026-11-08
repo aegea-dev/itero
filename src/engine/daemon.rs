@@ -927,11 +927,13 @@ fn fire_schedules(
                         &|n: &str| defined(ws, n),
                     ) =>
                 {
+                    // a schedule's run comes of no event: no window counts it
                     let start = Start {
                         workflow: name.clone(),
                         flows: pinned,
                         input: json!({}),
                         cause: None,
+                        gates: vec![],
                     };
                     j.start_run(&start, &stamp(now), Some(&key))?;
                 }
@@ -1006,6 +1008,7 @@ fn route(
                 flows: pinned,
                 input: Value::Object(data.clone()),
                 cause: Some(r.event.id.clone()),
+                gates: gates(name, &f.on.windows, &first, now),
             }),
             Err(why) => log.write(
                 "error",
@@ -1027,16 +1030,67 @@ fn route(
         .filter(|run| reaches && steps::is_waiting(&run.runtime))
         .map(|run| run.id)
         .collect();
-    let started = j.route(r, &starts, &waiting, &stamp(now))?;
+    let routed = j.route(r, &starts, &waiting, &stamp(now))?;
     let mut line = json!({ "message": r.event.id, "type": r.event.kind, "data": r.event.data });
-    if started.is_empty() && waiting.is_empty() {
+    if routed.started.is_empty() && waiting.is_empty() {
         line["nothing"] = json!(true);
     } else {
-        line["started"] = json!(started);
+        line["started"] = json!(routed.started);
         line["reached"] = json!(waiting);
+    }
+    if !routed.held.is_empty() {
+        line["held"] = routed
+            .held
+            .iter()
+            .map(|(workflow, why)| json!({ "workflow": workflow, "why": why }))
+            .collect();
     }
     log.write("message", line);
     Ok(true)
+}
+
+/// The windows of `workflow`'s `on`, with the values a run's first
+/// `state` gives them at `now`. A value the event lacks is `null`, a value
+/// as any other. Keys hold the window's place and a hash of its `per`
+/// value; values are hashes too, so a state row stays small.
+fn gates(
+    workflow: &str,
+    windows: &[flow::Window],
+    state: &Map<String, Value>,
+    now: DateTime<Utc>,
+) -> Vec<journal::Gated> {
+    use journal::Gate;
+    let hash = |path: &str| {
+        use sha2::{Digest, Sha256};
+        let v = flow::lookup(state, path).cloned().unwrap_or(Value::Null);
+        Sha256::digest(v.to_string().as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let after = |d: &std::time::Duration| {
+        stamp(now + chrono::Duration::from_std(*d).unwrap_or(chrono::Duration::MAX))
+    };
+    windows
+        .iter()
+        .enumerate()
+        .map(|(i, w)| journal::Gated {
+            key: format!(
+                "{workflow}\u{1f}on/{i}\u{1f}{}",
+                w.per.as_deref().map(hash).unwrap_or_default()
+            ),
+            gate: match &w.gate {
+                flow::Gate::Unique { value, within } => Gate::Unique {
+                    value: hash(value),
+                    until: within.as_ref().map(after),
+                },
+                flow::Gate::Changed { value } => Gate::Changed { value: hash(value) },
+                flow::Gate::AtMost { every } => Gate::AtMost {
+                    until: after(every),
+                },
+            },
+        })
+        .collect()
 }
 
 /// Why a job that kept being lost is an error.

@@ -31,9 +31,14 @@ Group == [kind |-> "group", wait |-> FALSE, flow |-> 0]  \* two actions side by 
 Child(f) == [kind |-> "child", wait |-> FALSE, flow |-> f]
 
 \* A workflow: its steps, its rounds (repeat), the kinds it starts on
-\* ("run.done" for itero.run.done), whether it is a built-in.
+\* ("run.done" for itero.run.done), whether it is a built-in, and
+\* whether a window in its on (unique, changed, at_most) may hold an
+\* event back from it.
 Flow(steps, rounds, on, internal) ==
-    [steps |-> steps, rounds |-> rounds, on |-> on, internal |-> internal]
+    [steps |-> steps, rounds |-> rounds, on |-> on, internal |-> internal,
+     window |-> FALSE]
+Windowed(steps, rounds, on, internal) ==
+    [Flow(steps, rounds, on, internal) EXCEPT !.window = TRUE]
 
 VARIABLES
     ev,         \* table events, by seq; a job's runs (table jobs) and a ghost count ride on it
@@ -265,12 +270,15 @@ Starts(e) ==
 Counted(e) == \E k \in 1..Len(Starts(e)) : ~Flows[Starts(e)[k]].internal
 
 \* journal.rs route: handled first (one cancelled since it was read starts
-\* nothing), its runs started, copied to the runs waiting
+\* nothing), its runs started but those a window holds back (any of the
+\* windowed ones, by what came before), copied to the runs waiting; the
+\* room under the limit is counted before the windows, as daemon.rs does
 Route ==
     /\ up /\ taking /= 0
-    /\ LET j == taking
+    /\ \E dropped \in SUBSET {w \in 1..Len(Flows) : Flows[w].window} :
+       LET j == taking
            e == ev[j]
-           s == Starts(e)
+           s == SelectSeq(Starts(e), LAMBDA w : w \notin dropped)
            full == Counted(e) /\ ActiveOf(runs) >= Limit
            waiters == SelectSeq([r \in 1..Len(runs) |-> r],
                                 LAMBDA r : runs[r].waiting /\ runs[r].ended = "")
@@ -284,6 +292,9 @@ Route ==
           ELSE IF full /\ Bug /= "limit"
           THEN /\ held' = held \cup {j}
                /\ UNCHANGED <<ev, runs, overLimit>>
+          ELSE IF Bug = "window" /\ dropped \cap {Starts(e)[k] : k \in 1..Len(Starts(e))} /= {}
+          \* the bug: an event held back is left for the next pass
+          THEN UNCHANGED <<ev, runs, held, overLimit>>
           ELSE /\ ev' = [ev EXCEPT ![j] = Mark(@, @.note)] \o started \o copies
                /\ runs' = runs \o fresh
                /\ overLimit' = (overLimit \/ full)
