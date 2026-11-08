@@ -2,7 +2,9 @@
 # Tells itero about each new mail in the local mailbox, as it arrives: one
 # line per mail, with its sender and subject as mail programs show them.
 # It notes the last mail it told about, so a restart tells nothing twice;
-# on its first start it only notes where the mailbox is.
+# on its first start it only notes where the mailbox is. `itero watch`
+# sets its watch, then runs this script with `check`: once, and again
+# after each change, so no mail comes between a look and the watch.
 mailbox="/var/mail/$USER"
 seen=".itero/mail.received.seen"
 all=".itero/mail.received.all"
@@ -96,5 +98,8 @@ check() {
   tail -n 1 "$all" | cut -f 1 > "$seen"
 }
 
-check
-itero watch "$mailbox" | while read -r _; do check; done
+if [ "$1" = check ]; then
+  check
+  exit
+fi
+exec itero watch "$mailbox" -- "$0" check

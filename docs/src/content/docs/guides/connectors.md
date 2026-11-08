@@ -185,6 +185,13 @@ changes, calm for half a second: for a connector that wants the same
 events as a `path` in `on`. `examples/photos` makes a thumbnail of each
 photo dropped into its `inbox/`.
 
+A connector that reads what is there and tells what is new gives it a
+command: `itero watch <path> -- <command>` sets the watch, then runs the
+command, and again after each change; the command's lines are the
+connector's. The first read comes after the watch is set, so no change
+falls between them ([itero watch](/commands/watch/#running-a-command)).
+`examples/mail-alert` tells each new mail in a local mailbox so.
+
 `itero browser watch <url>` does the same for a page in Chrome: a line
 when a part of it changes or appears, when it goes elsewhere, or when it
 receives JSON ([Watching a page](/guides/browser/#watching-a-page)).
