@@ -29,9 +29,16 @@ is an error.
 | `{"$output.paid": true}` | condition: a field of the step before's result (in a step's `on`) |
 | `{"has": "$event.order"}` | condition: the event has an `order` |
 | `{"has": ["$event.order", "$$API"]}` | condition: all are there; `$$API` is defined (secret, `.env` or environment) |
+| `{"unique": "$event.id", "for": "1d"}` | window: a run starts for a value no run started with within `for` (for good without it) |
+| `{"changed": "$event.state"}` | window: a run starts when the value is not the last run's |
+| `{"at_most": "1h"}` | window: at most one run per period; the first event in it starts it |
+| `"per": "$event.site"` | beside a window: one window for each value |
 
 `event` (with its `args`), `schedule` and `path` are alternatives, each
-alone in its object; conditions must all hold. Any other key is an error naming it.
+alone in its object; conditions must all hold, then every window must let
+the event through ([Across events: windows](/guides/workflows/#across-events-windows)).
+A window is in a workflow's `on`, not a step's, and a schedule's run passes
+none. Any other key is an error naming it.
 
 What a workflow is (its description, `off`, `from`, `until`, `internal`)
 is in its entry in
