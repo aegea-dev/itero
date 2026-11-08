@@ -185,7 +185,39 @@ pub struct On {
     /// `{"$event.paid": true}`: values that must be exactly these, by path
     /// (`event.paid`).
     pub equal: Map<String, Value>,
+    /// `{"unique": ...}`, `{"changed": ...}`, `{"at_most": ...}`: across
+    /// events, whether this one starts a run, by those that started runs
+    /// before it. All must let it through; the conditions are checked first.
+    pub windows: Vec<Window>,
 }
+
+/// A window over the events that start runs: its gate, and the value its
+/// state is kept per (`"per": "$event.site"`), one state for all without.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Window {
+    pub gate: Gate,
+    /// A value's path, `event.site`, as conditions keep them.
+    pub per: Option<String>,
+}
+
+/// What lets an event start a run, by the runs started before it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Gate {
+    /// `{"unique": "$event.id", "for": "1d"}`: a value no run started with
+    /// within `for`; for good without it.
+    Unique {
+        value: String,
+        within: Option<Duration>,
+    },
+    /// `{"changed": "$event.state"}`: a value other than the last run's.
+    Changed { value: String },
+    /// `{"at_most": "1h"}`: one run per period; the first in it starts.
+    AtMost { every: Duration },
+}
+
+/// The keys of a window entry: its gate, and what goes with it.
+const WINDOW_KEYS: [&str; 5] = ["unique", "changed", "at_most", "for", "per"];
+const GATES: [&str; 3] = ["unique", "changed", "at_most"];
 
 /// An event `on` listens for, and the args the connector that sends it is
 /// given: one copy of a connector runs for each different set.
@@ -827,7 +859,7 @@ fn on(v: &Value) -> Result<On, Vec<Problem>> {
     if ps.is_empty() { Ok(o) } else { Err(ps) }
 }
 
-const ON_FORMS: &str = "{\"event\": ...}, {\"schedule\": ...}, {\"path\": ...}, {\"$event.x\": value} or {\"has\": ...}";
+const ON_FORMS: &str = "{\"event\": ...}, {\"schedule\": ...}, {\"path\": ...}, {\"$event.x\": value}, {\"has\": ...}, {\"unique\": ...}, {\"changed\": ...} or {\"at_most\": ...}";
 
 /// One entry of `on`, into `o`: every problem it has.
 fn on_entry(item: &Value, o: &mut On) -> Result<(), Vec<String>> {
@@ -861,7 +893,107 @@ fn on_entry(item: &Value, o: &mut On) -> Result<(), Vec<String>> {
         });
         return Ok(());
     }
+    if m.keys().any(|k| WINDOW_KEYS.contains(&k.as_str())) {
+        o.windows.push(on_window(item, m)?);
+        return Ok(());
+    }
     on_condition(item, m, o).map_err(|e| vec![e])
+}
+
+/// A window entry: its gate, `for` with `unique`, `per` with any. Every
+/// problem it has.
+fn on_window(item: &Value, m: &Map<String, Value>) -> Result<Window, Vec<String>> {
+    let gates: Vec<&str> = GATES
+        .iter()
+        .copied()
+        .filter(|g| m.contains_key(*g))
+        .collect();
+    let Some(&gate) = gates.first() else {
+        return Err(vec![match m.contains_key("for") {
+            true => "on: for goes with unique: {\"unique\": \"$event.id\", \"for\": \"1d\"}".into(),
+            false => "on: per goes with unique, changed or at_most".into(),
+        }]);
+    };
+    let mut ps = vec![];
+    if gates.len() > 1 {
+        ps.push(format!(
+            "on: {item} says more than one thing: unique, changed and at_most are entries of their own"
+        ));
+    }
+    for k in m.keys() {
+        match k.as_str() {
+            "per" | "unique" | "changed" | "at_most" => {}
+            "for" if gate == "unique" => {}
+            "for" => ps.push(format!("on: for goes with unique, not {gate}")),
+            _ => ps.push(format!(
+                "on: {item} says more than one thing: a window is an entry of its own, with its per (and for, with unique)"
+            )),
+        }
+    }
+    let per = match m.get("per").map(|v| window_value("per", v)) {
+        Some(Err(e)) => {
+            ps.push(e);
+            None
+        }
+        Some(Ok(p)) => Some(p),
+        None => None,
+    };
+    let g = match gate {
+        "unique" => {
+            let value = window_value(gate, &m[gate]);
+            let within = m
+                .get("for")
+                .filter(|_| gates.len() == 1)
+                .map(|v| window_period("for", v));
+            match (value, within.transpose()) {
+                (Ok(value), Ok(within)) => Some(Gate::Unique { value, within }),
+                (v, w) => {
+                    ps.extend(v.err());
+                    ps.extend(w.err());
+                    None
+                }
+            }
+        }
+        "changed" => window_value(gate, &m[gate])
+            .map(|value| Gate::Changed { value })
+            .map_err(|e| ps.push(e))
+            .ok(),
+        _ => window_period(gate, &m[gate])
+            .map(|every| Gate::AtMost { every })
+            .map_err(|e| ps.push(e))
+            .ok(),
+    };
+    match g {
+        Some(gate) if ps.is_empty() => Ok(Window { gate, per }),
+        _ => Err(ps),
+    }
+}
+
+/// A window's value: `"$event.site"`, kept as its path, `event.site`.
+fn window_value(key: &str, v: &Value) -> Result<String, String> {
+    let Some(s) = v.as_str() else {
+        return Err(format!(
+            "on: {key} {v} is not a value, like \"$event.site\""
+        ));
+    };
+    match (s.strip_prefix("$$"), s.strip_prefix('$')) {
+        (Some(_), _) => Err(format!(
+            "on: {key} \"{s}\" is a secret's name, not a value of the event"
+        )),
+        (None, Some(n)) => value_path(n, s),
+        _ => Err(format!("on: {key} \"{s}\" is not a value: write \"${s}\"")),
+    }
+}
+
+/// A window's period: a duration longer than nothing.
+fn window_period(key: &str, v: &Value) -> Result<Duration, String> {
+    let wrong = || format!("on: {key}: a duration is like 30m, 2h or 1d, not {v}");
+    let t = v.as_str().ok_or_else(wrong)?;
+    let d = humantime::parse_duration(t).map_err(|_| wrong())?;
+    if d.is_zero() {
+        return Err(format!("on: {key} is longer than 0s"));
+    }
+    Ok(d)
 }
 
 /// A connector's args in an `on` entry: names an environment variable may
@@ -965,7 +1097,7 @@ fn on_condition(item: &Value, m: &Map<String, Value>, o: &mut On) -> Result<(), 
                     }
                     _ => {
                         return Err(format!(
-                            "on: \"{k}\" is not one of event, schedule, path, has or a $name"
+                            "on: \"{k}\" is not one of event, schedule, path, has, unique, changed, at_most or a $name"
                         ));
                     }
                 },
@@ -1378,6 +1510,12 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
                     format!(
                         "a step's on holds conditions ({{\"$name\": value}}, {{\"has\": ...}}), not {what}: an event, a schedule or a path starts a workflow"
                     ),
+                ));
+            }
+            if !w.windows.is_empty() {
+                ps.push(Problem::new(
+                    "",
+                    "a step's on holds conditions, not a window (unique, changed, at_most): a window goes in the workflow's on",
                 ));
             }
             Some(w)

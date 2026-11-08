@@ -73,6 +73,8 @@ fn a_journal_from_itero_0_4_to_0_8_keeps_what_it_held() {
     for gone in ["queued", "paused", "cursors", "memory", "replies"] {
         assert!(!left.contains(&gone.to_string()), "{gone}: {left:?}");
     }
+    // and the windows' table, as a new journal has it
+    assert!(left.contains(&"seen".to_string()), "{left:?}");
     // nor the columns callbacks used
     let db = rusqlite::Connection::open(ws.journal()).unwrap();
     for table in ["events", "runs"] {
@@ -117,6 +119,7 @@ fn a_new_journal_has_only_the_tables_itero_reads() {
             "meta",
             "runs",
             "schedules",
+            "seen",
             "timers",
             "workflow_ids",
             "workflows"
@@ -157,6 +160,7 @@ fn start(workflow: &str, flows: Value) -> Start {
         flows: serde_json::from_value(flows).unwrap(),
         input: json!({"sipariş": 43}),
         cause: None,
+        gates: vec![],
     }
 }
 
@@ -464,7 +468,7 @@ fn an_event_not_yet_handled_is_cancelled_and_one_handled_is_not() {
     ));
     let mut s = start("kayıt", json!({"kayıt": {"steps": ["#yaz"]}}));
     s.cause = Some(r.event.id.clone());
-    assert!(j.route(&r, &[s], &[], NOW).unwrap().is_empty());
+    assert!(j.route(&r, &[s], &[], NOW).unwrap().started.is_empty());
     assert!(j.runs().unwrap().is_empty(), "cancelled first: no run");
     // and one routed is cancelled no more: it says what it started
     j.publish(&Envelope::new(
@@ -479,7 +483,7 @@ fn an_event_not_yet_handled_is_cancelled_and_one_handled_is_not() {
     let r = j.next(&[]).unwrap().unwrap();
     let mut s = start("kayıt", json!({"kayıt": {"steps": ["#yaz"]}}));
     s.cause = Some(r.event.id.clone());
-    let started = j.route(&r, &[s], &[], NOW).unwrap();
+    let started = j.route(&r, &[s], &[], NOW).unwrap().started;
     match j.cancel(&r.event.id, NOW).unwrap() {
         Cancelled::Handled { started: s, .. } => assert_eq!(s, started),
         other => panic!("{other:?}"),

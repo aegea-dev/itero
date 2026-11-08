@@ -50,6 +50,7 @@ fn run(ws: &Workspace) -> String {
                 flows: serde_json::from_value(flows).unwrap(),
                 input: serde_json::json!({}),
                 cause: None,
+                gates: vec![],
             },
             "2026-11-07T10:00:00Z",
             None,

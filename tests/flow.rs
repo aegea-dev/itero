@@ -51,6 +51,90 @@ fn on_entries_say_what_they_are() {
 }
 
 #[test]
+fn on_windows_say_which_events_start_a_run() {
+    use flow::{Gate, Window};
+    use std::time::Duration;
+    let f = flow::parse(
+        r##"{ "on": [
+              { "event": "sayfa.değişti" },
+              { "unique": "$event.adres", "for": "1d" },
+              { "changed": "$event.durum", "per": "$event.site" },
+              { "at_most": "1h", "per": "$event.site" },
+              { "unique": "$event.kimlik" }
+            ],
+            "steps": ["#bildir"] }"##,
+    )
+    .unwrap();
+    assert_eq!(
+        f.on.windows,
+        vec![
+            Window {
+                gate: Gate::Unique {
+                    value: "event.adres".into(),
+                    within: Some(Duration::from_secs(86_400))
+                },
+                per: None
+            },
+            Window {
+                gate: Gate::Changed {
+                    value: "event.durum".into()
+                },
+                per: Some("event.site".into())
+            },
+            Window {
+                gate: Gate::AtMost {
+                    every: Duration::from_secs(3_600)
+                },
+                per: Some("event.site".into())
+            },
+            Window {
+                gate: Gate::Unique {
+                    value: "event.kimlik".into(),
+                    within: None
+                },
+                per: None
+            },
+        ]
+    );
+}
+
+#[test]
+fn every_wrong_window_is_told_at_once() {
+    let e = err(r##"{ "on": [
+          { "event": "sayfa.değişti" },
+          { "unique": "event.adres" },
+          { "at_most": "bir saat" },
+          { "for": "1d" },
+          { "per": "$event.site" },
+          { "changed": "$event.durum", "per": 3 },
+          { "unique": "$event.x", "changed": "$event.y" },
+          { "at_most": "1h", "for": "1d" },
+          { "unique": "$$PAROLA" },
+          { "at_most": "0s" }
+        ],
+        "steps": ["#bildir"] }"##);
+    for want in [
+        "on: unique \"event.adres\" is not a value: write \"$event.adres\" (on/2)",
+        "on: at_most: a duration is like 30m, 2h or 1d, not \"bir saat\" (on/3)",
+        "on: for goes with unique: {\"unique\": \"$event.id\", \"for\": \"1d\"} (on/4)",
+        "on: per goes with unique, changed or at_most (on/5)",
+        "on: per 3 is not a value, like \"$event.site\" (on/6)",
+        "says more than one thing: unique, changed and at_most are entries of their own (on/7)",
+        "on: for goes with unique, not at_most (on/8)",
+        "on: unique \"$$PAROLA\" is a secret's name, not a value of the event (on/9)",
+        "on: at_most is longer than 0s (on/10)",
+    ] {
+        assert!(e.contains(want), "missing: {want}\nin:\n{e}");
+    }
+    let e = err(r##"{ "on": [{ "event": "sayfa.değişti" }],
+        "steps": [{ "#bildir": { "on": [{ "at_most": "1h" }] } }] }"##);
+    assert!(
+        e.contains("a step's on holds conditions, not a window (unique, changed, at_most): a window goes in the workflow's on"),
+        "{e}"
+    );
+}
+
+#[test]
 fn an_event_entry_may_give_its_connector_args() {
     let f = flow::parse(
         r##"{ "on": [

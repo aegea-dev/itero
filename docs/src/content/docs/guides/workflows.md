@@ -143,6 +143,36 @@ a `path` stands alone in its object.
 A workflow with no `event`, `schedule` or `path` never starts by itself:
 it runs only as a step of another.
 
+### Across events: windows
+
+Each event starts a run of its own. A window in `on` looks across them,
+at the runs started before, and lets an event start a run or holds it back:
+
+| Window | A run starts |
+|---|---|
+| `{ "unique": "$event.id" }` | for a value no run started with: each delivery once |
+| `{ "unique": "$event.id", "for": "1d" }` | the same, a value remembered for a day |
+| `{ "changed": "$event.state" }` | when the value is not the last run's: `up`, `up`, `down`, `up` start three |
+| `{ "at_most": "1h" }` | at most once an hour: the first event in the hour starts it, the rest start nothing |
+
+`per` keeps a window for each value: `{ "at_most": "1h", "per": "$event.site" }`
+starts a run at most once an hour for each site. The conditions are checked
+first, then every window must let the event through; only a run started
+counts for the windows, so an event one window held back is not counted by
+another. An event without the value counts as `null`.
+
+```json
+{ "on": [{ "event": "page.changed" },
+         { "changed": "$event.text", "per": "$event.url" },
+         { "at_most": "10m", "per": "$event.url" }],
+  "steps": [{ "#notify": { "args": { "title": "$event.url", "text": "$event.text" } } }] }
+```
+
+tells a page's new text, at most once every ten minutes for each page.
+What a window let through is kept in the journal, so a daemon started again
+goes on where it stopped; the log's `message` line says which workflow a
+window `held` back, and why. A schedule's run passes no window.
+
 ## About it: its entry
 
 What a workflow is, apart from its work, is in the workspace's

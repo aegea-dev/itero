@@ -54,6 +54,7 @@ happen; its `.cfg` lists its rules.
 | `MCWait` | two steps that each wait for a message | 2 messages, a stop, a cancel |
 | `MCHeld` | a step that waits, started twice under a run limit of 1 | 2 messages, a cancel, a crash |
 | `MCChild` | a workflow whose step is a workflow of 2 rounds, and a built-in on `itero.run.done` | a stop |
+| `MCWindow` | two workflows on one message, one with a window that may hold it back | 2 messages, a cancel, a crash |
 
 All finish in seconds but `MCStop`, which takes a few minutes.
 
@@ -83,6 +84,10 @@ running.
 
 - Values: `$name`, args, outputs are tokens. Time: a message's time is
   its order, and a due timer is an event that may come at any moment.
+- What a window decides: any windowed workflow may be held back from any
+  message (`unique`, `changed`, `at_most` choose by values and time); the
+  model checks that a message held back is still handled once, in the
+  same transaction.
 - A failure inside a group side by side (a group's actions only finish);
   a repeated step (the same step twice in a row stands for it); cron;
   chains on `itero.run.error` and `itero.run.failed`.
