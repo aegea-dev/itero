@@ -21,7 +21,8 @@ workflow is [internal](/guides/maintenance/).
 |---|---|
 | `daemon.started` | every field of the workspace and the daemon |
 | `daemon.stopped` | the daemon's last line: what a pass under way would write after it is not written, and the journal keeps what the pass saved (a step's own process may still add a line) |
-| `message` | `message`, `type`, `data`, and what it did: `started` and `reached` (runs), or `nothing`; `held`: the workflows a window held it back from, each with `why` |
+| `message` | `message`, `type`, `data`, and what it did: `started` and `reached` (runs), or `nothing`; `held`: the workflows a window held it back from, each with `why`; `kept`: those whose `batch` or `at_least` kept it |
+| `batch.closed`, `batch.dropped` | `workflow`, and `run` (the run of what it kept) or `events` and `why` (dropped: its workflow is gone or off) |
 | `run.started` | `message`, `schedule`, or `parent` (the run whose step started it) |
 | `step.started` | `step` |
 | `step.done`, `step.waiting` | `step`, `output` |

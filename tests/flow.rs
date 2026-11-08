@@ -117,9 +117,9 @@ fn every_wrong_window_is_told_at_once() {
         "on: unique \"event.adres\" is not a value: write \"$event.adres\" (on/2)",
         "on: at_most: a duration is like 30m, 2h or 1d, not \"bir saat\" (on/3)",
         "on: for goes with unique: {\"unique\": \"$event.id\", \"for\": \"1d\"} (on/4)",
-        "on: per goes with unique, changed or at_most (on/5)",
+        "on: per goes with unique, changed, at_most, batch or at_least (on/5)",
         "on: per 3 is not a value, like \"$event.site\" (on/6)",
-        "says more than one thing: unique, changed and at_most are entries of their own (on/7)",
+        "says more than one thing: unique, changed, at_most, batch and at_least are entries of their own (on/7)",
         "on: for goes with unique, not at_most (on/8)",
         "on: unique \"$$PAROLA\" is a secret's name, not a value of the event (on/9)",
         "on: at_most is longer than 0s (on/10)",
@@ -129,7 +129,7 @@ fn every_wrong_window_is_told_at_once() {
     let e = err(r##"{ "on": [{ "event": "sayfa.değişti" }],
         "steps": [{ "#bildir": { "on": [{ "at_most": "1h" }] } }] }"##);
     assert!(
-        e.contains("a step's on holds conditions, not a window (unique, changed, at_most): a window goes in the workflow's on"),
+        e.contains("a step's on holds conditions, not a window (unique, changed, at_most, batch, at_least): a window goes in the workflow's on"),
         "{e}"
     );
 }

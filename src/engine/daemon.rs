@@ -492,6 +492,7 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     j.see_workflows(flows.read.keys(), &stamp(now))?;
     let no_room = watch_limits(ws, &j, now, &log)?;
     fire_schedules(ws, &flows, &mut j, now, &log)?;
+    fire_windows(&flows, &mut j, now, &log)?;
     // runs' events first; then the waiting jobs, whose results are the
     // next events. Each worker's result is saved as it ends, while others
     // still run; when the pass fails, what runs is still saved.
@@ -893,7 +894,47 @@ pub fn next_due(ws: &Workspace, now: DateTime<Utc>) -> Result<Option<DateTime<Ut
                 .map_err(|_| anyhow!("a timer's time is not a time: {t}"))?,
         );
     }
+    if let Some(t) = j.next_batch_close()? {
+        due.push(
+            t.parse()
+                .map_err(|_| anyhow!("a batch's close is not a time: {t}"))?,
+        );
+    }
     Ok(due.into_iter().min())
+}
+
+/// Closes the batches whose time has come: each starts its run with the
+/// events it kept, as a schedule does (outside `limits.runs`, which counts
+/// what messages start). A batch whose workflow is gone, off, or out of
+/// its dates is dropped, said in the log.
+fn fire_windows(flows: &Flows, j: &mut Journal, now: DateTime<Utc>, log: &Log) -> Result<()> {
+    let at = stamp(now);
+    for (key, name) in j.batches_due(&at)? {
+        let live = flows.read.get(&name).filter(|f| flow::active(&f.meta, now));
+        match live.map(|_| flows.pinned(&name)) {
+            Some(Ok(pinned)) => {
+                let start = Start {
+                    workflow: name.clone(),
+                    flows: pinned,
+                    input: Value::Null,
+                    cause: None,
+                    gates: vec![],
+                };
+                if let Some(run) = j.close_batch(&key, &start, &at)? {
+                    log.write("batch.closed", json!({ "workflow": name, "run": run }));
+                }
+            }
+            Some(Err(why)) => log.write("error", json!({ "workflow": name, "why": why })),
+            None => {
+                let n = j.drop_batch(&key)?;
+                log.write(
+                    "batch.dropped",
+                    json!({ "workflow": name, "events": n, "why": "its workflow is gone, off or out of its dates" }),
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn fire_schedules(
@@ -1038,6 +1079,9 @@ fn route(
         line["started"] = json!(routed.started);
         line["reached"] = json!(waiting);
     }
+    if !routed.kept.is_empty() {
+        line["kept"] = json!(routed.kept);
+    }
     if !routed.held.is_empty() {
         line["held"] = routed
             .held
@@ -1075,6 +1119,10 @@ fn gates(
         .iter()
         .enumerate()
         .map(|(i, w)| journal::Gated {
+            per: w
+                .per
+                .as_deref()
+                .map(|p| flow::lookup(state, p).cloned().unwrap_or(Value::Null)),
             key: format!(
                 "{workflow}\u{1f}on/{i}\u{1f}{}",
                 w.per.as_deref().map(hash).unwrap_or_default()
@@ -1087,6 +1135,16 @@ fn gates(
                 flow::Gate::Changed { value } => Gate::Changed { value: hash(value) },
                 flow::Gate::AtMost { every } => Gate::AtMost {
                     until: after(every),
+                },
+                flow::Gate::Batch { count, within } => Gate::Batch {
+                    count: *count,
+                    closes: within.as_ref().map(after),
+                },
+                flow::Gate::AtLeast { count, within } => Gate::AtLeast {
+                    count: *count,
+                    since: stamp(
+                        now - chrono::Duration::from_std(*within).unwrap_or(chrono::Duration::MAX),
+                    ),
                 },
             },
         })

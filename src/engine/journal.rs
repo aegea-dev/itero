@@ -21,7 +21,7 @@ const OLDEST: i64 = 7;
 /// The steps from each version to the next: `MIGRATIONS[0]` takes `OLDEST`
 /// to the one after, and so on. A step is only ever added, never changed:
 /// a journal on someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 4] = [
+const MIGRATIONS: [&str; 5] = [
     // 8: the tables nothing reads any more
     "DROP TABLE IF EXISTS queued; DROP TABLE IF EXISTS paused;
      DROP TABLE IF EXISTS cursors; DROP TABLE IF EXISTS memory;",
@@ -32,6 +32,9 @@ const MIGRATIONS: [&str; 4] = [
     "ALTER TABLE runs ADD COLUMN parent TEXT; ALTER TABLE runs ADD COLUMN parent_path TEXT;",
     // 11: the windows in a workflow's on, and what they have let through
     "CREATE TABLE IF NOT EXISTS seen (key TEXT NOT NULL, value TEXT NOT NULL, until TEXT, PRIMARY KEY (key, value));",
+    // 12: the events a batch or at_least keeps for a run, and the batches open
+    "CREATE TABLE IF NOT EXISTS kept (key TEXT NOT NULL, seq INTEGER NOT NULL, at TEXT NOT NULL, PRIMARY KEY (key, seq));
+     CREATE TABLE IF NOT EXISTS batches (key TEXT PRIMARY KEY, workflow TEXT NOT NULL, closes TEXT, per TEXT);",
 ];
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
@@ -113,6 +116,8 @@ CREATE TABLE IF NOT EXISTS jobs (seq INTEGER PRIMARY KEY, runs INTEGER NOT NULL,
 CREATE TABLE IF NOT EXISTS schedules (key TEXT PRIMARY KEY, last TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS seen (key TEXT NOT NULL, value TEXT NOT NULL, until TEXT, PRIMARY KEY (key, value));
+CREATE TABLE IF NOT EXISTS kept (key TEXT NOT NULL, seq INTEGER NOT NULL, at TEXT NOT NULL, PRIMARY KEY (key, seq));
+CREATE TABLE IF NOT EXISTS batches (key TEXT PRIMARY KEY, workflow TEXT NOT NULL, closes TEXT, per TEXT);
 ";
 
 /// An event: the CloudEvents fields, and the event that led to it.
@@ -285,6 +290,8 @@ pub struct Start {
 pub struct Gated {
     pub key: String,
     pub gate: Gate,
+    /// The `per` value itself, given to a run of kept events as `per`.
+    pub per: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -299,6 +306,111 @@ pub enum Gate {
     Changed { value: String },
     /// No run started within its period; the next period ends at `until`.
     AtMost { until: String },
+    /// Kept for one run of `count` events, or of those kept when the batch
+    /// `closes`, opened by its first; whichever comes first.
+    Batch {
+        count: Option<u32>,
+        closes: Option<String>,
+    },
+    /// Kept for one run once `count` were kept since `since`.
+    AtLeast { count: u32, since: String },
+}
+
+impl Gate {
+    fn keeps(&self) -> bool {
+        matches!(self, Gate::Batch { .. } | Gate::AtLeast { .. })
+    }
+}
+
+/// The `$event` of a run of kept events: their data in order, how many,
+/// the times of the first and the last, and its window's `per` value.
+fn kept_input(tx: &rusqlite::Connection, key: &str) -> Result<Option<Value>> {
+    let per: Option<String> = tx
+        .query_row(
+            "SELECT per FROM batches WHERE key = ?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    let mut q = tx.prepare(
+        "SELECT e.data, e.time FROM kept k JOIN events e ON e.seq = k.seq
+         WHERE k.key = ?1 ORDER BY k.seq",
+    )?;
+    let rows: Vec<(String, String)> = q
+        .query_map(params![key], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
+        return Ok(None);
+    };
+    let events: Vec<Value> = rows
+        .iter()
+        .map(|(d, _)| serde_json::from_str(d).unwrap_or(Value::Null))
+        .collect();
+    let mut input = json!({
+        "events": events,
+        "count": rows.len(),
+        "first": first.1,
+        "last": last.1,
+    });
+    if let Some(per) = per {
+        input["per"] = serde_json::from_str(&per).unwrap_or(Value::Null);
+    }
+    Ok(Some(input))
+}
+
+/// Takes the events `key` kept, for a run: its `$event`; none when it
+/// kept none. The batch, if one was open, is closed.
+fn take_kept(tx: &rusqlite::Connection, key: &str) -> Result<Option<Value>> {
+    let input = kept_input(tx, key)?;
+    tx.execute("DELETE FROM kept WHERE key = ?1", params![key])?;
+    tx.execute("DELETE FROM batches WHERE key = ?1", params![key])?;
+    Ok(input)
+}
+
+/// Keeps the message `seq` in `g`'s window for `workflow`: the `$event`
+/// of the run it starts now (a full batch, enough at_least), or none.
+fn keep(
+    tx: &rusqlite::Connection,
+    g: &Gated,
+    workflow: &str,
+    seq: i64,
+    at: &str,
+) -> Result<Option<Value>> {
+    if let Gate::AtLeast { since, .. } = &g.gate {
+        tx.execute(
+            "DELETE FROM kept WHERE key = ?1 AND at < ?2",
+            params![g.key, since],
+        )?;
+    }
+    tx.execute(
+        "INSERT OR IGNORE INTO kept (key, seq, at) VALUES (?1, ?2, ?3)",
+        params![g.key, seq, at],
+    )?;
+    // an at_least's row has no time to close at: it holds its per only
+    let closes = match &g.gate {
+        Gate::Batch { closes, .. } => closes.clone(),
+        _ => None,
+    };
+    let per = g.per.as_ref().map(Value::to_string);
+    tx.execute(
+        "INSERT OR IGNORE INTO batches (key, workflow, closes, per) VALUES (?1, ?2, ?3, ?4)",
+        params![g.key, workflow, closes, per],
+    )?;
+    let count = match &g.gate {
+        Gate::Batch { count, .. } => *count,
+        Gate::AtLeast { count, .. } => Some(*count),
+        _ => None,
+    };
+    let n: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM kept WHERE key = ?1",
+        params![g.key],
+        |r| r.get(0),
+    )?;
+    match count {
+        Some(c) if n >= i64::from(c) => take_kept(tx, &g.key),
+        _ => Ok(None),
+    }
 }
 
 /// What routing a message did.
@@ -308,6 +420,8 @@ pub struct Routed {
     pub started: Vec<String>,
     /// The workflows a window held back, each with why.
     pub held: Vec<(String, String)>,
+    /// The workflows whose batch or at_least kept it, for a later run.
+    pub kept: Vec<String>,
 }
 
 /// Why a window holds `g` back, by what it let through before; none when it
@@ -345,6 +459,8 @@ fn held_back(tx: &rusqlite::Transaction, g: &Gated, at: &str) -> Result<Option<S
             .flatten()
             .filter(|until| until.as_str() > at)
             .map(|until| format!("at_most: a run started in this period, which ends at {until}")),
+        // these keep what they let through (`keep`): they hold nothing back
+        Gate::Batch { .. } | Gate::AtLeast { .. } => None,
     })
 }
 
@@ -366,6 +482,8 @@ fn let_through(tx: &rusqlite::Transaction, g: &Gated) -> Result<()> {
             "INSERT OR REPLACE INTO seen (key, value, until) VALUES (?1, '', ?2)",
             params![g.key, until],
         )?,
+        // kept by `keep`, not remembered here
+        Gate::Batch { .. } | Gate::AtLeast { .. } => 0,
     };
     Ok(())
 }
@@ -946,29 +1064,55 @@ impl Journal {
         }
         let mut routed = Routed::default();
         'starts: for s in starts {
-            for g in &s.gates {
+            // the windows that let through or hold back first, then the one
+            // that keeps; an event kept counts for them, as one that starts
+            let (keeps, passes): (Vec<&Gated>, Vec<&Gated>) =
+                s.gates.iter().partition(|g| g.gate.keeps());
+            for g in &passes {
                 if let Some(why) = held_back(&tx, g, at)? {
                     routed.held.push((s.workflow.clone(), why));
                     continue 'starts;
                 }
             }
-            for g in &s.gates {
+            for g in &passes {
                 let_through(&tx, g)?;
             }
+            let input = match keeps.first() {
+                None => None,
+                Some(g) => match keep(&tx, g, &s.workflow, r.seq, at)? {
+                    Some(input) => Some(input),
+                    None => {
+                        routed.kept.push(s.workflow.clone());
+                        continue;
+                    }
+                },
+            };
             let pin = pin(&tx, &s.workflow, &s.flows)?;
-            routed
-                .started
-                .push(insert_run(&tx, s.new_run(&pin, &Runtime::default(), at))?);
+            let fresh = Runtime::default();
+            let mut run = s.new_run(&pin, &fresh, at);
+            if let Some(input) = &input {
+                run.input = input;
+            }
+            routed.started.push(insert_run(&tx, run)?);
         }
-        if routed.started.is_empty() && waiting.is_empty() && !routed.held.is_empty() {
-            let why: Vec<String> = routed
+        if routed.started.is_empty()
+            && waiting.is_empty()
+            && (!routed.held.is_empty() || !routed.kept.is_empty())
+        {
+            let mut why: Vec<String> = routed
                 .held
                 .iter()
                 .map(|(w, why)| format!("{w}: {why}"))
                 .collect();
+            why.extend(
+                routed
+                    .kept
+                    .iter()
+                    .map(|w| format!("{w}: kept for a run of many")),
+            );
             tx.execute(
                 "UPDATE events SET note = ?2 WHERE seq = ?1",
-                params![r.seq, format!("held back by a window: {}", why.join("; "))],
+                params![r.seq, format!("by a window: {}", why.join("; "))],
             )?;
         }
         for id in waiting {
@@ -976,6 +1120,56 @@ impl Journal {
         }
         tx.commit()?;
         Ok(routed)
+    }
+
+    /// The open batches whose time has come at `now`: each key and its
+    /// workflow.
+    pub fn batches_due(&self, now: &str) -> Result<Vec<(String, String)>> {
+        let mut q = self.db.prepare(
+            "SELECT key, workflow FROM batches WHERE closes IS NOT NULL AND closes <= ?1 ORDER BY closes, key",
+        )?;
+        let rows = q
+            .query_map(params![now], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// When the next open batch closes.
+    pub fn next_batch_close(&self) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT MIN(closes) FROM batches", [], |r| r.get(0))?)
+    }
+
+    /// Closes the batch `key`: starts `s` with the events it kept as its
+    /// `$event`, in one transaction. None when it kept none (taken already).
+    pub fn close_batch(&mut self, key: &str, s: &Start, at: &str) -> Result<Option<String>> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(input) = take_kept(&tx, key)? else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let pin = pin(&tx, &s.workflow, &s.flows)?;
+        let fresh = Runtime::default();
+        let mut run = s.new_run(&pin, &fresh, at);
+        run.input = &input;
+        let id = insert_run(&tx, run)?;
+        tx.commit()?;
+        Ok(Some(id))
+    }
+
+    /// Drops the batch `key` and the events it kept for no run (its
+    /// workflow is gone or off).
+    pub fn drop_batch(&mut self, key: &str) -> Result<usize> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let n = tx.execute("DELETE FROM kept WHERE key = ?1", params![key])?;
+        tx.execute("DELETE FROM batches WHERE key = ?1", params![key])?;
+        tx.commit()?;
+        Ok(n)
     }
 
     /// Forgets what windows let through that they no longer hold back for:
@@ -1236,7 +1430,8 @@ impl Journal {
             )?;
             self.db.execute(
                 "DELETE FROM events WHERE subject = 'itero.app' AND handled IS NOT NULL AND handled < ?1
-                   AND time < COALESCE((SELECT MIN(started) FROM runs WHERE ended IS NULL), '9999')",
+                   AND time < COALESCE((SELECT MIN(started) FROM runs WHERE ended IS NULL), '9999')
+                   AND seq NOT IN (SELECT seq FROM kept)",
                 params![cutoff],
             )?;
             Ok(())

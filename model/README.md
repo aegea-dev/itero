@@ -55,6 +55,7 @@ happen; its `.cfg` lists its rules.
 | `MCHeld` | a step that waits, started twice under a run limit of 1 | 2 messages, a cancel, a crash |
 | `MCChild` | a workflow whose step is a workflow of 2 rounds, and a built-in on `itero.run.done` | a stop |
 | `MCWindow` | two workflows on one message, one with a window that may hold it back | 2 messages, a cancel, a crash |
+| `MCBatch` | a workflow whose batch keeps its messages for one run, full at a message or closed by its time | 2 messages, a cancel, a crash |
 
 All finish in seconds but `MCStop`, which takes a few minutes.
 
@@ -79,15 +80,19 @@ running.
 | 12 | `ChildrenReport` | Eventually, every child's end reaches its parent, unless the parent has ended. |
 | 13 | `RunsEnd` | Eventually, every run ends or waits for a message. |
 | 14 | `NoChain` | A run whose chain started on `itero.run.done` says nothing when done. |
+| 15 | `KeptOnce` | A message a batch (or `at_least`) kept reaches one run of many, and only one. |
+| 16 | `AllKeptTaken` | Eventually, every message a batch kept is in a run. |
 
 ## What it leaves out
 
 - Values: `$name`, args, outputs are tokens. Time: a message's time is
   its order, and a due timer is an event that may come at any moment.
 - What a window decides: any windowed workflow may be held back from any
-  message (`unique`, `changed`, `at_most` choose by values and time); the
-  model checks that a message held back is still handled once, in the
-  same transaction.
+  message (`unique`, `changed`, `at_most` choose by values and time), and
+  a keeping one may keep a message or be full at it (`batch`, `at_least`
+  count and time); a batch may close at any moment. The model checks that
+  a message held back is still handled once, in the same transaction, and
+  that a message kept reaches exactly one run, across a crash too.
 - A failure inside a group side by side (a group's actions only finish);
   a repeated step (the same step twice in a row stands for it); cron;
   chains on `itero.run.error` and `itero.run.failed`.
@@ -103,7 +108,8 @@ running.
 | `Emit` | `itero ws emit`, `journal.rs` `publish` |
 | `CancelEvent` | `journal.rs` `cancel` |
 | `StopRun` | `events.rs` `stop_run` |
-| `Take`, `Route` | `daemon.rs` `work` (`next`) and `route`; `journal.rs` `route` |
+| `Take`, `Route` | `daemon.rs` `work` (`next`) and `route`; `journal.rs` `route` (`keep`) |
+| `FireBatch` | `daemon.rs` `fire_windows`; `journal.rs` `close_batch` |
 | `Deliver` | `daemon.rs` `deliver`; `steps.rs` `decide` (`Decide`); `journal.rs` `handle` and `messages_since` |
 | `ManagerKilled` | `daemon.rs` `ask_again`, `Delivered::Deferred` |
 | `FireTimer` | `daemon.rs` `fire_timers`; `journal.rs` `fire_timer` |

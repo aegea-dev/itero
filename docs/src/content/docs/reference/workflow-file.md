@@ -32,13 +32,15 @@ is an error.
 | `{"unique": "$event.id", "for": "1d"}` | window: a run starts for a value no run started with within `for` (for good without it) |
 | `{"changed": "$event.state"}` | window: a run starts when the value is not the last run's |
 | `{"at_most": "1h"}` | window: at most one run per period; the first event in it starts it |
+| `{"batch": {"count": 100, "within": "5m"}}` | window: one run of the events it kept, at `count` or `within` after the first (`$event.events`, `count`, `first`, `last`, and `per`) |
+| `{"at_least": 5, "within": "10m"}` | window: one run of the events it kept, once `at_least` came within `within` |
 | `"per": "$event.site"` | beside a window: one window for each value |
 
 `event` (with its `args`), `schedule` and `path` are alternatives, each
 alone in its object; conditions must all hold, then every window must let
 the event through ([Across events: windows](/guides/workflows/#across-events-windows)).
 A window is in a workflow's `on`, not a step's, and a schedule's run passes
-none. Any other key is an error naming it.
+none; an `on` has one `batch` or `at_least` at most. Any other key is an error naming it.
 
 What a workflow is (its description, `off`, `from`, `until`, `internal`)
 is in its entry in
