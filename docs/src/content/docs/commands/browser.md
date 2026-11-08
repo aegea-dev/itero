@@ -29,7 +29,8 @@ act on the same page. A target is a name, as a step's is, or
 
 It runs only as a connector of a daemon that serves its API: the daemon
 gives it its window (`ITERO_BROWSER_API`), and closes it when the
-connector stops or the daemon ends.
+connector ends, however it ends (stopped, killed or crashed), or when the
+daemon ends.
 
 ```sh
 #!/bin/sh

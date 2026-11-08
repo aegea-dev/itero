@@ -623,27 +623,12 @@ fn stop_on_signal(last: impl FnOnce() + Send + 'static) {
     });
 }
 
-/// `itero browser watch`: its window is given back when it is stopped
-/// (SIGTERM, as the daemon stops a connector), when its stdin closes (the
-/// daemon has gone), or when watching fails.
+/// `itero browser watch`: it ends when it is stopped (SIGTERM, as the
+/// daemon stops a connector), when its stdin closes (the daemon has gone),
+/// or when watching fails; its window goes with it, however it ends.
 fn browser_watch(o: crate::browser::watch::Options) -> Result<()> {
-    use crate::browser::watch;
-    let given = std::sync::Arc::new(std::sync::Mutex::new(None::<(String, String)>));
-    let kept = given.clone();
-    let ran = watch::run(o, move |api, id| {
-        *kept.lock().unwrap_or_else(|e| e.into_inner()) = Some((api.into(), id.into()));
-        let (a, i) = (api.to_string(), id.to_string());
-        stop_on_signal(move || watch::close(&a, &i));
-        let (a, i) = (api.to_string(), id.to_string());
-        std::thread::spawn(move || {
-            let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
-            watch::close(&a, &i);
-            std::process::exit(0);
-        });
-    });
-    if let Some((api, id)) = given.lock().unwrap_or_else(|e| e.into_inner()).take() {
-        watch::close(&api, &id);
-    }
+    // once the window is there: an error before it is said, not cut short
+    let ran = crate::browser::watch::run(o, || end_with_stdin(|| {}));
     if ran.is_err() {
         // a daemon stopping ends its Chrome before it closes our stdin:
         // give it the moment, so its stop is quiet, not an error

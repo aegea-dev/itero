@@ -41,6 +41,9 @@ tokio = { version = "~1.53.1", features = ["rt-multi-thread", "net", "macros", "
 # itero webhook's listener: axum's own serve has no limit on a connection
 hyper = { version = "~1.12.0", features = ["http1", "server"] }
 hyper-util = { version = "~0.1.21", features = ["tokio", "service"] }
+# a response body that stays open (a watched window's), and in the tests a
+# download that breaks
+futures-core = "~0.3.31"
 # axum's own: a request to /w/<name>/ handed to that workspace's routes
 tower = { version = "~0.5.3", features = ["util"] }
 clap_complete = { version = "~4.6.11", features = ["unstable-dynamic"] }
@@ -66,8 +69,6 @@ dispatch2 = { version = "~0.3.1", default-features = false, features = ["std", "
 [dev-dependencies]
 chrono-tz = "~0.10"
 tempfile = "~3.27.0"
-# a download that breaks, in the tests of itero ai models add
-futures-core = "~0.3.31"
 # keyring's own core: its in-memory store stands in for the OS secret store
 # in the tests of secrets
 keyring-core = "~1.0.1"
