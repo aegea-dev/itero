@@ -177,8 +177,11 @@ fn http() -> Result<reqwest::blocking::Client, String> {
     crate::net::client(Duration::from_secs(60)).map_err(|e| e.to_string())
 }
 
-/// A window of the daemon's Chrome.
-fn open(api: &str, headless: bool) -> Result<Tab, String> {
+/// A window of the daemon's Chrome, and the response that keeps it: the
+/// window lives as long as the response is held, closed by the daemon
+/// when its connection closes, however this process ends.
+fn open(api: &str, headless: bool) -> Result<(Tab, impl Sized), String> {
+    use std::io::BufRead;
     let body = if headless {
         json!({ "headless": true })
     } else {
@@ -189,25 +192,24 @@ fn open(api: &str, headless: bool) -> Result<Tab, String> {
         .json(&body)
         .send()
         .map_err(|e| format!("the daemon at {api}: {e}"))?;
-    let ok = r.status().is_success();
-    let v: Value = r.json().map_err(|e| format!("the daemon said: {e}"))?;
-    if !ok {
+    if !r.status().is_success() {
+        let v: Value = r.json().map_err(|e| format!("the daemon said: {e}"))?;
         return Err(format!(
             "the daemon: {}",
             v["error"].as_str().unwrap_or("failed")
         ));
     }
-    Ok(Tab {
+    // its first line; the rest never comes, and is not read
+    let mut held = std::io::BufReader::new(r);
+    let mut line = String::new();
+    held.read_line(&mut line)
+        .map_err(|e| format!("the daemon said: {e}"))?;
+    let v: Value = serde_json::from_str(&line).map_err(|e| format!("the daemon said: {e}"))?;
+    let tab = Tab {
         id: v["id"].as_str().ok_or("the daemon gave no window")?.into(),
         ws: v["ws"].as_str().ok_or("the daemon gave no window")?.into(),
-    })
-}
-
-/// Gives the window back; the daemon closes it.
-pub fn close(api: &str, id: &str) {
-    if let Ok(c) = http() {
-        let _ = c.delete(format!("{api}/tabs/{id}")).send();
-    }
+    };
+    Ok((tab, held))
 }
 
 /// A line for the connector's event: what happened, and the page.
@@ -265,13 +267,14 @@ fn blocked(cdp: &mut Cdp, from: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Watches until the window closes (an error) or the process is stopped.
-/// Its window is given back by whoever stops it (`close`).
-pub fn run(o: Options, opened: impl FnOnce(&str, &str)) -> Result<(), String> {
+/// Watches until the window closes (an error) or the process ends; the
+/// window goes with the process, however it ends. `opened` is called once
+/// the window is there.
+pub fn run(o: Options, opened: impl FnOnce()) -> Result<(), String> {
     let (changed, appeared) = check(&o)?;
     let api = api()?;
-    let tab = open(&api, o.headless)?;
-    opened(&api, &tab.id);
+    let (tab, _held) = open(&api, o.headless)?;
+    opened();
     let mut cdp = Cdp::connect(&tab.ws, Duration::from_secs(30))?;
     page::prepare(&mut cdp)?;
     cdp.send("Runtime.enable", json!({}))?;

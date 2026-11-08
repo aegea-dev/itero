@@ -99,6 +99,33 @@ fn pages(port: &str) -> Vec<String> {
         .collect()
 }
 
+/// A window from the daemon at `api`: the response, held, keeps it open;
+/// its first line says which.
+fn open(api: &str, body: Value) -> (impl std::io::BufRead, Value) {
+    use std::io::BufRead;
+    let r = client()
+        .post(format!("{api}/tabs"))
+        .json(&body)
+        .send()
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let mut held = std::io::BufReader::new(r);
+    let mut line = String::new();
+    held.read_line(&mut line).unwrap();
+    let tab: Value = serde_json::from_str(&line).unwrap();
+    (held, tab)
+}
+
+/// The daemon's browser API, as the connector of the workspace at `root`
+/// wrote it to `seen`, once it ran.
+fn api_of(seen: &Path) -> String {
+    // the shell makes the file, then writes in it
+    until("the connector ran", 20, || {
+        std::fs::read_to_string(seen).is_ok_and(|t| !t.is_empty())
+    });
+    std::fs::read_to_string(seen).unwrap()
+}
+
 #[test]
 fn a_connector_asks_the_daemon_for_a_window_and_gives_it_back() {
     let d = tempfile::tempdir().unwrap();
@@ -112,20 +139,10 @@ fn a_connector_asks_the_daemon_for_a_window_and_gives_it_back() {
         json!({ "OUT": seen.display().to_string() }),
     );
     let mut daemon = daemon(&root, d.path());
-    // the shell makes the file, then writes in it
-    until("the connector ran", 20, || {
-        std::fs::read_to_string(&seen).is_ok_and(|t| !t.is_empty())
-    });
-    let api = std::fs::read_to_string(&seen).unwrap();
+    let api = api_of(&seen);
     assert_eq!(api, format!("http://127.0.0.1:{port}/browser"));
 
-    let r = client()
-        .post(format!("{api}/tabs"))
-        .json(&json!({ "headless": true }))
-        .send()
-        .unwrap();
-    assert_eq!(r.status(), 201, "{:?}", r.text());
-    let tab: Value = r.json().unwrap();
+    let (held, tab) = open(&api, json!({ "headless": true }));
     assert_eq!(tab["mode"], "headless", "{tab}");
     let ws = tab["ws"].as_str().unwrap();
     let chrome = ws
@@ -140,22 +157,14 @@ fn a_connector_asks_the_daemon_for_a_window_and_gives_it_back() {
     assert_eq!(c.eval("document.visibilityState").unwrap(), "visible");
     drop(c);
 
-    // given back: closed
-    let r = client().delete(format!("{api}/tabs/{id}")).send().unwrap();
-    assert_eq!(r.status(), 200, "{:?}", r.text());
+    // given back, by ending the connection: closed
+    drop(held);
     until("the window closed", 10, || {
         !pages(&chrome).contains(&id.to_string())
     });
-    let r = client().delete(format!("{api}/tabs/{id}")).send().unwrap();
-    assert_eq!(r.status(), 404);
 
-    // one left open goes with the daemon, and its Chrome too
-    let r = client()
-        .post(format!("{api}/tabs"))
-        .json(&json!({}))
-        .send()
-        .unwrap();
-    assert_eq!(r.status(), 201);
+    // one held open goes with the daemon, and its Chrome too
+    let (_held, _) = open(&api, json!({}));
     stop::stop(&mut daemon.0);
     assert!(
         client()
@@ -164,6 +173,61 @@ fn a_connector_asks_the_daemon_for_a_window_and_gives_it_back() {
             .is_err(),
         "Chrome stopped with the daemon"
     );
+}
+
+/// A watch that dies with no word (`kill -9`, a crash): its window is
+/// closed all the same, since it lives as long as the watch's connection.
+#[test]
+fn a_killed_watchs_window_is_closed() {
+    let d = tempfile::tempdir().unwrap();
+    let w = web::serve(vec![web::html("/liste", LISTE)]);
+    let seen = d.path().join("api.txt");
+    let root = workspace(
+        d.path(),
+        free_port(),
+        "sayfa.changed",
+        "#!/bin/sh\nprintf '%s' \"$ITERO_BROWSER_API\" > \"$OUT\"\nexec cat >/dev/null\n",
+        json!({ "OUT": seen.display().to_string() }),
+    );
+    let _daemon = daemon(&root, d.path());
+    let api = api_of(&seen);
+    let mut watch = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+        .args([
+            "browser",
+            "watch",
+            &w.url("/liste"),
+            "--navigated",
+            "--headless",
+        ])
+        .env("ITERO_BROWSER_API", &api)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let _stdin = watch.stdin.take();
+    drop(browser::watched(&d.path().join("durum"), "/liste"));
+    let active = d
+        .path()
+        .join("durum/itero/browser/headless/DevToolsActivePort");
+    let port = std::fs::read_to_string(active).unwrap();
+    let chrome = format!("127.0.0.1:{}", port.lines().next().unwrap().trim());
+    let liste = || {
+        let list: Value = client()
+            .get(format!("http://{chrome}/json/list"))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        list.as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["url"].as_str().unwrap_or_default().ends_with("/liste"))
+    };
+    assert!(liste());
+    // SAFETY: a plain kill of our own child
+    unsafe { libc::kill(watch.id() as i32, libc::SIGKILL) };
+    watch.wait().unwrap();
+    until("the window closed", 10, || !liste());
 }
 
 #[path = "common/web.rs"]

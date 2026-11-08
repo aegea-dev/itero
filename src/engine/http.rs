@@ -52,18 +52,19 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16) -> Router {
         .route("/runs/{id}/stop", post(stop_run))
         .route("/workflows", get(workflows))
         .route("/browser/tabs", post(open_watch))
-        .route("/browser/tabs/{id}", delete(close_watch))
         .layer(middleware::from_fn_with_state(s.clone(), local_only))
         .with_state(s)
 }
 
 /// `POST /browser/tabs`, `{"headless": true}` or `{}`: a browser window
-/// for a connector to watch (`itero browser watch`), answered with its
-/// `id`, `ws` (its DevTools address) and `mode`.
+/// for a connector to watch (`itero browser watch`), answered with one
+/// line, its `id`, `ws` (its DevTools address) and `mode`. The response
+/// then stays open, and the window lives as long as it does: when the
+/// connection closes, however the connector ended, the window is closed.
 async fn open_watch(
     State(s): State<Shared>,
     body: Result<Json<Value>, JsonRejection>,
-) -> Result<Reply, Reply> {
+) -> Result<Response, Reply> {
     let Json(b) = body.map_err(|r| fail(r.status(), r.body_text()))?;
     let headless = match b.get("headless") {
         None | Some(Value::Null) => None,
@@ -83,24 +84,53 @@ async fn open_watch(
     .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .map_err(|why| fail(StatusCode::INTERNAL_SERVER_ERROR, why))?;
     let (mode, tab) = opened;
+    let line = json!({ "id": tab.id, "ws": tab.ws, "mode": mode.name() }).to_string() + "\n";
+    let held = Held {
+        line: Some(line.into()),
+        _window: Window(tab.id),
+    };
     Ok((
         StatusCode::CREATED,
-        Json(json!({ "id": tab.id, "ws": tab.ws, "mode": mode.name() })),
-    ))
+        [(header::CONTENT_TYPE, "application/x-ndjson")],
+        axum::body::Body::from_stream(held),
+    )
+        .into_response())
 }
 
-/// `DELETE /browser/tabs/{id}`: the watched window given back, closed.
-async fn close_watch(Path(id): Path<String>) -> Result<Reply, Reply> {
-    let closed = tokio::task::spawn_blocking(move || {
-        crate::browser::keeper::Keeper::global().close_watch(&id)
-    })
-    .await
-    .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .map_err(|why| fail(StatusCode::INTERNAL_SERVER_ERROR, why))?;
-    if closed {
-        Ok((StatusCode::OK, Json(json!({ "closed": true }))))
-    } else {
-        Err(fail(StatusCode::NOT_FOUND, "no such watched window"))
+/// A watched window's response: its line, then nothing, for as long as
+/// the connection lasts. The server drops it when the connection closes.
+struct Held {
+    line: Option<axum::body::Bytes>,
+    _window: Window,
+}
+
+impl futures_core::Stream for Held {
+    type Item = Result<axum::body::Bytes, std::convert::Infallible>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        match self.get_mut().line.take() {
+            Some(line) => std::task::Poll::Ready(Some(Ok(line))),
+            // nothing more, for good: the connection's end ends it
+            None => std::task::Poll::Pending,
+        }
+    }
+}
+
+/// A watched window, closed when dropped (the connection that held it has
+/// closed); closing talks to Chrome, so not on the server's own threads.
+struct Window(String);
+
+impl Drop for Window {
+    fn drop(&mut self) {
+        let id = std::mem::take(&mut self.0);
+        std::thread::spawn(move || {
+            if let Err(e) = crate::browser::keeper::Keeper::global().close_watch(&id) {
+                eprintln!("itero: cannot close a watched window: {e}");
+            }
+        });
     }
 }
 

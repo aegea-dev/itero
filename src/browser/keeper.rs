@@ -164,7 +164,8 @@ impl Keeper {
 
     /// A window for a connector to watch (`itero browser watch`), in the
     /// Chrome of the mode asked, started when none runs. It keeps its
-    /// Chrome up until it is given back (`close_watch`).
+    /// Chrome up until it is given back (`close_watch`, when the
+    /// connection that asked for it closes).
     pub fn open_watch(
         &'static self,
         ws: &Workspace,
