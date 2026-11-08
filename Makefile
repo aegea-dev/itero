@@ -203,10 +203,6 @@ test-install: ## Install from a local release through the install script, in tem
 test-linux: ## Run the tests and clippy on Linux, in Docker
 	sh scripts/test-linux.sh
 
-.PHONY: test-devcontainer
-test-devcontainer: ## Build the dev containers (try, develop) and check them from inside (Docker, npx)
-	sh scripts/test-devcontainer.sh
-
 .PHONY: test-docker
 test-docker: ## Run the tests that need Docker: container actions, IMAP and POP3
 	sh scripts/test-docker.sh
