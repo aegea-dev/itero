@@ -1,0 +1,22 @@
+// To try itero: the latest release and what its examples need. The one
+// GitHub Codespaces, CodeSandbox, VS Code and DevPod open first; the one
+// to work on itero is in develop/.
+{
+  "name": "itero: try the examples",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "features": {
+    // the examples' container actions
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "containerEnv": {
+    // no desktop: #notify writes each notification to this file
+    "ITERO_NOTIFY_LOG": "/tmp/itero-notifications.log",
+    // no OS secret store: secrets come from .env
+    "ITERO_NO_SECRET_STORE": "1"
+  },
+  "postCreateCommand": "sh .devcontainer/setup.sh",
+  "postAttachCommand": "sh .devcontainer/welcome.sh",
+  // the webhook examples listen here: a public URL in Codespaces and CodeSandbox
+  "forwardPorts": [8788],
+  "portsAttributes": { "8788": { "label": "webhooks" } }
+}

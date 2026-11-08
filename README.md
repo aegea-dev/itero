@@ -94,6 +94,16 @@ the release archive's SHA-256 before unpacking, installs `itero` to
 edits your shell profile. `--version X.Y.Z`, `--to DIR` and `--uninstall`
 are its options (`sh -s -- --help`).
 
+### Or try it in your browser
+
+Open the repository in [GitHub Codespaces] or [CodeSandbox]: a container
+with the latest itero, its examples, jq, Chromium, Python, Bun and Docker,
+nothing to install. Notifications go to `/tmp/itero-notifications.log`,
+and the webhook examples get a public address on port 8788.
+
+[GitHub Codespaces]: https://codespaces.new/aegea-dev/itero
+[CodeSandbox]: https://codesandbox.io/p/devbox/github/aegea-dev/itero
+
 ## Build
 
 ```bash
@@ -108,7 +118,12 @@ make test-linux   # the tests and clippy on Linux, in Docker
 make test-docker  # the IMAP, POP3 and Gmail examples against a mail server in Docker
 make docs         # the docs site at http://localhost:4321/ (make docs-install once)
 make verify       # every gate before a release: fmt, check, clippy, tests, audit, docs
+make test-devcontainer  # the dev containers, built and checked from inside (Docker, npx)
 ```
+
+To work on itero in a container, open `.devcontainer/develop`: the pinned
+Rust, cmake and libclang, Chromium, Node for the docs and Docker
+(Codespaces lists it beside the one to try itero).
 
 On macOS, `make notifier` builds `Itero.app` next to the binary (and `make
 install` puts it in `~/Applications`): notifications then come from itero.

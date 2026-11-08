@@ -11,6 +11,18 @@ resolve there. Your actions are programs of their own and keep the
 system's. The local model's server, `itero-ai`, needs glibc 2.34 or later
 (Ubuntu 22.04, Debian 12, RHEL 9 and later).
 
+## In your browser
+
+To try itero with nothing installed, open the repository in
+[GitHub Codespaces](https://codespaces.new/aegea-dev/itero) or
+[CodeSandbox](https://codesandbox.io/p/devbox/github/aegea-dev/itero): a
+container with the latest itero and its examples, jq, Chromium (for
+[`#browser`](/guides/browser/)), Python, Bun and Docker. There is no desktop
+there, so [`#notify`](/guides/actions/#built-in) writes each notification to
+`/tmp/itero-notifications.log`; the webhook examples listen on port 8788,
+which gets a public address. A container that sleeps stops the daemon:
+start it again with `itero daemon`.
+
 ## Homebrew
 
 ```bash
