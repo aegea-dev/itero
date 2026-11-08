@@ -78,6 +78,7 @@ back    MCChild PROPERTY  RunsEnd
 quiet   MCChild INVARIANT NoChain
 nolock  MCStop  INVARIANT OneCopy
 window  MCWindow PROPERTY AllHandled
+kept    MCBatch INVARIANT KeptOnce
 '
 
 # Each mutant must break its rule; what does not goes in a file, as the

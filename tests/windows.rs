@@ -49,6 +49,11 @@ impl Ws {
         run_once(&self.ws, now.parse().unwrap(), exe()).unwrap();
     }
 
+    /// A pass at `now`, with no new event: what came due.
+    fn pass(&self, now: &str) {
+        run_once(&self.ws, now.parse().unwrap(), exe()).unwrap();
+    }
+
     /// The `$event` of each run started, in order.
     fn started(&self) -> Vec<Value> {
         let mut runs = Journal::open(&self.ws).unwrap().runs().unwrap();
@@ -190,5 +195,158 @@ fn what_a_window_no_longer_holds_back_for_is_forgotten() {
         ws.started().len(),
         1,
         "changed still holds the same value back"
+    );
+}
+
+/// The values of a batch run's events, by `field`.
+fn values(batch: &Value, field: &str) -> Vec<Value> {
+    batch["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e[field].clone())
+        .collect()
+}
+
+#[test]
+fn a_batch_of_count_events_starts_one_run_with_them_all() {
+    let ws = Ws::with(json!([{ "batch": { "count": 3 } }]));
+    for (n, now) in [(1, "10:00"), (2, "10:01"), (3, "10:02"), (4, "10:03")] {
+        ws.event(json!({ "n": n }), &format!("2026-11-08T{now}:00Z"));
+    }
+    let runs = ws.started();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(values(&runs[0], "n"), [1, 2, 3]);
+    assert_eq!(runs[0]["count"], 3);
+    assert_eq!(runs[0]["first"], "2026-11-08T10:00:00Z");
+    assert_eq!(runs[0]["last"], "2026-11-08T10:02:00Z");
+}
+
+#[test]
+fn a_batch_within_a_while_starts_its_run_when_the_while_has_passed() {
+    let ws = Ws::with(json!([{ "batch": { "within": "5m" } }]));
+    ws.event(json!({ "n": 1 }), "2026-11-08T10:00:00Z");
+    ws.event(json!({ "n": 2 }), "2026-11-08T10:02:00Z");
+    assert!(ws.started().is_empty());
+    // the daemon wakes when it closes
+    let due = itero::engine::daemon::next_due(&ws.ws, "2026-11-08T10:02:00Z".parse().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(due.to_rfc3339(), "2026-11-08T10:05:00+00:00");
+    ws.pass("2026-11-08T10:04:59Z");
+    assert!(ws.started().is_empty());
+    ws.pass("2026-11-08T10:05:00Z");
+    let runs = ws.started();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(values(&runs[0], "n"), [1, 2]);
+    // the next event opens a new batch
+    ws.event(json!({ "n": 3 }), "2026-11-08T10:06:00Z");
+    ws.pass("2026-11-08T10:11:00Z");
+    assert_eq!(values(&ws.started()[1], "n"), [3]);
+}
+
+#[test]
+fn a_batch_starts_at_its_count_or_its_while_whichever_comes_first() {
+    let ws = Ws::with(json!([{ "batch": { "count": 10, "within": "5m" } }]));
+    ws.event(json!({ "n": 1 }), "2026-11-08T10:00:00Z");
+    ws.event(json!({ "n": 2 }), "2026-11-08T10:01:00Z");
+    ws.pass("2026-11-08T10:05:00Z");
+    assert_eq!(values(&ws.started()[0], "n"), [1, 2]);
+}
+
+#[test]
+fn at_least_starts_a_run_when_enough_came_within_a_while() {
+    let ws = Ws::with(json!([{ "at_least": 3, "within": "10m" }]));
+    for (n, now) in [(1, "10:00"), (2, "10:05"), (3, "10:11")] {
+        ws.event(json!({ "n": n }), &format!("2026-11-08T{now}:00Z"));
+    }
+    // the first is more than ten minutes before the third
+    assert!(ws.started().is_empty());
+    ws.event(json!({ "n": 4 }), "2026-11-08T10:12:00Z");
+    let runs = ws.started();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(values(&runs[0], "n"), [2, 3, 4]);
+    // it starts again from none
+    ws.event(json!({ "n": 5 }), "2026-11-08T10:13:00Z");
+    assert_eq!(ws.started().len(), 1);
+}
+
+#[test]
+fn per_keeps_a_batch_for_each_value() {
+    let ws = Ws::with(json!([{ "batch": { "count": 2 }, "per": "$event.site" }]));
+    for (site, now) in [("bir", "10:00"), ("iki", "10:01"), ("bir", "10:02")] {
+        ws.event(json!({ "site": site }), &format!("2026-11-08T{now}:00Z"));
+    }
+    let runs = ws.started();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(values(&runs[0], "site"), ["bir", "bir"]);
+    // whose window it is
+    assert_eq!(runs[0]["per"], "bir");
+}
+
+#[test]
+fn unique_before_a_batch_keeps_a_value_out_of_it_once_in() {
+    let ws = Ws::with(json!([
+        { "unique": "$event.kimlik" },
+        { "batch": { "count": 2 } }
+    ]));
+    for (k, now) in [(1, "10:00"), (1, "10:01"), (2, "10:02")] {
+        ws.event(json!({ "kimlik": k }), &format!("2026-11-08T{now}:00Z"));
+    }
+    assert_eq!(values(&ws.started()[0], "kimlik"), [1, 2]);
+}
+
+#[test]
+fn the_events_a_batch_keeps_are_not_forgotten() {
+    let ws = Ws::with(json!([{ "batch": { "count": 2 } }]));
+    ws.event(json!({ "n": 1 }), "2026-11-08T10:00:00Z");
+    // as #forget does, with everything handled long ago
+    Journal::open(&ws.ws)
+        .unwrap()
+        .prune("2030-01-01T00:00:00Z")
+        .unwrap();
+    ws.event(json!({ "n": 2 }), "2026-11-08T10:01:00Z");
+    assert_eq!(values(&ws.started()[0], "n"), [1, 2]);
+}
+
+#[test]
+fn every_wrong_batch_is_told_at_once() {
+    let e = itero::flow::parse(
+        r##"{ "on": [
+              { "event": "sayfa.değişti" },
+              { "batch": {} },
+              { "batch": { "count": 0 } },
+              { "batch": { "count": 20000 } },
+              { "batch": { "within": "beş dakika" } },
+              { "batch": "5m" },
+              { "at_least": 3 },
+              { "at_least": 0, "within": "10m" },
+              { "batch": { "count": 2 }, "at_least": 2, "within": "1m" },
+              { "batch": { "count": 2, "kaç": 1 } }
+            ],
+            "steps": ["#bildir"] }"##,
+    )
+    .unwrap_err();
+    for want in [
+        "on: batch takes a count, a within or both: {\"count\": 100, \"within\": \"5m\"} (on/2)",
+        "on: batch count is 1 to 10000, not 0 (on/3)",
+        "on: batch count is 1 to 10000, not 20000 (on/4)",
+        "on: batch within: a duration is like 30m, 2h or 1d, not \"beş dakika\" (on/5)",
+        "on: batch is an object: {\"count\": 100, \"within\": \"5m\"} (on/6)",
+        "on: at_least goes with within: {\"at_least\": 5, \"within\": \"10m\"} (on/7)",
+        "on: at_least is a count from 1 to 10000, not 0 (on/8)",
+        "says more than one thing: unique, changed, at_most, batch and at_least are entries of their own (on/9)",
+        "on: batch takes count and within, not \"kaç\" (on/10)",
+    ] {
+        assert!(e.contains(want), "missing: {want}\nin:\n{e}");
+    }
+    let two = itero::flow::parse(
+        r##"{ "on": [{ "event": "a.b" }, { "batch": { "count": 2 } }, { "at_least": 2, "within": "1m" }],
+              "steps": ["#bildir"] }"##,
+    )
+    .unwrap_err();
+    assert!(
+        two.contains("on: one batch or at_least in an on: each keeps the events it lets through"),
+        "{two}"
     );
 }

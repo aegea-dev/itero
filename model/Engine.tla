@@ -33,12 +33,15 @@ Child(f) == [kind |-> "child", wait |-> FALSE, flow |-> f]
 \* A workflow: its steps, its rounds (repeat), the kinds it starts on
 \* ("run.done" for itero.run.done), whether it is a built-in, and
 \* whether a window in its on (unique, changed, at_most) may hold an
-\* event back from it.
+\* event back from it, and whether one (batch, at_least) keeps its events
+\* for a run of many.
 Flow(steps, rounds, on, internal) ==
     [steps |-> steps, rounds |-> rounds, on |-> on, internal |-> internal,
-     window |-> FALSE]
+     window |-> FALSE, keep |-> FALSE]
 Windowed(steps, rounds, on, internal) ==
     [Flow(steps, rounds, on, internal) EXCEPT !.window = TRUE]
+Keeping(steps, rounds, on, internal) ==
+    [Flow(steps, rounds, on, internal) EXCEPT !.keep = TRUE]
 
 VARIABLES
     ev,         \* table events, by seq; a job's runs (table jobs) and a ghost count ride on it
@@ -61,7 +64,9 @@ vars == <<ev, runs, timers, up, taking, held, running, cancel, deferred,
 Ev(subj, type) ==
     [subj |-> subj, type |-> type, handled |-> FALSE, note |-> "", marks |-> 0,
      kind |-> "", wf |-> 0, run |-> 0, path |-> 0, br |-> 0, msg |-> 0,
-     cause |-> 0, tries |-> 0]
+     cause |-> 0, tries |-> 0, kept |-> 0, takes |-> 0]
+\* kept: the workflow whose batch keeps the message (table kept), 0 for
+\* none; takes: a ghost count of the runs of many that took it
 
 Run(wf, parent, ppath, round, msg, from, origin) ==
     [wf |-> wf, pos |-> 0, open |-> {}, waiting |-> FALSE, child |-> FALSE,
@@ -276,9 +281,23 @@ Counted(e) == \E k \in 1..Len(Starts(e)) : ~Flows[Starts(e)[k]].internal
 Route ==
     /\ up /\ taking /= 0
     /\ \E dropped \in SUBSET {w \in 1..Len(Flows) : Flows[w].window} :
+       \E full_now \in SUBSET {w \in 1..Len(Flows) : Flows[w].keep} :
        LET j == taking
            e == ev[j]
-           s == SelectSeq(Starts(e), LAMBDA w : w \notin dropped)
+           passed == SelectSeq(Starts(e), LAMBDA w : w \notin dropped)
+           \* a keeping workflow keeps the message, or (its batch full now)
+           \* starts a run of it and all it kept
+           keeps == {w \in {passed[k] : k \in 1..Len(passed)} : Flows[w].keep /\ w \notin full_now}
+           s == SelectSeq(passed, LAMBDA w : w \notin keeps)
+           took(i) == \/ ev[i].kept \in full_now /\ ev[i].kept \in {s[k] : k \in 1..Len(s)}
+                      \/ i = j /\ \E k \in 1..Len(s) : s[k] \in full_now
+           after(i) == LET x == IF i = j THEN Mark(ev[i], ev[i].note) ELSE ev[i]
+                       IN IF took(i)
+                          THEN [x EXCEPT !.takes = @ + 1,
+                                         !.kept = IF Bug = "kept" THEN @ ELSE 0]
+                          ELSE IF i = j /\ keeps /= {}
+                          THEN [x EXCEPT !.kept = CHOOSE w \in keeps : TRUE]
+                          ELSE x
            full == Counted(e) /\ ActiveOf(runs) >= Limit
            waiters == SelectSeq([r \in 1..Len(runs) |-> r],
                                 LAMBDA r : runs[r].waiting /\ runs[r].ended = "")
@@ -295,7 +314,7 @@ Route ==
           ELSE IF Bug = "window" /\ dropped \cap {Starts(e)[k] : k \in 1..Len(Starts(e))} /= {}
           \* the bug: an event held back is left for the next pass
           THEN UNCHANGED <<ev, runs, held, overLimit>>
-          ELSE /\ ev' = [ev EXCEPT ![j] = Mark(@, @.note)] \o started \o copies
+          ELSE /\ ev' = [i \in DOMAIN ev |-> after(i)] \o started \o copies
                /\ runs' = runs \o fresh
                /\ overLimit' = (overLimit \/ full)
                /\ UNCHANGED held
@@ -374,6 +393,23 @@ ManagerKilled(j) ==
                    orphans, overLimit, twice>>
 
 \* fire_timers: a due timer becomes its run's event, in one transaction
+\* daemon.rs fire_windows; journal.rs close_batch: a batch's time has come,
+\* its run starts with all it kept, in one transaction
+FireBatch(w) ==
+    /\ up /\ taking = 0 /\ Flows[w].keep
+    /\ \E i \in DOMAIN ev : ev[i].kept = w
+    /\ LET first == CHOOSE i \in DOMAIN ev :
+                        ev[i].kept = w /\ \A k \in DOMAIN ev : ev[k].kept = w => i <= k
+       IN /\ ev' = [i \in DOMAIN ev |->
+                       IF ev[i].kept = w
+                       THEN [ev[i] EXCEPT !.takes = @ + 1,
+                                          !.kept = IF Bug = "kept" THEN @ ELSE 0]
+                       ELSE ev[i]]
+                    \o <<[Ev(Len(runs) + 1, "run.started") EXCEPT !.cause = first]>>
+          /\ runs' = Append(runs, Run(w, 0, 0, 1, first, Len(ev) + 1, "batch"))
+    /\ UNCHANGED <<timers, up, taking, held, running, cancel, deferred, orphans,
+                   left, overLimit, twice>>
+
 FireTimer(r) ==
     /\ up /\ taking = 0 /\ r \in timers
     /\ timers' = timers \ {r}
@@ -391,6 +427,7 @@ Daemon ==
     \/ Route
     \/ \E s \in DOMAIN ev : StartJob(s) \/ OrphanDies(s) \/ \E o \in Outs : EndWorker(s, o)
     \/ \E r \in DOMAIN runs : FireTimer(r)
+    \/ \E w \in 1..Len(Flows) : FireBatch(w)
     \/ Restart
 
 \* Daemon's actions listed again, one a line: a trace names a step by its
@@ -403,6 +440,7 @@ Next ==
     \/ \E s \in DOMAIN ev : OrphanDies(s)
     \/ \E s \in DOMAIN ev : \E o \in Outs : EndWorker(s, o)
     \/ \E r \in DOMAIN runs : FireTimer(r)
+    \/ \E w \in 1..Len(Flows) : FireBatch(w)
     \/ Restart
     \/ \E k \in Kinds : Emit(k)
     \/ \E j \in DOMAIN ev : CancelEvent(j)
@@ -461,6 +499,12 @@ EndedNoTimer == \A r \in timers : runs[r].ended = ""
 
 \* 11. Every event is handled.
 AllHandled == <>[](\A j \in DOMAIN ev : ev[j].handled)
+
+\* 15. A message a batch kept reaches one run of many, and only one.
+KeptOnce == \A j \in DOMAIN ev : ev[j].takes <= 1
+
+\* 16. Eventually, every message a batch kept is in a run.
+AllKeptTaken == <>[](\A j \in DOMAIN ev : ev[j].kept = 0)
 
 \* 12. Every child's end reaches its parent, unless the parent has ended.
 LastRound(c) == ~(runs[c].ended = "done" /\ runs[c].round < Flows[runs[c].wf].rounds)

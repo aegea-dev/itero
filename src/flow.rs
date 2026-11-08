@@ -213,11 +213,34 @@ pub enum Gate {
     Changed { value: String },
     /// `{"at_most": "1h"}`: one run per period; the first in it starts.
     AtMost { every: Duration },
+    /// `{"batch": {"count": 100, "within": "5m"}}`: the events it lets
+    /// through are kept, and start one run when there are `count` of them
+    /// or `within` after the first, whichever comes first.
+    Batch {
+        count: Option<u32>,
+        within: Option<Duration>,
+    },
+    /// `{"at_least": 5, "within": "10m"}`: the events it lets through are
+    /// kept, and start one run once `count` came within `within`.
+    AtLeast { count: u32, within: Duration },
 }
 
+impl Gate {
+    /// Whether it keeps the events it lets through, for a run of them.
+    pub fn keeps(&self) -> bool {
+        matches!(self, Gate::Batch { .. } | Gate::AtLeast { .. })
+    }
+}
+
+/// The most events a batch or `at_least` keeps for one run: what a pass
+/// handles at most (`MAX_EVENTS` in the daemon).
+pub const MOST_KEPT: u32 = 10_000;
+
 /// The keys of a window entry: its gate, and what goes with it.
-const WINDOW_KEYS: [&str; 5] = ["unique", "changed", "at_most", "for", "per"];
-const GATES: [&str; 3] = ["unique", "changed", "at_most"];
+const WINDOW_KEYS: [&str; 8] = [
+    "unique", "changed", "at_most", "batch", "at_least", "for", "within", "per",
+];
+const GATES: [&str; 5] = ["unique", "changed", "at_most", "batch", "at_least"];
 
 /// An event `on` listens for, and the args the connector that sends it is
 /// given: one copy of a connector runs for each different set.
@@ -856,6 +879,12 @@ fn on(v: &Value) -> Result<On, Vec<Problem>> {
             ps.extend(es.into_iter().map(|e| Problem::new((i + 1).to_string(), e)));
         }
     }
+    if o.windows.iter().filter(|w| w.gate.keeps()).count() > 1 {
+        ps.push(Problem::new(
+            "",
+            "on: one batch or at_least in an on: each keeps the events it lets through",
+        ));
+    }
     if ps.is_empty() { Ok(o) } else { Err(ps) }
 }
 
@@ -909,22 +938,30 @@ fn on_window(item: &Value, m: &Map<String, Value>) -> Result<Window, Vec<String>
         .filter(|g| m.contains_key(*g))
         .collect();
     let Some(&gate) = gates.first() else {
-        return Err(vec![match m.contains_key("for") {
-            true => "on: for goes with unique: {\"unique\": \"$event.id\", \"for\": \"1d\"}".into(),
-            false => "on: per goes with unique, changed or at_most".into(),
+        return Err(vec![if m.contains_key("for") {
+            "on: for goes with unique: {\"unique\": \"$event.id\", \"for\": \"1d\"}".into()
+        } else if m.contains_key("within") {
+            "on: within goes with at_least: {\"at_least\": 5, \"within\": \"10m\"}".into()
+        } else {
+            "on: per goes with unique, changed, at_most, batch or at_least".into()
         }]);
     };
     let mut ps = vec![];
     if gates.len() > 1 {
         ps.push(format!(
-            "on: {item} says more than one thing: unique, changed and at_most are entries of their own"
+            "on: {item} says more than one thing: unique, changed, at_most, batch and at_least are entries of their own"
         ));
     }
     for k in m.keys() {
         match k.as_str() {
-            "per" | "unique" | "changed" | "at_most" => {}
+            "per" | "unique" | "changed" | "at_most" | "batch" | "at_least" => {}
             "for" if gate == "unique" => {}
             "for" => ps.push(format!("on: for goes with unique, not {gate}")),
+            "within" if gate == "at_least" => {}
+            "within" if gates.len() == 1 && gate != "batch" => {
+                ps.push(format!("on: within goes with at_least, not {gate}"))
+            }
+            "within" => {}
             _ => ps.push(format!(
                 "on: {item} says more than one thing: a window is an entry of its own, with its per (and for, with unique)"
             )),
@@ -958,10 +995,27 @@ fn on_window(item: &Value, m: &Map<String, Value>) -> Result<Window, Vec<String>
             .map(|value| Gate::Changed { value })
             .map_err(|e| ps.push(e))
             .ok(),
-        _ => window_period(gate, &m[gate])
+        "at_most" => window_period(gate, &m[gate])
             .map(|every| Gate::AtMost { every })
             .map_err(|e| ps.push(e))
             .ok(),
+        "batch" => window_batch(&m[gate]).map_err(|e| ps.extend(e)).ok(),
+        _ => {
+            let count = window_count(&m[gate]).map_err(|e| ps.push(e)).ok();
+            let within = match m.get("within") {
+                None => {
+                    ps.push(
+                        "on: at_least goes with within: {\"at_least\": 5, \"within\": \"10m\"}"
+                            .into(),
+                    );
+                    None
+                }
+                Some(v) => window_period("within", v).map_err(|e| ps.push(e)).ok(),
+            };
+            count
+                .zip(within)
+                .map(|(count, within)| Gate::AtLeast { count, within })
+        }
     };
     match g {
         Some(gate) if ps.is_empty() => Ok(Window { gate, per }),
@@ -982,6 +1036,52 @@ fn window_value(key: &str, v: &Value) -> Result<String, String> {
         )),
         (None, Some(n)) => value_path(n, s),
         _ => Err(format!("on: {key} \"{s}\" is not a value: write \"${s}\"")),
+    }
+}
+
+/// `batch`'s object: a count, a within or both.
+fn window_batch(v: &Value) -> Result<Gate, Vec<String>> {
+    let form = "{\"count\": 100, \"within\": \"5m\"}";
+    let Value::Object(b) = v else {
+        return Err(vec![format!("on: batch is an object: {form}")]);
+    };
+    let mut ps = vec![];
+    for k in b.keys().filter(|k| *k != "count" && *k != "within") {
+        ps.push(format!("on: batch takes count and within, not \"{k}\""));
+    }
+    if !b.contains_key("count") && !b.contains_key("within") {
+        ps.push(format!("on: batch takes a count, a within or both: {form}"));
+    }
+    let count = match b.get("count") {
+        None => None,
+        Some(c) => match c.as_u64() {
+            Some(n @ 1..) if n <= u64::from(MOST_KEPT) => Some(n as u32),
+            _ => {
+                ps.push(format!("on: batch count is 1 to {MOST_KEPT}, not {c}"));
+                None
+            }
+        },
+    };
+    let within = match b.get("within") {
+        None => None,
+        Some(w) => window_period("batch within", w)
+            .map_err(|e| ps.push(e))
+            .ok(),
+    };
+    if ps.is_empty() {
+        Ok(Gate::Batch { count, within })
+    } else {
+        Err(ps)
+    }
+}
+
+/// `at_least`'s count of events.
+fn window_count(v: &Value) -> Result<u32, String> {
+    match v.as_u64() {
+        Some(n @ 1..) if n <= u64::from(MOST_KEPT) => Ok(n as u32),
+        _ => Err(format!(
+            "on: at_least is a count from 1 to {MOST_KEPT}, not {v}"
+        )),
     }
 }
 
@@ -1515,7 +1615,7 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             if !w.windows.is_empty() {
                 ps.push(Problem::new(
                     "",
-                    "a step's on holds conditions, not a window (unique, changed, at_most): a window goes in the workflow's on",
+                    "a step's on holds conditions, not a window (unique, changed, at_most, batch, at_least): a window goes in the workflow's on",
                 ));
             }
             Some(w)
