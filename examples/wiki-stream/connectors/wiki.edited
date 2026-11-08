@@ -1,0 +1,27 @@
+#!/bin/sh
+# Every edit to a Wikipedia, live, from Wikimedia's EventStreams: a stream
+# of Server-Sent Events, no key needed. Prints a line per edit or new page
+# on a *.wikipedia.org: its id, time, wiki, title, user, whether a bot made
+# it, how many bytes it changed, and its address.
+#
+# It notes the time of the last edit it told, and after a restart asks the
+# stream for what came since: nothing is missed, and what comes twice the
+# workflows drop by its id (unique).
+stream="${WIKI_STREAM:-https://stream.wikimedia.org/v2/stream/recentchange}"
+since=".itero/wiki.edited.since"
+mkdir -p .itero
+from=$(cat "$since" 2>/dev/null || true)
+[ -z "$from" ] || echo "resuming from $from" >&2
+curl -sfN -A "itero-example-wiki-stream/1 (https://github.com/aegea-dev/itero)" \
+  "$stream${from:+?since=$from}" |
+  jq -cR --unbuffered '
+    select(startswith("data: ")) | .[6:] | fromjson? |
+    select((.server_name // "") | endswith(".wikipedia.org")) |
+    select(.type == "edit" or .type == "new") |
+    {id: .meta.id, at: .meta.dt, wiki, title, user, bot,
+     change: ((.length.new // 0) - (.length.old // 0)), url: .meta.uri}' |
+  while IFS= read -r line; do
+    printf '%s\n' "$line"
+    at=${line#*\"at\":\"}
+    printf '%s\n' "${at%%\"*}" >"$since"
+  done
