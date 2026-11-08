@@ -1,16 +1,10 @@
 #!/bin/sh
-# Every webhook comes here. It picks the fields it trusts and sends an event
-# of its own. A commit's message is a stranger's text: never eval it.
+# A delivery from GitHub comes here, once: the workflow's on lets each
+# delivery id through once, so GitHub's Redeliver starts nothing. It picks
+# the fields it trusts and sends an event of its own. A commit's message is
+# a stranger's text: never eval it.
 input=$(cat)
-field() { printf '%s' "$input" | jq -r ".args.$1"; }
-[ "$(field path)" = /github ] && [ "$(field kind)" = push ] || exit 0
-
-# GitHub's Redeliver sends a delivery again: each one once. Kept as JSON, so
-# it stays on one line whatever it holds.
-id=$(printf '%s' "$input" | jq -c '.args.delivery')
-touch "$ITERO_MEMORY"
-grep -qxF -- "$id" "$ITERO_MEMORY" && exit 0
-printf '%s\n' "$id" >>"$ITERO_MEMORY"
+[ "$(printf '%s' "$input" | jq -r '.args.kind')" = push ] || exit 0
 
 printf '%s' "$input" |
   jq -c '.args.body | {

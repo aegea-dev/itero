@@ -1,2 +1,4 @@
-{ "on": [{ "event": "itero.webhook.received" }],
-  "steps": [{ "#forward-webhook": { "args": { "path": "$event.path", "body": "$event.body" } } }] }
+{ "on": [{ "event": "itero.webhook.received" },
+         { "$event.path": "/app" },
+         { "unique": "$event.body.id", "for": "7d" }],
+  "steps": [{ "#forward-webhook": { "args": { "body": "$event.body" } } }] }

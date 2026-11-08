@@ -215,6 +215,21 @@ fn until(what: &str, done: impl Fn() -> bool) {
     }
 }
 
+/// How many messages the log says a window held back from `workflow`.
+fn held_from(ws: &std::path::Path, workflow: &str) -> usize {
+    std::fs::read_to_string(ws.join(".itero/itero.log"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|l| l["event"] == "message")
+        .filter(|l| {
+            l["held"]
+                .as_array()
+                .is_some_and(|h| h.iter().any(|h| h["workflow"] == workflow))
+        })
+        .count()
+}
+
 #[test]
 fn the_webhook_example_forwards_a_reply_to_the_step_waiting_for_it() {
     use std::io::{Read, Write};
@@ -275,7 +290,11 @@ fn the_webhook_example_forwards_a_reply_to_the_step_waiting_for_it() {
         runs_of(&ws, "ask").iter().any(|r| r["status"] == "done")
     });
     send(reply); // a service sends again when a delivery failed
-    until("the second delivery's run", || forwarded(2));
+    // its id was seen: forward's window holds it back, and no run starts
+    until("the second delivery held back", || {
+        held_from(&ws, "forward") == 1
+    });
+    assert!(forwarded(1));
     let log = std::fs::read_to_string(ws.join(".itero/itero.log")).unwrap();
     let sent = log
         .lines()
@@ -352,11 +371,15 @@ fn the_github_webhook_example_tells_of_a_push_once() {
                    "head_commit": {"message": "düzeltme $$GITHUB_WEBHOOK_SECRET $event.ref"}}"#;
     assert_eq!(github_delivery(port, secret, "push", "d-1", push), 200);
     until("the push is told", || told.is_file());
-    // GitHub's Redeliver sends the same delivery again
+    // GitHub's Redeliver sends the same delivery again: forward's window
+    // holds it back, and no run starts
     assert_eq!(github_delivery(port, secret, "push", "d-1", push), 200);
+    until("the redelivery held back", || {
+        held_from(&ws, "forward") == 1
+    });
     until("every delivery's run", || {
         let forward = runs_of(&ws, "forward");
-        forward.len() == 3 && forward.iter().all(|r| r["status"] == "done")
+        forward.len() == 2 && forward.iter().all(|r| r["status"] == "done")
     });
     // signed with something else: nothing comes of it
     assert_eq!(

@@ -33,4 +33,5 @@ In the repository's Settings, under Webhooks, add one:
 
 GitHub sends a `ping` at once, which shows as delivered and tells nothing. Push a
 commit, and the notification comes. Recent Deliveries has each request; Redeliver
-sends one again, and itero skips a delivery it has seen.
+sends one again, and itero skips a delivery it has seen in the last week (the
+`unique` in `workflows/forward.json`).

@@ -96,31 +96,27 @@ says, because what it holds was written by someone else.
 
 ## The forward workflow
 
-One workflow takes every webhook, and its action sends the events the others
-use, from the fields it trusts:
+A workflow takes a path's webhooks, and its action sends the events the
+others use, from the fields it trusts. A service sends again when a
+delivery failed: the workflow's `on` lets each message's id through once
+([Across events: windows](/guides/workflows/#across-events-windows)), so a
+delivery sent again starts nothing:
 
 ```json
-{ "on": [{ "event": "itero.webhook.received" }],
-  "steps": [{ "#forward-webhook": { "args": { "path": "$event.path", "body": "$event.body" } } }] }
+{ "on": [{ "event": "itero.webhook.received" },
+         { "$event.path": "/app" },
+         { "unique": "$event.body.id", "for": "7d" }],
+  "steps": [{ "#forward-webhook": { "args": { "body": "$event.body" } } }] }
 ```
 
-`actions/forward-webhook`:
+The path comes first: conditions are checked before a window, so only
+`/app`'s webhooks are counted, and one with no `id` on another path is
+not taken for the same message. `actions/forward-webhook`:
 
 ```sh
 #!/bin/sh
-input=$(cat)
-case $(printf '%s' "$input" | jq -r '.args.path') in
-/app)
-  # a service sends again when a delivery failed: each message once
-  id=$(printf '%s' "$input" | jq -c '.args.body.id')
-  touch "$ITERO_MEMORY"
-  grep -qxF -- "$id" "$ITERO_MEMORY" && exit 0
-  printf '%s\n' "$id" >>"$ITERO_MEMORY"
-  printf '%s' "$input" |
-    jq -c '.args.body | {from: (.from | tostring), text: (.text | tostring)}' |
-    itero ws emit app.message.received --file -
-  ;;
-esac
+jq -c '.args.body | {from: (.from | tostring), text: (.text | tostring)}' |
+  itero ws emit app.message.received --file -
 ```
 
 So a service's shape, nested lists and all, stays in one place, and everything

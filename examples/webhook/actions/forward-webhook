@@ -1,17 +1,7 @@
 #!/bin/sh
-# Every webhook comes here. It picks the fields it trusts and sends an event
-# of its own. The body is a stranger's text: never eval it.
-input=$(cat)
-case $(printf '%s' "$input" | jq -r '.args.path') in
-/app)
-  # a service sends again when a delivery failed: each message once. The id
-  # is kept as JSON, so it stays on one line whatever it holds.
-  id=$(printf '%s' "$input" | jq -c '.args.body.id')
-  touch "$ITERO_MEMORY"
-  grep -qxF -- "$id" "$ITERO_MEMORY" && exit 0
-  printf '%s\n' "$id" >>"$ITERO_MEMORY"
-  printf '%s' "$input" |
-    jq -c '.args.body | {from: (.from | tostring), text: (.text | tostring)}' |
-    itero ws emit app.message.received --file -
-  ;;
-esac
+# A message from the app comes here, once: the workflow's on lets each id
+# through once, so a service sending again after a failed delivery starts
+# nothing. It picks the fields it trusts and sends an event of its own.
+# The body is a stranger's text: never eval it.
+jq -c '.args.body | {from: (.from | tostring), text: (.text | tostring)}' |
+  itero ws emit app.message.received --file -

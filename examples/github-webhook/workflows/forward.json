@@ -1,6 +1,6 @@
-{ "on": [{ "event": "itero.webhook.received" }],
+{ "on": [{ "event": "itero.webhook.received" },
+         { "$event.path": "/github" },
+         { "unique": "$event.headers.x_github_delivery", "for": "7d" }],
   "steps": [{ "#forward-webhook": { "args": {
-    "path": "$event.path",
     "kind": "$event.headers.x_github_event",
-    "delivery": "$event.headers.x_github_delivery",
     "body": "$event.body" } } }] }
