@@ -20,7 +20,7 @@ workflow is [internal](/guides/maintenance/).
 | `event` | Also |
 |---|---|
 | `daemon.started` | every field of the workspace and the daemon |
-| `daemon.stopped` | |
+| `daemon.stopped` | the daemon's last line: what a pass under way would write after it is not written, and the journal keeps what the pass saved (a step's own process may still add a line) |
 | `message` | `message`, `type`, `data`, and what it did: `started` and `reached` (runs), or `nothing` |
 | `run.started` | `message`, `schedule`, or `parent` (the run whose step started it) |
 | `step.started` | `step` |

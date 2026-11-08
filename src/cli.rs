@@ -596,8 +596,8 @@ extern "C" fn on_stop(_: libc::c_int) {
 }
 
 /// When the daemon is asked to stop (SIGINT, SIGTERM), stops itero-ai,
-/// calls `last` (each workspace logs `daemon.stopped`) and ends the
-/// process.
+/// calls `last` (each workspace's last line, `daemon.stopped`) and ends
+/// the process.
 fn stop_on_signal(last: impl FnOnce() + Send + 'static) {
     #[cfg(unix)]
     // SAFETY: the handler only stores to an atomic
@@ -775,7 +775,9 @@ fn dispatch(cli: Cli) -> Result<()> {
             {
                 let machine = machine.clone();
                 stop_on_signal(move || {
-                    machine.each(|r| r.log.write("daemon.stopped", serde_json::json!({})))
+                    let mut logs = vec![];
+                    machine.each(|r| logs.push(r.log.clone()));
+                    crate::engine::log::last(&logs, "daemon.stopped");
                 });
             }
             eprintln!(
@@ -856,7 +858,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                     .write("port.changed", serde_json::json!({ "why": note }));
             }
             let log = running.log.clone();
-            stop_on_signal(move || log.write("daemon.stopped", serde_json::json!({})));
+            stop_on_signal(move || crate::engine::log::last(&[log], "daemon.stopped"));
             eprintln!(
                 "itero: running the workflows in {}, each as it comes due (Ctrl-C stops); log: .itero/itero.log",
                 ws.root.display()
