@@ -147,8 +147,14 @@ pub enum Cmd {
         /// The click, as JSON: {"notification", "answer", "workflow", "data"}
         data: String,
     },
-    /// For connectors: print a line each time a file or folder changes
-    Watch { path: std::path::PathBuf },
+    /// For connectors: print a line each time a file or folder changes; or
+    /// run a command once the watch is set, and again after each change
+    Watch {
+        path: std::path::PathBuf,
+        /// After `--`: the command to run (no shell); its output is the connector's
+        #[arg(last = true, value_name = "COMMAND")]
+        command: Vec<String>,
+    },
     /// For connectors: the browser, kept on a page
     Browser {
         #[command(subcommand)]
@@ -662,9 +668,11 @@ fn ignore_sigpipe() {
 /// Wakes the running daemon for a message saved in the journal; the
 /// message is kept either way, so a failure is said, not fatal.
 /// The daemon going away closes stdin: a command a connector runs then ends.
-fn end_with_stdin() {
+/// Ends the process once its stdin closes, calling `last` first.
+fn end_with_stdin(last: impl FnOnce() + Send + 'static) {
     std::thread::spawn(|| {
         let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
+        last();
         std::process::exit(0);
     });
 }
@@ -1044,15 +1052,21 @@ fn dispatch(cli: Cli) -> Result<()> {
         },
         Cmd::Secret { name, file } => top::secret(None, &name, file)?,
         Cmd::Info { json } => top::machine_info(json)?,
-        Cmd::Watch { path } => {
+        Cmd::Watch { path, command } => {
             let watch = crate::connectors::Watch::new(&path)?;
-            end_with_stdin();
-            watch.run(&mut std::io::stdout().lock())?;
+            end_with_stdin(crate::connectors::end_run);
+            if command.is_empty() {
+                watch.run(&mut std::io::stdout().lock())?;
+            } else {
+                // the daemon stops a connector with SIGTERM: its run ends too
+                stop_on_signal(crate::connectors::end_run);
+                watch.run_command(&command)?;
+            }
         }
         Cmd::Webhook { host, port, hooks } => {
             let webhook =
                 crate::connectors::webhook::Webhook::new(workspace()?, host, port, &hooks)?;
-            end_with_stdin();
+            end_with_stdin(|| {});
             webhook.run()?;
         }
         Cmd::Service { cmd } => {

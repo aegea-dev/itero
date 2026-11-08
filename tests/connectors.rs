@@ -11,43 +11,186 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+/// Long enough for a slow machine: each test waits for what it reads, and
+/// this only bounds a wait that would otherwise never end.
+const LONG: Duration = Duration::from_secs(20);
+
+/// The lines `out` prints, as they come, until it closes.
+fn read_lines(out: impl std::io::Read + Send + 'static) -> std::sync::mpsc::Receiver<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
+/// Waits for `child` to end.
+fn ended(child: &mut std::process::Child) -> std::process::ExitStatus {
+    let end = Instant::now() + LONG;
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        assert!(Instant::now() < end, "still running");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Whether `f` holds before `LONG` has passed.
+fn until(f: impl Fn() -> bool) -> bool {
+    let end = Instant::now() + LONG;
+    while Instant::now() < end {
+        if f() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    f()
+}
+
+fn watch(args: &[&std::ffi::OsStr]) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_itero"))
+        .arg("watch")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+/// With no command: a line per change, its path and kind; it ends when
+/// its stdin closes. (A burst giving one line is the debouncer's, tested
+/// in `src/watch`.)
 #[test]
-fn itero_watch_prints_a_debounced_line_and_ends_with_its_stdin() {
+fn itero_watch_prints_a_line_per_change_and_ends_with_its_stdin() {
     let d = tempfile::tempdir().unwrap();
     let f = d.path().join("gelen kutusu");
     std::fs::write(&f, "From ayşe\n").unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_itero"))
-        .arg("watch")
-        .arg(&f)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = watch(&[f.as_os_str()]);
     let stdin = child.stdin.take().unwrap();
-    std::thread::sleep(Duration::from_millis(500)); // the watch is set
-    for _ in 0..5 {
+    let lines = read_lines(child.stdout.take().unwrap());
+    // nothing says when the watch is set: a mail each second until one is told
+    let end = Instant::now() + LONG;
+    let line = loop {
         std::fs::OpenOptions::new()
             .append(true)
             .open(&f)
             .unwrap()
             .write_all(b"From can\n")
             .unwrap();
-    }
-    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-    let v: serde_json::Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+        match lines.recv_timeout(Duration::from_secs(1)) {
+            Ok(line) => break line,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(e) => panic!("{e}"),
+        }
+        assert!(Instant::now() < end, "no line for a change");
+    };
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert_eq!(v["path"], f.to_str().unwrap());
     assert_eq!(v["kind"], "changed");
     drop(stdin);
-    let end = Instant::now() + Duration::from_secs(3);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "{status}");
-            break;
+    assert!(ended(&mut child).success());
+}
+
+/// With a command: run once the watch is set, then after each change. Its
+/// first run appends to the watched file: a second run follows only if the
+/// watch was set before the first one began.
+#[test]
+fn itero_watch_runs_its_command_once_the_watch_is_set_then_after_each_change() {
+    let d = tempfile::tempdir().unwrap();
+    let f = d.path().join("gelen kutusu");
+    std::fs::write(&f, "From ayşe\n").unwrap();
+    let runs = d.path().join("çalıştı");
+    let script = d.path().join("oku.sh");
+    std::fs::write(
+        &script,
+        "echo x >> \"$1\"\n\
+         n=$(wc -l < \"$1\" | tr -d ' ')\n\
+         [ \"$n\" = 1 ] && echo 'From can' >> \"$2\"\n\
+         echo \"{\\\"çalışma\\\": $n}\"\n",
+    )
+    .unwrap();
+    let mut child = watch(&[
+        f.as_os_str(),
+        "--".as_ref(),
+        "sh".as_ref(),
+        script.as_os_str(),
+        runs.as_os_str(),
+        f.as_os_str(),
+    ]);
+    let stdin = child.stdin.take().unwrap();
+    let lines = read_lines(child.stdout.take().unwrap());
+    // its lines are itero watch's
+    assert_eq!(lines.recv_timeout(LONG).unwrap(), r#"{"çalışma": 1}"#);
+    assert_eq!(lines.recv_timeout(LONG).unwrap(), r#"{"çalışma": 2}"#);
+    drop(stdin);
+    assert!(ended(&mut child).success());
+}
+
+/// A run that fails ends itero watch, its status in the error.
+#[test]
+fn itero_watch_ends_when_its_command_fails() {
+    let d = tempfile::tempdir().unwrap();
+    let f = d.path().join("gelen kutusu");
+    std::fs::write(&f, "").unwrap();
+    let mut child = watch(&[
+        f.as_os_str(),
+        "--".as_ref(),
+        "sh".as_ref(),
+        "-c".as_ref(),
+        "exit 3".as_ref(),
+    ]);
+    let _stdin = child.stdin.take().unwrap();
+    let status = ended(&mut child);
+    let mut err = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut err).unwrap();
+    assert!(!status.success(), "{err}");
+    assert!(err.contains("exit status: 3"), "{err}");
+}
+
+/// When itero watch ends, by its stdin closing or by SIGTERM (how the
+/// daemon stops a connector), a run under way ends with it.
+#[test]
+fn itero_watch_ends_a_run_under_way_when_it_ends() {
+    for how in ["stdin", "SIGTERM"] {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("gelen kutusu");
+        std::fs::write(&f, "").unwrap();
+        let pid_file = d.path().join("süreç");
+        let mut child = watch(&[
+            f.as_os_str(),
+            "--".as_ref(),
+            "sh".as_ref(),
+            "-c".as_ref(),
+            "echo $$ > \"$0.yazılıyor\" && mv \"$0.yazılıyor\" \"$0\" && exec sleep 600".as_ref(),
+            pid_file.as_os_str(),
+        ]);
+        let stdin = child.stdin.take().unwrap();
+        assert!(until(|| pid_file.exists()), "{how}: the run did not start");
+        let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        match how {
+            "stdin" => drop(stdin),
+            // SAFETY: a plain signal to our own child
+            _ => unsafe {
+                libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+            },
         }
-        assert!(Instant::now() < end, "still running after its stdin closed");
-        std::thread::sleep(Duration::from_millis(50));
+        ended(&mut child);
+        // SAFETY: signal 0 only asks whether the process is there
+        assert!(
+            until(|| unsafe { libc::kill(pid, 0) } != 0),
+            "{how}: the run is still there"
+        );
     }
-    assert!(lines.next().is_none(), "five appends, one line");
 }
 
 fn quick() -> Policy {

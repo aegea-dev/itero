@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use stop::Daemon;
 
 /// The example workspace, copied into `d`, with its mailbox at `mbox`.
-fn example(d: &Path, mbox: &Path) -> PathBuf {
+/// The mail-alert example in `d`, on `mbox`; with `late`, its watch is set
+/// two seconds after the connector starts.
+fn example(d: &Path, mbox: &Path, late: bool) -> PathBuf {
     let ws = d.join("ws");
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/mail-alert");
     let status = std::process::Command::new("cp")
@@ -23,6 +25,19 @@ fn example(d: &Path, mbox: &Path) -> PathBuf {
     let text = std::fs::read_to_string(&src)
         .unwrap()
         .replace("/var/mail/$USER", mbox.to_str().unwrap());
+    let text = match late {
+        false => text,
+        true => {
+            let watch = "itero watch \"$mailbox\"";
+            assert_eq!(text.matches(watch).count(), 1, "{text}");
+            text.lines()
+                .map(|l| match l.contains(watch) {
+                    true => format!("sleep 2\n{l}\n"),
+                    false => format!("{l}\n"),
+                })
+                .collect()
+        }
+    };
     std::fs::write(&src, text).unwrap();
     ws
 }
@@ -61,7 +76,7 @@ fn each_new_mail_is_shown_once_as_it_arrives_and_old_mail_never() {
     let d = tempfile::tempdir().unwrap();
     let mbox = d.path().join("gelen kutusu");
     let log = d.path().join("bildirim.log");
-    let ws = example(d.path(), &mbox);
+    let ws = example(d.path(), &mbox, false);
     // there before the daemon: where the mailbox is, not news
     mail(&mbox, "eski@örnek.test", "Thu Oct 15 10:00:00 2026", "Eski");
     let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -83,13 +98,12 @@ fn each_new_mail_is_shown_once_as_it_arrives_and_old_mail_never() {
             .spawn()
             .unwrap(),
     );
-    // the connector has noted where the mailbox is and set its watch
+    // the connector has set its watch, then noted where the mailbox is
     let seen = ws.join(".itero/mail.received.seen");
     assert!(
         wait_for(20, || seen.exists()),
         "the connector did not start"
     );
-    std::thread::sleep(std::time::Duration::from_millis(500));
     mail(
         &mbox,
         "ayşe@örnek.test",
@@ -130,10 +144,52 @@ fn each_new_mail_is_shown_once_as_it_arrives_and_old_mail_never() {
     );
 }
 
+/// However late the connector's watch is set, its first read comes after
+/// it: a mail as soon as it has noted the mailbox is shown.
+#[test]
+fn a_mail_is_shown_however_late_the_watch_is_set() {
+    let d = tempfile::tempdir().unwrap();
+    let mbox = d.path().join("gelen kutusu");
+    let log = d.path().join("bildirim.log");
+    let ws = example(d.path(), &mbox, true);
+    mail(&mbox, "eski@örnek.test", "Thu Oct 15 10:00:00 2026", "Eski");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    std::fs::write(
+        ws.join("itero.config.json"),
+        format!("{{\"port\": {port}}}"),
+    )
+    .unwrap();
+    let _daemon = Daemon(
+        std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .arg("daemon")
+            .current_dir(&ws)
+            .env("ITERO_NOTIFY_LOG", &log)
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .spawn()
+            .unwrap(),
+    );
+    let seen = ws.join(".itero/mail.received.seen");
+    assert!(
+        wait_for(20, || seen.exists()),
+        "the connector did not start"
+    );
+    mail(&mbox, "ayşe@örnek.test", "Fri Oct 16 10:00:00 2026", "Geç");
+    assert!(
+        wait_for(10, || shown(&log).contains("Geç")),
+        "{}",
+        shown(&log)
+    );
+    assert!(!shown(&log).contains("Eski"), "{}", shown(&log));
+}
+
 #[test]
 fn check_lists_the_workflow_and_the_connector() {
     let d = tempfile::tempdir().unwrap();
-    let ws = example(d.path(), &d.path().join("yok"));
+    let ws = example(d.path(), &d.path().join("yok"), false);
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
         .args(["ws", "check"])
         .current_dir(&ws)
@@ -165,7 +221,7 @@ fn headers_are_shown_as_mail_programs_meant_them() {
     let d = tempfile::tempdir().unwrap();
     let mbox = d.path().join("gelen kutusu");
     let log = d.path().join("bildirim.log");
-    let ws = example(d.path(), &mbox);
+    let ws = example(d.path(), &mbox, false);
     mail(&mbox, "eski@örnek.test", "Thu Oct 15 10:00:00 2026", "Eski");
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -191,7 +247,6 @@ fn headers_are_shown_as_mail_programs_meant_them() {
         wait_for(20, || seen.exists()),
         "the connector did not start"
     );
-    std::thread::sleep(std::time::Duration::from_millis(500));
     // an encoded sender, and a long subject in two encoded words on two lines
     mail_as_written(
         &mbox,
