@@ -154,6 +154,8 @@ at the runs started before, and lets an event start a run or holds it back:
 | `{ "unique": "$event.id", "for": "1d" }` | the same, a value remembered for a day |
 | `{ "changed": "$event.state" }` | when the value is not the last run's: `up`, `up`, `down`, `up` start three |
 | `{ "at_most": "1h" }` | at most once an hour: the first event in the hour starts it, the rest start nothing |
+| `{ "batch": { "count": 100, "within": "5m" } }` | one run for 100 events, or for those that came within 5 minutes of the first, whichever comes first |
+| `{ "at_least": 5, "within": "10m" }` | one run once 5 events came within 10 minutes: "5 failures in 10 minutes" |
 
 `per` keeps a window for each value: `{ "at_most": "1h", "per": "$event.site" }`
 starts a run at most once an hour for each site. The conditions are checked
@@ -169,9 +171,30 @@ another. An event without the value counts as `null`.
 ```
 
 tells a page's new text, at most once every ten minutes for each page.
-What a window let through is kept in the journal, so a daemon started again
-goes on where it stopped; the log's `message` line says which workflow a
-window `held` back, and why. A schedule's run passes no window.
+`batch` (with a `count`, a `within` or both) and `at_least` (with its
+`within`) keep the events they let through, and start one run of them:
+its `$event` is `{"events": [...], "count": 3, "first": "<time>",
+"last": "<time>"}`, the events' data in the order they came, and `per`,
+the value its window is kept for, when it has one:
+
+```json
+{ "on": [{ "event": "order.failed" },
+         { "at_least": 5, "within": "10m", "per": "$event.shop" }],
+  "steps": [{ "#notify": { "args": { "title": "$event.per",
+                                     "text": "$event.count failures in ten minutes" } } }] }
+```
+
+`at_least` starts again from none once it has started a run. An `on` has
+one `batch` or `at_least` at most; the other windows come first, and an
+event kept counts for them as one that starts a run (`unique` before a
+batch keeps a value out of it once in). A batch whose time has come starts
+its run as a schedule does, outside `limits.runs`; one whose workflow is
+gone or off by then is dropped (`batch.dropped` in the log).
+
+What a window let through or keeps is in the journal, so a daemon started
+again goes on where it stopped; the log's `message` line says which
+workflow a window `held` back, and why, and which `kept` it. A schedule's
+run passes no window.
 
 ## About it: its entry
 
