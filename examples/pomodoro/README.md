@@ -17,7 +17,9 @@ While it waits, `itero ws wf runs` shows how long is left, as the step
 says it each minute on stderr. The step holds a worker the whole time; a
 daemon that stops meanwhile starts it again from the beginning.
 
-Run `itero daemon` in this folder.
+Run `itero daemon` in this folder. Or open `pomodoro.ipynb`, a notebook that
+installs itero and runs a session step by step, here or in
+[Colab](https://colab.research.google.com/github/aegea-dev/itero/blob/main/examples/pomodoro/pomodoro.ipynb).
 
 ## Tests
 
