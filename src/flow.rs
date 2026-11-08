@@ -309,6 +309,9 @@ pub enum Step {
         label: String,
         /// It runs in rounds, each with the one before's results.
         repeat: Option<Repeat>,
+        /// `"at_most": "1h"` and the like on the step: whether it runs, by
+        /// the runs of the workflow it let through before.
+        window: Option<Window>,
     },
     /// Actions and workflows that run side by side; the next step waits as
     /// the group says.
@@ -1400,6 +1403,7 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
                 undo: None,
                 undo_args: Value::Object(Map::new()),
                 repeat: None,
+                window: None,
             })
         }
         Value::Array(items) => Ok(Step::Side(Group {
@@ -1418,6 +1422,7 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
                 undo: w.undo,
                 undo_args: w.undo_args,
                 repeat: w.repeat,
+                window: w.window,
             })
         }
         _ => Err(one(format!(
@@ -1571,6 +1576,7 @@ struct Written {
     undo: Option<Name>,
     undo_args: Value,
     repeat: Option<Repeat>,
+    window: Option<Window>,
 }
 
 fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
@@ -1691,11 +1697,47 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             "strict is gone: a step's args reach its action and nothing else now",
         ));
     }
+    // a window on the step: its keys beside args, as in a workflow's on
+    let keys: Map<String, Value> = WINDOW_KEYS
+        .iter()
+        .filter_map(|k| fields.remove(*k).map(|v| (k.to_string(), v)))
+        .collect();
+    let window = if keys.is_empty() {
+        None
+    } else if keys.contains_key("batch") || keys.contains_key("at_least") {
+        ps.push(Problem::new(
+            "",
+            "a step runs or not: batch and at_least keep events for a run, in a workflow's on",
+        ));
+        None
+    } else if matches!(step_name, Some(Name::Workflow(_))) {
+        ps.push(Problem::new(
+            "",
+            "a window goes on an action's step; a workflow used as a step has windows of its own steps",
+        ));
+        None
+    } else {
+        match on_window(&Value::Object(keys.clone()), &keys) {
+            Ok(w) => Some(w),
+            Err(es) => {
+                for e in es {
+                    ps.push(Problem::new("", e.trim_start_matches("on: ")));
+                }
+                None
+            }
+        }
+    };
+    if window.is_some() && rounds.is_some() {
+        ps.push(Problem::new(
+            "",
+            "a window and repeat on one step: put the step in a workflow of its own, repeated, used here by its name",
+        ));
+    }
     for other in fields.keys() {
         ps.push(Problem::new(
             "",
             format!(
-                "\"{other}\" is not one of args, on, undo, repeat: a step's values go under args"
+                "\"{other}\" is not one of args, on, undo, repeat, unique, changed, at_most: a step's values go under args"
             ),
         ));
     }
@@ -1720,6 +1762,7 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             undo,
             undo_args,
             repeat: rounds,
+            window,
         }),
         _ => Err(ps),
     }
@@ -1744,6 +1787,12 @@ fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, Vec<Problem>
                     return Err(vec![Problem::new(
                         "",
                         "repeat is for a step of a list, not one side by side: put the step in a workflow of its own, repeated, used here by its name",
+                    )]);
+                }
+                if w.window.is_some() {
+                    return Err(vec![Problem::new(
+                        "",
+                        "a window is for a step of a list, not one side by side: put the step in a workflow of its own, used here by its name",
                     )]);
                 }
                 let label = w.name.label();

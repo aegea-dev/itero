@@ -43,6 +43,53 @@ impl Ws {
         Ws { d, ws }
     }
 
+    /// A workspace whose `bildir` runs `steps` on each `sayfa.değişti`;
+    /// `#yaz` writes its arg `n` as a line of `yazıldı`, `#son` a line of
+    /// `bitti`.
+    fn steps(steps: Value) -> Ws {
+        let ws = Ws::with(json!([]));
+        let root = ws.d.path();
+        std::fs::write(
+            root.join("workflows/bildir.json"),
+            json!({ "on": [{ "event": "sayfa.değişti" }], "steps": steps }).to_string(),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        for (name, body) in [
+            ("yaz", "printf '%s\\n' \"$n\" >> yazıldı\necho '{}'"),
+            ("son", "echo bitti >> bitti\necho '{}'"),
+        ] {
+            let a = root.join("actions").join(name);
+            std::fs::write(&a, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&a, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        ws
+    }
+
+    /// An event, and passes at `now` until its run has nothing left to do.
+    fn event_run(&self, data: Value, now: &str) {
+        itero::engine::events::emit(&self.ws, "sayfa.değişti", Some(data), now).unwrap();
+        for _ in 0..50 {
+            let p = run_once(&self.ws, now.parse().unwrap(), exe()).unwrap();
+            if !p.more && p.deferred == 0 && p.elsewhere == 0 {
+                return;
+            }
+        }
+        panic!("the run did not settle");
+    }
+
+    fn read(&self, rel: &str) -> String {
+        std::fs::read_to_string(self.d.path().join(rel)).unwrap_or_default()
+    }
+
+    /// The log's `step.skipped` lines.
+    fn skipped(&self) -> Vec<Value> {
+        common::log_lines(&self.read(".itero/itero.log"))
+            .into_iter()
+            .filter(|l| l["event"] == "step.skipped")
+            .collect()
+    }
+
     /// An event, routed by a pass at `now`.
     fn event(&self, data: Value, now: &str) {
         itero::engine::events::emit(&self.ws, "sayfa.değişti", Some(data), now).unwrap();
@@ -349,4 +396,116 @@ fn every_wrong_batch_is_told_at_once() {
         two.contains("on: one batch or at_least in an on: each keeps the events it lets through"),
         "{two}"
     );
+}
+
+#[test]
+fn a_step_with_at_most_runs_once_per_period_and_the_run_goes_on() {
+    let ws = Ws::steps(json!([
+        { "#yaz": { "args": { "n": "$event.n" }, "at_most": "1h" } },
+        "#son"
+    ]));
+    ws.event_run(json!({ "n": 1 }), "2026-11-08T10:00:00Z");
+    ws.event_run(json!({ "n": 2 }), "2026-11-08T10:30:00Z");
+    ws.event_run(json!({ "n": 3 }), "2026-11-08T11:00:01Z");
+    assert_eq!(ws.read("yazıldı"), "1\n3\n");
+    // every run went on past it
+    assert_eq!(ws.read("bitti").lines().count(), 3);
+    let skipped = ws.skipped();
+    assert_eq!(skipped.len(), 1, "{skipped:?}");
+    assert_eq!(skipped[0]["step"], "#yaz");
+    assert!(
+        skipped[0]["why"].as_str().unwrap().starts_with("at_most:"),
+        "{skipped:?}"
+    );
+}
+
+#[test]
+fn a_step_with_unique_per_a_value_runs_once_for_each() {
+    let ws = Ws::steps(json!([
+        { "#yaz": { "args": { "n": "$event.n" }, "unique": "$event.n", "per": "$event.site" } }
+    ]));
+    for (n, site, now) in [
+        (1, "bir", "10:00"),
+        (1, "bir", "10:01"),
+        (1, "iki", "10:02"),
+        (2, "bir", "10:03"),
+    ] {
+        ws.event_run(
+            json!({ "n": n, "site": site }),
+            &format!("2026-11-08T{now}:00Z"),
+        );
+    }
+    assert_eq!(ws.read("yazıldı"), "1\n1\n2\n");
+}
+
+#[test]
+fn a_step_with_changed_runs_when_its_value_is_not_the_last_runs() {
+    let ws = Ws::steps(json!([
+        { "#yaz": { "args": { "n": "$event.n" }, "changed": "$event.n" } }
+    ]));
+    for (i, n) in [1, 1, 2, 2, 1].iter().enumerate() {
+        ws.event_run(json!({ "n": n }), &format!("2026-11-08T10:0{i}:00Z"));
+    }
+    assert_eq!(ws.read("yazıldı"), "1\n2\n1\n");
+}
+
+#[test]
+fn every_wrong_window_on_a_step_is_told_at_once() {
+    let e = itero::flow::parse(
+        r##"{ "on": [{ "event": "sayfa.değişti" }],
+            "steps": [
+              { "#yaz": { "batch": { "count": 2 } } },
+              { "#yaz": { "unique": "$event.n", "at_most": "1h" } },
+              { "#yaz": { "for": "1d" } },
+              { "#yaz": { "at_most": "bir saat" } },
+              { "#yaz": { "at_least": 2, "within": "1m" } }
+            ] }"##,
+    )
+    .unwrap_err();
+    for want in [
+        "a step runs or not: batch and at_least keep events for a run, in a workflow's on (steps/#yaz/1)",
+        "says more than one thing: unique, changed, at_most, batch and at_least are entries of their own (steps/#yaz/2)",
+        "for goes with unique: {\"unique\": \"$event.id\", \"for\": \"1d\"} (steps/#yaz/3)",
+        "at_most: a duration is like 30m, 2h or 1d, not \"bir saat\" (steps/#yaz/4)",
+        "a step runs or not: batch and at_least keep events for a run, in a workflow's on (steps/#yaz/5)",
+    ] {
+        assert!(e.contains(want), "missing: {want}\nin:\n{e}");
+    }
+}
+
+#[test]
+fn a_step_that_runs_again_after_waiting_is_not_counted_again() {
+    let ws = Ws::steps(json!([
+        { "#bekle": { "args": { "k": "$event.n" }, "at_most": "1h" } },
+        "#son"
+    ]));
+    use std::os::unix::fs::PermissionsExt;
+    let a = ws.d.path().join("actions/bekle");
+    std::fs::write(
+        &a,
+        "#!/bin/sh\n\
+         if printf '%s' \"${event:-}\" | grep -q geldi; then echo '{}'; exit 0; fi\n\
+         printf '{\"k\": %s}\\n' \"$k\"\n\
+         exit 75\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&a, std::fs::Permissions::from_mode(0o755)).unwrap();
+    ws.event_run(json!({ "n": 1 }), "2026-11-08T10:00:00Z");
+    assert_eq!(ws.read("bitti"), "", "it waits");
+    // what it waits for comes: the step runs again, within the hour
+    itero::engine::events::emit(
+        &ws.ws,
+        "cevap.geldi",
+        Some(json!({ "k": 1, "geldi": true })),
+        "2026-11-08T10:10:00Z",
+    )
+    .unwrap();
+    for _ in 0..50 {
+        let p = run_once(&ws.ws, "2026-11-08T10:10:00Z".parse().unwrap(), exe()).unwrap();
+        if !p.more && p.deferred == 0 && p.elsewhere == 0 {
+            break;
+        }
+    }
+    assert_eq!(ws.read("bitti"), "bitti\n");
+    assert!(ws.skipped().is_empty(), "{:?}", ws.skipped());
 }

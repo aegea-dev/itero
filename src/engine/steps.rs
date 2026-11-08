@@ -276,8 +276,19 @@ pub struct StepInput {
     /// The run is a workflow used as a step: another run's step started it.
     #[serde(default)]
     pub child: bool,
+    /// Steps whose window holds them back now (the daemon asks again with
+    /// them): each is passed by, saying why.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held: Vec<HeldStep>,
     pub runtime: Runtime,
     pub event: Event,
+}
+
+/// A step a window holds back: its path, and why.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HeldStep {
+    pub path: Vec<usize>,
+    pub why: String,
 }
 
 /// What the manager decided.
@@ -332,6 +343,10 @@ pub struct StepJob {
     /// `$event`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event: Option<Value>,
+    /// Its step's window, on the job of its first start only: the daemon
+    /// lets it through (and remembers it) or holds the step back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<super::journal::Gated>,
 }
 
 /// A workflow used as a step, to start as a run of its own.
@@ -627,10 +642,15 @@ impl Machine<'_> {
 
     /// A step whose `on` does not hold: it is passed by.
     fn skipped(&mut self, step: &str) {
+        self.skipped_why(step, "its on does not hold");
+    }
+
+    /// A step passed by, saying why.
+    fn skipped_why(&mut self, step: &str, why: &str) {
         self.notes.push(serde_json::json!({
             "event": "step.skipped",
             "step": step,
-            "why": "its on does not hold",
+            "why": why,
         }));
     }
 
@@ -692,6 +712,7 @@ impl Machine<'_> {
                         undo: None,
                         undo_args: Value::Object(Map::new()),
                         repeat: None,
+                        window: None,
                     })
                 })
                 .collect::<Result<_, String>>()?,
@@ -764,12 +785,20 @@ impl Machine<'_> {
                 args,
                 on,
                 label,
+                window,
                 ..
             } => {
                 if let Some(on) = on
                     && !self.holds(on)
                 {
                     self.skipped(label);
+                    return Ok(None);
+                }
+                if window.is_some()
+                    && let Some(h) = self.i.held.iter().find(|h| h.path == *path)
+                {
+                    let why = h.why.clone();
+                    self.skipped_why(label, &why);
                     return Ok(None);
                 }
                 let data = match self.args(args) {
@@ -780,7 +809,20 @@ impl Machine<'_> {
                         return Ok(None);
                     }
                 };
-                self.start_name(name, &data, flow::written_secrets(args), path)
+                let at = self.start_name(name, &data, flow::written_secrets(args), path)?;
+                if let Some(w) = window {
+                    let now = self
+                        .i
+                        .now
+                        .parse()
+                        .map_err(|_| format!("now is not a time: {}", self.i.now))?;
+                    let key = format!("{}\u{1f}step/{path:?}", self.i.workflow);
+                    let gate = super::journal::gated(&key, w, &self.rt.state, now);
+                    if let Some(job) = self.jobs.iter_mut().rev().find(|j| j.path == *path) {
+                        job.gate = Some(gate);
+                    }
+                }
+                Ok(at)
             }
             Step::Side(group) => {
                 let mut entries: Vec<Entry> = vec![];
@@ -1975,6 +2017,7 @@ fn job(leaf: &mut At, path: &[usize]) -> Option<StepJob> {
         secrets: secrets.clone(),
         waiting_since: waiting_since.clone(),
         event: event.clone(),
+        gate: None,
     })
 }
 

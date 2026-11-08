@@ -305,6 +305,7 @@ fn a_run_started_by_a_step_keeps_its_parent_and_the_step() {
     let pinned = serde_json::from_value(flows).unwrap();
     let input = json!({"gün": "salı"});
     j.handle(Handled {
+        let_through: vec![],
         seq: started.seq,
         at: NOW,
         error: None,
@@ -568,6 +569,7 @@ fn a_job_is_done_once_handled_or_forgotten_and_not_while_it_waits() {
     j.lose_job(jobs[0].seq, "denendi").unwrap();
     assert!(!j.job_done(jobs[0].seq).unwrap(), "waits");
     j.handle(Handled {
+        let_through: vec![],
         seq: jobs[1].seq,
         at: NOW,
         error: None,

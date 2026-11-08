@@ -97,6 +97,7 @@ fn an_action_gets_its_steps_args_and_a_waited_event() {
     std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
     let ws = itero::workspace::find(d.path()).unwrap();
     let job = |event: Option<serde_json::Value>| StepJob {
+        gate: None,
         path: vec![0],
         action: "imap-check".into(),
         version: None,
@@ -253,6 +254,7 @@ fn bind_gives_the_secret_only_to_the_args_written_as_one() {
     std::fs::write(d.path().join(".env"), "ITERO_TEST_ANAHTAR2=değer\n").unwrap();
     let ws = itero::workspace::find(d.path()).unwrap();
     let job = StepJob {
+        gate: None,
         path: vec![0],
         action: "a".into(),
         version: None,

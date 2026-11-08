@@ -337,6 +337,7 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
             undo_args: json!({}),
             label: "order-process".into(),
             repeat: None,
+            window: None,
         }
     );
     let Step::One { name, .. } = &f.steps[2] else {
@@ -448,7 +449,7 @@ fn mistakes_are_named() {
         // a step's values go under args
         (
             r##"{ "steps": [{ "#a": { "carrier": "PTT Kargo" } }] }"##,
-            "\"carrier\" is not one of args, on, undo, repeat:",
+            "\"carrier\" is not one of args, on, undo, repeat, unique, changed, at_most:",
         ),
         (
             r##"{ "steps": [{ "#a": { "args": 3 } }] }"##,
