@@ -1094,60 +1094,17 @@ fn route(
 }
 
 /// The windows of `workflow`'s `on`, with the values a run's first
-/// `state` gives them at `now`. A value the event lacks is `null`, a value
-/// as any other. Keys hold the window's place and a hash of its `per`
-/// value; values are hashes too, so a state row stays small.
+/// `state` gives them at `now`: each keyed by its place, `on/<i>`.
 fn gates(
     workflow: &str,
     windows: &[flow::Window],
     state: &Map<String, Value>,
     now: DateTime<Utc>,
 ) -> Vec<journal::Gated> {
-    use journal::Gate;
-    let hash = |path: &str| {
-        use sha2::{Digest, Sha256};
-        let v = flow::lookup(state, path).cloned().unwrap_or(Value::Null);
-        Sha256::digest(v.to_string().as_bytes())
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    };
-    let after = |d: &std::time::Duration| {
-        stamp(now + chrono::Duration::from_std(*d).unwrap_or(chrono::Duration::MAX))
-    };
     windows
         .iter()
         .enumerate()
-        .map(|(i, w)| journal::Gated {
-            per: w
-                .per
-                .as_deref()
-                .map(|p| flow::lookup(state, p).cloned().unwrap_or(Value::Null)),
-            key: format!(
-                "{workflow}\u{1f}on/{i}\u{1f}{}",
-                w.per.as_deref().map(hash).unwrap_or_default()
-            ),
-            gate: match &w.gate {
-                flow::Gate::Unique { value, within } => Gate::Unique {
-                    value: hash(value),
-                    until: within.as_ref().map(after),
-                },
-                flow::Gate::Changed { value } => Gate::Changed { value: hash(value) },
-                flow::Gate::AtMost { every } => Gate::AtMost {
-                    until: after(every),
-                },
-                flow::Gate::Batch { count, within } => Gate::Batch {
-                    count: *count,
-                    closes: within.as_ref().map(after),
-                },
-                flow::Gate::AtLeast { count, within } => Gate::AtLeast {
-                    count: *count,
-                    since: stamp(
-                        now - chrono::Duration::from_std(*within).unwrap_or(chrono::Duration::MAX),
-                    ),
-                },
-            },
-        })
+        .map(|(i, w)| journal::gated(&format!("{workflow}\u{1f}on/{i}"), w, state, now))
         .collect()
 }
 
@@ -1216,6 +1173,7 @@ fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Resul
         children: vec![],
         stopped: vec![],
         stopped_why: journal::JOB_STOPPED,
+        let_through: vec![],
     })?;
     Ok(Delivered::Handled(vec![]))
 }
@@ -1277,7 +1235,7 @@ fn deliver(
     }
     names.sort();
     names.dedup();
-    let input = StepInput {
+    let mut input = StepInput {
         now: at.clone(),
         workflow: root,
         flows: values,
@@ -1285,6 +1243,7 @@ fn deliver(
         config: ws.manifest().unwrap_or_default(),
         defined: names.into_iter().filter(|n| defined(ws, n)).collect(),
         child: run.parent.is_some(),
+        held: vec![],
         runtime: run.runtime.clone(),
         event: Event {
             id: r.event.id.clone(),
@@ -1292,19 +1251,44 @@ fn deliver(
             data: r.event.data.clone(),
         },
     };
-    let answer = match ask_again(exe, &input) {
-        Ok(a) => a,
-        Err(Failure::Error(why)) => return give_up(log, j, r.seq, &at, why),
-        Err(Failure::Lost(why)) => {
-            log.write(
-                "error",
-                who.line(
-                    json!({ "why": format!("{why}; {} is given again in a second", r.event.kind) }),
-                ),
-            );
-            return Ok(Delivered::Deferred);
+    // a step's window lets its first job through, or holds the step back:
+    // then the manager is asked again, passing it by. Deliveries are one at
+    // a time, so what the windows say holds until the answer is saved.
+    let answer = loop {
+        let answer = match ask_again(exe, &input) {
+            Ok(a) => a,
+            Err(Failure::Error(why)) => return give_up(log, j, r.seq, &at, why),
+            Err(Failure::Lost(why)) => {
+                log.write(
+                    "error",
+                    who.line(
+                        json!({ "why": format!("{why}; {} is given again in a second", r.event.kind) }),
+                    ),
+                );
+                return Ok(Delivered::Deferred);
+            }
+        };
+        let mut held = vec![];
+        for job in &answer.jobs {
+            if let Some(g) = &job.gate
+                && let Some(why) = j.held_back(g, &at)?
+            {
+                held.push(steps::HeldStep {
+                    path: job.path.clone(),
+                    why,
+                });
+            }
         }
+        if held.is_empty() {
+            break answer;
+        }
+        input.held.extend(held);
     };
+    let let_through: Vec<journal::Gated> = answer
+        .jobs
+        .iter()
+        .filter_map(|job| job.gate.clone())
+        .collect();
     let mut events: Vec<Envelope> = answer
         .jobs
         .iter()
@@ -1418,6 +1402,7 @@ fn deliver(
         seq: r.seq,
         at: &at,
         error: None,
+        let_through,
         run: Some((&id, &answer.runtime, answer.runtime.ended.is_some())),
         timers: Some(&answer.timers),
         events,
@@ -1912,6 +1897,7 @@ fn save_result(
         children: vec![],
         stopped: vec![],
         stopped_why: journal::JOB_STOPPED,
+        let_through: vec![],
     })
 }
 

@@ -92,7 +92,9 @@ running.
   a keeping one may keep a message or be full at it (`batch`, `at_least`
   count and time); a batch may close at any moment. The model checks that
   a message held back is still handled once, in the same transaction, and
-  that a message kept reaches exactly one run, across a crash too.
+  that a message kept reaches exactly one run, across a crash too. A
+  window on a step is the manager passing the step by, as for an `on`
+  that does not hold: values, which the model leaves out.
 - A failure inside a group side by side (a group's actions only finish);
   a repeated step (the same step twice in a row stands for it); cron;
   chains on `itero.run.error` and `itero.run.failed`.

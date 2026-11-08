@@ -53,6 +53,7 @@ impl Run {
     fn try_send(&mut self, kind: &str, data: Value) -> Result<StepAnswer, String> {
         self.seq += 1;
         let input = StepInput {
+            held: vec![],
             now: self.now.clone(),
             workflow: self.root.clone(),
             flows: self.flows.clone(),
@@ -922,6 +923,7 @@ fn a_run_written_before_output_is_read_and_goes_on() {
     r.rt = rt;
     let a = r.failed(
         &StepJob {
+            gate: None,
             path: vec![0, 2],
             action: "uygula".into(),
             version: None,
@@ -1508,6 +1510,7 @@ fn a_group_is_read_from_a_run_written_before_groups_said_how_to_wait() {
     )]);
     r.rt = rt;
     let seker = StepJob {
+        gate: None,
         path: vec![0, 0, 1],
         action: "şeker".into(),
         version: None,

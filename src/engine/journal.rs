@@ -286,15 +286,66 @@ pub struct Start {
 
 /// A window a run's start passes: its key (the workflow, the window, the
 /// `per` value's hash) and what it asks, by the runs it let through.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Gated {
     pub key: String,
     pub gate: Gate,
     /// The `per` value itself, given to a run of kept events as `per`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub per: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// The gate of window `w` at `key` (whose window it is: a workflow's
+/// `on/<i>`, a step's path), with the values `state` gives it at `now`. A
+/// value the state lacks is `null`, a value as any other. Values and the
+/// `per` value are kept as hashes, so a row stays small.
+pub fn gated(
+    key: &str,
+    w: &crate::flow::Window,
+    state: &Map<String, Value>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Gated {
+    use crate::flow;
+    let value = |path: &str| flow::lookup(state, path).cloned().unwrap_or(Value::Null);
+    let hash = |path: &str| {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(value(path).to_string().as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let shift =
+        |d: &std::time::Duration| chrono::Duration::from_std(*d).unwrap_or(chrono::Duration::MAX);
+    let stamp = |t: chrono::DateTime<chrono::Utc>| super::daemon::stamp(t);
+    Gated {
+        key: format!(
+            "{key}\u{1f}{}",
+            w.per.as_deref().map(hash).unwrap_or_default()
+        ),
+        per: w.per.as_deref().map(value),
+        gate: match &w.gate {
+            flow::Gate::Unique { value, within } => Gate::Unique {
+                value: hash(value),
+                until: within.as_ref().map(|d| stamp(now + shift(d))),
+            },
+            flow::Gate::Changed { value } => Gate::Changed { value: hash(value) },
+            flow::Gate::AtMost { every } => Gate::AtMost {
+                until: stamp(now + shift(every)),
+            },
+            flow::Gate::Batch { count, within } => Gate::Batch {
+                count: *count,
+                closes: within.as_ref().map(|d| stamp(now + shift(d))),
+            },
+            flow::Gate::AtLeast { count, within } => Gate::AtLeast {
+                count: *count,
+                since: stamp(now - shift(within)),
+            },
+        },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Gate {
     /// No run started with `value` (a hash) that is still remembered;
     /// remembered until `until`, for good without.
@@ -426,7 +477,7 @@ pub struct Routed {
 
 /// Why a window holds `g` back, by what it let through before; none when it
 /// lets it through.
-fn held_back(tx: &rusqlite::Transaction, g: &Gated, at: &str) -> Result<Option<String>> {
+fn held_back(tx: &rusqlite::Connection, g: &Gated, at: &str) -> Result<Option<String>> {
     Ok(match &g.gate {
         Gate::Unique { value, .. } => tx
             .query_row(
@@ -465,7 +516,7 @@ fn held_back(tx: &rusqlite::Transaction, g: &Gated, at: &str) -> Result<Option<S
 }
 
 /// Remembers that `g` let a run through.
-fn let_through(tx: &rusqlite::Transaction, g: &Gated) -> Result<()> {
+fn let_through(tx: &rusqlite::Connection, g: &Gated) -> Result<()> {
     match &g.gate {
         Gate::Unique { value, until } => tx.execute(
             "INSERT OR REPLACE INTO seen (key, value, until) VALUES (?1, ?2, ?3)",
@@ -569,6 +620,9 @@ pub struct Handled<'a> {
     pub stopped: Vec<i64>,
     /// Why they were: `JOB_STOPPED` (a group), `JOB_RUN_STOPPED` (the run).
     pub stopped_why: &'a str,
+    /// The windows of the steps it starts, which let them through: each
+    /// remembers it.
+    pub let_through: Vec<Gated>,
 }
 
 pub struct Journal {
@@ -1172,6 +1226,12 @@ impl Journal {
         Ok(n)
     }
 
+    /// Why the window of `g` holds it back at `at`, by what it let through
+    /// before; none when it lets it through. Nothing is written.
+    pub fn held_back(&self, g: &Gated, at: &str) -> Result<Option<String>> {
+        held_back(&self.db, g, at)
+    }
+
     /// Forgets what windows let through that they no longer hold back for:
     /// `unique` values and `at_most` periods past their end at `now`.
     pub fn forget_seen(&self, now: &str) -> Result<usize> {
@@ -1341,6 +1401,9 @@ impl Journal {
         }
         for e in &h.events {
             publish(&tx, e)?;
+        }
+        for g in &h.let_through {
+            let_through(&tx, g)?;
         }
         for e in &h.shown {
             publish(&tx, e)?;
