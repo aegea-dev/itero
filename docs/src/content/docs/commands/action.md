@@ -14,7 +14,9 @@ itero ws ac list
 itero ws ac errors [<action>] [--limit N]
 ```
 
-Each one takes `--json`, to print JSON for scripts instead of a table.
+Each one takes `--json`, to print JSON for scripts instead of a table: the
+same JSON as the API's [`GET /actions`](/reference/http/#get-actions) and
+[`GET /actions/errors`](/reference/http/#get-actionserrors).
 
 ## list
 

@@ -21,6 +21,9 @@ an error is `{"error": "..."}` with its status.
 | `GET /runs/{id or name}` | a run, its state and its events |
 | `POST /runs/{id or name}/stop` | stops a run where it is |
 | `GET /workflows` | each workflow's name and what starts it |
+| `GET /actions` | each action and its files |
+| `GET /actions/errors` | which actions break runs, or one action's failures |
+| `GET /connectors` | each connector, once for each set of args |
 
 ## Only from this machine
 
@@ -230,6 +233,42 @@ The same as [`itero ws wf list --json`](/commands/workflow/#list):
 `path` is from the workspace, and `null` for a built-in workflow;
 `notes` are `off`, `not now (from/until)` or `internal`; `waiting`, the
 events no daemon has handled yet.
+
+## GET /actions
+
+The same as [`itero ws ac list --json`](/commands/action/#list): each
+action, its files (one per version), and the built-in ones:
+
+```json
+[ { "name": "ship", "files": ["actions/ship", "actions/ship@2"], "built_in": false },
+  { "name": "notify", "files": [], "built_in": true } ]
+```
+
+## GET /actions/errors
+
+The same as [`itero ws ac errors --json`](/commands/action/#errors):
+each action runs broke at, how often, and when and why last, the most
+recent first:
+
+```json
+[ { "action": "ship", "errors": 3, "last": "...", "why": "exit 1: no stock",
+    "run": "misty-lake" } ]
+```
+
+`?action=<name>` (`#` or not) gives that action's failures instead,
+newest first: each with `when`, `workflow`, `run` (its name), `id` and
+`why`; none for an action that never broke a run. `?limit=N` caps either
+(20 unless given).
+
+## GET /connectors
+
+The same as [`itero ws cn list --json`](/commands/connector/#list): each
+connector, once for each set of args the workflows give it:
+
+```json
+[ { "type": "mail.received", "file": "connectors/mail.received",
+    "args": { "box": "INBOX" } } ]
+```
 
 ## One itero per machine
 
