@@ -27,7 +27,7 @@ stopped waits for it.
 | `--file <path>` | takes the data from this file, `-` for stdin ([below](#data-from-a-file)) |
 | `--wait` | waits for the runs it starts to end, and prints them as JSON (below) |
 | `--timeout D` | with `--wait`: how long, like `30s` or `5m` (60s) |
-| `--json` | prints its id and what it starts as JSON |
+| `--json` | prints its id and what it starts as JSON, the same as the API's [`POST /events`](/reference/http/#post-events) |
 
 It prints the event's id (which [`itero ws ev cancel`](/commands/event/#cancel)
 takes back while no daemon has handled it), then (on stderr) what the
@@ -80,13 +80,15 @@ id:
 ```
 $ itero ws emit --wait website.requested '{"url": "https://example.com"}'
 {
+  "id": "01a1602a-43f3-70a6-a731-c2210dc038ef",
   "message": "01a1602a-43f3-70a6-a731-c2210dc038ef",
   "runs": [
     { "run": "01a1602a-4401-7c8e-9e0b-1f2b5a3c4d5e", "name": "misty-lake",
       "workflow": "page-summary", "status": "done",
       "state": { "event": { "url": "https://example.com" }, "output": "- The page is …",
                  "steps": { "fetch": "<!doctype html>…", "ask-ai": "- The page is …" } } }
-  ]
+  ],
+  "waited": "done"
 }
 $ itero ws emit --wait website.requested '{"url": "https://example.com"}' | jq -r '.runs[0].state.output'
 ```

@@ -70,23 +70,34 @@ curl -s -X POST http://127.0.0.1:8787/events -H 'content-type: application/json'
 | `type` | the event's type, two or more words joined by dots (needed) |
 | `data` | a JSON object |
 
-Answers 202 `{"id": "..."}`; 400 for a bad event, or one of the engine's
-own types (`itero.*`, `action.*`, `timer.*`, `run.*`, `workflow.*`,
-`connector.*`); 422 for a field it does not know. See
-[Connectors](/guides/connectors/).
+Answers 202 with the same JSON as [`itero ws emit
+--json`](/commands/emit/): its `id`, the workflows it `starts`, the
+`waiting` runs it may reach, the `nearest` type that starts something
+when it starts nothing, and `daemon`:
+
+```json
+{ "id": "01a1…", "starts": ["order"], "waiting": 0, "nearest": null,
+  "daemon": { "running": true } }
+```
+
+400 for a bad event, or one of the engine's own types (`itero.*`,
+`action.*`, `timer.*`, `run.*`, `workflow.*`, `connector.*`); 422 for a
+field it does not know. See [Connectors](/guides/connectors/).
 
 With `?wait=N` (seconds, up to 600) it holds the request until the runs
 the event started have ended, and answers 200 with them:
 
 ```json
-{ "id": "01a1…", "message": "01a1…",
+{ "id": "01a1…", "message": "01a1…", "waited": "done",
   "runs": [ { "run": "01a1…", "name": "misty-lake", "workflow": "order",
               "status": "done",
               "state": { "event": { "order": 43 }, "output": { "tracking": "TR-43" },
                          "steps": { "ship": { "tracking": "TR-43" } } } } ] }
 ```
 
-When the time runs out first, it answers 202 with the runs so far.
+`waited` is `done`, `failed` (one failed or ended in error) or `timed
+out`: when the time runs out first, it answers 202 with the runs so far.
+The same as `itero ws emit --wait`.
 
 For runs that wait for days, the workflow posts its result itself, to a
 URL the app sends in the event's data
@@ -131,8 +142,9 @@ none.
 [`itero ws ev list`](/commands/event/#list) does: `[{ "id", "type",
 "time", "data" }]`. `DELETE /events/{id}` cancels one: `200` with
 `{"cancelled": id}`, `409` when a daemon has handled it (with the runs it
-`started`) or runs waiting for it have it already (those runs, as
-`reached`), `404` when there is none.
+`started`, and its `note`) or runs waiting for it have it already (those
+runs, as `reached`), `404` when there is none; each `error` says it as
+[`itero ws ev cancel`](/commands/event/#cancel) does.
 
 ## GET /events/stream
 
