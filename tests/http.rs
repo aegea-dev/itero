@@ -14,6 +14,7 @@ fn app(d: &std::path::Path) -> (axum::Router, std::sync::mpsc::Receiver<()>) {
     let engine = Arc::new(Engine {
         health: Mutex::new(Health::starting("2026-10-15T14:00:00Z")),
         wake,
+        streams: Default::default(),
     });
     (router(ws, engine, 8790), woken)
 }

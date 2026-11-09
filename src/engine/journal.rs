@@ -795,6 +795,47 @@ impl Journal {
         Ok(())
     }
 
+    /// The newest event's seq, 0 for none: where following from now
+    /// starts.
+    pub fn last_seq(&self) -> Result<i64> {
+        Ok(self
+            .db
+            .query_row("SELECT COALESCE(MAX(seq), 0) FROM events", [], |r| r.get(0))?)
+    }
+
+    /// The seq of the event `id` that came into the workspace, while the
+    /// journal keeps it.
+    pub fn seq_came_in(&self, id: &str) -> Result<Option<i64>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT seq FROM events WHERE id = ?1 AND subject = ?2",
+                params![id, subject("app")],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Up to `limit` of the events that came into the workspace after
+    /// `seq`, oldest first: not the engine's inner messages (a worker's
+    /// job, a timer or a stop for one run).
+    pub fn came_in_after(&self, seq: i64, limit: usize) -> Result<Vec<Recorded>> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM events WHERE seq > ?1 AND subject = ?2 ORDER BY seq LIMIT ?3"
+        );
+        let mut s = self.db.prepare(&sql)?;
+        let out = s
+            .query_map(params![seq, subject("app"), limit as i64], row)?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(out)
+    }
+
+    /// SQLite's `data_version`: it changes when another connection has
+    /// written to the journal, so a reader looks again only then.
+    pub fn changed(&self) -> Result<i64> {
+        Ok(self.db.query_row("PRAGMA data_version", [], |r| r.get(0))?)
+    }
+
     /// Every event, or those about one subject, in order.
     pub fn events(&self, subject: Option<&str>) -> Result<Vec<Recorded>> {
         let sql =

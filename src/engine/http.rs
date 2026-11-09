@@ -1,6 +1,7 @@
-//! The daemon's HTTP API on 127.0.0.1:<port>: its health, events in, and
-//! what the journal holds (runs, workflows, memory). Local only: the Host
-//! header must name this port on 127.0.0.1 or localhost.
+//! The daemon's HTTP API on 127.0.0.1:<port>: its health, events in,
+//! what the journal holds (runs, workflows, memory), and the events and
+//! the log followed live. Local only: the Host header must name this port
+//! on 127.0.0.1 or localhost.
 use super::daemon::Health;
 use super::journal::Journal;
 use crate::workspace::Workspace;
@@ -20,6 +21,8 @@ pub struct Engine {
     pub health: Mutex<Health>,
     /// Wakes the loop for an event that just arrived.
     pub wake: Sender<()>,
+    /// Who follows the workspace now (`GET /events/stream`, `/log/stream`).
+    pub streams: Arc<super::follow::Streams>,
 }
 
 #[derive(Clone)]
@@ -46,6 +49,8 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/events", post(event).get(queued))
+        .route("/events/stream", get(follow_events))
+        .route("/log/stream", get(follow_log))
         .route("/events/{id}", delete(cancel_event))
         .route("/runs", get(runs))
         .route("/runs/{id}", get(run))
@@ -187,6 +192,7 @@ async fn health(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
         "last_pass": h.last_pass,
         "last_error": h.last_error,
         "connectors": h.connectors,
+        "streams": s.engine.streams.health(),
         "ai": crate::ai::keeper::Keeper::global().health(),
         "browser": crate::browser::keeper::Keeper::global().health(),
     })))
@@ -305,6 +311,51 @@ async fn event(
         _ => StatusCode::OK,
     };
     Ok((code, Json(answer)))
+}
+
+/// `GET /events/stream`: each event that comes into the workspace, one
+/// JSON line, as it comes; see `follow`.
+async fn follow_events(
+    State(s): State<Shared>,
+    Query(q): Query<Vec<(String, String)>>,
+) -> Result<Response, Reply> {
+    follow(s, &q, super::follow::Kind::Events).await
+}
+
+/// `GET /log/stream`: each new line of the workspace's log, as it is
+/// written.
+async fn follow_log(
+    State(s): State<Shared>,
+    Query(q): Query<Vec<(String, String)>>,
+) -> Result<Response, Reply> {
+    follow(s, &q, super::follow::Kind::Log).await
+}
+
+async fn follow(
+    s: Shared,
+    q: &[(String, String)],
+    kind: super::follow::Kind,
+) -> Result<Response, Reply> {
+    use super::follow::{self, Kind, Refused};
+    let asked = follow::asked(q, kind).map_err(|why| fail(StatusCode::BAD_REQUEST, why))?;
+    let (ws, streams) = (s.ws.clone(), s.engine.streams.clone());
+    // the journal may wait on a busy SQLite: off the async threads
+    let body = tokio::task::spawn_blocking(move || match kind {
+        Kind::Events => follow::events(&ws, asked, streams),
+        Kind::Log => follow::log(&ws, asked, streams),
+    })
+    .await
+    .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|r| match r {
+        Refused::Gone(why) => fail(StatusCode::GONE, why),
+        Refused::Internal(e) => internal(e),
+    })?;
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/x-ndjson")],
+        axum::body::Body::from_stream(body),
+    )
+        .into_response())
 }
 
 /// An event that was not sent, as a reply.
