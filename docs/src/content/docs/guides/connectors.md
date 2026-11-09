@@ -35,7 +35,10 @@ It runs in the workspace, with the daemon's `itero` first on its `PATH`
 and its args as environment variables, secrets among them. Its args are
 given by the workflows that listen to it, in their `on` entry beside its
 event: [A connector's args](/guides/secrets/#a-connectors-args). Its stdin
-closes when the daemon goes; its stderr goes to the daemon's stderr. The
+closes when the daemon goes, and a daemon that is stopped (Ctrl-C,
+SIGTERM, `itero service stop`) sends it SIGTERM, killing one still
+running 3 seconds later: no connector outlives its daemon, so the next
+one never runs a second copy. Its stderr goes to the daemon's stderr. The
 daemon starts it again when it ends, waiting longer each time, and gives
 up on one that keeps ending (`itero.connector.gave-up`); the log and
 `/health` show each connector.
