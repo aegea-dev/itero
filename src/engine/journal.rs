@@ -45,7 +45,7 @@ const STOPPED: &str = "the daemon stopped while it ran";
 pub const CANCELLED: &str = "cancelled by command";
 
 /// An event for the workspace no daemon has handled yet.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Queued {
     pub id: String,
     #[serde(rename = "type")]

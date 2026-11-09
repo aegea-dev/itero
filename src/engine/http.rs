@@ -225,79 +225,56 @@ async fn stop_run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Rep
     Ok((StatusCode::ACCEPTED, asked))
 }
 
-/// The events for the workspace no daemon has handled yet.
+/// `GET /events`: the events for the workspace no daemon has handled yet.
 async fn queued(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
-    blocking(&s, |ws| {
-        let q = Journal::open(ws)
-            .map_err(internal)?
-            .queued()
-            .map_err(internal)?;
-        serde_json::to_value(q).map_err(|e| internal(e.into()))
-    })
-    .await
+    answered(&s, crate::answer::events::queued).await
 }
 
-/// Cancels an event no daemon has handled yet: 409 when one has, 404 when
-/// there is none.
+/// `DELETE /events/{id}`: takes back an event no daemon has handled yet.
 async fn cancel_event(
     State(s): State<Shared>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, Reply> {
-    blocking(&s, move |ws| {
-        let now = super::daemon::stamp(chrono::Utc::now());
-        match Journal::open(ws).map_err(internal)?.cancel(&id, &now).map_err(internal)? {
-            super::journal::Cancelled::Done => Ok(json!({ "cancelled": id })),
-            super::journal::Cancelled::Handled { note, started } => Err((
-                StatusCode::CONFLICT,
-                Json(json!({ "error": format!("{id} was already handled"), "note": note, "started": started })),
-            )),
-            super::journal::Cancelled::Reached { runs } => Err((
-                StatusCode::CONFLICT,
-                Json(json!({ "error": format!("{id} has reached runs waiting for it"), "reached": runs })),
-            )),
-            super::journal::Cancelled::Missing => {
-                Err(fail(StatusCode::NOT_FOUND, format!("no event {id}")))
-            }
-        }
-    })
-    .await
+    answered(&s, move |ws| crate::answer::events::cancel(ws, &id)).await
 }
 
+/// `POST /events`: an event sent, 202 with what it will do; with `?wait=`,
+/// its runs once they ended (200), or those so far when the time ran out
+/// (202).
 async fn event(
     State(s): State<Shared>,
     Query(q): Query<EventQuery>,
     body: Result<Json<Posted>, JsonRejection>,
 ) -> Result<Reply, Reply> {
+    use crate::answer::events::{Emit, Emitted};
     // Json refuses any Content-Type but application/json (415): a page on
     // another site cannot post one without a preflight, never granted here
     let Json(p) = body.map_err(|r| fail(r.status(), r.body_text()))?;
-    let ws = s.ws.clone();
-    let now = super::daemon::stamp(chrono::Utc::now());
-    // the journal may wait on a busy SQLite: off the async threads
-    let id = tokio::task::spawn_blocking(move || super::events::emit(&ws, &p.kind, p.data, &now))
-        .await
-        .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(not_sent)?;
-    // a loop that has stopped finds the event in the journal when it starts
-    let _ = s.engine.wake.send(());
-    let Some(secs) = q.wait else {
-        return Ok((StatusCode::ACCEPTED, Json(json!({ "id": id }))));
+    let e = Emit {
+        kind: p.kind,
+        data: p.data,
+        wait: q
+            .wait
+            .map(|secs| std::time::Duration::from_secs(secs.min(MAX_WAIT))),
     };
-    // its runs' end: 200 once they all ended, 202 with those so far when
-    // the time ran out
-    let ws = s.ws.clone();
-    let wait = std::time::Duration::from_secs(secs.min(MAX_WAIT));
-    let (mut answer, how) =
-        tokio::task::spawn_blocking(move || super::events::wait_for(&ws, &id, wait))
-            .await
-            .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .map_err(internal)?;
-    answer["id"] = answer["message"].clone();
-    let code = match how {
-        super::events::Waited::TimedOut => StatusCode::ACCEPTED,
-        _ => StatusCode::OK,
+    let (ws, wake) = (s.ws.clone(), s.engine.wake.clone());
+    // the journal may wait on a busy SQLite: off the async threads; the
+    // loop is woken before any waiting (one that has stopped finds the
+    // event in the journal when it starts)
+    let sent = tokio::task::spawn_blocking(move || {
+        crate::answer::events::emit(&ws, &e, || {
+            let _ = wake.send(());
+        })
+    })
+    .await
+    .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(fault)?;
+    let code = match &sent {
+        Emitted::Waited(w) if w.how() != super::events::Waited::TimedOut => StatusCode::OK,
+        _ => StatusCode::ACCEPTED,
     };
-    Ok((code, Json(answer)))
+    let v = serde_json::to_value(&sent).map_err(|e| internal(e.into()))?;
+    Ok((code, Json(v)))
 }
 
 /// `GET /events/stream`: each event that comes into the workspace, one
@@ -389,7 +366,14 @@ async fn answered<T: serde::Serialize>(
 /// No answer, as a reply: its status and its message.
 fn fault(f: crate::answer::Fault) -> Reply {
     let code = StatusCode::from_u16(f.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    fail(code, f.to_string())
+    let (code, mut body) = fail(code, f.to_string());
+    // a conflict's fields: what is in the way
+    if let crate::answer::Fault::Conflict(_, why) = f
+        && let Value::Object(b) = &mut body.0
+    {
+        b.extend(why);
+    }
+    (code, body)
 }
 
 /// `GET /runs`: the runs `q` asks for, newest first; 50 unless `limit`.
