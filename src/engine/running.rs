@@ -87,6 +87,7 @@ impl Running {
         let engine = Arc::new(Engine {
             health: Mutex::new(Health::starting(&daemon::stamp(chrono::Utc::now()))),
             wake,
+            streams: Default::default(),
         });
         let stop = Arc::new(Stop::default());
         let state = Arc::new(Mutex::new("running"));

@@ -4,6 +4,7 @@
 pub mod alarm;
 pub mod daemon;
 pub mod events;
+pub mod follow;
 pub mod http;
 pub mod journal;
 pub mod lock;

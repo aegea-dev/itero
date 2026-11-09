@@ -43,7 +43,8 @@ run of its own, whose result is the step's.
 (`order.placed`), and data. Apps send them with `itero ws emit` or `POST
 /events`; connectors print them. An event starts a run of every workflow
 whose `on` has an `event` of its type. A schedule or a change to a
-watched file starts runs too.
+watched file starts runs too. A program follows them as they come with
+[`GET /events/stream`](/reference/http/#get-eventsstream).
 
 **A run** is one go through a workflow, with an id and a name of two
 random words (`misty-lake`). Its steps read the event that started it

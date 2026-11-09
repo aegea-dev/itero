@@ -15,6 +15,8 @@ an error is `{"error": "..."}` with its status.
 | `POST /events` | sends an event (a message) |
 | `GET /runs` | runs, newest first |
 | `GET /events` | the events not yet handled |
+| `GET /events/stream` | each event that comes in, as it comes |
+| `GET /log/stream` | each new line of the log, as it is written |
 | `DELETE /events/{id}` | cancels an event not yet handled |
 | `GET /runs/{id or name}` | a run, its state and its events |
 | `POST /runs/{id or name}/stop` | stops a run where it is |
@@ -51,6 +53,10 @@ tunnel at this API: it can stop runs.
 `connectors` has each [connector](/guides/connectors/): `running`,
 `waiting` (to start again) or `gave up`, its restarts, and how it ended
 last.
+
+`streams` is how many follow the workspace now:
+`{"events": 1, "log": 0}` ([GET /events/stream](#get-eventsstream),
+[GET /log/stream](#get-logstream)).
 
 ## POST /events
 
@@ -114,6 +120,63 @@ none.
 `{"cancelled": id}`, `409` when a daemon has handled it (with the runs it
 `started`) or runs waiting for it have it already (those runs, as
 `reached`), `404` when there is none.
+
+## GET /events/stream
+
+Each event that comes into the workspace, as it comes, one JSON line each
+(`application/x-ndjson`): from connectors, webhooks, `POST /events`,
+`itero ws emit` and itero's own (`itero.run.done`,
+`itero.notification.clicked`, ...). They are the events a workflow's `on`
+sees, whether or not they start a run.
+
+```bash
+curl -sN http://127.0.0.1:8787/events/stream | jq .
+```
+
+```json
+{"id": "01a1…", "type": "order.placed", "time": "2026-11-09T10:00:00Z",
+ "source": "outside", "data": {"order": 43}}
+```
+
+`source` says where it came from: `outside` (posted or emitted),
+`webhook`, `connector/<type>`, or `daemon` (itero's own).
+
+It starts with the events saved after the request.
+
+| Param | Does |
+|---|---|
+| `after=<id>` | starts after that event instead: every one since, then on |
+| `type=<type>` | only events of that type; give it again for more (`?type=order.placed&type=order.paid`) |
+| `count=N` | ends after N events: `?count=1` waits for the next one |
+| `every=<duration>` | how often it looks: `100ms` unless given, from `10ms` to `1m` |
+
+An `after` the journal no longer has (forgotten by
+[`keep`](/guides/maintenance/), or never sent) is 410, so a listener knows
+it missed some. A bad parameter is 400, every problem in one `error`.
+
+The stream ends when the daemon stops. A listener that keeps the last
+`id` it got starts again with `?after=` it and misses nothing:
+
+```bash
+curl -sN "http://127.0.0.1:8787/events/stream?type=order.placed&count=1"   # the next order
+```
+
+## GET /log/stream
+
+Each new line of [the log](/guides/log/), as the daemon writes it, the
+same JSON as the file (`application/x-ndjson`), from the request on. It
+follows a roll: the rest of the old file, then the new one. Only whole
+lines are sent. It takes `count` and `every` as `GET /events/stream`
+does.
+
+```bash
+curl -sN http://127.0.0.1:8787/log/stream | jq -r '"\(.time) \(.event) \(.workflow // "")"'
+```
+
+Both streams read what is already saved: with nobody listening they cost
+the daemon nothing, and a slow listener is read at its own pace. Through
+`itero daemon --all` they are `/ws/<name>/events/stream` and
+`/ws/<name>/log/stream`.
 
 ## GET /runs/\{id or name\}
 
