@@ -296,8 +296,10 @@ async fn an_event_posted_with_wait_is_answered_with_its_runs_end() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&action, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    // the daemon's loop, which the post wakes
+    // the daemon's loop, which the post wakes, holding the workspace as a
+    // daemon does: waiting needs a daemon
     let ws = itero::workspace::find(d.path()).unwrap();
+    let _held = itero::engine::lock::take(&ws, "deneme").unwrap();
     std::thread::spawn(move || {
         let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
         while woken.recv().is_ok() {

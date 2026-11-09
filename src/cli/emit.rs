@@ -59,74 +59,57 @@ fn wait(args: &EmitArgs) -> Result<Option<Duration>> {
 /// `itero ws emit`: saved for the workspace, to wait for its daemon if none
 /// runs.
 pub fn one(ws: &Workspace, args: EmitArgs) -> Result<()> {
+    use crate::answer::events::{Emit, Emitted};
     let kind = &args.kind;
-    let data = data(&args)?;
-    let now = stamp(chrono::Utc::now());
-    let fields = data
-        .as_ref()
-        .and_then(|d: &Value| d.as_object().cloned())
-        .unwrap_or_default();
-    if let Some(timeout) = wait(&args)? {
-        // with no daemon nothing would answer: say so, sending nothing
-        if !super::daemon_running(ws)? {
-            bail!(
-                "no daemon is running: start itero daemon (or itero ws add, with the machine's daemon), then send it again"
-            );
-        }
-        let id = events::emit(ws, kind, data, &now)?;
-        super::nudge(ws, &now);
-        let (answer, how) = events::wait_for(ws, &id, timeout)?;
-        println!("{}", serde_json::to_string_pretty(&answer)?);
-        match how {
-            Waited::Done => return Ok(()),
-            Waited::Failed => std::process::exit(1),
-            Waited::TimedOut => {
-                eprintln!("timed out: not every run it started has ended");
-                std::process::exit(2);
+    let e = Emit {
+        kind: kind.clone(),
+        data: data(&args)?,
+        wait: wait(&args)?,
+    };
+    let mut sent = match crate::answer::Client::Local(ws.clone()).emit(&e)? {
+        Emitted::Waited(w) => {
+            println!("{}", serde_json::to_string_pretty(&w)?);
+            match w.how() {
+                Waited::Done => return Ok(()),
+                Waited::Failed => std::process::exit(1),
+                Waited::TimedOut => {
+                    eprintln!("timed out: not every run it started has ended");
+                    std::process::exit(2);
+                }
             }
         }
-    }
-    let id = events::emit(ws, kind, data, &now)?;
-    super::nudge(ws, &now);
-    let fate = events::fate(ws, kind, &fields)?;
-    let running = super::daemon_running(ws)?;
-    // none holds it: what the machine's daemon, if one answers, says of it
-    let machine = if running {
+        Emitted::Sent(sent) => sent,
+    };
+    // none holds it: what this machine's daemon, if one answers, says of it
+    let machine = if sent.daemon.running {
         None
     } else {
         super::workspace::machine_says(&ws.root)
     };
-    let mut daemon = json!({ "running": running });
     if let Some(m) = &machine {
-        daemon["machine"] = json!({
+        sent.daemon.machine = Some(json!({
             "state": m.state.as_ref().map(|(s, _)| s),
             "why": m.state.as_ref().and_then(|(_, w)| w.as_ref()),
             "itero": m.itero,
-        });
+        }));
     }
-    let v = json!({
-        "id": id,
-        "starts": fate.starts,
-        "waiting": fate.waiting,
-        "nearest": fate.nearest,
-        "daemon": daemon,
-    });
-    show(args.json, &v, |_| {
+    let id = sent.id.clone();
+    show(args.json, &serde_json::to_value(&sent)?, |_| {
         println!("{id}");
         // what it will do, on stderr: stdout stays the id for scripts
-        if !fate.starts.is_empty() {
-            eprintln!("starts: {}", fate.starts.join(", "));
+        if !sent.starts.is_empty() {
+            eprintln!("starts: {}", sent.starts.join(", "));
         }
-        if fate.waiting > 0 {
-            eprintln!("may reach {} waiting run(s)", fate.waiting);
+        if sent.waiting > 0 {
+            eprintln!("may reach {} waiting run(s)", sent.waiting);
         }
-        if fate.starts.is_empty() {
-            match &fate.nearest {
+        if sent.starts.is_empty() {
+            match &sent.nearest {
                 Some(n) => eprintln!("nothing starts on {kind}: did you mean {n}?"),
                 None => eprintln!("nothing starts on {kind}"),
             }
         }
-        match (&machine, running) {
+        match (&machine, sent.daemon.running) {
             (_, true) => {}
             (Some(m), false) => {
                 for l in m.lines(m.name.as_deref().unwrap_or("this workspace")) {

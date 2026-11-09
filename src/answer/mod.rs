@@ -2,6 +2,7 @@
 //! its API route both call the function here, so the two never say
 //! different things. The CLI reaches them through a [`Client`]: on this
 //! machine, in the same process, with no daemon needed.
+pub mod events;
 pub mod runs;
 pub mod workflows;
 
@@ -14,8 +15,9 @@ pub enum Fault {
     Bad(String),
     /// What it names is not there: a run, a workflow (404).
     Missing(String),
-    /// It cannot be done now, and why (409).
-    Conflict(String),
+    /// It cannot be done now, and why (409), with what is in the way
+    /// (the runs an event started, say) as the route's fields.
+    Conflict(String, serde_json::Map<String, serde_json::Value>),
     /// What broke here: the journal, a file (500).
     Internal(anyhow::Error),
 }
@@ -26,7 +28,7 @@ impl Fault {
         match self {
             Fault::Bad(_) => 400,
             Fault::Missing(_) => 404,
-            Fault::Conflict(_) => 409,
+            Fault::Conflict(..) => 409,
             Fault::Internal(_) => 500,
         }
     }
@@ -35,7 +37,7 @@ impl Fault {
 impl std::fmt::Display for Fault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Fault::Bad(m) | Fault::Missing(m) | Fault::Conflict(m) => f.write_str(m),
+            Fault::Bad(m) | Fault::Missing(m) | Fault::Conflict(m, _) => f.write_str(m),
             Fault::Internal(e) => write!(f, "{e:#}"),
         }
     }
@@ -71,6 +73,24 @@ impl Client {
     pub fn stop(&self, run: &str) -> Result<runs::Stopped, Fault> {
         match self {
             Client::Local(ws) => runs::stop(ws, run),
+        }
+    }
+
+    pub fn queued(&self) -> Result<Vec<crate::engine::journal::Queued>, Fault> {
+        match self {
+            Client::Local(ws) => events::queued(ws),
+        }
+    }
+
+    pub fn cancel(&self, id: &str) -> Result<events::Cancelled, Fault> {
+        match self {
+            Client::Local(ws) => events::cancel(ws, id),
+        }
+    }
+
+    pub fn emit(&self, e: &events::Emit) -> Result<events::Emitted, Fault> {
+        match self {
+            Client::Local(ws) => events::emit(ws, e, || events::nudge(ws)),
         }
     }
 

@@ -144,6 +144,16 @@ impl Ws {
         String::from_utf8_lossy(&o.stderr).into_owned()
     }
 
+    /// A request with a JSON body: its status and JSON.
+    fn send(&self, method: reqwest::Method, path: &str, body: Option<Value>) -> (u16, Value) {
+        let mut r = http().request(method, self.url(path));
+        if let Some(b) = body {
+            r = r.json(&b);
+        }
+        let r = r.send().unwrap();
+        (r.status().as_u16(), r.json().unwrap_or(Value::Null))
+    }
+
     fn run_id(&self, status: &str) -> String {
         let (_, v) = self.get("/runs");
         v.as_array()
@@ -274,4 +284,113 @@ fn a_stop_is_answered_alike() {
     let v: Value = r.json().unwrap();
     let keys = |v: &Value| v.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
     assert_eq!(keys(&v), keys(&api));
+}
+
+/// `v` without the fields that differ between two events sent alike.
+fn but_ids(mut v: Value) -> Value {
+    fn strip(v: &mut Value) {
+        match v {
+            Value::Object(m) => {
+                for k in [
+                    "id", "message", "run", "name", "started", "ended", "time", "at",
+                ] {
+                    m.remove(k);
+                }
+                m.values_mut().for_each(strip);
+            }
+            Value::Array(a) => a.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    strip(&mut v);
+    v
+}
+
+#[test]
+fn events_are_listed_and_sent_alike() {
+    let w = Ws::new();
+    same(&w, &["ws", "ev", "list"], "/events");
+    let data = json!({ "ürün": "şeker" });
+    let cli = w.cli(&["ws", "emit", "sipariş.verildi", &data.to_string()]);
+    let (code, api) = w.send(
+        reqwest::Method::POST,
+        "/events",
+        Some(json!({ "type": "sipariş.verildi", "data": data })),
+    );
+    assert_eq!(code, 202, "{api}");
+    assert_eq!(cli["id"].as_str().unwrap().len(), 36, "{cli}");
+    assert_eq!(api["id"].as_str().unwrap().len(), 36, "{api}");
+    assert_eq!(
+        but_ids(cli.clone()),
+        but_ids(api),
+        "the same answer, its id apart"
+    );
+    assert_eq!(cli["starts"], json!(["sipariş"]), "{cli}");
+    assert_eq!(cli["daemon"]["running"], true, "{cli}");
+    // waiting for the runs it starts: the same runs, ended alike
+    let o = w
+        .command()
+        .args([
+            "ws",
+            "emit",
+            "--wait",
+            "--timeout",
+            "20s",
+            "kargo.çıktı",
+            "{}",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(1), "a run in error exits 1");
+    let cli: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let (code, api) = w.send(
+        reqwest::Method::POST,
+        "/events?wait=20",
+        Some(json!({ "type": "kargo.çıktı", "data": {} })),
+    );
+    assert_eq!(code, 200, "{api}");
+    assert_eq!(but_ids(cli.clone()), but_ids(api), "the same runs");
+    assert_eq!(cli["waited"], "failed", "{cli}");
+    assert_eq!(cli["runs"][0]["status"], "error", "{cli}");
+}
+
+#[test]
+fn a_bad_event_and_a_cancel_are_refused_alike() {
+    let w = Ws::new();
+    // a type that is not one: 400, the same words
+    let (code, api) = w.send(
+        reqwest::Method::POST,
+        "/events",
+        Some(json!({ "type": "tek", "data": {} })),
+    );
+    assert_eq!(code, 400, "{api}");
+    let said = w.cli_fails(&["ws", "emit", "tek", "{}"]);
+    let message = api["error"].as_str().unwrap();
+    assert!(said.contains(message), "{said:?} lacks {message:?}");
+    // an event a daemon has handled: 409, what it started, in both
+    let sent = w.cli(&["ws", "emit", "sipariş.verildi", "{}"]);
+    let id = sent["id"].as_str().unwrap().to_string();
+    until("the daemon to take it", || {
+        let (_, q) = w.get("/events");
+        q.as_array()
+            .is_some_and(|q| q.iter().all(|e| e["id"] != id.as_str()))
+    });
+    let (code, api) = w.send(reqwest::Method::DELETE, &format!("/events/{id}"), None);
+    assert_eq!(code, 409, "{api}");
+    // the runs it started, by id
+    let started = api["started"].as_array().unwrap();
+    assert_eq!(started.len(), 1, "{api}");
+    let message = api["error"].as_str().unwrap();
+    assert!(
+        message.contains(&format!("it started {}", started[0].as_str().unwrap())),
+        "{message}"
+    );
+    let said = w.cli_fails(&["ws", "ev", "cancel", &id]);
+    assert!(said.contains(message), "{said:?} lacks {message:?}");
+    // one there is not: 404, the same words
+    let (code, api) = w.send(reqwest::Method::DELETE, "/events/yok-b%C3%B6yle", None);
+    assert_eq!(code, 404, "{api}");
+    let message = api["error"].as_str().unwrap();
+    let said = w.cli_fails(&["ws", "ev", "cancel", "yok-böyle"]);
+    assert!(said.contains(message), "{said:?} lacks {message:?}");
 }

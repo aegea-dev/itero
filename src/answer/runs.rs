@@ -294,9 +294,10 @@ pub fn stop(ws: &Workspace, run: &str) -> Result<Stopped, Fault> {
             stopping: name,
             daemon,
         }),
-        StopAsked::Ended { name, status } => {
-            Err(Fault::Conflict(format!("{name} has ended: {status}")))
-        }
+        StopAsked::Ended { name, status } => Err(Fault::Conflict(
+            format!("{name} has ended: {status}"),
+            serde_json::Map::new(),
+        )),
         StopAsked::Missing => Err(Fault::Missing(format!(
             "no run {run}: itero ws wf runs lists them"
         ))),
