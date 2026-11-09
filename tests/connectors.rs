@@ -2,6 +2,8 @@
 //! print the data of one message of their file name's type; and `itero
 //! watch`, for connectors that watch a file.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "common/stop.rs"]
+mod stop;
 use itero::connectors::Copy;
 use itero::connectors::supervise::{self, Policy};
 use itero::engine::daemon::Health;
@@ -349,4 +351,115 @@ fn after_an_end_the_pause_doubles_resets_when_calm_and_gives_up() {
         Some(Duration::from_secs(1))
     );
     assert_eq!(ends.len(), 1);
+}
+
+/// A workspace whose connector never reads its stdin and never prints: it
+/// notes its pid in `kulak.pid`, then sleeps. A workflow listens to it.
+fn deaf_connector(d: &std::path::Path) -> std::path::PathBuf {
+    connector_running(d, "#!/bin/sh\necho $$ > kulak.pid\nexec sleep 600\n")
+}
+
+/// A workspace whose connector is `script`, which notes in `kulak.pid` the
+/// pid that is to end with the daemon.
+fn connector_running(d: &std::path::Path, script: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let root = d.join("çalışma");
+    for dir in ["connectors", "workflows", "actions"] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    std::fs::write(root.join("itero.config.json"), "{}").unwrap();
+    let exec = |p: std::path::PathBuf, text: &str| {
+        std::fs::write(&p, text).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    exec(root.join("connectors/kulak.duydu"), script);
+    exec(root.join("actions/yaz"), "#!/bin/sh\nexit 0\n");
+    std::fs::write(
+        root.join("workflows/dinle.json"),
+        r##"{ "on": [{ "event": "kulak.duydu" }], "steps": ["#yaz"] }"##,
+    )
+    .unwrap();
+    root
+}
+
+fn alive(pid: i32) -> bool {
+    // SAFETY: signal 0 only asks whether the process is there
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+/// Starts `itero <args>` in `root`, waits for its connector's pid, stops
+/// the daemon as Ctrl-C does, and says whether the connector ended too.
+fn connector_ends_with(d: &std::path::Path, root: &std::path::Path, args: &[&str]) {
+    let itero = |dir: &std::path::Path| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_itero"));
+        c.current_dir(dir)
+            .env("HOME", d.join("ev"))
+            .env("XDG_STATE_HOME", d.join("durum"))
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .env("ITERO_NOTIFIER", "/usr/bin/true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        c
+    };
+    if args.contains(&"--all") {
+        assert!(
+            itero(root)
+                .args(["workspace", "add"])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    // stopped however the test ends
+    let daemon = stop::Daemon(
+        itero(if args.contains(&"--all") { d } else { root })
+            .args(args)
+            .spawn()
+            .unwrap(),
+    );
+    let pid_file = root.join("kulak.pid");
+    assert!(
+        until(|| std::fs::read_to_string(&pid_file).is_ok_and(|t| t.trim().parse::<i32>().is_ok())),
+        "the connector never started"
+    );
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(alive(pid));
+    // as Ctrl-C does: SIGTERM, then waited for
+    drop(daemon);
+    let gone = until(|| !alive(pid));
+    if !gone {
+        // SAFETY: the connector this test started
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    assert!(gone, "{args:?}: the connector {pid} outlived its daemon");
+}
+
+#[test]
+fn a_connector_deaf_to_its_stdin_ends_with_its_daemon() {
+    let d = tempfile::tempdir().unwrap();
+    let root = deaf_connector(d.path());
+    connector_ends_with(d.path(), &root, &["daemon", "--no-serve"]);
+}
+
+#[test]
+fn a_connector_deaf_to_its_stdin_ends_with_the_machines_daemon() {
+    let d = tempfile::tempdir().unwrap();
+    let root = deaf_connector(d.path());
+    connector_ends_with(d.path(), &root, &["daemon", "--all", "--no-serve"]);
+}
+
+#[test]
+fn what_a_connector_runs_ends_with_its_daemon_too() {
+    let d = tempfile::tempdir().unwrap();
+    // the script waits on a program it started: a pipeline's, say
+    let root = connector_running(
+        d.path(),
+        "#!/bin/sh\nsleep 600 &\necho $! > kulak.pid\nwait\n",
+    );
+    connector_ends_with(d.path(), &root, &["daemon", "--no-serve"]);
 }

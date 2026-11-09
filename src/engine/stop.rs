@@ -112,10 +112,46 @@ impl Stop {
     }
 }
 
+/// How long a daemon that is going gives its connectors to end once asked,
+/// before it kills those still there.
+pub const GRACE: Duration = Duration::from_secs(3);
+
+/// Ends what `stops` hold, as a daemon does that is going: each is set
+/// (its connectors' processes asked to end, SIGTERM), then up to `grace`
+/// for them to end, then SIGKILL for those still there. A connector that
+/// never reads its stdin would not see the daemon go otherwise, and the
+/// next daemon would start a second copy of it.
+pub fn end(stops: &[Arc<Stop>], grace: Duration) {
+    for s in stops {
+        s.set();
+    }
+    let until = std::time::Instant::now() + grace;
+    loop {
+        // a pid stays held until its process is reaped: never another's
+        let left: Vec<u32> = stops.iter().flat_map(|s| s.pids()).collect();
+        if left.is_empty() {
+            return;
+        }
+        if std::time::Instant::now() >= until {
+            for pid in left {
+                signal(pid, libc::SIGKILL);
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn term(pid: u32) {
-    // SAFETY: kill only sends a signal, to a process this daemon started and
-    // has not seen end
+    signal(pid, libc::SIGTERM);
+}
+
+/// Sends `sig` to the process group a connector leads (it is started as
+/// one), so what it runs gets it too.
+fn signal(pid: u32, sig: libc::c_int) {
+    // SAFETY: kill only sends a signal, to the group of a process this
+    // daemon started and has not reaped (so its group id is not another's)
     unsafe {
-        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        libc::kill(-(pid as libc::pid_t), sig);
     }
 }
