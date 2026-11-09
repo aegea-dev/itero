@@ -220,20 +220,7 @@ const MAX_WAIT: u64 = 600;
 /// Asks a run to stop: 202; 409 when it has ended, 404 when there is none.
 async fn stop_run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Reply, Reply> {
     let wake = s.engine.wake.clone();
-    let asked = blocking(&s, move |ws| {
-        let now = super::daemon::stamp(chrono::Utc::now());
-        match super::events::stop_run(ws, &id, &now).map_err(internal)? {
-            super::events::StopAsked::Asked { name, .. } => Ok(json!({ "stopping": name })),
-            super::events::StopAsked::Ended { name, status } => Err(fail(
-                StatusCode::CONFLICT,
-                format!("{name} has ended: {status}"),
-            )),
-            super::events::StopAsked::Missing => {
-                Err(fail(StatusCode::NOT_FOUND, format!("no run {id}")))
-            }
-        }
-    })
-    .await?;
+    let asked = answered(&s, move |ws| crate::answer::runs::stop(ws, &id)).await?;
     let _ = wake.send(());
     Ok((StatusCode::ACCEPTED, asked))
 }
@@ -386,122 +373,42 @@ fn internal(e: anyhow::Error) -> Reply {
     fail(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))
 }
 
-/// A run as lists show it.
-fn run_row(r: &super::journal::Run) -> Value {
-    json!({
-        "id": r.id,
-        "name": r.name,
-        "workflow": r.workflow,
-        "status": super::steps::status(&r.runtime),
-        "started": r.started,
-        "ended": r.ended,
-        // the run whose step started it: a workflow used as a step
-        "parent": r.parent,
-    })
-}
-
-#[derive(serde::Deserialize)]
-struct RunsQuery {
-    workflow: Option<String>,
-    /// `running`, `waiting`, `done`, `failed`, `error` or `split`.
-    status: Option<String>,
-    limit: Option<usize>,
-    /// The internal workflows' runs too.
-    #[serde(default)]
-    all: bool,
-}
-
-async fn runs(State(s): State<Shared>, Query(q): Query<RunsQuery>) -> Result<Json<Value>, Reply> {
-    blocking(&s, move |ws| {
-        let j = Journal::open(ws).map_err(internal)?;
-        let limit = q.limit.unwrap_or(50);
-        let apart = if q.all {
-            vec![]
-        } else {
-            ws.internal().map_err(internal)?
-        };
-        let runs = match q.status.as_deref() {
-            // under way: few, and their status is not a column
-            Some(st @ ("running" | "waiting")) => j
-                .active_runs()
-                .map_err(internal)?
-                .into_iter()
-                .rev()
-                .filter(|r| super::steps::status(&r.runtime) == st)
-                .filter(|r| q.workflow.as_ref().is_none_or(|w| *w == r.workflow))
-                .filter(|r| !apart.contains(&r.workflow))
-                .take(limit)
-                .collect(),
-            ended => j
-                .runs_page(q.workflow.as_deref(), ended, &apart, limit)
-                .map_err(internal)?,
-        };
-        Ok(Value::Array(runs.iter().map(run_row).collect()))
+/// A command's answer as a route gives it: computed by `f` off the async
+/// threads, the same function the CLI calls.
+async fn answered<T: serde::Serialize>(
+    s: &Shared,
+    f: impl FnOnce(&Workspace) -> Result<T, crate::answer::Fault> + Send + 'static,
+) -> Result<Json<Value>, Reply> {
+    blocking(s, move |ws| {
+        let a = f(ws).map_err(fault)?;
+        serde_json::to_value(a).map_err(|e| internal(e.into()))
     })
     .await
 }
 
+/// No answer, as a reply: its status and its message.
+fn fault(f: crate::answer::Fault) -> Reply {
+    let code = StatusCode::from_u16(f.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    fail(code, f.to_string())
+}
+
+/// `GET /runs`: the runs `q` asks for, newest first; 50 unless `limit`.
+async fn runs(
+    State(s): State<Shared>,
+    Query(mut q): Query<crate::answer::runs::Query>,
+) -> Result<Json<Value>, Reply> {
+    q.limit = q.limit.or(Some(50));
+    answered(&s, move |ws| crate::answer::runs::list(ws, &q)).await
+}
+
+/// `GET /runs/{id}`: a run's story, by id or name.
 async fn run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Json<Value>, Reply> {
-    blocking(&s, move |ws| {
-        let j = Journal::open(ws).map_err(internal)?;
-        // by id or name; of two with one name, the newest
-        let r = j
-            .run_by(&id)
-            .map_err(internal)?
-            .into_iter()
-            .next()
-            .ok_or_else(|| fail(StatusCode::NOT_FOUND, format!("no run {id}")))?;
-        let id = r.id.clone();
-        let events: Vec<Value> = j
-            .events(Some(&super::journal::subject(&id)))
-            .map_err(internal)?
-            .iter()
-            .map(|e| {
-                json!({
-                    "seq": e.seq,
-                    "type": e.event.kind,
-                    "time": e.event.time,
-                    "handled": e.handled,
-                    "error": e.error,
-                    "data": e.event.data,
-                })
-            })
-            .collect();
-        let mut v = run_row(&r);
-        if v["status"] == "running" {
-            v["progress"] = Value::Array(super::progress::of_run(&ws.root, &id));
-        }
-        v["input"] = r.input.clone();
-        v["state"] = Value::Object(r.runtime.state.clone());
-        v["events"] = Value::Array(events);
-        Ok(v)
-    })
-    .await
+    answered(&s, move |ws| crate::answer::runs::one(ws, &id)).await
 }
 
+/// `GET /workflows`: each workflow, and whether a daemon takes events.
 async fn workflows(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
-    blocking(&s, |ws| {
-        let flows = ws.flows().map_err(internal)?;
-        let files = ws.flow_files().map_err(internal)?;
-        Ok(Value::Array(
-            flows
-                .iter()
-                .map(|(name, f)| {
-                    json!({
-                        "name": name,
-                        // none for a built-in one
-                        "path": files.get(name).map(|p| ws.shown(p)),
-                        "internal": f.meta.internal,
-                        "on": {
-                            "events": f.on.events,
-                            "schedules": f.on.schedules,
-                        },
-                    })
-                })
-                .collect(),
-        ))
-    })
-    .await
+    answered(&s, crate::answer::workflows::list).await
 }
 
 /// The daemon's socket on 127.0.0.1, bound before anything else starts:
