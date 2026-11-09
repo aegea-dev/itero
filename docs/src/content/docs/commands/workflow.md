@@ -51,7 +51,8 @@ A status is `running`, `waiting`, `done`, `failed`, `error` or `stopped`
 ([stop](#stop)). The run
 of a workflow used as a step
 ends its line with `from <parent run>`; `--json` gives `parent`, that
-run's id.
+run's id, and `from`, its name. `--json` is the same JSON as the API's
+[`GET /runs`](/reference/http/#get-runs).
 
 | Option | Shows |
 |---|---|

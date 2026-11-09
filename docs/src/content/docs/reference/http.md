@@ -94,17 +94,30 @@ URL the app sends in the event's data
 
 ## GET /runs
 
-`?workflow=<name>` keeps one workflow's runs; `?status=<status>` the runs
-with one status (`running`, `waiting`, `done`, `failed`, `error`,
-`stopped`);
-`?limit=N` (50 unless given) caps them. Internal
-workflows' runs only with `?all=true`. `parent` is the id of the run
-whose step started it, for a workflow used as a step, else `null`.
+The same runs as [`itero ws wf runs`](/commands/workflow/#runs), and the
+same JSON as its `--json`: both are computed in one place.
+
+| Param | Keeps |
+|---|---|
+| `workflow=<name>` | that workflow's runs (an internal one too); 404 for a workflow there is not |
+| `status=<status>` | the runs with that status: `running`, `waiting`, `done`, `failed`, `error` or `stopped` |
+| `action=<name>` | the runs that broke at that action (`#` or not): `itero ws wf runs --action` |
+| `limit=N` | the newest N; 50 unless given |
+| `all=true` | the internal workflows' runs too |
+
+A bad `status`, or `action` with a status other than `error`, is 400,
+every problem in one `error`.
 
 ```json
-[ { "id": "...", "name": "misty-lake", "workflow": "order", "status": "waiting",
-    "started": "...", "ended": null, "parent": null } ]
+[ { "id": "...", "name": "misty-lake", "workflow": "order", "status": "error",
+    "started": "...", "ended": "...", "parent": null,
+    "failed_step": "#ship", "why": "exit 1: no stock" } ]
 ```
+
+`parent` is the id of the run whose step started it, for a workflow used
+as a step, else `null`, and `from` that run's name. A broken run has
+`failed_step` and `why`; a running one `progress`: what its newest
+running step said last.
 
 ## POST /runs/\{id or name\}/stop
 
@@ -181,19 +194,30 @@ the daemon nothing, and a slow listener is read at its own pace. Through
 ## GET /runs/\{id or name\}
 
 The run as in the list, with its `input` (the data it started with), its
-`state`, and its `events`: each with `seq`, `type`, `time`, `handled`,
-`error` and `data`. A running run also has `progress`: each running step's
-`step`, what it `said` last on stderr, and `at` when, newest first. Of two runs with one name, the newest. 404 for a run
-there is not.
+`state`, its `steps` (its story, as [`itero ws wf runs
+<run>`](/commands/workflow/#runs) tells it: each with `what`, `step`,
+`data` and `time`), and its `events`: each with `seq`, `type`, `time`,
+`handled`, `error` and `data`. A running run also has `progress`: each
+running step's `step`, what it `said` last on stderr, and `at` when,
+newest first. Of two runs with one name, the newest, and `named_alike`
+says how many have it. 404 for a run there is not.
 
 ## GET /workflows
 
+The same as [`itero ws wf list --json`](/commands/workflow/#list):
+
 ```json
-[ { "name": "order", "path": "workflows/shop/order.json", "internal": false,
-    "on": { "events": [{ "event": "order.placed" }], "schedules": [] } } ]
+{ "workflows": [
+    { "name": "order", "path": "workflows/shop/order.json", "internal": false,
+      "on": { "events": [{ "event": "order.placed" }], "schedules": [] },
+      "starts": ["on order.placed"], "runs": 2,
+      "last": { "status": "error", "at": "..." }, "notes": [] } ],
+  "daemon": { "running": true }, "waiting": 0 }
 ```
 
-`path` is from the workspace, and `null` for a built-in workflow.
+`path` is from the workspace, and `null` for a built-in workflow;
+`notes` are `off`, `not now (from/until)` or `internal`; `waiting`, the
+events no daemon has handled yet.
 
 ## One itero per machine
 
