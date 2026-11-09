@@ -768,8 +768,13 @@ fn dispatch(cli: Cli) -> Result<()> {
             {
                 let machine = machine.clone();
                 stop_on_signal(move || {
-                    let mut logs = vec![];
-                    machine.each(|r| logs.push(r.log.clone()));
+                    let (mut logs, mut stops) = (vec![], vec![]);
+                    machine.each(|r| {
+                        logs.push(r.log.clone());
+                        stops.push(r.stopper());
+                    });
+                    // its connectors end with it, those deaf to stdin too
+                    crate::engine::stop::end(&stops, crate::engine::stop::GRACE);
                     crate::engine::log::last(&logs, "daemon.stopped");
                 });
             }
@@ -850,8 +855,12 @@ fn dispatch(cli: Cli) -> Result<()> {
                     .log
                     .write("port.changed", serde_json::json!({ "why": note }));
             }
-            let log = running.log.clone();
-            stop_on_signal(move || crate::engine::log::last(&[log], "daemon.stopped"));
+            let (log, stopper) = (running.log.clone(), running.stopper());
+            stop_on_signal(move || {
+                // its connectors end with it, those deaf to stdin too
+                crate::engine::stop::end(&[stopper], crate::engine::stop::GRACE);
+                crate::engine::log::last(&[log], "daemon.stopped");
+            });
             eprintln!(
                 "itero: running the workflows in {}, each as it comes due (Ctrl-C stops); log: .itero/itero.log",
                 ws.root.display()

@@ -208,6 +208,11 @@ impl Running {
         *self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// What stops it: set, its connectors' processes are asked to end.
+    pub fn stopper(&self) -> Arc<Stop> {
+        self.stop.clone()
+    }
+
     /// The processes its connectors run now.
     pub fn connector_pids(&self) -> Vec<u32> {
         self.stop.pids()
