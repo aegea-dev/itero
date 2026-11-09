@@ -116,8 +116,19 @@ async fn runs_and_workflows_can_be_read() {
     assert_eq!(runs.as_array().unwrap().len(), 1);
     assert_eq!(runs[0]["status"], "done");
     assert_eq!(runs[0]["workflow"], "sayaç");
-    let (_, none) = send(&app, get("/runs?workflow=baska")).await;
-    assert_eq!(none, json!([]));
+    // a workflow there is not: said, as the CLI says it
+    let (code, none) = send(&app, get("/runs?workflow=baska")).await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+    assert_eq!(
+        none["error"],
+        "no workflow baska: itero ws wf list lists them"
+    );
+    let (code, bad) = send(&app, get("/runs?status=bitti")).await;
+    assert_eq!(code, StatusCode::BAD_REQUEST);
+    assert!(
+        bad["error"].as_str().unwrap().contains("not bitti"),
+        "{bad}"
+    );
     let (_, none) = send(&app, get("/runs?status=error")).await;
     assert_eq!(none, json!([]));
     let (_, none) = send(&app, get("/runs?status=waiting")).await;
@@ -143,7 +154,7 @@ async fn runs_and_workflows_can_be_read() {
     assert_eq!(send(&app, get("/runs/yok")).await.0, StatusCode::NOT_FOUND);
     let (_, flows) = send(&app, get("/workflows")).await;
     let named = |n: &str| {
-        flows
+        flows["workflows"]
             .as_array()
             .unwrap()
             .iter()
