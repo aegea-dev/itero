@@ -693,9 +693,12 @@ fn two_listeners_run_as_connectors_of_one_daemon() {
         "actions/yaz",
         "#!/bin/sh\nprintf '%s\\n' \"$yol\" >> yazıldı.txt\n",
     );
+    // no API: a webhook wakes the daemon through a file, and an API on a
+    // port the OS gives could be given `a` or `b`, free again since
+    // free_port let them go; the request would then reach the daemon
     let daemon = Daemon(
         Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["daemon", "--no-serve"])
             .current_dir(d.path())
             .env("ITERO_NO_SECRET_STORE", "1")
             .stdin(Stdio::piped())
