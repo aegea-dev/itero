@@ -119,8 +119,8 @@ same JSON as its `--json`: both are computed in one place.
 | `limit=N` | the newest N; 50 unless given |
 | `all=true` | the internal workflows' runs too |
 
-A bad `status`, or `action` with a status other than `error`, is 400,
-every problem in one `error`.
+A bad `status`, `action` with a status other than `error`, or a
+parameter it does not know is 400, every problem in one `error`.
 
 ```json
 [ { "id": "...", "name": "misty-lake", "workflow": "order", "status": "error",
@@ -258,7 +258,7 @@ recent first:
 `?action=<name>` (`#` or not) gives that action's failures instead,
 newest first: each with `when`, `workflow`, `run` (its name), `id` and
 `why`; none for an action that never broke a run. `?limit=N` caps either
-(20 unless given).
+(20 unless given). A parameter it does not know is 400.
 
 ## GET /connectors
 
