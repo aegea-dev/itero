@@ -404,10 +404,11 @@ async fn connectors(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ErrorsQuery {
     /// One action's failures, instead of each action's.
     action: Option<String>,
-    /// At most this many: 20 unless given, as `itero ws ac errors`.
+    /// At most this many: as many as `itero ws ac errors` unless given.
     limit: Option<usize>,
 }
 
@@ -417,10 +418,11 @@ async fn action_errors(
     State(s): State<Shared>,
     Query(q): Query<ErrorsQuery>,
 ) -> Result<Json<Value>, Reply> {
-    let limit = q.limit.unwrap_or(20);
+    use crate::answer::kinds;
+    let limit = q.limit.unwrap_or(kinds::ERRORS_SHOWN);
     match q.action {
-        Some(a) => answered(&s, move |ws| crate::answer::kinds::broke(ws, &a, limit)).await,
-        None => answered(&s, move |ws| crate::answer::kinds::breaks(ws, limit)).await,
+        Some(a) => answered(&s, move |ws| kinds::failures_of(ws, &a, limit)).await,
+        None => answered(&s, move |ws| kinds::errors_by_action(ws, limit)).await,
     }
 }
 

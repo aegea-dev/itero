@@ -107,15 +107,15 @@ impl Client {
         }
     }
 
-    pub fn breaks(&self, limit: usize) -> Result<Vec<kinds::Breaks>, Fault> {
+    pub fn errors_by_action(&self, limit: usize) -> Result<Vec<kinds::Breaks>, Fault> {
         match self {
-            Client::Local(ws) => kinds::breaks(ws, limit),
+            Client::Local(ws) => kinds::errors_by_action(ws, limit),
         }
     }
 
-    pub fn broke(&self, action: &str, limit: usize) -> Result<Vec<kinds::Broke>, Fault> {
+    pub fn failures_of(&self, action: &str, limit: usize) -> Result<Vec<kinds::Broke>, Fault> {
         match self {
-            Client::Local(ws) => kinds::broke(ws, action, limit),
+            Client::Local(ws) => kinds::failures_of(ws, action, limit),
         }
     }
 

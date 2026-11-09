@@ -368,7 +368,7 @@ pub enum ActionCmd {
         #[arg(add = complete::actions())]
         action: Option<String>,
         /// At most this many
-        #[arg(long, default_value_t = 20)]
+        #[arg(long, default_value_t = crate::answer::kinds::ERRORS_SHOWN)]
         limit: usize,
         #[arg(long)]
         json: bool,

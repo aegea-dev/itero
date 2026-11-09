@@ -72,7 +72,7 @@ pub fn connectors(ws: &Workspace, json: bool) -> Result<()> {
 pub fn errors(ws: &Workspace, action: Option<&str>, limit: usize, json: bool) -> Result<()> {
     let now = chrono::Utc::now();
     if let Some(name) = action {
-        let mine = serde_json::to_value(client(ws).broke(name, limit)?)?;
+        let mine = serde_json::to_value(client(ws).failures_of(name, limit)?)?;
         let name = name.trim_start_matches('#');
         return show(json, &mine, |v| {
             let rows: Vec<Vec<String>> = v
@@ -94,7 +94,7 @@ pub fn errors(ws: &Workspace, action: Option<&str>, limit: usize, json: bool) ->
             table(&rows);
         });
     }
-    let out = serde_json::to_value(client(ws).breaks(limit)?)?;
+    let out = serde_json::to_value(client(ws).errors_by_action(limit)?)?;
     show(json, &out, |v| {
         let rows: Vec<Vec<String>> = v
             .as_array()

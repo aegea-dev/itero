@@ -66,79 +66,20 @@ pub fn connectors(ws: &Workspace) -> Result<Vec<Connector>, Fault> {
         .collect())
 }
 
-/// An action and how it breaks runs: how often, when and why last.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Breaks {
-    pub action: String,
-    pub errors: usize,
-    pub last: String,
-    pub why: Option<String>,
-    /// The last run it broke, by name.
-    pub run: String,
-}
+pub use crate::engine::journal::{Breaks, Broke};
 
-/// A run an action broke.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Broke {
-    pub when: String,
-    pub workflow: String,
-    pub run: String,
-    pub id: String,
-    pub why: Option<String>,
-}
-
-/// The runs that ended in error, newest first, each with the action it
-/// broke at (without `#`).
-fn broken(ws: &Workspace) -> Result<Vec<(String, Broke)>, Fault> {
-    let j = Journal::open(ws)?;
-    Ok(j.runs_page(None, Some("error"), &[], usize::MAX)?
-        .into_iter()
-        .filter_map(|r| {
-            let rt = &r.runtime;
-            let step = rt.failed_step.as_deref()?.strip_prefix('#')?.to_string();
-            Some((
-                step,
-                Broke {
-                    when: r.ended.clone().unwrap_or_else(|| r.started.clone()),
-                    workflow: r.workflow.clone(),
-                    run: r.name.clone(),
-                    id: r.id.clone(),
-                    why: rt.why.clone(),
-                },
-            ))
-        })
-        .collect())
-}
+/// How many `itero ws ac errors` and `GET /actions/errors` give unless
+/// told: one number for both.
+pub const ERRORS_SHOWN: usize = 20;
 
 /// Each action runs broke at, the most recent first: at most `limit`.
-pub fn breaks(ws: &Workspace, limit: usize) -> Result<Vec<Breaks>, Fault> {
-    // newest first already: the first of each is its last
-    let mut by: Vec<Breaks> = vec![];
-    for (action, b) in broken(ws)? {
-        match by.iter_mut().find(|x| x.action == action) {
-            Some(x) => x.errors += 1,
-            None => by.push(Breaks {
-                action,
-                errors: 1,
-                last: b.when,
-                why: b.why,
-                run: b.run,
-            }),
-        }
-    }
-    by.truncate(limit);
-    Ok(by)
+pub fn errors_by_action(ws: &Workspace, limit: usize) -> Result<Vec<Breaks>, Fault> {
+    Ok(Journal::open(ws)?.breaks(limit)?)
 }
 
 /// The runs `action` (`#` or not) broke, newest first: at most `limit`.
 /// An action that never broke one has none: not a mistake, as the action
 /// may be gone while its failures stay.
-pub fn broke(ws: &Workspace, action: &str, limit: usize) -> Result<Vec<Broke>, Fault> {
-    let name = action.trim_start_matches('#');
-    Ok(broken(ws)?
-        .into_iter()
-        .filter(|(a, _)| a == name)
-        .map(|(_, b)| b)
-        .take(limit)
-        .collect())
+pub fn failures_of(ws: &Workspace, action: &str, limit: usize) -> Result<Vec<Broke>, Fault> {
+    Ok(Journal::open(ws)?.broken_at(action.trim_start_matches('#'), limit)?)
 }

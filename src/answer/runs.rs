@@ -13,6 +13,7 @@ const STATUSES: [&str; 6] = ["running", "waiting", "done", "failed", "error", "s
 
 /// Which runs: all of them unless a field narrows them.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Query {
     pub workflow: Option<String>,
     /// One of `STATUSES`.

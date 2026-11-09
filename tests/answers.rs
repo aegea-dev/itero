@@ -449,3 +449,12 @@ fn actions_connectors_and_breaks_are_the_same_from_the_cli_and_the_api() {
         "/actions/errors?action=yaz",
     );
 }
+
+#[test]
+fn a_misspelt_parameter_is_refused_not_ignored() {
+    let w = Ws::new();
+    for path in ["/actions/errors?acton=boz", "/runs?statsu=error"] {
+        let (code, v) = w.get(path);
+        assert_eq!(code, 400, "{path}: {v}");
+    }
+}
