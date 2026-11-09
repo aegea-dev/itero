@@ -47,6 +47,15 @@ jq -r '"\(.time) \(.event) \(.workflow // "") \(.step // "")"' .itero/itero.log
 tail -f .itero/itero.log | jq .                             # live
 ```
 
+A program follows it over the API too, with
+[`GET /log/stream`](/reference/http/#get-logstream): the same lines, as
+they are written, across a roll; through `/ws/<name>/log/stream` when
+one itero runs the machine.
+
+```sh
+curl -sN http://127.0.0.1:8787/log/stream | jq 'select(.event == "step.failed")'
+```
+
 Past its `log` limit (10 MB) the log is rolled: `itero.log` becomes
 `itero.log.1`, and so on, keeping `logs` of them (3). See
 [The daemon's own workflows](/guides/maintenance/).
