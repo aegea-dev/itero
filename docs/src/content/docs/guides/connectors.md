@@ -37,8 +37,9 @@ given by the workflows that listen to it, in their `on` entry beside its
 event: [A connector's args](/guides/secrets/#a-connectors-args). Its stdin
 closes when the daemon goes, and a daemon that is stopped (Ctrl-C,
 SIGTERM, `itero service stop`) sends it SIGTERM, killing one still
-running 3 seconds later: no connector outlives its daemon, so the next
-one never runs a second copy. Its stderr goes to the daemon's stderr. The
+running 3 seconds later. It runs in a process group of its own, so the
+signal reaches what it runs too (a pipeline's programs): no connector
+outlives its daemon, so the next one never runs a second copy. Its stderr goes to the daemon's stderr. The
 daemon starts it again when it ends, waiting longer each time, and gives
 up on one that keeps ending (`itero.connector.gave-up`); the log and
 `/health` show each connector.
