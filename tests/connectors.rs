@@ -356,6 +356,12 @@ fn after_an_end_the_pause_doubles_resets_when_calm_and_gives_up() {
 /// A workspace whose connector never reads its stdin and never prints: it
 /// notes its pid in `kulak.pid`, then sleeps. A workflow listens to it.
 fn deaf_connector(d: &std::path::Path) -> std::path::PathBuf {
+    connector_running(d, "#!/bin/sh\necho $$ > kulak.pid\nexec sleep 600\n")
+}
+
+/// A workspace whose connector is `script`, which notes in `kulak.pid` the
+/// pid that is to end with the daemon.
+fn connector_running(d: &std::path::Path, script: &str) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let root = d.join("çalışma");
     for dir in ["connectors", "workflows", "actions"] {
@@ -366,10 +372,7 @@ fn deaf_connector(d: &std::path::Path) -> std::path::PathBuf {
         std::fs::write(&p, text).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
     };
-    exec(
-        root.join("connectors/kulak.duydu"),
-        "#!/bin/sh\necho $$ > kulak.pid\nexec sleep 600\n",
-    );
+    exec(root.join("connectors/kulak.duydu"), script);
     exec(root.join("actions/yaz"), "#!/bin/sh\nexit 0\n");
     std::fs::write(
         root.join("workflows/dinle.json"),
@@ -448,4 +451,15 @@ fn a_connector_deaf_to_its_stdin_ends_with_the_machines_daemon() {
     let d = tempfile::tempdir().unwrap();
     let root = deaf_connector(d.path());
     connector_ends_with(d.path(), &root, &["daemon", "--all", "--no-serve"]);
+}
+
+#[test]
+fn what_a_connector_runs_ends_with_its_daemon_too() {
+    let d = tempfile::tempdir().unwrap();
+    // the script waits on a program it started: a pipeline's, say
+    let root = connector_running(
+        d.path(),
+        "#!/bin/sh\nsleep 600 &\necho $! > kulak.pid\nwait\n",
+    );
+    connector_ends_with(d.path(), &root, &["daemon", "--no-serve"]);
 }

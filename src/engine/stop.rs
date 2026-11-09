@@ -134,10 +134,7 @@ pub fn end(stops: &[Arc<Stop>], grace: Duration) {
         }
         if std::time::Instant::now() >= until {
             for pid in left {
-                // SAFETY: a process this daemon started and has not reaped
-                unsafe {
-                    libc::kill(pid as libc::pid_t, libc::SIGKILL);
-                }
+                signal(pid, libc::SIGKILL);
             }
             return;
         }
@@ -146,9 +143,15 @@ pub fn end(stops: &[Arc<Stop>], grace: Duration) {
 }
 
 fn term(pid: u32) {
-    // SAFETY: kill only sends a signal, to a process this daemon started and
-    // has not seen end
+    signal(pid, libc::SIGTERM);
+}
+
+/// Sends `sig` to the process group a connector leads (it is started as
+/// one), so what it runs gets it too.
+fn signal(pid: u32, sig: libc::c_int) {
+    // SAFETY: kill only sends a signal, to the group of a process this
+    // daemon started and has not reaped (so its group id is not another's)
     unsafe {
-        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        libc::kill(-(pid as libc::pid_t), sig);
     }
 }

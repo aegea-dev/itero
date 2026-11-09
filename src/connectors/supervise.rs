@@ -118,7 +118,12 @@ fn once(
         // where `itero browser watch` asks for its window
         env.insert("ITERO_BROWSER_API".into(), format!("{api}browser"));
     }
-    let mut child = Command::new(&s.file)
+    let mut c = Command::new(&s.file);
+    // its own process group: a stop reaches what it runs too (a script's
+    // pipeline, a program it starts), not only the script
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut c, 0);
+    let mut child = c
         .current_dir(&ws.root)
         .envs(env)
         .env("PATH", path_with(exe))

@@ -601,10 +601,11 @@ extern "C" fn on_stop(_: libc::c_int) {
     STOP.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// When the daemon is asked to stop (SIGINT, SIGTERM), stops itero-ai,
-/// calls `last` (each workspace's last line, `daemon.stopped`) and ends
-/// the process.
-fn stop_on_signal(last: impl FnOnce() + Send + 'static) {
+/// When the daemon is asked to stop (SIGINT, SIGTERM), calls `first` (its
+/// connectors end, while what they use is still there), stops itero-ai
+/// and the browser, calls `last` (each workspace's last line,
+/// `daemon.stopped`) and ends the process.
+fn stop_on_signal(first: impl FnOnce() + Send + 'static, last: impl FnOnce() + Send + 'static) {
     #[cfg(unix)]
     // SAFETY: the handler only stores to an atomic
     unsafe {
@@ -616,6 +617,7 @@ fn stop_on_signal(last: impl FnOnce() + Send + 'static) {
         while !STOP.load(std::sync::atomic::Ordering::SeqCst) {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+        first();
         crate::ai::keeper::Keeper::global().stop();
         crate::browser::keeper::Keeper::global().stop();
         last();
@@ -767,16 +769,17 @@ fn dispatch(cli: Cli) -> Result<()> {
             ));
             {
                 let machine = machine.clone();
-                stop_on_signal(move || {
-                    let (mut logs, mut stops) = (vec![], vec![]);
-                    machine.each(|r| {
-                        logs.push(r.log.clone());
-                        stops.push(r.stopper());
-                    });
-                    // its connectors end with it, those deaf to stdin too
-                    crate::engine::stop::end(&stops, crate::engine::stop::GRACE);
-                    crate::engine::log::last(&logs, "daemon.stopped");
-                });
+                let stopper = machine.stopper();
+                stop_on_signal(
+                    // its connectors end with it, those deaf to stdin and
+                    // those of a workspace starting now too
+                    move || crate::engine::stop::end(&[stopper], crate::engine::stop::GRACE),
+                    move || {
+                        let mut logs = vec![];
+                        machine.each(|r| logs.push(r.log.clone()));
+                        crate::engine::log::last(&logs, "daemon.stopped");
+                    },
+                );
             }
             eprintln!(
                 "itero: running the workspaces on the machine's list ({}), each as it comes due (Ctrl-C stops)",
@@ -849,6 +852,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 report,
                 false,
                 served,
+                None,
             )?;
             if let Some((_, Some(note))) = &listening {
                 running
@@ -856,11 +860,11 @@ fn dispatch(cli: Cli) -> Result<()> {
                     .write("port.changed", serde_json::json!({ "why": note }));
             }
             let (log, stopper) = (running.log.clone(), running.stopper());
-            stop_on_signal(move || {
+            stop_on_signal(
                 // its connectors end with it, those deaf to stdin too
-                crate::engine::stop::end(&[stopper], crate::engine::stop::GRACE);
-                crate::engine::log::last(&[log], "daemon.stopped");
-            });
+                move || crate::engine::stop::end(&[stopper], crate::engine::stop::GRACE),
+                move || crate::engine::log::last(&[log], "daemon.stopped"),
+            );
             eprintln!(
                 "itero: running the workflows in {}, each as it comes due (Ctrl-C stops); log: .itero/itero.log",
                 ws.root.display()
@@ -1053,7 +1057,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 watch.run(&mut std::io::stdout().lock())?;
             } else {
                 // the daemon stops a connector with SIGTERM: its run ends too
-                stop_on_signal(crate::connectors::end_run);
+                stop_on_signal(|| {}, crate::connectors::end_run);
                 watch.run_command(&command)?;
             }
         }
@@ -1110,7 +1114,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 Target::Workspace(Box::new(workspace()?))
             };
             #[cfg(unix)]
-            stop_on_signal(crate::engine::watchdog::stop_daemon);
+            stop_on_signal(|| {}, crate::engine::watchdog::stop_daemon);
             // the path it was started by: a service starts it by an
             // absolute one, which an upgrade points at a new file
             let exe = std::env::args_os()

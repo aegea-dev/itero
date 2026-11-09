@@ -45,6 +45,7 @@ impl Running {
         report: Report,
         machine: bool,
         port: Option<u16>,
+        parent: Option<&Arc<Stop>>,
     ) -> Result<Running> {
         let me = super::journal::Journal::open(&ws)?.workspace()?;
         let log = Log::new(&ws, &me.id);
@@ -89,7 +90,11 @@ impl Running {
             wake,
             streams: Default::default(),
         });
-        let stop = Arc::new(Stop::default());
+        // under the machine's stop: set when it is, even if set already
+        let stop = match parent {
+            Some(p) => p.under(),
+            None => Arc::new(Stop::default()),
+        };
         let state = Arc::new(Mutex::new("running"));
         // the next due time, kept by the kernel; it wakes the loop as
         // everything else does

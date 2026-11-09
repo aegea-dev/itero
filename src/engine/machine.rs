@@ -38,6 +38,9 @@ pub struct Machine {
     syncing: Mutex<()>,
     /// The port the machine's API is served on, when it is.
     port: Option<u16>,
+    /// Every running workspace's stop is under it: a workspace started
+    /// after it was set is stopped at once.
+    stop: std::sync::Arc<super::stop::Stop>,
 }
 
 impl Machine {
@@ -50,7 +53,13 @@ impl Machine {
             idle: Mutex::new(BTreeMap::new()),
             syncing: Mutex::new(()),
             port,
+            stop: Default::default(),
         }
+    }
+
+    /// What stops every workspace it runs, those it starts later too.
+    pub fn stopper(&self) -> std::sync::Arc<super::stop::Stop> {
+        self.stop.clone()
     }
 
     /// Reads the list, and starts or stops workspaces to match it.
@@ -74,7 +83,9 @@ impl Machine {
                 .remove(&id);
             if let Some(r) = r {
                 eprintln!("itero: stopping {}", r.name);
+                let stopper = r.stopper();
                 r.stop();
+                self.stop.forget(&stopper);
             }
         }
         let mut idle = BTreeMap::new();
@@ -131,7 +142,16 @@ impl Machine {
                 }
             }
         };
-        Running::start(ws, &self.exe, held, self.report, true, self.port).map_err(|err| Idle {
+        Running::start(
+            ws,
+            &self.exe,
+            held,
+            self.report,
+            true,
+            self.port,
+            Some(&self.stop),
+        )
+        .map_err(|err| Idle {
             state: "failed",
             why: format!("{err:#}"),
         })
