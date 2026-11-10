@@ -120,3 +120,17 @@ add `"listen": "0.0.0.0:8443"` to `~/.config/itero/server.json`, and
 with a `tls` certificate beside it, or behind a proxy that adds TLS; then,
 on your machine, `itero context add office https://office.example.com:8443
 --ws quiet-river` with that token.
+
+## Deploying a workspace
+
+Made and tried here, a workspace goes to a server with one command, its
+folder kept the same there:
+
+```sh
+itero context add prod https://prod.example.com:8443 --ws shop
+itero ws apply --context prod
+```
+
+The first apply makes it on the server; each one after makes the
+server's copy match this folder. See [`itero ws apply`](/commands/workspace/#apply).
+

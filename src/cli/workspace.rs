@@ -48,10 +48,21 @@ pub fn target(
     ws: Option<&str>,
     context: Option<crate::context::Context>,
 ) -> Result<crate::answer::Client> {
-    use crate::answer::{Client, remote};
-    let Some(c) = context else {
-        return Ok(Client::Local(Box::new(chosen(ws)?)));
-    };
+    use crate::answer::Client;
+    match context {
+        None => Ok(Client::Local(Box::new(chosen(ws)?))),
+        Some(c) => Ok(Client::Remote(remote_target(ws, c)?)),
+    }
+}
+
+/// The workspace on context `c`'s server a command means: the one named
+/// (a path is this machine's, so refused), else the context's; with
+/// neither, the server's names are said.
+pub fn remote_target(
+    ws: Option<&str>,
+    c: crate::context::Context,
+) -> Result<crate::answer::remote::Remote> {
+    use crate::answer::remote;
     if let Some(p) = ws.filter(|w| is_path(w)) {
         bail!(
             "{p}: a path is this machine's: give {}'s workspace by its name (itero ws list --context {})",
@@ -74,12 +85,12 @@ pub fn target(
             );
         }
     };
-    Ok(Client::Remote(remote::Remote {
+    Ok(remote::Remote {
         name: c.name,
         url: c.url,
         token: c.token,
         ws,
-    }))
+    })
 }
 
 /// The entry on the machine's list with this name.

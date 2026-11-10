@@ -273,3 +273,115 @@ fn what_cannot_be_a_workspace_is_refused_every_problem_at_once() {
         "{v}"
     );
 }
+
+impl Server {
+    /// `itero <args>` in `dir`, as this machine's user: its output.
+    fn itero(&self, dir: &Path, args: &[&str]) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_itero"))
+            .current_dir(dir)
+            .env("HOME", self.d.path().join("ev"))
+            .env("XDG_CONFIG_HOME", self.d.path().join("ayar"))
+            .env("XDG_STATE_HOME", self.d.path().join("durum"))
+            .env("ITERO_NO_SECRET_STORE", "1")
+            .env("ITERO_TOKEN", "")
+            .stdin(Stdio::null())
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    /// A workspace being made in this machine's `projeler/<name>`, its
+    /// files `files`, and a context `sunucu` to this server for it.
+    fn local(&self, name: &str, files: &[(String, String, bool)]) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let w = self.d.path().join("projeler").join(name);
+        for (p, text, executable) in files {
+            let f = w.join(p);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(&f, text).unwrap();
+            if *executable {
+                std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let o = self.itero(&w, &["context", "add", "sunucu", &self.url, "--ws", name]);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        w
+    }
+}
+
+fn said(o: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    )
+}
+
+#[test]
+fn ws_apply_sends_the_folder_and_mirrors_it() {
+    let s = Server::new();
+    let out = s.d.path().join("çıktı");
+    let w = s.local("dükkan", &workspace(&out));
+    // this machine's own, never sent
+    std::fs::write(w.join(".env"), "ANAHTAR=yerel\n").unwrap();
+    let o = s.itero(&w, &["ws", "apply", "--context", "sunucu"]);
+    let text = said(&o);
+    assert!(o.status.success(), "{text}");
+    assert!(text.contains("created dükkan on sunucu"), "{text}");
+    assert!(text.contains("+ actions/yaz"), "{text}");
+    let folder = s.folder("dükkan");
+    assert!(folder.join("workflows/selam.json").is_file());
+    assert!(!folder.join(".env").exists(), "the .env stayed here");
+    until("dükkan running", || {
+        state_of(&s, "dükkan").as_deref() == Some("running")
+    });
+    // an edit, a removal: a dry run says, the apply does
+    std::fs::remove_file(w.join("actions/yaz")).unwrap();
+    std::fs::write(
+        w.join("workflows/selam.json"),
+        json!({ "on": [{ "event": "selam.geldi" }], "steps": ["#notify"] }).to_string(),
+    )
+    .unwrap();
+    let o = s.itero(&w, &["ws", "apply", "--dry-run", "--context", "sunucu"]);
+    let text = said(&o);
+    assert!(
+        text.contains("- actions/yaz") && text.contains("~ workflows/selam.json"),
+        "{text}"
+    );
+    assert!(text.contains("dry run: nothing written"), "{text}");
+    assert!(folder.join("actions/yaz").exists());
+    let o = s.itero(&w, &["ws", "apply", "--context", "sunucu", "--json"]);
+    assert!(o.status.success(), "{}", said(&o));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["removed"], json!(["actions/yaz"]), "{v}");
+    assert_eq!(v["changed"], json!(["workflows/selam.json"]), "{v}");
+    assert!(!folder.join("actions/yaz").exists());
+    let o = s.itero(&w, &["ws", "apply", "--context", "sunucu"]);
+    assert!(
+        said(&o).contains("dükkan on sunucu is up to date"),
+        "{}",
+        said(&o)
+    );
+}
+
+#[test]
+fn ws_apply_needs_a_context_and_refuses_what_cannot_travel() {
+    let s = Server::new();
+    let out = s.d.path().join("çıktı");
+    let w = s.local("dükkan", &workspace(&out));
+    // with no context: the folder is the workspace already
+    let o = s.itero(&w, &["ws", "apply"]);
+    assert!(!o.status.success());
+    assert!(said(&o).contains("--context"), "{}", said(&o));
+    // a symlink points at this machine: refused, with every other problem
+    std::os::unix::fs::symlink("/etc/hosts", w.join("bağ")).unwrap();
+    std::os::unix::fs::symlink("/etc/passwd", w.join("actions/öteki")).unwrap();
+    let o = s.itero(&w, &["ws", "apply", "--context", "sunucu"]);
+    let text = said(&o);
+    assert!(!o.status.success(), "{text}");
+    assert!(
+        text.contains("bağ: a symlink") && text.contains("actions/öteki: a symlink"),
+        "{text}"
+    );
+    assert!(!s.folder("dükkan").exists(), "nothing sent");
+}

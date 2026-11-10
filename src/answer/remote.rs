@@ -70,6 +70,33 @@ impl Remote {
     }
 }
 
+/// The workspace `r` made on its server to hold `files` (`PUT
+/// /workspaces/{name}`): what it did, or would do on a dry run. The time
+/// it may take grows with what is sent.
+pub fn apply(
+    r: &Remote,
+    files: &super::apply::Files,
+    dry_run: bool,
+) -> Result<super::apply::Applied, Fault> {
+    let size: usize = files.files.iter().map(|f| f.content.len()).sum();
+    let timeout = TIMEOUT + Duration::from_secs((size / (1024 * 1024)) as u64);
+    let body = serde_json::to_value(files).map_err(|e| Fault::Internal(e.into()))?;
+    let query: Vec<(&str, String)> = match dry_run {
+        true => vec![("dry_run", "true".into())],
+        false => vec![],
+    };
+    ask(
+        &r.name,
+        &r.url,
+        r.token.as_deref(),
+        Method::PUT,
+        &["workspaces", &r.ws],
+        &query,
+        Some(&body),
+        timeout,
+    )
+}
+
 /// `GET` the server's own route at `path` (not a workspace's): its
 /// `/workspaces`, its `/health`.
 pub fn server<T: DeserializeOwned>(
