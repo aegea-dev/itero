@@ -1,13 +1,14 @@
 //! `itero ws ev`: the events for the workspace no daemon has handled yet,
 //! and taking one back.
+use crate::answer::Client;
 use super::out::{show, table, text};
 use crate::engine::journal::Journal;
 use crate::workspace::Workspace;
 use anyhow::Result;
 
 /// Each event not yet handled, oldest first: its id, type, time and data.
-pub fn list(ws: &Workspace, json: bool) -> Result<()> {
-    let q = super::client(ws).queued()?;
+pub fn list(c: &Client, json: bool) -> Result<()> {
+    let q = c.queued()?;
     show(json, &serde_json::to_value(&q)?, |v| {
         let rows: Vec<Vec<String>> = v
             .as_array()
@@ -28,8 +29,8 @@ pub fn list(ws: &Workspace, json: bool) -> Result<()> {
 
 /// Cancels an event no daemon has handled yet: it starts and reaches
 /// nothing.
-pub fn cancel(ws: &Workspace, id: &str, json: bool) -> Result<()> {
-    let done = super::client(ws).cancel(id)?;
+pub fn cancel(c: &Client, id: &str, json: bool) -> Result<()> {
+    let done = c.cancel(id)?;
     show(json, &serde_json::to_value(&done)?, |_| {
         println!("cancelled {id}")
     })

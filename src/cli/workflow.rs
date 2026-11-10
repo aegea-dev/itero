@@ -1,16 +1,15 @@
 //! `itero ws wf`: the workflows and their runs.
-use super::client;
+use crate::answer::Client;
 use super::out::{ago, show, table, text};
 use crate::answer::runs;
-use crate::workspace::Workspace;
 use anyhow::Result;
 use serde_json::Value;
 
 /// Each workflow: its file, what starts it, its runs and the last, and
 /// whether a daemon takes its events.
-pub fn list(ws: &Workspace, json: bool) -> Result<()> {
+pub fn list(c: &Client, json: bool) -> Result<()> {
     let now = chrono::Utc::now();
-    let v = serde_json::to_value(client(ws).workflows()?)?;
+    let v = serde_json::to_value(c.workflows()?)?;
     show(json, &v, |v| {
         let rows: Vec<Vec<String>> = v["workflows"]
             .as_array()
@@ -72,7 +71,7 @@ pub struct Filter {
 }
 
 /// The runs, newest first: all of them, or those `f` asks for.
-pub fn runs(ws: &Workspace, f: &Filter, json: bool) -> Result<()> {
+pub fn runs(c: &Client, f: &Filter, json: bool) -> Result<()> {
     let q = runs::Query {
         workflow: f.workflow.clone(),
         status: f.errors.then(|| "error".to_string()),
@@ -80,7 +79,7 @@ pub fn runs(ws: &Workspace, f: &Filter, json: bool) -> Result<()> {
         limit: f.limit,
         all: f.all,
     };
-    let rows = client(ws).runs(&q)?;
+    let rows = c.runs(&q)?;
     show(json, &serde_json::to_value(rows)?, |v| {
         let rows: Vec<Vec<String>> = v
             .as_array()
@@ -114,8 +113,8 @@ pub fn runs(ws: &Workspace, f: &Filter, json: bool) -> Result<()> {
 
 /// Asks a run to stop: the daemon running the workspace stops it now, or
 /// the next to start does.
-pub fn stop(ws: &Workspace, run: &str, json: bool) -> Result<()> {
-    let stopped = client(ws).stop(run)?;
+pub fn stop(c: &Client, run: &str, json: bool) -> Result<()> {
+    let stopped = c.stop(run)?;
     show(json, &serde_json::to_value(&stopped)?, |_| {
         println!("stopping {}", stopped.stopping);
         if !stopped.daemon {
@@ -126,8 +125,8 @@ pub fn stop(ws: &Workspace, run: &str, json: bool) -> Result<()> {
 
 /// One run, by id or name: how it started, each step and how it went, the
 /// events it took, and its state.
-pub fn run(ws: &Workspace, run: &str, json: bool) -> Result<()> {
-    let story = client(ws).run(run)?;
+pub fn run(c: &Client, run: &str, json: bool) -> Result<()> {
+    let story = c.run(run)?;
     if let Some(n) = story.named_alike
         && !json
     {

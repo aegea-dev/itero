@@ -1,6 +1,6 @@
 //! The machine and the workspace as a whole: `info`, `service status`, and
 //! `ws info`, `ws check`, `ws which`.
-use super::client;
+use crate::answer::Client;
 use super::out::{show, text};
 use crate::answer::workspace::{RunBy, Runner};
 use crate::engine::journal::Journal;
@@ -12,8 +12,8 @@ use std::path::PathBuf;
 /// Reads every workflow, action and connector and says what is wrong:
 /// every problem, each with its address, then how many; what it found is
 /// printed when nothing is wrong.
-pub fn check(ws: &Workspace, json: bool) -> Result<()> {
-    let report = client(ws).check()?;
+pub fn check(c: &Client, json: bool) -> Result<()> {
+    let report = c.check()?;
     let (errors, warnings) = (report.errors.len(), report.warnings.len());
     let v = serde_json::to_value(report)?;
     if errors > 0 {
@@ -138,8 +138,8 @@ fn probe(ws: &Workspace) -> Result<Runner> {
 }
 
 /// The workspace: its identity, meta and limits, and the daemon running it.
-pub fn info(ws: &Workspace, json: bool) -> Result<()> {
-    let v = serde_json::to_value(client(ws).info(|| Ok(probe(ws)?))?)?;
+pub fn info(c: &Client, json: bool) -> Result<()> {
+    let v = serde_json::to_value(c.info(|ws| Ok(probe(ws)?))?)?;
     show(json, &v, |v| {
         let w = &v["workspace"];
         println!("workspace");
@@ -248,8 +248,8 @@ pub fn machine_info(json: bool) -> Result<()> {
 }
 
 /// Where a workflow, action or connector of this name is.
-pub fn which(ws: &Workspace, name: &str, json: bool) -> Result<()> {
-    let v = serde_json::to_value(client(ws).which(name)?)?;
+pub fn which(c: &Client, name: &str, json: bool) -> Result<()> {
+    let v = serde_json::to_value(c.which(name)?)?;
     show(json, &v, |v| {
         for f in v.as_array().into_iter().flatten() {
             println!("{:<10}{}", text(&f["kind"]), text(&f["path"]));

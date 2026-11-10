@@ -20,6 +20,9 @@ use clap::{Parser, Subcommand};
     about = "itero: your domain, your solution, your tool. Build the harness you need, from anything, for anything."
 )]
 pub struct Cli {
+    /// The itero deployment to ask (itero context list); else the one in use, else this machine
+    #[arg(long, global = true, value_name = "NAME", add = complete::contexts())]
+    pub context: Option<String>,
     #[command(subcommand)]
     pub cmd: Cmd,
 }
@@ -723,12 +726,6 @@ fn health_at(api: &str) -> Option<serde_json::Value> {
         .ok()
 }
 
-/// Where a command's questions about `ws` go: this machine's workspace,
-/// answered in the same process.
-fn client(ws: &crate::workspace::Workspace) -> crate::answer::Client {
-    crate::answer::Client::Local(ws.clone())
-}
-
 /// The daemon running a workspace, and where its API is.
 struct Answering {
     /// The API's address, ending in `/`.
@@ -776,8 +773,58 @@ fn daemon_running(ws: &crate::workspace::Workspace) -> Result<bool> {
     crate::engine::lock::held(ws).map_err(anyhow::Error::msg)
 }
 
+/// The command, when it is about this machine and so cannot go to a
+/// context's server: its name as typed.
+fn here_only(cmd: &Cmd) -> Option<&'static str> {
+    Some(match cmd {
+        Cmd::Workspace { cmd, .. } => match cmd {
+            WorkspaceCmd::Add => "ws add",
+            WorkspaceCmd::Remove { .. } => "ws remove",
+            WorkspaceCmd::List { .. } => "ws list",
+            WorkspaceCmd::Secret { .. } => "ws secret",
+            WorkspaceCmd::Info { .. }
+            | WorkspaceCmd::Check { .. }
+            | WorkspaceCmd::Which { .. }
+            | WorkspaceCmd::Emit(_)
+            | WorkspaceCmd::Workflow { .. }
+            | WorkspaceCmd::Action { .. }
+            | WorkspaceCmd::Event { .. }
+            | WorkspaceCmd::Connector { .. } => return None,
+        },
+        // they only say where a command moved
+        Cmd::MovedCheck { .. }
+        | Cmd::MovedWhich { .. }
+        | Cmd::MovedWorkflow { .. }
+        | Cmd::MovedAction { .. }
+        | Cmd::MovedConnector { .. } => return None,
+        Cmd::Daemon { .. } => "daemon",
+        Cmd::Watchdog { .. } => "watchdog",
+        Cmd::Manager => "manager",
+        Cmd::Worker => "worker",
+        Cmd::Service { .. } => "service",
+        Cmd::Emit(_) => "emit",
+        Cmd::Secret { .. } => "secret",
+        Cmd::Info { .. } => "info",
+        Cmd::Ai { .. } => "ai",
+        Cmd::Completion { .. } => "completion",
+        Cmd::Context { .. } => "context",
+        Cmd::NotificationClicked { .. } => "notification-clicked",
+        Cmd::Watch { .. } => "watch",
+        Cmd::Browser { .. } => "browser",
+        Cmd::Webhook { .. } => "webhook",
+    })
+}
+
 fn dispatch(cli: Cli) -> Result<()> {
     let workspace = || crate::workspace::find(&std::env::current_dir()?);
+    let context = cli.context.clone();
+    // only a context given to it: the one in use is for the commands that
+    // can go to a server, and these are about this machine by nature
+    if let Some(name) = context.as_deref().filter(|n| *n != crate::context::LOCAL)
+        && let Some(what) = here_only(&cli.cmd)
+    {
+        bail!("itero {what} works on this machine: run it on {name}'s server");
+    }
     if matches!(
         cli.cmd,
         Cmd::Daemon { .. } | Cmd::Manager | Cmd::Worker | Cmd::Watchdog { .. }
@@ -958,6 +1005,9 @@ fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Completion { shell } => complete::script(shell, command),
         Cmd::Workspace { ws, cmd } => {
             let chosen = || workspace::chosen(ws.as_deref());
+            // where the command's question goes: here, or a context's server
+            let client =
+                || workspace::target(ws.as_deref(), crate::context::chosen(context.as_deref())?);
             // these are about the list, or this folder: no other workspace
             let none = |what: &str| -> Result<()> {
                 match &ws {
@@ -985,20 +1035,20 @@ fn dispatch(cli: Cli) -> Result<()> {
                     none("list")?;
                     workspace::list(json)?
                 }
-                WorkspaceCmd::Info { json } => top::info(&chosen()?, json)?,
-                WorkspaceCmd::Check { json } => top::check(&chosen()?, json)?,
-                WorkspaceCmd::Which { name, json } => top::which(&chosen()?, &name, json)?,
-                WorkspaceCmd::Emit(args) => emit::one(&chosen()?, args)?,
+                WorkspaceCmd::Info { json } => top::info(&client()?, json)?,
+                WorkspaceCmd::Check { json } => top::check(&client()?, json)?,
+                WorkspaceCmd::Which { name, json } => top::which(&client()?, &name, json)?,
+                WorkspaceCmd::Emit(args) => emit::one(&client()?, args)?,
                 WorkspaceCmd::Secret { name, file } => top::secret(Some(&chosen()?), &name, file)?,
                 WorkspaceCmd::Workflow { cmd } => {
-                    let ws = chosen()?;
+                    let c = client()?;
                     match cmd {
-                        WorkflowCmd::List { json } => workflow::list(&ws, json)?,
+                        WorkflowCmd::List { json } => workflow::list(&c, json)?,
                         WorkflowCmd::Runs {
                             run: Some(run),
                             json,
                             ..
-                        } => workflow::run(&ws, &run, json)?,
+                        } => workflow::run(&c, &run, json)?,
                         WorkflowCmd::Runs {
                             run: None,
                             errors,
@@ -1008,7 +1058,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                             all,
                             json,
                         } => workflow::runs(
-                            &ws,
+                            &c,
                             &workflow::Filter {
                                 errors,
                                 workflow,
@@ -1018,31 +1068,31 @@ fn dispatch(cli: Cli) -> Result<()> {
                             },
                             json,
                         )?,
-                        WorkflowCmd::Stop { run, json } => workflow::stop(&ws, &run, json)?,
+                        WorkflowCmd::Stop { run, json } => workflow::stop(&c, &run, json)?,
                     }
                 }
                 WorkspaceCmd::Action { cmd } => {
-                    let ws = chosen()?;
+                    let c = client()?;
                     match cmd {
-                        ActionCmd::List { json } => kinds::actions(&ws, json)?,
+                        ActionCmd::List { json } => kinds::actions(&c, json)?,
                         ActionCmd::Errors {
                             action,
                             limit,
                             json,
-                        } => kinds::errors(&ws, action.as_deref(), limit, json)?,
+                        } => kinds::errors(&c, action.as_deref(), limit, json)?,
                     }
                 }
                 WorkspaceCmd::Event { cmd } => {
-                    let ws = chosen()?;
+                    let c = client()?;
                     match cmd {
-                        EventCmd::List { json } => event::list(&ws, json)?,
-                        EventCmd::Cancel { id, json } => event::cancel(&ws, &id, json)?,
+                        EventCmd::List { json } => event::list(&c, json)?,
+                        EventCmd::Cancel { id, json } => event::cancel(&c, &id, json)?,
                     }
                 }
                 WorkspaceCmd::Connector { cmd } => {
-                    let ws = chosen()?;
+                    let c = client()?;
                     match cmd {
-                        ConnectorCmd::List { json } => kinds::connectors(&ws, json)?,
+                        ConnectorCmd::List { json } => kinds::connectors(&c, json)?,
                     }
                 }
             }

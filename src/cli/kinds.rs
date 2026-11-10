@@ -1,15 +1,14 @@
 //! `itero ws ac` and `itero ws cn`: what there is, their repeat and
 //! args, and which actions break.
-use super::client;
+use crate::answer::Client;
 use super::out::{ago, show, table, text};
-use crate::workspace::Workspace;
 use anyhow::Result;
 use serde_json::Value;
 
 /// Each action: its name and its files (one per version); the built-in
 /// ones too.
-pub fn actions(ws: &Workspace, json: bool) -> Result<()> {
-    let out = serde_json::to_value(client(ws).actions()?)?;
+pub fn actions(c: &Client, json: bool) -> Result<()> {
+    let out = serde_json::to_value(c.actions()?)?;
     show(json, &out, |v| {
         let rows: Vec<Vec<String>> = v
             .as_array()
@@ -38,8 +37,8 @@ pub fn actions(ws: &Workspace, json: bool) -> Result<()> {
 
 /// Each connector, once for each set of args the workflows give it: the
 /// type of the events it sends, its file, and those args.
-pub fn connectors(ws: &Workspace, json: bool) -> Result<()> {
-    let out = serde_json::to_value(client(ws).connectors()?)?;
+pub fn connectors(c: &Client, json: bool) -> Result<()> {
+    let out = serde_json::to_value(c.connectors()?)?;
     show(json, &out, |v| {
         let rows: Vec<Vec<String>> = v
             .as_array()
@@ -64,10 +63,10 @@ pub fn connectors(ws: &Workspace, json: bool) -> Result<()> {
 /// Which actions break: without a name, each action runs failed at, how
 /// often, when and why last; with one, its failures, newest first. From
 /// the runs that ended in error: the step they failed at, and why.
-pub fn errors(ws: &Workspace, action: Option<&str>, limit: usize, json: bool) -> Result<()> {
+pub fn errors(c: &Client, action: Option<&str>, limit: usize, json: bool) -> Result<()> {
     let now = chrono::Utc::now();
     if let Some(name) = action {
-        let mine = serde_json::to_value(client(ws).failures_of(name, limit)?)?;
+        let mine = serde_json::to_value(c.failures_of(name, limit)?)?;
         let name = name.trim_start_matches('#');
         return show(json, &mine, |v| {
             let rows: Vec<Vec<String>> = v
@@ -89,7 +88,7 @@ pub fn errors(ws: &Workspace, action: Option<&str>, limit: usize, json: bool) ->
             table(&rows);
         });
     }
-    let out = serde_json::to_value(client(ws).errors_by_action(limit)?)?;
+    let out = serde_json::to_value(c.errors_by_action(limit)?)?;
     show(json, &out, |v| {
         let rows: Vec<Vec<String>> = v
             .as_array()

@@ -66,6 +66,10 @@ pub fn nudge(ws: &Workspace) {
 }
 
 /// An event to send.
+/// The longest `POST /events?wait=` waits for its runs, in seconds: the
+/// route's cap, which a context's CLI says before it sends.
+pub const MAX_WAIT: u64 = 600;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Emit {
     pub kind: String,
