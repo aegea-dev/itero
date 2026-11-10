@@ -1,0 +1,4 @@
+{
+  "on": [{ "event": "selam.geldi" }],
+  "steps": [{ "#selamla": { "args": { "ad": "$event.ad" } } }]
+}

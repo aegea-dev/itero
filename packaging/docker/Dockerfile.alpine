@@ -1,0 +1,29 @@
+# check=skip=SecretsUsedInArgOrEnv
+# itero on Alpine, small: curl and jq beside it, the rest yours to add
+# (FROM this, then apk add). The build context as for the Debian image.
+FROM alpine:3.22
+ARG TARGETARCH
+RUN apk add --no-cache tini ca-certificates curl jq \
+ && addgroup -g 10001 itero \
+ && adduser -u 10001 -G itero -h /var/lib/itero -H -s /sbin/nologin -D itero \
+ && mkdir -p /var/lib/itero /etc/itero \
+ && chown itero:itero /var/lib/itero \
+ && echo '{}' > /etc/itero/server.json
+COPY bin/${TARGETARCH}/itero /usr/local/bin/itero
+COPY bin/${TARGETARCH}/THIRD-PARTY-LICENSES /usr/share/doc/itero/THIRD-PARTY-LICENSES
+# (the check skipped on the first line takes ITERO_NO_SECRET_STORE for a
+# secret by its name; it only says there is no store)
+# as in the Debian image
+ENV XDG_STATE_HOME=/var/lib \
+    HOME=/var/lib/itero \
+    ITERO_NO_SECRET_STORE=1 \
+    ITERO_BROWSER_SANDBOX=off
+LABEL org.opencontainers.image.source="https://github.com/aegea-dev/itero" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.description="itero: workflows from anything, for anything"
+USER 10001:10001
+WORKDIR /var/lib/itero
+VOLUME /var/lib/itero
+EXPOSE 8443
+ENTRYPOINT ["tini", "--", "itero"]
+CMD ["daemon", "--config", "/etc/itero/server.json"]

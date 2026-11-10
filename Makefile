@@ -207,6 +207,14 @@ test-linux: ## Run the tests and clippy on Linux, in Docker
 test-docker: ## Run the tests that need Docker: container actions, IMAP and POP3
 	sh scripts/test-docker.sh
 
+.PHONY: image
+image: ## Build the Debian and Alpine images for this machine (itero:dev, itero:dev-alpine)
+	sh scripts/image.sh
+
+.PHONY: test-image
+test-image: ## Build both images and run each with the Compose example (needs Docker)
+	sh scripts/test-image.sh
+
 .PHONY: test-formula
 test-formula: ## Install the formula from a local tap (macOS; changes Homebrew, undone after)
 	sh scripts/test-formula.sh

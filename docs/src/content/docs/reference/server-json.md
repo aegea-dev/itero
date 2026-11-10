@@ -61,6 +61,9 @@ error: /Users/me/.config/itero/server.json: port: a number from 1 to 65535, not 
 /Users/me/.config/itero/server.json: prot: not a setting of server.json (port)
 ```
 
-On a server or in a container, set `XDG_CONFIG_HOME=/etc` and
-`XDG_STATE_HOME=/var/lib`: the file is then `/etc/itero/server.json`, and
-the daemon's state is in `/var/lib/itero/`.
+On a server or in a container, run `itero daemon --config
+/etc/itero/server.json` with `XDG_STATE_HOME=/var/lib`, so the daemon's
+state is in `/var/lib/itero/`, as itero's images do
+([In a container](/guides/container/)). Setting `XDG_CONFIG_HOME=/etc`
+would also find the file, but every program the daemon's actions run
+inherits it, and those that keep settings there cannot write to `/etc`.
