@@ -16,7 +16,7 @@ pub struct Context {
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
-    /// The workspace a command means when `--ws` names none.
+    /// The workspace a command means when it names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ws: Option<String>,
 }

@@ -3,22 +3,39 @@
 //! now, not as a script generated once had them.
 use clap_complete::engine::{ArgValueCandidates, CompletionCandidate};
 
-/// The workspace `--ws` names in the words being completed, else the one
-/// the shell is in; none outside one.
+/// The workspace the word after `ws` names in the words being completed
+/// (a path, or a name on the list), else the one the shell is in; none
+/// outside one, or for a name not on the list.
 fn workspace() -> Option<crate::workspace::Workspace> {
+    use super::workspace::{is_path, listed};
     let words: Vec<String> = std::env::args().collect();
-    let named = words
+    let after = words
         .iter()
-        .enumerate()
-        .find_map(|(i, w)| match w.as_str() {
-            "--ws" => words.get(i + 1).cloned(),
-            w => w.strip_prefix("--ws=").map(str::to_string),
-        });
-    match named {
+        .position(|w| w == "ws" || w == "workspace")
+        .and_then(|i| words.get(i + 1))
+        .filter(|w| !w.is_empty() && !w.starts_with('-'));
+    match after {
+        Some(p) if is_path(p) => crate::workspace::find(std::path::Path::new(p)).ok(),
         // its folder only: a TAB takes no lock on its journal
-        Some(name) => crate::engine::machine::folder(&super::workspace::listed(&name).ok()?).ok(),
+        Some(w) => match listed(w) {
+            Ok(e) => crate::engine::machine::folder(&e).ok(),
+            // a subcommand (wf, check): the shell's folder
+            Err(_) if is_subcommand(w) => {
+                crate::workspace::find(&std::env::current_dir().ok()?).ok()
+            }
+            Err(_) => None,
+        },
         None => crate::workspace::find(&std::env::current_dir().ok()?).ok(),
     }
+}
+
+/// Whether `w` is one of `itero ws`'s subcommands or their aliases.
+fn is_subcommand(w: &str) -> bool {
+    let cmd = <super::Cli as clap::CommandFactory>::command();
+    cmd.find_subcommand("ws").is_some_and(|ws| {
+        ws.get_subcommands()
+            .any(|s| s.get_name() == w || s.get_all_aliases().any(|a| a == w))
+    })
 }
 
 fn names(list: impl IntoIterator<Item = String>) -> Vec<CompletionCandidate> {

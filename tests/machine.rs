@@ -717,7 +717,7 @@ fn emit_reaches_every_workspace_on_the_list_and_ws_emit_one() {
     assert_eq!(said(&m.journal(&a)).len(), 1);
     // one workspace, by the folder or by name
     m.ok(&a, &["ws", "emit", "deneme.geldi"]);
-    m.ok(&elsewhere, &["ws", "--ws", &na, "emit", "deneme.geldi"]);
+    m.ok(&elsewhere, &["ws", &na, "emit", "deneme.geldi"]);
     assert_eq!(said(&m.journal(&a)).len(), 3);
     assert_eq!(said(&m.journal(&b)).len(), 1);
     // one that is missing from its folder is said, and fails nothing: an
@@ -764,10 +764,7 @@ fn emit_reads_its_file_from_the_folder_it_runs_in() {
     };
     // --ws names the workspace; the file is still this folder's
     let file = ["--file", "istek.json", "deneme.geldi"];
-    m.ok(
-        &elsewhere,
-        &[&["ws", "--ws", &na, "emit"][..], &file].concat(),
-    );
+    m.ok(&elsewhere, &[&["ws", &na, "emit"][..], &file].concat());
     assert_eq!(cities(&a), ["İzmir"]);
     assert!(cities(&b).is_empty());
     // itero emit: every workspace gets it

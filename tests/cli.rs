@@ -1336,15 +1336,21 @@ fn tab_completes_the_names_of_the_workspace_ws_names() {
     let name = listed(state.path()).remove(0);
     let elsewhere = tempfile::tempdir().unwrap();
     let tab = |words: &[&str]| completions_on(elsewhere.path(), state.path(), words);
-    assert_eq!(tab(&["ws", "--ws", ""]), [name.as_str()]);
-    assert_eq!(tab(&["ws", "wf", "list", "--ws", ""]), [name.as_str()]);
-    let flows = tab(&["ws", "wf", "runs", "--ws", &name, "--workflow", ""]);
+    // the names on the list, beside the subcommands, right after ws
+    let first = tab(&["ws", ""]);
+    assert!(
+        first.contains(&name) && first.contains(&"wf".to_string()),
+        "{first:?}"
+    );
+    let flows = tab(&["ws", &name, "wf", "runs", "--workflow", ""]);
     assert!(flows.contains(&"sipariş".to_string()), "{flows:?}");
-    let flows = tab(&["ws", "--ws", &name, "wf", "runs", "--workflow", ""]);
+    // by its path too
+    let path = d.path().display().to_string();
+    let flows = tab(&["ws", &path, "wf", "runs", "--workflow", ""]);
     assert!(flows.contains(&"sipariş".to_string()), "{flows:?}");
     // the folder's when none is named, and none for a name not listed
     assert!(tab(&["ws", "wf", "runs", "--workflow", ""]).is_empty());
-    assert!(tab(&["ws", "wf", "runs", "--ws", "yok", "--workflow", ""]).is_empty());
+    assert!(tab(&["ws", "yok-böyle", "wf", "runs", "--workflow", ""]).is_empty());
 }
 
 #[test]
@@ -1512,50 +1518,59 @@ fn a_ws_command_picks_a_workspace_by_name_from_any_folder() {
     );
     let name = listed(state.path()).remove(0);
     let elsewhere = tempfile::tempdir().unwrap();
-    let o = itero_on(
-        elsewhere.path(),
-        state.path(),
-        &["ws", "wf", "list", "--ws", &name],
-    );
+    let o = itero_on(elsewhere.path(), state.path(), &["ws", &name, "wf", "list"]);
     assert!(o.status.success(), "{}", err(&o));
     assert!(out(&o).contains("selam"), "{}", out(&o));
-    let o = itero_on(
-        elsewhere.path(),
-        state.path(),
-        &["ws", "--ws", &name, "ac", "list"],
-    );
+    let o = itero_on(elsewhere.path(), state.path(), &["ws", &name, "ac", "list"]);
     assert!(o.status.success(), "{}", err(&o));
     let o = itero_on(
         elsewhere.path(),
         state.path(),
-        &["ws", "wf", "list", "--ws", "yok-böyle"],
+        &["ws", "yok-böyle", "wf", "list"],
     );
     assert!(
         !o.status.success() && err(&o).contains("itero ws list"),
         "{}",
         err(&o)
     );
+    // by its path, absolute or relative, listed or not
+    let path = d.path().display().to_string();
+    let o = itero_on(elsewhere.path(), state.path(), &["ws", &path, "wf", "list"]);
+    assert!(out(&o).contains("selam"), "{}", err(&o));
+    let o = itero_on(d.path(), state.path(), &["ws", ".", "wf", "list"]);
+    assert!(out(&o).contains("selam"), "{}", err(&o));
+    let parent = d.path().parent().unwrap();
+    let rel = format!("./{}", d.path().file_name().unwrap().to_str().unwrap());
+    let o = itero_on(parent, state.path(), &["ws", &rel, "wf", "list"]);
+    assert!(out(&o).contains("selam"), "{}", err(&o));
+    // none named, outside any workspace: the list's names are said
+    let o = itero_on(elsewhere.path(), state.path(), &["ws", "wf", "list"]);
+    assert!(
+        !o.status.success() && err(&o).contains("which workspace") && err(&o).contains(&name),
+        "{}",
+        err(&o)
+    );
 }
 
 #[test]
-fn the_lists_own_commands_take_no_ws() {
+fn the_lists_own_commands_take_no_workspace_before_them() {
     let state = tempfile::tempdir().unwrap();
     let d = workspace();
     for args in [
-        &["ws", "add", "--ws", "güneş"][..],
-        &["ws", "list", "--ws", "güneş"],
-        &["ws", "remove", "--ws", "güneş"],
+        &["ws", "güneş-ay", "add"][..],
+        &["ws", "güneş-ay", "list"],
+        &["ws", "güneş-ay", "remove"],
     ] {
         let o = itero_on(d.path(), state.path(), args);
         assert!(
-            !o.status.success() && err(&o).contains("takes no --ws"),
+            !o.status.success() && err(&o).contains("takes no workspace before it"),
             "{args:?}: {}",
             err(&o)
         );
     }
     // remove takes the name itself, from any folder
-    let o = itero_on(d.path(), state.path(), &["ws", "remove", "--ws", "güneş"]);
-    assert!(err(&o).contains("itero ws remove güneş"), "{}", err(&o));
+    let o = itero_on(d.path(), state.path(), &["ws", "güneş-ay", "remove"]);
+    assert!(err(&o).contains("itero ws remove güneş-ay"), "{}", err(&o));
 }
 
 #[test]

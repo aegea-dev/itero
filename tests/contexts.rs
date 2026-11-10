@@ -281,10 +281,11 @@ fn two_workspaces(m: &Machine) -> (Daemon, String, String, String) {
     (d, url, names[0].clone(), names[1].clone())
 }
 
-/// The name of the workspace `ws info` answered for, with `env` set.
-fn answered_by(m: &Machine, args: &[&str], env: Option<&str>) -> String {
+/// The name of the workspace `ws [ws] info` answered for, with `args`
+/// after it and `env` set.
+fn answered_by(m: &Machine, ws: Option<&str>, args: &[&str], env: Option<&str>) -> String {
     let mut c = m.command();
-    c.args(["ws", "info", "--json"]).args(args);
+    c.arg("ws").args(ws).args(["info", "--json"]).args(args);
     if let Some(e) = env {
         c.env("ITERO_CONTEXT", e);
     }
@@ -305,11 +306,14 @@ fn the_context_is_the_flag_else_itero_context_else_the_current_one() {
     m.ok(&["context", "add", "bir", &url, "--ws", &a], Some(""));
     m.ok(&["context", "add", "iki", &url, "--ws", &b], Some(""));
     m.ok(&["context", "use", "bir"], None);
-    assert_eq!(answered_by(&m, &[], None), a);
-    assert_eq!(answered_by(&m, &[], Some("iki")), b);
-    assert_eq!(answered_by(&m, &["--context", "bir"], Some("iki")), a);
-    // --ws picks another workspace on the same server
-    assert_eq!(answered_by(&m, &["--context", "bir", "--ws", &b], None), b);
+    assert_eq!(answered_by(&m, None, &[], None), a);
+    assert_eq!(answered_by(&m, None, &[], Some("iki")), b);
+    assert_eq!(answered_by(&m, None, &["--context", "bir"], Some("iki")), a);
+    // a name picks another workspace on the same server
+    assert_eq!(answered_by(&m, Some(&b), &["--context", "bir"], None), b);
+    // a path is this machine's: refused with a context
+    let said = m.fails(&["ws", "./bir", "info", "--context", "bir"], None);
+    assert!(said.contains("a path is this machine's"), "{said}");
     // a context that is not there
     let said = m.fails(&["--context", "yok", "ws", "info"], None);
     assert!(said.contains("no context yok"), "{said}");
