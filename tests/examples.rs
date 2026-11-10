@@ -70,7 +70,7 @@ fn the_order_example_waits_for_its_payment_then_ships() {
             r#"{"order": 43, "email": "ayşe@örnek.test"}"#,
         ],
     );
-    itero(&ws, &["daemon", "--once"]);
+    itero(&ws, &["ws", "daemon", "--once"]);
     let runs = String::from_utf8(itero(&ws, &["ws", "wf", "runs"]).stdout).unwrap();
     assert!(runs.contains("waiting"), "{runs}");
     itero(
@@ -82,7 +82,7 @@ fn the_order_example_waits_for_its_payment_then_ships() {
             r#"{"payment_ref": "pay-43", "paid": true}"#,
         ],
     );
-    itero(&ws, &["daemon", "--once"]);
+    itero(&ws, &["ws", "daemon", "--once"]);
     let read = |f: &str| std::fs::read_to_string(ws.join(f)).unwrap_or_default();
     assert_eq!(
         read(".itero/sent.log"),
@@ -249,7 +249,7 @@ fn the_webhook_example_forwards_a_reply_to_the_step_waiting_for_it() {
     std::fs::write(&script, text).unwrap();
     let _daemon = Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .current_dir(&ws)
             .env("ITERO_NO_SECRET_STORE", "1")
             .stdin(std::process::Stdio::piped())
@@ -342,7 +342,7 @@ fn the_github_webhook_example_tells_of_a_push_once() {
     let told = ws.join("bildirim.log");
     let _daemon = Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .current_dir(&ws)
             .env("ITERO_NO_SECRET_STORE", "1")
             .env("ITERO_NOTIFY_LOG", &told)
@@ -579,7 +579,7 @@ fn the_messages_alert_goes_the_way_its_event_names() {
             r#"{"via": "push", "subject": "Yedek", "text": "Gece yedeği bitti."}"#,
         ],
     );
-    itero(&ws, &["daemon", "--once"]);
+    itero(&ws, &["ws", "daemon", "--once"]);
     let got = server.join().unwrap();
     assert_eq!(got.len(), 1, "one push: {:?}", runs_of(&ws, "alert"));
     let sent: serde_json::Value = serde_json::from_str(&got[0].1).unwrap();
@@ -633,7 +633,7 @@ fn the_reddit_example_opens_the_top_post_and_sums_up_its_discussion() {
     };
     let event = serde_json::json!({ "url": w.url("/r/rust/") }).to_string();
     run(&["ws", "emit", "subreddit.asked", &event]);
-    run(&["daemon", "--once"]);
+    run(&["ws", "daemon", "--once"]);
     let runs = runs_of(&ws, "top");
     assert_eq!(runs[0]["status"], "done", "{runs:?}");
     // the click went to the post the model named, not the pinned one
@@ -690,7 +690,7 @@ fn the_page_watch_example_tells_each_change_of_the_newest_post() {
     let state = d.path().join("durum");
     let _daemon = stop::Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .current_dir(&ws)
             .env("ITERO_NO_SECRET_STORE", "1")
             .env("XDG_STATE_HOME", &state)
@@ -776,7 +776,7 @@ fn the_wiki_stream_example_tells_ten_seconds_and_a_busy_page_and_resumes() {
     let told = ws.join("bildirim.log");
     let _daemon = Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .args(["daemon", "--no-serve"])
+            .args(["ws", "daemon", "--no-serve"])
             .current_dir(&ws)
             .env("ITERO_NO_SECRET_STORE", "1")
             .env("ITERO_NOTIFY_LOG", &told)

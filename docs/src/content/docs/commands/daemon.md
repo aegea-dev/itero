@@ -3,21 +3,28 @@ title: daemon
 description: Runs your workflows; leave it running.
 ---
 
-`itero daemon` runs your workflows. While it runs, events start them,
+`itero daemon` runs your workflows: every workspace on the machine's
+list, each on its own, on one port. While it runs, events start them,
 schedules come due and steps run; leave it running in a terminal, or use
 [`itero service`](/commands/service/) to start it at login.
 
 ```sh
-itero daemon [--no-serve]
-itero daemon --all [--config <path>] [--no-serve]
+itero daemon [--config <path>] [--no-serve]
+itero ws daemon [--no-serve]
 ```
 
-`--all` runs every workspace on the machine's list instead of this
-folder's, on one port: see [One itero per machine](/guides/machine/). Its
+A workspace is on the list once [`itero ws add`](/commands/workspace/)
+put it there: see [One itero per machine](/guides/machine/). The daemon's
 settings, its port among them, are in
-[`server.json`](/reference/server-json/).
+[`server.json`](/reference/server-json/). Run in a workspace's folder that
+is not on the list, it says so when it starts.
 
-It starts the workspace's [connectors](/guides/connectors/), watches the
+`itero ws daemon` runs one workspace alone, in the foreground: the
+folder's, or the one named after `ws` (`itero ws quiet-river daemon`).
+It is for a workspace you are making, before it goes on the list; its
+port is the one in its `itero.config.json`, else one the OS gives.
+
+Each workspace's daemon starts the workspace's [connectors](/guides/connectors/), watches the
 [paths](/guides/connectors/#watching-files) its workflows name, takes
 events and schedules, and runs steps. It serves the
 [HTTP API](/reference/http/) on `127.0.0.1:<port>`. Leave it running;
@@ -41,12 +48,13 @@ while a slow step still runs. Between passes it waits and uses no CPU.
 
 | Option | Does |
 |---|---|
-| `--all` | every workspace on the machine's list ([`itero workspace`](/commands/workspace/)) |
-| `--config <path>` | with `--all`: its settings from this file, not the config folder's [`server.json`](/reference/server-json/) |
+| `--config <path>` | its settings from this file, not the config folder's [`server.json`](/reference/server-json/) |
 | `--no-serve` | the passes only, no HTTP API |
 
+`itero daemon --all`, from before, is refused and says the new form.
+
 ```
-$ itero daemon
+$ itero ws daemon
 itero: running the workflows in /Users/me/home, each as it comes due (Ctrl-C stops); log: .itero/itero.log
 itero: serving on http://127.0.0.1:8787/
 3 events, 1 jobs, 0 lost (run again), 0 stopped, 0 waiting
@@ -61,4 +69,4 @@ One daemon per workspace: whichever runs it holds a lock on its
 have your workspaces running from login on, without a terminal:
 `itero workspace add` in each, then
 [`itero service install`](/commands/service/), which runs
-`itero daemon --all`.
+`itero daemon`.

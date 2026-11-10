@@ -1,4 +1,4 @@
-//! `itero daemon --all`: one daemon running every workspace on the
+//! `itero daemon`: one daemon running every workspace on the
 //! machine's list, each on threads of its own (`Running`), following the
 //! list as it changes.
 use super::events::EmitError;

@@ -4,10 +4,10 @@ description: How the machine's daemon serves, read at its start.
 ---
 
 `server.json` holds the settings of the machine's daemon
-([`itero daemon --all`](/commands/daemon/), which
+([`itero daemon`](/commands/daemon/), which
 [`itero service`](/commands/service/) runs). It is in itero's config
 folder: `$XDG_CONFIG_HOME/itero/server.json`, else
-`~/.config/itero/server.json`. `itero daemon --all --config <path>` reads
+`~/.config/itero/server.json`. `itero daemon --config <path>` reads
 another file instead.
 
 ```json
@@ -53,7 +53,7 @@ A setting it does not know, or a value that is wrong, stops the daemon
 before it serves anything, with every problem told at once:
 
 ```
-$ itero daemon --all
+$ itero daemon
 error: /Users/me/.config/itero/server.json: port: a number from 1 to 65535, not "8787"
 /Users/me/.config/itero/server.json: prot: not a setting of server.json (port)
 ```

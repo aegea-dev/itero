@@ -41,7 +41,7 @@ starts: greet
 $ itero ws emit greet.someon '{}'
 01a1602a-43fc-71b8-b210-dbf25ba0b65e
 nothing starts on greet.someon: did you mean greet.someone?
-no daemon is running: it waits for itero daemon
+no daemon is running: it waits for one (itero daemon, or itero ws daemon for this workspace alone)
 ```
 
 - `starts:` the workflows it starts;

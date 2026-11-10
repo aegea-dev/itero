@@ -3,7 +3,7 @@ title: HTTP API
 description: The daemon's local API, its routes and answers.
 ---
 
-`itero daemon` serves on `127.0.0.1:<port>` only: `port` in
+`itero ws daemon` serves a workspace's API on `127.0.0.1:<port>` only: `port` in
 [`itero.config.json`](/reference/itero-config/), or, when it sets none, one
 the OS gives, which `itero ws info` shows; an app that calls the API sets
 one. The examples here use 8787. Answers are JSON;
@@ -218,7 +218,7 @@ curl -sN http://127.0.0.1:8787/log/stream | jq -r '"\(.time) \(.event) \(.workfl
 
 Both streams read what is already saved: with nobody listening they cost
 the daemon nothing, and a slow listener is read at its own pace. Through
-`itero daemon --all` they are `/ws/<name>/events/stream` and
+`itero daemon` they are `/ws/<name>/events/stream` and
 `/ws/<name>/log/stream`.
 
 ## GET /runs/\{id or name\}
@@ -329,7 +329,7 @@ nothing has that name.
 
 ## One itero per machine
 
-`itero daemon --all` ([One itero per machine](/guides/machine/)) serves
+`itero daemon` ([One itero per machine](/guides/machine/)) serves
 every workspace on the machine's list on one port, with the same `Host`
 check:
 

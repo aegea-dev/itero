@@ -101,7 +101,7 @@ impl Ws {
     fn daemon(&self) -> Daemon {
         let child = self
             .command(&self.root)
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .stderr(std::fs::File::create(self.d.path().join("söylenen")).unwrap())
             .spawn()
             .unwrap();
@@ -395,7 +395,7 @@ fn the_stream_works_through_the_machine_api() {
     let port = free_port();
     let _d = Daemon(
         w.command(w.d.path())
-            .args(["daemon", "--all", "--config", &server_file(&w, port)])
+            .args(["daemon", "--config", &server_file(&w, port)])
             .stderr(Stdio::null())
             .spawn()
             .unwrap(),
@@ -516,7 +516,7 @@ fn the_log_stream_works_through_the_machine_api() {
     let port = free_port();
     let _d = Daemon(
         w.command(w.d.path())
-            .args(["daemon", "--all", "--config", &server_file(&w, port)])
+            .args(["daemon", "--config", &server_file(&w, port)])
             .stderr(Stdio::null())
             .spawn()
             .unwrap(),

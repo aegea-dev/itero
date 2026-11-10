@@ -43,7 +43,7 @@ fn action(dir: &Path, name: &str, body: &str) {
 
 fn start(dir: &Path) -> (Daemon, u16) {
     let child = Command::new(env!("CARGO_BIN_EXE_itero"))
-        .arg("daemon")
+        .args(["ws", "daemon"])
         .current_dir(dir)
         .env("ITERO_NO_SECRET_STORE", "1")
         .env("ITERO_NOTIFIER", "/usr/bin/true")

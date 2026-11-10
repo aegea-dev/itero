@@ -28,6 +28,6 @@ for push):
   Message Forwarding on, in the iPhone's settings). macOS asks once
   whether the program running it may control Messages.
 
-Run `itero daemon` in this folder. The tests send mail to a mail server in
+Run `itero ws daemon` in this folder. The tests send mail to a mail server in
 Docker (`make test-docker`) and push to a stand-in for ntfy; iMessage is
 not tested, as it would send from your account.

@@ -139,10 +139,10 @@ pub fn changed(old: &Binary, new: &Binary) -> bool {
 
 /// The daemon a watchdog keeps running.
 pub enum Target {
-    /// `itero daemon` in a workspace: its port is read at each check, as
+    /// `itero ws daemon`, one workspace: its port is read at each check, as
     /// the OS may give it another one at a start.
     Workspace(Box<crate::workspace::Workspace>),
-    /// `itero daemon --all`: every workspace on the machine's list, its
+    /// `itero daemon`: every workspace on the machine's list, its
     /// settings from `config` (else the config folder's `server.json`).
     /// Its /health has no pass of its own, so a stuck workspace never
     /// restarts it: the daemon tells it.
@@ -153,9 +153,9 @@ impl Target {
     /// The daemon's command line, after the itero binary.
     pub fn args(&self) -> Vec<String> {
         match self {
-            Target::Workspace(_) => vec!["daemon".into()],
+            Target::Workspace(_) => vec!["ws".into(), "daemon".into()],
             Target::Machine { config } => {
-                let mut a = vec!["daemon".to_string(), "--all".into()];
+                let mut a = vec!["daemon".to_string()];
                 if let Some(c) = config {
                     a.extend(["--config".into(), c.display().to_string()]);
                 }

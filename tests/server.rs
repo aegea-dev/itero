@@ -48,7 +48,7 @@ impl Machine {
     fn daemon(&self, args: &[&str]) -> (Daemon, u16) {
         let child = self
             .command()
-            .args(["daemon", "--all"])
+            .args(["daemon"])
             .args(args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -80,7 +80,7 @@ impl Machine {
         let said = self.d.path().join("said.txt");
         let mut child = self
             .command()
-            .args(["daemon", "--all"])
+            .args(["daemon"])
             .args(args)
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(&said).unwrap())
@@ -169,4 +169,42 @@ fn the_daemon_takes_no_port_flag_now() {
     let m = Machine::new();
     let said = m.refused(&["--port", "8787"]);
     assert!(said.contains("unexpected argument '--port'"), "{said}");
+}
+
+#[test]
+fn all_is_refused_saying_the_new_form() {
+    let m = Machine::new();
+    let said = m.refused(&["--all"]);
+    assert!(
+        said.contains("itero daemon runs every workspace on the machine's list now: drop --all"),
+        "{said}"
+    );
+}
+
+#[test]
+fn in_a_workspace_off_the_list_it_says_it_does_not_run_it() {
+    let m = Machine::new();
+    let w = m.d.path().join("projeler/yeni");
+    std::fs::create_dir_all(&w).unwrap();
+    std::fs::write(w.join("itero.config.json"), "{}").unwrap();
+    let said = m.d.path().join("said.txt");
+    let _d = Daemon(
+        m.command()
+            .current_dir(&w)
+            .arg("daemon")
+            .stdout(Stdio::null())
+            .stderr(std::fs::File::create(&said).unwrap())
+            .spawn()
+            .unwrap(),
+    );
+    let end = Instant::now() + Duration::from_secs(20);
+    loop {
+        let text = std::fs::read_to_string(&said).unwrap_or_default();
+        if text.contains("this folder's workspace is not on the machine's list") {
+            assert!(text.contains("itero ws add puts it there"), "{text}");
+            break;
+        }
+        assert!(Instant::now() < end, "waited 20s for the note: {text}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }

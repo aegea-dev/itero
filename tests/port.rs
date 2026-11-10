@@ -21,7 +21,7 @@ fn itero(dir: &Path, args: &[&str]) -> Output {
 
 fn command(dir: &Path) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_itero"));
-    c.arg("daemon")
+    c.args(["ws", "daemon"])
         .current_dir(dir)
         .env("ITERO_NO_SECRET_STORE", "1")
         .env("ITERO_NOTIFIER", "/usr/bin/true")

@@ -145,7 +145,7 @@ pub fn emit(ws: &Workspace, e: &Emit, wake: impl FnOnce()) -> Result<Emitted, Fa
     // with no daemon nothing would answer: say so, sending nothing
     if e.wait.is_some() && !running()? {
         return Err(Fault::Conflict(
-            "no daemon is running: start itero daemon (or itero ws add, with the machine's daemon), then send it again".into(),
+            "no daemon is running: itero ws add puts it on the machine's list for itero daemon (or itero ws daemon runs it alone), then send it again".into(),
             Map::new(),
         ));
     }

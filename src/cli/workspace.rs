@@ -1,5 +1,5 @@
 //! `itero workspace`: the machine's list of workspaces, which one
-//! `itero daemon --all` runs.
+//! `itero daemon` runs.
 use super::out::{ago, show, table, text};
 use crate::engine::journal::Journal;
 use crate::machine::{Entry, List, list_path};
@@ -147,7 +147,7 @@ pub fn add(ws: &Workspace) -> Result<()> {
         }
     } else {
         println!(
-            "no daemon runs the list now: itero service install starts one at login (or itero daemon --all, in a terminal)"
+            "no daemon runs the list now: itero service install starts one at login (or itero daemon, in a terminal)"
         );
     }
     Ok(())

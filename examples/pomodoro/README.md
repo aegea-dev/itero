@@ -17,7 +17,7 @@ While it waits, `itero ws wf runs` shows how long is left, as the step
 says it each minute on stderr. The step holds a worker the whole time; a
 daemon that stops meanwhile starts it again from the beginning.
 
-Run `itero daemon` in this folder.
+Run `itero ws daemon` in this folder.
 
 ## Tests
 

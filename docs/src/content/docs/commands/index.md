@@ -35,7 +35,7 @@ command's options, and every command that prints something takes
 
 | Command | Does |
 |---|---|
-| [`ws add`, `list`, `remove`](/commands/workspace/) | the machine's list of workspaces, which `itero daemon --all` runs |
+| [`ws add`, `list`, `remove`](/commands/workspace/) | the machine's list of workspaces, which `itero daemon` runs |
 | [`ws info`](/commands/workspace/#info) | the workspace and its daemon: IDs, names, limits |
 | [`ws check`](/commands/check/) | reads your files before anything runs, and says what is wrong |
 | [`ws which`](/commands/which/) | where a workflow, action or connector of a name is |
@@ -49,7 +49,7 @@ command's options, and every command that prints something takes
 A day with itero, in four of them:
 
 ```sh
-itero daemon                                      # in one terminal, left running
+itero ws daemon                                   # in one terminal, left running
 itero ws emit order.placed '{"order": 43}'        # from an app, a script, you
 itero ws wf list                                  # what ran, and what waits
 itero ws wf runs misty-lake                       # one run, step by step

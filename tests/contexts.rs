@@ -82,7 +82,7 @@ impl Machine {
     fn server(&self) -> (Daemon, String) {
         let child = self
             .command()
-            .args(["daemon", "--all"])
+            .args(["daemon"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -360,6 +360,7 @@ fn a_command_about_this_machine_refuses_a_context_given_to_it() {
     .unwrap();
     for args in [
         &["daemon"][..],
+        &["ws", "daemon"],
         &["service", "status"],
         &["ws", "add"],
         &["secret", "ANAHTAR"],

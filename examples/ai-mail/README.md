@@ -7,7 +7,7 @@ machine through itero-ai; nothing leaves it.
 ```sh
 brew install aegea-dev/tap/itero-ai
 itero ai models add unsloth/Qwen3.5-4B-GGUF
-itero daemon
+itero ws daemon
 itero ws emit mail.received '{"from": "monitoring", "subject": "Database down", "body": "Customers cannot pay."}'
 ```
 

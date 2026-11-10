@@ -356,7 +356,7 @@ fn runs_and_errors_say_how_each_run_is_doing() {
             .status
             .success()
     );
-    let o = itero(d.path(), &["daemon", "--once"]);
+    let o = itero(d.path(), &["ws", "daemon", "--once"]);
     assert!(o.status.success(), "{o:?}");
     let runs = out(&itero(d.path(), &["ws", "wf", "runs"]));
     assert!(
@@ -380,7 +380,7 @@ fn runs_and_errors_say_how_each_run_is_doing() {
         r#"{"workflow": {"bakım": {"internal": true}}}"#,
     );
     itero(d.path(), &["ws", "emit", "a.b", "{}"]);
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     assert!(!out(&itero(d.path(), &["ws", "wf", "runs"])).contains("bakım"));
     assert!(out(&itero(d.path(), &["ws", "wf", "runs", "--all"])).contains("bakım"));
     let errors = out(&itero(d.path(), &["ws", "wf", "runs", "--errors"]));
@@ -413,7 +413,7 @@ fn runs_with_a_name_or_id_tells_the_runs_story() {
         d.path(),
         &["ws", "emit", "sipariş.geldi", r#"{"sipariş": 1}"#],
     );
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let list = out(&itero(d.path(), &["ws", "wf", "runs"]));
     let name = list.split_whitespace().nth(1).unwrap().to_string();
     let waiting = out(&itero(d.path(), &["ws", "wf", "runs", &name]));
@@ -434,7 +434,7 @@ fn runs_with_a_name_or_id_tells_the_runs_story() {
             r#"{"sipariş": 1, "tamam": true}"#,
         ],
     );
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let id = list.split_whitespace().next().unwrap();
     let story = out(&itero(d.path(), &["ws", "wf", "runs", id]));
     for says in ["done", "ödeme.geldi", "#gönder", "TR-ü1", "state"] {
@@ -458,7 +458,7 @@ fn a_step_that_lost_a_race_is_stopped_in_the_story() {
     file(d.path(), "actions/hızlı", "#!/bin/sh\necho hızlı\n");
     file(d.path(), "actions/yavaş", "#!/bin/sh\nsleep 30\n");
     itero(d.path(), &["ws", "emit", "yarış.başladı", "{}"]);
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let list = out(&itero(d.path(), &["ws", "wf", "runs"]));
     let id = list.split_whitespace().next().unwrap();
     let story = out(&itero(d.path(), &["ws", "wf", "runs", id]));
@@ -492,7 +492,7 @@ fn a_waiting_step_and_a_workflow_that_lost_are_stopped_in_the_story_after_the_wi
         "#!/bin/sh\nsleep 1; echo hızlı\n",
     );
     itero(d.path(), &["ws", "emit", "yarış.başladı", "{}"]);
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let list = out(&itero(
         d.path(),
         &["ws", "wf", "runs", "--workflow", "yarış"],
@@ -544,7 +544,7 @@ echo tamam
 ",
     );
     itero(d.path(), &["ws", "emit", "sipariş.geldi", "{}"]);
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let json_of = |args: &[&str]| -> serde_json::Value {
         serde_json::from_str(&out(&itero(d.path(), args))).unwrap()
     };
@@ -604,7 +604,7 @@ fn an_event_not_yet_handled_is_listed_and_cancelled() {
     let v: serde_json::Value =
         serde_json::from_str(&out(&itero(d.path(), &["ws", "ev", "list", "--json"]))).unwrap();
     assert_eq!(v.as_array().unwrap().len(), 1);
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let runs: serde_json::Value =
         serde_json::from_str(&out(&itero(d.path(), &["ws", "wf", "runs", "--json"]))).unwrap();
     assert_eq!(
@@ -641,7 +641,7 @@ fn a_run_is_stopped_by_command_and_its_story_says_so() {
         "#!/bin/sh\necho '{\"sipariş\": 1}'; exit 75\n",
     );
     itero(d.path(), &["ws", "emit", "bekle.başla", "{}"]);
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let runs: serde_json::Value =
         serde_json::from_str(&out(&itero(d.path(), &["ws", "wf", "runs", "--json"]))).unwrap();
     let name = runs[0]["name"].as_str().unwrap().to_string();
@@ -649,7 +649,7 @@ fn a_run_is_stopped_by_command_and_its_story_says_so() {
     assert!(o.status.success(), "{}", err(&o));
     assert_eq!(out(&o).trim(), format!("stopping {name}"));
     assert!(err(&o).contains("no daemon is running"), "{}", err(&o));
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let list = out(&itero(d.path(), &["ws", "wf", "runs"]));
     assert!(list.contains(" stopped "), "{list}");
     let story = out(&itero(d.path(), &["ws", "wf", "runs", &name]));
@@ -705,7 +705,7 @@ fn a_step_that_breaks_undoes_those_before_it_and_the_story_says_so() {
         d.path(),
         &["ws", "emit", "küme.istendi", r#"{"ad": "deneme"}"#],
     );
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let order = std::fs::read_to_string(d.path().join("sıra.txt")).unwrap();
     assert_eq!(order, "kur\nsil k-1\nbildir\n");
     let list = out(&itero(d.path(), &["ws", "wf", "runs"]));
@@ -808,7 +808,7 @@ fn workflows_lists_each_workflow_and_what_waits_for_a_daemon() {
         before.lines().last().unwrap() == "daemon: not running, 1 event waiting",
         "{before}"
     );
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let after = out(&itero(d.path(), &["ws", "wf", "list"]));
     let s = line(&after, "sipariş");
     assert!(s.contains("runs 1") && s.contains("last: done"), "{after}");
@@ -842,7 +842,7 @@ fn emit_says_what_a_message_starts() {
     let said = err(&o);
     assert!(said.contains("starts: kayıt, sipariş"), "{said}");
     assert!(
-        said.contains("no daemon is running: it waits for itero daemon"),
+        said.contains("no daemon is running: it waits for one (itero daemon"),
         "{said}"
     );
     let o = itero(d.path(), &["ws", "emit", "order.places", "{}"]);
@@ -874,7 +874,7 @@ fn serving(d: &Path, port: u16) -> stop::Daemon {
     // held before the wait, so a daemon that never answers is stopped too
     let daemon = stop::Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .current_dir(d)
             .env("ITERO_NO_SECRET_STORE", "1")
             .stdout(std::process::Stdio::null())
@@ -1017,7 +1017,7 @@ fn a_daemon_without_its_api_is_running_all_the_same() {
     };
     let _daemon = stop::Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .args(["daemon", "--no-serve"])
+            .args(["ws", "daemon", "--no-serve"])
             .current_dir(d.path())
             .env("ITERO_NO_SECRET_STORE", "1")
             .env("XDG_STATE_HOME", &state)
@@ -1146,7 +1146,11 @@ fn action_errors_say_which_actions_broke_runs_and_why() {
     for e in ["sipariş.geldi", "iade.geldi"] {
         assert!(itero(d.path(), &["ws", "emit", e, "{}"]).status.success());
     }
-    assert!(itero(d.path(), &["daemon", "--once"]).status.success());
+    assert!(
+        itero(d.path(), &["ws", "daemon", "--once"])
+            .status
+            .success()
+    );
     // each action that broke a run, how often, and why last
     let all = out(&itero(d.path(), &["ws", "ac", "errors"]));
     assert_eq!(all.lines().count(), 1, "{all}");
@@ -1203,7 +1207,7 @@ fn commands_that_print_also_print_json() {
     );
     file(d.path(), "actions/selamla", "#!/bin/sh\n");
     itero(d.path(), &["ws", "emit", "kişi.geldi", "{}"]);
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let json = |args: &[&str]| -> serde_json::Value {
         let o = itero(d.path(), args);
         assert!(o.status.success(), "{args:?}: {o:?}");
@@ -1309,7 +1313,7 @@ fn tab_completes_the_workspaces_own_names() {
     // no runs yet, then the run's name
     assert!(completions(d.path(), &["ws", "wf", "runs", ""]).is_empty());
     itero(d.path(), &["ws", "emit", "sipariş.geldi", "{}"]);
-    itero(d.path(), &["daemon", "--once"]);
+    itero(d.path(), &["ws", "daemon", "--once"]);
     let list = out(&itero(d.path(), &["ws", "wf", "runs"]));
     let name = list.split_whitespace().nth(1).unwrap().to_string();
     assert_eq!(completions(d.path(), &["ws", "wf", "runs", ""]), [name]);

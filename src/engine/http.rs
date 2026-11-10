@@ -678,7 +678,7 @@ struct MachineShared {
     port: u16,
 }
 
-/// The machine's routes, for `itero daemon --all` on `port`: its health,
+/// The machine's routes, for `itero daemon` on `port`: its health,
 /// its workspaces, and each running workspace's own routes under
 /// `/ws/<name>/`.
 pub fn machine_router(machine: Arc<super::machine::Machine>, port: u16) -> Router {

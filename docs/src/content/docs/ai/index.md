@@ -97,7 +97,7 @@ or its archive, `itero-ai-<version>-<target>.tar.gz`, from the
    itero workspace add
    ```
 
-   Without it, run a daemon in one terminal (`itero daemon`) and send
+   Without it, run its daemon in one terminal (`itero ws daemon`) and send
    the event from another. Either way:
 
    ```sh

@@ -4,7 +4,7 @@ description: Runs the machine's daemon from login on, kept up by a watchdog.
 ---
 
 `itero service` runs the machine's daemon for you: one
-[`itero daemon --all`](/commands/daemon/), for every workspace on the
+[`itero daemon`](/commands/daemon/), for every workspace on the
 machine's list ([One itero per machine](/guides/machine/)). It starts
 when you log in, and is restarted if it stops. Its commands work from
 any folder.

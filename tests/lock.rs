@@ -81,7 +81,7 @@ fn one_pass_refuses_a_workspace_already_run_and_runs_nothing() {
     let ws = workspace(d.path());
     let held = itero::engine::lock::take(&ws, "sakin-nehir, pid 1").unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_itero"))
-        .args(["daemon", "--once"])
+        .args(["ws", "daemon", "--once"])
         .current_dir(d.path())
         .env("ITERO_NO_SECRET_STORE", "1")
         .stdin(Stdio::null())
@@ -103,7 +103,7 @@ fn a_foreground_daemon_refuses_a_workspace_already_run() {
     workspace(d.path());
     let daemon = || {
         Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .current_dir(d.path())
             .env("ITERO_NO_SECRET_STORE", "1")
             .stdin(Stdio::null())

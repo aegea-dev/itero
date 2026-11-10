@@ -101,7 +101,7 @@ impl Ws {
             .name;
         let child = w
             .command()
-            .args(["daemon", "--all"])
+            .args(["daemon"])
             .stderr(Stdio::null())
             .spawn()
             .unwrap();

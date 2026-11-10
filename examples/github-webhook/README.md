@@ -14,7 +14,7 @@ connector, on port 8788:
 
     openssl rand -hex 32                     # the secret
     itero ws secret GITHUB_WEBHOOK_SECRET    # asks for it
-    itero daemon
+    itero ws daemon
 
 Give that port a public HTTPS address. With [Tailscale
 Funnel](https://tailscale.com/kb/1223/funnel):

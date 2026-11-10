@@ -402,7 +402,7 @@ fn connector_ends_with(d: &std::path::Path, root: &std::path::Path, args: &[&str
             .stderr(Stdio::null());
         c
     };
-    if args.contains(&"--all") {
+    if args.first() == Some(&"daemon") {
         assert!(
             itero(root)
                 .args(["workspace", "add"])
@@ -413,10 +413,14 @@ fn connector_ends_with(d: &std::path::Path, root: &std::path::Path, args: &[&str
     }
     // stopped however the test ends
     let daemon = stop::Daemon(
-        itero(if args.contains(&"--all") { d } else { root })
-            .args(args)
-            .spawn()
-            .unwrap(),
+        itero(if args.first() == Some(&"daemon") {
+            d
+        } else {
+            root
+        })
+        .args(args)
+        .spawn()
+        .unwrap(),
     );
     let pid_file = root.join("kulak.pid");
     assert!(
@@ -443,14 +447,14 @@ fn connector_ends_with(d: &std::path::Path, root: &std::path::Path, args: &[&str
 fn a_connector_deaf_to_its_stdin_ends_with_its_daemon() {
     let d = tempfile::tempdir().unwrap();
     let root = deaf_connector(d.path());
-    connector_ends_with(d.path(), &root, &["daemon", "--no-serve"]);
+    connector_ends_with(d.path(), &root, &["ws", "daemon", "--no-serve"]);
 }
 
 #[test]
 fn a_connector_deaf_to_its_stdin_ends_with_the_machines_daemon() {
     let d = tempfile::tempdir().unwrap();
     let root = deaf_connector(d.path());
-    connector_ends_with(d.path(), &root, &["daemon", "--all", "--no-serve"]);
+    connector_ends_with(d.path(), &root, &["daemon", "--no-serve"]);
 }
 
 #[test]
@@ -461,5 +465,5 @@ fn what_a_connector_runs_ends_with_its_daemon_too() {
         d.path(),
         "#!/bin/sh\nsleep 600 &\necho $! > kulak.pid\nwait\n",
     );
-    connector_ends_with(d.path(), &root, &["daemon", "--no-serve"]);
+    connector_ends_with(d.path(), &root, &["ws", "daemon", "--no-serve"]);
 }

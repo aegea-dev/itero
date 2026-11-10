@@ -33,7 +33,7 @@ cat > workflows/beacon.json <<'EOF'
   "error": [{ "#notify": { "args": { "title": "beacon", "text": "$output.why" } } }] }
 EOF
 
-itero daemon
+itero ws daemon
 ```
 
 Two small files and one command. [`examples/beacon`][beacon] goes
@@ -118,7 +118,7 @@ through `notify-send` (or `gdbus`, or `kdialog`).
 
 ## A workspace
 
-A folder with `itero.config.json` is a workspace (`{}` will do); `itero daemon` runs it.
+A folder with `itero.config.json` is a workspace (`{}` will do); `itero ws daemon` runs it alone, `itero daemon` every workspace on the machine's list.
 
 ```
 itero.config.json          the manifest: what it is, port, limits, and each workflow, action and connector
@@ -150,10 +150,10 @@ a name stays its file name, and `itero ws which <name>` says where it is.
 - **A message** starts runs of the workflows on its type, and reaches the
   steps waiting for it that it matches by what they printed.
 
-Commands at the top level are the machine's: `itero daemon`, `itero service
-install|status|start|stop|restart|uninstall`, `itero info`, `itero emit`, `itero secret`,
-`itero ai`, `itero watch`, `itero webhook`, `itero completion`. Everything about one workspace
-is under `itero ws`, in its folder or named after it (`itero ws <name> ...`): `add|list|remove`,
+Commands at the top level are the machine's: `itero daemon` (every workspace on its list), `itero service
+install|status|start|stop|restart|uninstall`, `itero info`, `itero emit`, `itero secret`, `itero context`,
+`itero token`, `itero ai`, `itero watch`, `itero webhook`, `itero completion`. Everything about one workspace
+is under `itero ws`, in its folder or named after it (`itero ws <name> ...`): `daemon`, `add|list|remove`,
 `info`, `check`, `which`, `emit <type> '<data>'`, `secret`, `wf list|runs|stop`,
 `ac list|errors`, `cn list`, `ev list|cancel`.
 What the daemon does is in `.itero/itero.log`, one JSON line each.

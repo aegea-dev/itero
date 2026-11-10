@@ -116,7 +116,9 @@ pub fn one(c: &crate::answer::Client, args: EmitArgs) -> Result<()> {
                     eprintln!("{l}");
                 }
             }
-            (None, false) => eprintln!("no daemon is running: it waits for itero daemon"),
+            (None, false) => eprintln!(
+                "no daemon is running: it waits for one (itero daemon, or itero ws daemon for this workspace alone)"
+            ),
         }
     })
 }

@@ -447,7 +447,7 @@ Check your network connection and try again."
 	restart_service "$DEST/itero"
 
 	say ""
-	say "Next:  mkdir my-workflows && cd my-workflows && echo '{}' > itero.config.json && itero daemon"
+	say "Next:  mkdir my-workflows && cd my-workflows && echo '{}' > itero.config.json && itero ws daemon"
 	say "       and to start it at login, in that folder:  itero service install"
 	say "Docs:  https://docs.itero.sh"
 }

@@ -4,7 +4,7 @@ A notification each time the newest post on Hacker News changes, seen on
 the page itself in Chrome, as a person would see it.
 
 ```sh
-itero daemon
+itero ws daemon
 ```
 
 1. The connector, `connectors/page.changed`, is one line:

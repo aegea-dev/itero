@@ -33,7 +33,7 @@ fn pass(d: &Path) {
 
 fn pass_at(d: &Path, at: chrono::DateTime<chrono::Utc>) {
     let now = itero::engine::daemon::stamp(at);
-    let o = itero(d, &["daemon", "--once", "--now", &now]);
+    let o = itero(d, &["ws", "daemon", "--once", "--now", &now]);
     assert!(o.status.success(), "{o:?}");
 }
 

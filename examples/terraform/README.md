@@ -1,7 +1,7 @@
 # terraform
 
 A k3d cluster of 3 machines (containers in Docker) with a web app on it,
-applied with OpenTofu, all on this machine. Run `itero daemon` in this
+applied with OpenTofu, all on this machine. Run `itero ws daemon` in this
 folder, then from another terminal:
 
   itero ws emit --wait tools.requested

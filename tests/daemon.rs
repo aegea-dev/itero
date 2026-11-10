@@ -591,7 +591,7 @@ fn a_pass_whose_manager_keeps_being_killed_still_stops_the_steps_that_lose() {
     // every manager dies while this file is there
     let die = ws.d.path().join("ölsün");
     let mut daemon = std::process::Command::new(exe())
-        .args(["daemon", "--once", "--now", NOW])
+        .args(["ws", "daemon", "--once", "--now", NOW])
         .current_dir(ws.d.path())
         .env("ITERO_TEST_DIE_AT", "manager")
         .env("ITERO_TEST_DIE_WHILE", &die)
@@ -1073,7 +1073,7 @@ fn a_daemon_killed_anywhere_carries_on_with_nothing_lost_or_repeated() {
         ws.emit("say.bir", json!({}));
         let once = ws.d.path().join("öldü");
         let killed = std::process::Command::new(exe())
-            .args(["daemon", "--once", "--now", NOW])
+            .args(["ws", "daemon", "--once", "--now", NOW])
             .current_dir(ws.d.path())
             .env("ITERO_TEST_DIE_AT", point)
             .env("ITERO_TEST_DIE_ONCE", &once)
@@ -1081,7 +1081,7 @@ fn a_daemon_killed_anywhere_carries_on_with_nothing_lost_or_repeated() {
             .unwrap();
         assert!(once.exists(), "{point}: nothing died: {killed:?}");
         let again = std::process::Command::new(exe())
-            .args(["daemon", "--once", "--now", NOW])
+            .args(["ws", "daemon", "--once", "--now", NOW])
             .current_dir(ws.d.path())
             .output()
             .unwrap();
@@ -1414,7 +1414,7 @@ fn a_path_is_watched_by_the_daemon_one_run_per_burst() {
     w.flow("posta", on(vec![inbox.display().to_string()]));
     let daemon = stop::Daemon(
         std::process::Command::new(exe())
-            .args(["daemon", "--no-serve"])
+            .args(["ws", "daemon", "--no-serve"])
             .current_dir(&root)
             .env("ITERO_TEST_YER", "ikinci yer")
             .stdout(std::process::Stdio::null())
