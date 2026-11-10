@@ -44,7 +44,9 @@ Unless [`server.json`](/reference/server-json/#opening-the-api) opens it
 to other hosts, where every request needs a token, the API is this
 machine's. A request whose `Host` header is not `127.0.0.1:<port>` or
 `localhost:<port>` is refused with 403, so a web page cannot reach the API
-by pointing a name of its own at 127.0.0.1 (DNS rebinding). `POST /events`
+by pointing a name of its own at 127.0.0.1 (DNS rebinding); only the
+machine daemon's probes, `/livez` and `/readyz`, which say nothing but
+`ok`, take any `Host` ([below](#one-itero-per-machine)). `POST /events`
 takes only `application/json` (415 otherwise): a page on another site
 cannot post one without a preflight, which is never granted.
 
@@ -336,10 +338,18 @@ check:
 | Route | Does |
 |---|---|
 | `GET /health` | the daemon, each running workspace's passes and connectors by name, itero-ai |
+| `GET /livez` | `ok` while the daemon serves: for a platform's liveness probe. No token, even where `listen` opens the API |
+| `GET /readyz` | `ok` once the daemon has read its list and started its workspaces, `503 starting` before: for a readiness probe. No token |
 | `GET /workspaces` | each listed workspace: `name`, `folder`, `state`, `why`, `last_run`; the same as `itero ws list --json` |
 | `PUT /workspaces/{name}` | a workspace's files: makes it the first time, and makes its folder hold those files after ([below](#put-workspacesname)) |
 | `POST /events` | an event for every workspace on the list, as [`itero emit`](/commands/emit/#every-workspace) sends it |
 | `/ws/<name>/...` | that workspace's routes above: `POST /ws/<name>/events`, `GET /ws/<name>/runs` |
+
+`/livez` and `/readyz` answer plain text and nothing else (no version,
+no names), so they need no token on the opened listener and take any
+`Host`: Kubernetes probes and Docker's healthcheck cannot send a token.
+One workspace's long pass does not fail `/livez`: restarting would stop
+every workspace.
 
 ```json
 [{ "name": "quiet-river", "folder": "/Users/me/projects/home", "state": "running", "why": null,

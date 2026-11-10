@@ -26,7 +26,9 @@ another file instead.
 ## Opening the API
 
 With `listen`, the daemon serves the same routes on a second listener.
-There, every request needs `Authorization: Bearer <token>`, a token
+There, every request but `/livez` and `/readyz` (for probes,
+[HTTP API](/reference/http/#one-itero-per-machine)) needs
+`Authorization: Bearer <token>`, a token
 [`itero token create`](/commands/token/) made on this machine; without
 one it answers 401. Any `Host` is taken there, as the token is what a web
 page cannot add. A request that changes something is logged with its
