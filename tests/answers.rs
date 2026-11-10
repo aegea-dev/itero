@@ -1,6 +1,7 @@
-//! Each workspace command's answer is computed once: the CLI's `--json`
-//! and the API's route give the same JSON, and the same message for a
-//! mistake, on one workspace with a real daemon.
+//! Each workspace command's answer is computed once: the CLI's `--json`,
+//! in-process and over a context, and the API's route give the same JSON,
+//! and the same message for a mistake, on one workspace run by a real
+//! machine's daemon.
 #![cfg(unix)]
 #[path = "common/stop.rs"]
 mod stop;
@@ -29,9 +30,15 @@ fn http() -> reqwest::blocking::Client {
 struct Ws {
     d: tempfile::TempDir,
     root: PathBuf,
+    /// The machine's daemon's port.
     port: u16,
+    /// The workspace's name on the machine's list.
+    name: String,
     _daemon: Option<Daemon>,
 }
+
+/// The context to the machine's daemon, its workspace by default.
+const CONTEXT: &str = "yerel";
 
 impl Ws {
     fn new() -> Ws {
@@ -79,18 +86,36 @@ impl Ws {
             d,
             root,
             port: 0,
+            name: String::new(),
             _daemon: None,
         };
+        // on the machine's list, run by the machine's daemon: what a
+        // context reaches, under /ws/<name>/
+        let o = w.command().args(["ws", "add"]).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let ws = itero::workspace::find(&w.root).unwrap();
+        w.name = itero::engine::journal::Journal::open(&ws)
+            .unwrap()
+            .workspace()
+            .unwrap()
+            .name;
         let child = w
             .command()
-            .arg("daemon")
+            .args(["daemon", "--all"])
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
         w._daemon = Some(Daemon(child));
-        let ws = itero::workspace::find(&w.root).unwrap();
-        until("the daemon's port", || ws.saved_port().is_some());
-        w.port = ws.saved_port().unwrap();
+        // the port it keeps: no port picked and let go
+        let kept = w.d.path().join("durum/itero/port");
+        until("the daemon's port", || {
+            std::fs::read_to_string(&kept).is_ok_and(|p| p.trim().parse::<u16>().is_ok())
+        });
+        w.port = std::fs::read_to_string(&kept)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         until("the API", || {
             http()
                 .get(w.url("/health"))
@@ -119,7 +144,10 @@ impl Ws {
         let mut c = Command::new(env!("CARGO_BIN_EXE_itero"));
         c.current_dir(&self.root)
             .env("HOME", self.d.path().join("ev"))
+            .env("XDG_CONFIG_HOME", self.d.path().join("ayar"))
             .env("XDG_STATE_HOME", self.d.path().join("durum"))
+            .env_remove("ITERO_CONTEXT")
+            .env_remove("ITERO_TOKEN")
             .env("XDG_CACHE_HOME", self.d.path().join("önbellek"))
             .env("ITERO_NO_SECRET_STORE", "1")
             .env("ITERO_NOTIFIER", "/usr/bin/true")
@@ -127,8 +155,32 @@ impl Ws {
         c
     }
 
+    /// A route of the workspace, under the machine's API.
     fn url(&self, path: &str) -> String {
-        format!("http://127.0.0.1:{}{path}", self.port)
+        format!("http://127.0.0.1:{}/ws/{}{path}", self.port, self.name)
+    }
+
+    /// The context to this machine's daemon, added once.
+    fn context(&self) {
+        if self.d.path().join("ayar/itero/contexts.json").exists() {
+            return;
+        }
+        let server = format!("http://127.0.0.1:{}/", self.port);
+        let o = self
+            .command()
+            .args(["context", "add", CONTEXT, &server, "--ws", &self.name])
+            .env("ITERO_TOKEN", "")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+
+    /// `args` sent over the context instead.
+    fn remote<'a>(&self, args: &[&'a str]) -> Vec<&'a str> {
+        self.context();
+        let mut a = args.to_vec();
+        a.extend(["--context", CONTEXT]);
+        a
     }
 
     /// A route's status and JSON.
@@ -178,22 +230,37 @@ impl Ws {
     }
 }
 
-/// The CLI's `--json` and the route's body are the same.
+/// The CLI's `--json`, in-process and over the context, and the route's
+/// body are the same.
 fn same(w: &Ws, args: &[&str], path: &str) {
     let (code, api) = w.get(path);
     assert_eq!(code, 200, "{path}: {api}");
     assert_eq!(w.cli(args), api, "{args:?} against {path}");
+    assert_eq!(w.cli(&w.remote(args)), api, "{args:?} over a context");
 }
 
-/// The CLI and the route refuse alike: the route's status, and the
-/// route's message in what the CLI says.
+/// The CLI, in-process and over the context, and the route refuse alike:
+/// the route's status, and the route's message in what the CLI says.
 fn refused(w: &Ws, args: &[&str], path: &str, status: u16) -> String {
     let (code, api) = w.get(path);
     assert_eq!(code, status, "{path}: {api}");
     let message = api["error"].as_str().unwrap().to_string();
-    let said = w.cli_fails(args);
-    assert!(said.contains(&message), "{said:?} lacks {message:?}");
+    for args in [args.to_vec(), w.remote(args)] {
+        let said = w.cli_fails(&args);
+        assert!(said.contains(&message), "{said:?} lacks {message:?}");
+    }
     message
+}
+
+/// The CLI, in-process and over the context, fails saying `message`.
+fn fails_alike(w: &Ws, args: &[&str], message: &str) {
+    for args in [args.to_vec(), w.remote(args)] {
+        let said = w.cli_fails(&args);
+        assert!(
+            said.contains(message),
+            "{args:?}: {said:?} lacks {message:?}"
+        );
+    }
 }
 
 #[test]
@@ -269,8 +336,7 @@ fn a_mistake_is_said_alike_by_the_cli_and_the_api() {
     assert_eq!(r.status(), 409);
     let api: Value = r.json().unwrap();
     let message = api["error"].as_str().unwrap();
-    let said = w.cli_fails(&["ws", "wf", "stop", &done]);
-    assert!(said.contains(message), "{said:?} lacks {message:?}");
+    fails_alike(&w, &["ws", "wf", "stop", &done], message);
 }
 
 #[test]
@@ -295,6 +361,11 @@ fn a_stop_is_answered_alike() {
     let v: Value = r.json().unwrap();
     let keys = |v: &Value| v.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
     assert_eq!(keys(&v), keys(&api));
+    // and over a context
+    let w3 = Ws::new();
+    let waiting = w3.run_id("waiting");
+    let remote = w3.cli(&w3.remote(&["ws", "wf", "stop", &waiting]));
+    assert_eq!(keys(&remote), keys(&api), "{remote}");
 }
 
 /// `v` without the fields that differ between two events sent alike.
@@ -338,6 +409,8 @@ fn events_are_listed_and_sent_alike() {
     );
     assert_eq!(cli["starts"], json!(["sipariş"]), "{cli}");
     assert_eq!(cli["daemon"]["running"], true, "{cli}");
+    let remote = w.cli(&w.remote(&["ws", "emit", "sipariş.verildi", &data.to_string()]));
+    assert_eq!(but_ids(remote), but_ids(cli.clone()), "over a context");
     // waiting for the runs it starts: the same runs, ended alike
     let o = w
         .command()
@@ -361,6 +434,22 @@ fn events_are_listed_and_sent_alike() {
     );
     assert_eq!(code, 200, "{api}");
     assert_eq!(but_ids(cli.clone()), but_ids(api), "the same runs");
+    let o = w
+        .command()
+        .args(w.remote(&[
+            "ws",
+            "emit",
+            "--wait",
+            "--timeout",
+            "20s",
+            "kargo.çıktı",
+            "{}",
+        ]))
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(1), "over a context too");
+    let remote: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(but_ids(remote), but_ids(cli.clone()), "over a context");
     assert_eq!(cli["waited"], "failed", "{cli}");
     assert_eq!(cli["runs"][0]["status"], "error", "{cli}");
 }
@@ -375,9 +464,11 @@ fn a_bad_event_and_a_cancel_are_refused_alike() {
         Some(json!({ "type": "tek", "data": {} })),
     );
     assert_eq!(code, 400, "{api}");
-    let said = w.cli_fails(&["ws", "emit", "tek", "{}"]);
-    let message = api["error"].as_str().unwrap();
-    assert!(said.contains(message), "{said:?} lacks {message:?}");
+    fails_alike(
+        &w,
+        &["ws", "emit", "tek", "{}"],
+        api["error"].as_str().unwrap(),
+    );
     // an event a daemon has handled: 409, what it started, in both
     let sent = w.cli(&["ws", "emit", "sipariş.verildi", "{}"]);
     let id = sent["id"].as_str().unwrap().to_string();
@@ -396,14 +487,12 @@ fn a_bad_event_and_a_cancel_are_refused_alike() {
         message.contains(&format!("it started {}", started[0].as_str().unwrap())),
         "{message}"
     );
-    let said = w.cli_fails(&["ws", "ev", "cancel", &id]);
-    assert!(said.contains(message), "{said:?} lacks {message:?}");
+    fails_alike(&w, &["ws", "ev", "cancel", &id], message);
     // one there is not: 404, the same words
     let (code, api) = w.send(reqwest::Method::DELETE, "/events/yok-b%C3%B6yle", None);
     assert_eq!(code, 404, "{api}");
     let message = api["error"].as_str().unwrap();
-    let said = w.cli_fails(&["ws", "ev", "cancel", "yok-böyle"]);
-    assert!(said.contains(message), "{said:?} lacks {message:?}");
+    fails_alike(&w, &["ws", "ev", "cancel", "yok-böyle"], message);
 }
 
 #[test]
@@ -511,7 +600,7 @@ fn info_is_the_same_from_the_cli_and_the_api() {
     let (_, v) = w.get("/info");
     let d = &v["daemon"];
     assert_eq!(d["running"], true, "{v}");
-    assert_eq!(d["run_by"], "workspace", "{v}");
+    assert_eq!(d["run_by"], "machine", "{v}");
     assert_eq!(d["port"], w.port, "{v}");
     assert_eq!(d["api"], w.url("/").as_str(), "{v}");
     assert_eq!(v["workspace"]["path"], w.root.display().to_string(), "{v}");
@@ -539,4 +628,32 @@ fn which_is_the_same_from_the_cli_and_the_api() {
     );
     let m = refused(&w, &["ws", "which", "yok"], "/which/yok", 404);
     assert!(m.contains("nothing named yok"), "{m}");
+}
+
+#[test]
+fn the_text_is_the_same_over_a_context() {
+    let w = Ws::new();
+    // the ones without "5s ago", which could tick between the two
+    for args in [
+        &["ws", "check"][..],
+        &["ws", "which", "bekle"],
+        &["ws", "ac", "list"],
+        &["ws", "cn", "list"],
+        &["ws", "ev", "list"],
+        &["ws", "info"],
+    ] {
+        let text = |args: &[&str]| {
+            let o = w.command().args(args).output().unwrap();
+            assert!(
+                o.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            (
+                String::from_utf8_lossy(&o.stdout).into_owned(),
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+            )
+        };
+        assert_eq!(text(args), text(&w.remote(args)), "{args:?}");
+    }
 }

@@ -227,9 +227,6 @@ struct EventQuery {
     wait: Option<u64>,
 }
 
-/// The longest an answer is waited for, in seconds.
-const MAX_WAIT: u64 = 600;
-
 /// Asks a run to stop: 202; 409 when it has ended, 404 when there is none.
 async fn stop_run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Reply, Reply> {
     let wake = s.engine.wake.clone();
@@ -268,7 +265,7 @@ async fn event(
         data: p.data,
         wait: q
             .wait
-            .map(|secs| std::time::Duration::from_secs(secs.min(MAX_WAIT))),
+            .map(|secs| std::time::Duration::from_secs(secs.min(crate::answer::events::MAX_WAIT))),
     };
     let (ws, wake) = (s.ws.clone(), s.engine.wake.clone());
     // the journal may wait on a busy SQLite: off the async threads; the

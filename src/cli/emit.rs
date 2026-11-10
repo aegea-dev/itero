@@ -6,7 +6,6 @@ use crate::engine::daemon::stamp;
 use crate::engine::events::{self, Waited};
 use crate::engine::machine;
 use crate::machine::{List, list_path};
-use crate::workspace::Workspace;
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Map, Value, json};
 use std::path::Path;
@@ -58,7 +57,7 @@ fn wait(args: &EmitArgs) -> Result<Option<Duration>> {
 
 /// `itero ws emit`: saved for the workspace, to wait for its daemon if none
 /// runs.
-pub fn one(ws: &Workspace, args: EmitArgs) -> Result<()> {
+pub fn one(c: &crate::answer::Client, args: EmitArgs) -> Result<()> {
     use crate::answer::events::{Emit, Emitted};
     let kind = &args.kind;
     let e = Emit {
@@ -66,7 +65,7 @@ pub fn one(ws: &Workspace, args: EmitArgs) -> Result<()> {
         data: data(&args)?,
         wait: wait(&args)?,
     };
-    let mut sent = match super::client(ws).emit(&e)? {
+    let mut sent = match c.emit(&e)? {
         Emitted::Waited(w) => {
             println!("{}", serde_json::to_string_pretty(&w)?);
             match w.how() {
@@ -81,10 +80,11 @@ pub fn one(ws: &Workspace, args: EmitArgs) -> Result<()> {
         Emitted::Sent(sent) => sent,
     };
     // none holds it: what this machine's daemon, if one answers, says of it
-    let machine = if sent.daemon.running {
-        None
-    } else {
-        super::workspace::machine_says(&ws.root)
+    let machine = match c {
+        crate::answer::Client::Local(ws) if !sent.daemon.running => {
+            super::workspace::machine_says(&ws.root)
+        }
+        _ => None,
     };
     if let Some(m) = &machine {
         sent.daemon.machine = Some(json!({

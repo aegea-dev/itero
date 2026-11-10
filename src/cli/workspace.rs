@@ -16,6 +16,41 @@ pub fn chosen(name: Option<&str>) -> Result<Workspace> {
     Ok(crate::engine::machine::open(&listed(name)?)?.0)
 }
 
+/// Where a workspace command goes: this machine's workspace (`--ws` on
+/// its list, else this folder's), or, with a context, its server's
+/// workspace (`--ws`, else the context's; with neither, which one is asked,
+/// never guessed).
+pub fn target(
+    ws: Option<&str>,
+    context: Option<crate::context::Context>,
+) -> Result<crate::answer::Client> {
+    use crate::answer::{Client, remote};
+    let Some(c) = context else {
+        return Ok(Client::Local(Box::new(chosen(ws)?)));
+    };
+    let ws = match ws.map(String::from).or(c.ws.clone()) {
+        Some(w) => w,
+        None => {
+            let listed: Vec<Value> =
+                remote::server(&c.name, &c.url, c.token.as_deref(), &["workspaces"])?;
+            let names: Vec<&str> = listed.iter().filter_map(|w| w["name"].as_str()).collect();
+            bail!(
+                "which workspace on {}: --ws one of {} (or itero context add {} {} --ws NAME)",
+                c.name,
+                names.join(", "),
+                c.name,
+                c.url
+            );
+        }
+    };
+    Ok(Client::Remote(remote::Remote {
+        name: c.name,
+        url: c.url,
+        token: c.token,
+        ws,
+    }))
+}
+
 /// The entry on the machine's list with this name.
 pub fn listed(name: &str) -> Result<Entry> {
     let list = List::read(&list_path()?)?;

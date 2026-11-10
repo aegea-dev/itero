@@ -252,3 +252,120 @@ fn a_token_is_never_an_argument() {
     let o = m.run(&["context", "add", "uzak", &url, "itero_gizli"], None);
     assert_eq!(o.status.code(), Some(2), "a usage error");
 }
+
+/// A machine with two workspaces on its list, `bir` and `iki` folders,
+/// run by its daemon: their names on the list, and the server's URL.
+fn two_workspaces(m: &Machine) -> (Daemon, String, String, String) {
+    let mut names = vec![];
+    for folder in ["bir", "iki"] {
+        let w = m.d.path().join("projeler").join(folder);
+        std::fs::create_dir_all(&w).unwrap();
+        std::fs::write(w.join("itero.config.json"), "{}").unwrap();
+        let o = m
+            .command()
+            .current_dir(&w)
+            .args(["ws", "add"])
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let ws = itero::workspace::find(&w).unwrap();
+        names.push(
+            itero::engine::journal::Journal::open(&ws)
+                .unwrap()
+                .workspace()
+                .unwrap()
+                .name,
+        );
+    }
+    let (d, url) = m.server();
+    (d, url, names[0].clone(), names[1].clone())
+}
+
+/// The name of the workspace `ws info` answered for, with `env` set.
+fn answered_by(m: &Machine, args: &[&str], env: Option<&str>) -> String {
+    let mut c = m.command();
+    c.args(["ws", "info", "--json"]).args(args);
+    if let Some(e) = env {
+        c.env("ITERO_CONTEXT", e);
+    }
+    let o = c.output().unwrap();
+    assert!(
+        o.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    v["workspace"]["name"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn the_context_is_the_flag_else_itero_context_else_the_current_one() {
+    let m = Machine::new();
+    let (_d, url, a, b) = two_workspaces(&m);
+    m.ok(&["context", "add", "bir", &url, "--ws", &a], Some(""));
+    m.ok(&["context", "add", "iki", &url, "--ws", &b], Some(""));
+    m.ok(&["context", "use", "bir"], None);
+    assert_eq!(answered_by(&m, &[], None), a);
+    assert_eq!(answered_by(&m, &[], Some("iki")), b);
+    assert_eq!(answered_by(&m, &["--context", "bir"], Some("iki")), a);
+    // --ws picks another workspace on the same server
+    assert_eq!(answered_by(&m, &["--context", "bir", "--ws", &b], None), b);
+    // a context that is not there
+    let said = m.fails(&["--context", "yok", "ws", "info"], None);
+    assert!(said.contains("no context yok"), "{said}");
+}
+
+#[test]
+fn with_no_workspace_named_it_names_the_servers() {
+    let m = Machine::new();
+    let (_d, url, a, b) = two_workspaces(&m);
+    m.ok(&["context", "add", "sunucu", &url], Some(""));
+    let said = m.fails(&["--context", "sunucu", "ws", "info"], None);
+    assert!(said.contains("which workspace on sunucu"), "{said}");
+    assert!(said.contains(&a) && said.contains(&b), "{said}");
+}
+
+#[test]
+fn local_answers_in_process_with_no_daemon() {
+    let m = Machine::new();
+    let w = m.d.path().join("projeler/yerel");
+    std::fs::create_dir_all(&w).unwrap();
+    std::fs::write(w.join("itero.config.json"), "{}").unwrap();
+    let o = m
+        .command()
+        .current_dir(&w)
+        .env("ITERO_CONTEXT", "local")
+        .args(["ws", "info", "--json"])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["daemon"]["running"], false, "{v}");
+}
+
+#[test]
+fn a_command_about_this_machine_refuses_a_context_given_to_it() {
+    let m = Machine::new();
+    let url = closing();
+    // added by hand: the server is not needed to refuse
+    std::fs::create_dir_all(m.d.path().join("ayar/itero")).unwrap();
+    std::fs::write(
+        m.file(),
+        json!({ "contexts": [{ "name": "uzak", "url": url }] }).to_string(),
+    )
+    .unwrap();
+    for args in [
+        &["daemon"][..],
+        &["service", "status"],
+        &["ws", "add"],
+        &["ws", "list"],
+        &["secret", "ANAHTAR"],
+        &["emit", "kapı.açıldı"],
+        &["info"],
+    ] {
+        let mut a = args.to_vec();
+        a.extend(["--context", "uzak"]);
+        let said = m.fails(&a, None);
+        assert!(said.contains("works on this machine"), "{args:?}: {said}");
+    }
+}

@@ -88,6 +88,23 @@ impl Contexts {
     }
 }
 
+/// The context a command uses: `flag` (`--context`), else
+/// `ITERO_CONTEXT`, else the one in use, else this machine (none).
+pub fn chosen(flag: Option<&str>) -> Result<Option<Context>> {
+    let env = std::env::var("ITERO_CONTEXT")
+        .ok()
+        .filter(|e| !e.is_empty());
+    let all = Contexts::read(&Contexts::path()?)?;
+    let name = flag.map(String::from).or(env).or(all.current.clone());
+    match name.as_deref() {
+        None | Some(LOCAL) => Ok(None),
+        Some(n) => match all.get(n) {
+            Some(c) => Ok(Some(c.clone())),
+            None => bail!("no context {n}: itero context list lists them"),
+        },
+    }
+}
+
 /// A new file, truncated, that only its owner may read or write.
 #[cfg(unix)]
 fn private_file(p: &Path) -> std::io::Result<std::fs::File> {
