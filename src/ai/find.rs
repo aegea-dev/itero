@@ -290,7 +290,7 @@ pub fn scan_on(own: PathBuf) -> Result<Value, String> {
             client = Some((
                 sock.clone(),
                 crate::net::unix_client(&sock, Duration::from_secs(60))
-                    .map_err(|e| e.to_string())?,
+                    .map_err(|e| crate::net::cause(&e))?,
             ));
         }
         let (_, c) = client.as_ref().expect("made above");
@@ -298,9 +298,9 @@ pub fn scan_on(own: PathBuf) -> Result<Value, String> {
             .post("http://itero-ai/itero/inspect")
             .json(&json!({ "path": path }))
             .send()
-            .map_err(|e| format!("itero-ai did not answer: {e}"))?;
+            .map_err(|e| format!("itero-ai did not answer: {}", crate::net::cause(&e)))?;
         let status = resp.status().as_u16();
-        let v: Value = resp.json().map_err(|e| e.to_string())?;
+        let v: Value = resp.json().map_err(|e| crate::net::cause(&e))?;
         match status {
             200 => Ok(Some(v)),
             // a file that is no model, or gone since: left out
