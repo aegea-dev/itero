@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// The settings `server.json` may have.
-const SETTINGS: &[&str] = &["port"];
+const SETTINGS: &[&str] = &["port", "listen"];
 
 /// How the machine's daemon serves.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -14,6 +14,9 @@ pub struct Server {
     /// The local API's port on 127.0.0.1; none: the one it kept, else
     /// one the OS gives.
     pub port: Option<u16>,
+    /// Where the API is opened too, beside the local one: there, every
+    /// request needs a token.
+    pub listen: Option<std::net::SocketAddr>,
 }
 
 impl Server {
@@ -63,6 +66,12 @@ fn parse(text: &str) -> Result<Server, Vec<String>> {
             "port" => match v.as_u64().filter(|p| (1..=65535).contains(p)) {
                 Some(p) => s.port = Some(p as u16),
                 None => problems.push(format!("port: a number from 1 to 65535, not {v}")),
+            },
+            "listen" => match v.as_str().and_then(|a| a.parse().ok()) {
+                Some(a) => s.listen = Some(a),
+                None => problems.push(format!(
+                    "listen: an address and a port, like 0.0.0.0:8443, not {v}"
+                )),
             },
             _ => problems.push(format!(
                 "{k}: not a setting of server.json ({})",
