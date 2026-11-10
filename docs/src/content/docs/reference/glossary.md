@@ -7,7 +7,7 @@ description: itero's terms in plain words.
 
 A folder with an `itero.config.json`, its manifest. One daemon runs it
 at a time. itero finds the workspace from the folder it runs in. The
-machine's list holds the workspaces one `itero daemon --all` runs
+machine's list holds the workspaces one `itero daemon` runs
 ([One itero per machine](/guides/machine/)).
 
 ### workflow <span class="wf">●</span>
@@ -150,8 +150,8 @@ later (`keep`).
 
 ### daemon
 
-`itero daemon`: runs one workspace, pass after pass (`--all`: every
-workspace on the machine's list, each on its own). It starts connectors,
+`itero daemon`: runs every workspace on the machine's list, each on its
+own, pass after pass (`itero ws daemon`: one workspace alone). It starts connectors,
 watches paths, takes events and schedules, decides what each run does
 next, and runs each step's action in its own process. See
 [Workspaces, workflows and runs](/start/concepts/).

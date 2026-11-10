@@ -16,7 +16,7 @@ Each has parts of its own, listed under it.
 
 ## daemon
 
-- One daemon per machine (`itero daemon --all`): it runs every workspace
+- One daemon per machine (`itero daemon`): it runs every workspace
   on the machine's list ([One itero per machine](/guides/machine/)).
 - Starts what it needs: a worker per step, the connectors, itero-ai.
 - A watchdog (its own process, run by the service) keeps it running: it

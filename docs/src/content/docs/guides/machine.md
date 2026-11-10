@@ -3,14 +3,14 @@ title: One itero per machine
 description: One daemon runs every workspace on the machine's list, on one port.
 ---
 
-One `itero daemon --all` runs every workspace on this machine's list:
+One `itero daemon` runs every workspace on this machine's list:
 each with its own journal, log, connectors and schedules, all served on
 one port. Add a workspace once, and it runs.
 
 ```sh
 cd ~/projects/home && itero workspace add
 cd ~/projects/mail && itero workspace add
-itero daemon --all
+itero daemon
 ```
 
 ## The list
@@ -31,11 +31,11 @@ moves with it.
 
 ## What runs
 
-`itero daemon --all` starts each listed workspace, and follows the list
+`itero daemon` starts each listed workspace, and follows the list
 while it runs: a workspace added is started at once, one removed is
 stopped, and the others run on. Each workspace has its own threads; its
 steps and connectors run as processes of their own, as with
-`itero daemon` in a folder.
+`itero ws daemon`, which runs one workspace alone.
 
 The daemon also keeps what the workspaces share:
 
@@ -64,8 +64,9 @@ send a notification about it.
 
 Whichever daemon runs a workspace holds a lock on its
 `.itero/daemon.lock`. A second one is refused, naming the first: an
-`itero daemon` in a folder on the list while `--all` runs it, or the
-other way around (`--all` then shows it as `stopped`, with why).
+`itero ws daemon` for a workspace on the list while `itero daemon` runs
+it, or the other way around (`itero daemon` then shows it as `stopped`,
+with why).
 
 A workspace `stopped` because another daemon held it is started when the
 list changes or the machine's daemon starts again

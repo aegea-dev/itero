@@ -39,7 +39,7 @@ itero ws check
 and leave it running; it takes each event as it comes:
 
 ```sh
-itero daemon
+itero ws daemon
 ```
 
 In another terminal, in the same folder, send an event (a message):

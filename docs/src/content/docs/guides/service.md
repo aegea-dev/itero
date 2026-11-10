@@ -13,7 +13,7 @@ itero service install      # once, from anywhere
 
 This registers a per-user service (a launchd agent on macOS, a systemd user
 unit on Linux) that starts at login and runs a watchdog, which keeps
-[`itero daemon --all`](/guides/machine/) running: one daemon for every
+[`itero daemon`](/guides/machine/) running: one daemon for every
 workspace on the list. If the watchdog itself ends, the service starts it
 again.
 

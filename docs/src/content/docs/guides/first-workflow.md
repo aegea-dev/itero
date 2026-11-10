@@ -73,7 +73,7 @@ not hold is skipped.
 
 ```sh
 itero ws check    # says what is wrong, if anything
-itero daemon      # leave it running
+itero ws daemon   # leave it running
 ```
 
 In another terminal, in the same folder:

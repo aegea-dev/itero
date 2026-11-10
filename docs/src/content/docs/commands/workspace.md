@@ -5,7 +5,8 @@ description: The machine's list of workspaces, which one daemon runs.
 
 `itero workspace` (`itero ws` for short) is everything about one
 workspace, and the machine's list of workspaces, which one
-[`itero daemon --all`](/commands/daemon/) runs. See
+[`itero daemon`](/commands/daemon/) runs; `itero ws daemon` runs one
+alone. See
 [One itero per machine](/guides/machine/).
 
 ```sh
@@ -93,6 +94,18 @@ $ itero ws list
 NAME          FOLDER                    STATE     LAST RUN
 quiet-river   /Users/me/projects/home   running   2m ago
 misty-lake    /Users/me/projects/mail   running   1h ago
+```
+
+## `daemon`
+
+`itero ws daemon` runs this workspace alone, in the foreground, as
+[`itero daemon`](/commands/daemon/) runs every one on the list: for a
+workspace you are making, before `itero ws add`. Ctrl-C stops it. A
+workspace the machine's daemon runs already is refused, naming it.
+
+```sh
+itero ws daemon                 # this folder's
+itero ws ./shop daemon          # a folder's, from elsewhere
 ```
 
 ## `info`
