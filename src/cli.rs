@@ -6,6 +6,7 @@ mod emit;
 mod event;
 mod kinds;
 mod out;
+mod token;
 mod top;
 mod workflow;
 mod workspace;
@@ -138,6 +139,11 @@ pub enum Cmd {
     Context {
         #[command(subcommand)]
         cmd: ContextCmd,
+    },
+    /// The tokens this server lets in, each shown once and kept as its hash
+    Token {
+        #[command(subcommand)]
+        cmd: TokenCmd,
     },
     /// Start the machine's daemon at login, kept up by a watchdog
     Service {
@@ -503,6 +509,24 @@ pub enum ContextCmd {
 }
 
 #[derive(Subcommand)]
+pub enum TokenCmd {
+    /// Make one: printed once; the server keeps only its hash
+    Create {
+        /// Its name, to tell who comes in and to revoke it: letters, digits, - and _
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Each one's name and when it was made, never a token
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Take one out: it lets nobody in from then on
+    Revoke { name: String },
+}
+
+#[derive(Subcommand)]
 pub enum ServiceCmd {
     /// Run the machine's daemon (every workspace on its list) as a service, at login
     Install,
@@ -805,6 +829,7 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
         Cmd::Ai { .. } => "ai",
         Cmd::Completion { .. } => "completion",
         Cmd::Context { .. } => "context",
+        Cmd::Token { .. } => "token",
         Cmd::NotificationClicked { .. } => "notification-clicked",
         Cmd::Watch { .. } => "watch",
         Cmd::Browser { .. } => "browser",
@@ -1165,6 +1190,11 @@ fn dispatch(cli: Cli) -> Result<()> {
             end_with_stdin(|| {});
             webhook.run()?;
         }
+        Cmd::Token { cmd } => match cmd {
+            TokenCmd::Create { name, json } => token::create(&name, json)?,
+            TokenCmd::List { json } => token::list(json)?,
+            TokenCmd::Revoke { name } => token::revoke(&name)?,
+        },
         Cmd::Context { cmd } => match cmd {
             ContextCmd::Add { name, url, ws } => context::add(&name, &url, ws)?,
             ContextCmd::Use { name } => context::use_(&name)?,
