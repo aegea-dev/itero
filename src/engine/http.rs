@@ -53,7 +53,7 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16, api: String, run_by
         api,
         run_by,
     };
-    Router::new()
+    let routes = Router::new()
         .route("/health", get(health))
         .route("/events", post(event).get(queued))
         .route("/events/stream", get(follow_events))
@@ -69,9 +69,14 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16, api: String, run_by
         .route("/check", get(check))
         .route("/info", get(info))
         .route("/which/{name}", get(which))
-        .route("/browser/tabs", post(open_watch))
-        .layer(middleware::from_fn_with_state(s.clone(), local_only))
-        .with_state(s)
+        .route("/browser/tabs", post(open_watch));
+    // under the machine's API, the machine's router guards it (its Host
+    // check locally, a token where it is opened)
+    let routes = match run_by {
+        RunBy::Workspace => routes.layer(middleware::from_fn_with_state(s.clone(), local_only)),
+        RunBy::Machine => routes,
+    };
+    routes.with_state(s)
 }
 
 /// `POST /browser/tabs`, `{"headless": true}` or `{}`: a browser window
@@ -498,11 +503,24 @@ pub fn listen(ws: &Workspace) -> anyhow::Result<(std::net::TcpListener, Option<S
 
 /// Serves `router` on `listener` until the process ends.
 pub fn serve(router: Router, listener: std::net::TcpListener) -> anyhow::Result<()> {
-    listener.set_nonblocking(true)?;
+    serve_all(vec![(router, listener)])
+}
+
+/// Serves each router on its listener, on one runtime, until one stops:
+/// the local API and, when opened, the opened one beside it.
+pub fn serve_all(served: Vec<(Router, std::net::TcpListener)>) -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
-        let listener = tokio::net::TcpListener::from_std(listener)?;
-        axum::serve(listener, router).await?;
+        let mut all = tokio::task::JoinSet::new();
+        for (router, listener) in served {
+            listener.set_nonblocking(true)?;
+            let listener = tokio::net::TcpListener::from_std(listener)?;
+            all.spawn(async move { axum::serve(listener, router).await });
+        }
+        // a listener that ends ends the daemon's serving, as one alone did
+        if let Some(ended) = all.join_next().await {
+            ended??;
+        }
         Ok(())
     })
 }
@@ -518,15 +536,61 @@ struct MachineShared {
 /// its workspaces, and each running workspace's own routes under
 /// `/ws/<name>/`.
 pub fn machine_router(machine: Arc<super::machine::Machine>, port: u16) -> Router {
-    let s = MachineShared { machine, port };
+    machine_routes()
+        .layer(middleware::from_fn_with_state(port, local_only_on))
+        .with_state(MachineShared { machine, port })
+}
+
+/// The machine's routes as served where `server.json`'s `listen` opens
+/// them: every request with a token `itero token create` made, any Host.
+/// `port` is the local API's, which a workspace's `info` names.
+pub fn opened_router(machine: Arc<super::machine::Machine>, port: u16) -> Router {
+    machine_routes()
+        .layer(middleware::from_fn(bearer))
+        .with_state(MachineShared { machine, port })
+}
+
+fn machine_routes() -> Router<MachineShared> {
     Router::new()
         .route("/health", get(machine_health))
         .route("/workspaces", get(workspaces))
         .route("/events", post(machine_event))
         .route("/ws/{name}", axum::routing::any(in_workspace))
         .route("/ws/{name}/{*rest}", axum::routing::any(in_workspace))
-        .layer(middleware::from_fn_with_state(port, local_only_on))
-        .with_state(s)
+}
+
+/// Lets in a request with `Authorization: Bearer <token>` for a token
+/// kept now (401 otherwise, saying how); one that changes something is
+/// logged with the token's name.
+async fn bearer(req: Request, next: Next) -> Response {
+    let presented = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .map(str::to_string);
+    let who = match presented {
+        None => None,
+        Some(t) => match tokio::task::spawn_blocking(move || crate::token::who(&t)).await {
+            Ok(Ok(who)) => who,
+            Ok(Err(e)) => return internal(e).into_response(),
+            Err(e) => return internal(e.into()).into_response(),
+        },
+    };
+    let Some(name) = who else {
+        let (code, body) = fail(
+            StatusCode::UNAUTHORIZED,
+            "this API needs a token: Authorization: Bearer <token>, one itero token create made on this server",
+        );
+        return (code, [(header::WWW_AUTHENTICATE, "Bearer")], body).into_response();
+    };
+    if !matches!(
+        *req.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD
+    ) {
+        eprintln!("itero: {name}: {} {}", req.method(), req.uri().path());
+    }
+    next.run(req).await
 }
 
 async fn machine_health(State(s): State<MachineShared>) -> Json<Value> {

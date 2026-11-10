@@ -30,7 +30,9 @@ an error is `{"error": "..."}` with its status.
 
 ## Only from this machine
 
-A request whose `Host` header is not `127.0.0.1:<port>` or
+Unless [`server.json`](/reference/server-json/#opening-the-api) opens it
+to other hosts, where every request needs a token, the API is this
+machine's. A request whose `Host` header is not `127.0.0.1:<port>` or
 `localhost:<port>` is refused with 403, so a web page cannot reach the API
 by pointing a name of its own at 127.0.0.1 (DNS rebinding). `POST /events`
 takes only `application/json` (415 otherwise): a page on another site

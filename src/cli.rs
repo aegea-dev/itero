@@ -863,11 +863,29 @@ fn dispatch(cli: Cli) -> Result<()> {
             // its settings, then its port: a daemon that cannot listen
             // starts nothing
             let server = crate::server::Server::read(config.as_deref())?;
+            if let (Some(at), true) = (server.listen, no_serve) {
+                bail!("server.json opens the API on {at}, and --no-serve serves none");
+            }
+            // opened, a token must be able to reach it
+            if let Some(at) = server.listen
+                && crate::token::none()?
+            {
+                bail!(
+                    "listen {at} opens the API, and no token can reach it: itero token create NAME first"
+                );
+            }
             let listener = if no_serve {
                 None
             } else {
                 Some(crate::engine::http::listen_machine(server.port)?)
             };
+            let opened =
+                match server.listen {
+                    Some(at) => Some(std::net::TcpListener::bind(at).map_err(|e| {
+                        anyhow!("cannot listen on {at} (server.json's listen): {e}")
+                    })?),
+                    None => None,
+                };
             crate::ai::keeper::Keeper::global().for_machine();
             crate::browser::keeper::Keeper::global().for_machine();
             let served = match &listener {
@@ -912,10 +930,19 @@ fn dispatch(cli: Cli) -> Result<()> {
                     }
                     let port = listener.local_addr()?.port();
                     eprintln!("itero: serving on http://127.0.0.1:{port}/");
-                    crate::engine::http::serve(
-                        crate::engine::http::machine_router(machine, port),
+                    let mut served = vec![(
+                        crate::engine::http::machine_router(machine.clone(), port),
                         listener,
-                    )?;
+                    )];
+                    if let Some(opened) = opened {
+                        let at = opened.local_addr()?;
+                        eprintln!("itero: opened on {at}");
+                        eprintln!(
+                            "itero: serving without TLS on {at}: tokens cross the network in clear unless a proxy in front adds TLS"
+                        );
+                        served.push((crate::engine::http::opened_router(machine, port), opened));
+                    }
+                    crate::engine::http::serve_all(served)?;
                 }
             }
         }
