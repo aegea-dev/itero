@@ -20,7 +20,7 @@ fn a_daemon_held_by_a_test_that_fails_is_stopped() {
     let failed = std::thread::spawn(move || {
         let daemon = stop::Daemon(
             Command::new(env!("CARGO_BIN_EXE_itero"))
-                .args(["daemon", "--no-serve"])
+                .args(["ws", "daemon", "--no-serve"])
                 .current_dir(&root)
                 .env("ITERO_NO_SECRET_STORE", "1")
                 .stdin(Stdio::null())

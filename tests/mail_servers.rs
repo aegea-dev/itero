@@ -123,7 +123,7 @@ fn example(d: &Path, workflow: &str, port: u16, user: &str, host: &str) -> PathB
 
 fn pass(ws: &Path, now: &str, log: &Path) {
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-        .args(["daemon", "--once", "--now", now])
+        .args(["ws", "daemon", "--once", "--now", now])
         .current_dir(ws)
         .env("ITERO_NOTIFY_LOG", log)
         .env("ITERO_NO_SECRET_STORE", "1")
@@ -511,7 +511,7 @@ fn gmail_example(d: &Path, user: &str, host: &str) -> PathBuf {
 fn daemon(ws: &Path, log: &Path) -> stop::Daemon {
     stop::Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .current_dir(ws)
             .env("ITERO_NOTIFY_LOG", log)
             .env("ITERO_NO_SECRET_STORE", "1")

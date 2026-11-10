@@ -67,7 +67,7 @@ fn workspace_with(
 fn daemon(root: &Path, d: &Path) -> Daemon {
     Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .current_dir(root)
             .env("XDG_STATE_HOME", d.join("durum"))
             .env("ITERO_TEST_BROWSER_HEADLESS", "1")

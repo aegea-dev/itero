@@ -153,7 +153,7 @@ impl Target {
     /// The daemon's command line, after the itero binary.
     pub fn args(&self) -> Vec<String> {
         match self {
-            Target::Workspace(_) => vec!["daemon".into()],
+            Target::Workspace(_) => vec!["ws".into(), "daemon".into()],
             Target::Machine { config } => {
                 let mut a = vec!["daemon".to_string(), "--all".into()];
                 if let Some(c) = config {

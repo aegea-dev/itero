@@ -29,7 +29,7 @@ fn file(d: &Path, rel: &str, text: &str) {
 
 fn pass(d: &Path) {
     let now = itero::engine::daemon::stamp(chrono::Utc::now());
-    let o = itero(d, &["daemon", "--once", "--now", &now]);
+    let o = itero(d, &["ws", "daemon", "--once", "--now", &now]);
     assert!(o.status.success(), "{o:?}");
 }
 
@@ -698,7 +698,7 @@ fn two_listeners_run_as_connectors_of_one_daemon() {
     // free_port let them go; the request would then reach the daemon
     let daemon = Daemon(
         Command::new(env!("CARGO_BIN_EXE_itero"))
-            .args(["daemon", "--no-serve"])
+            .args(["ws", "daemon", "--no-serve"])
             .current_dir(d.path())
             .env("ITERO_NO_SECRET_STORE", "1")
             .stdin(Stdio::piped())

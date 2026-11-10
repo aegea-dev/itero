@@ -420,6 +420,18 @@ pub enum ConnectorCmd {
 pub enum WorkspaceCmd {
     /// Add this workspace to the machine's list: the machine's daemon runs it
     Add,
+    /// Run this workspace's workflows alone, in the foreground, as each comes due
+    Daemon {
+        /// One pass, then stop: for tests and scripts, so hidden
+        #[arg(long, hide = true)]
+        once: bool,
+        /// The time to run at, with --once (RFC 3339; for tests)
+        #[arg(long, requires = "once", hide = true)]
+        now: Option<String>,
+        /// The passes only: no HTTP API
+        #[arg(long)]
+        no_serve: bool,
+    },
     /// The workspace: its identity, meta and limits, and the daemon running it
     Info {
         #[arg(long)]
@@ -801,6 +813,7 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
             WorkspaceCmd::Add => "ws add",
             WorkspaceCmd::Remove { .. } => "ws remove",
             WorkspaceCmd::Secret { .. } => "ws secret",
+            WorkspaceCmd::Daemon { .. } => "ws daemon",
             WorkspaceCmd::List { .. }
             | WorkspaceCmd::Info { .. }
             | WorkspaceCmd::Check { .. }
@@ -837,6 +850,95 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
     })
 }
 
+/// One workspace's daemon, alone, in the foreground: `itero ws daemon`.
+/// `once`: one pass at `now` (tests and scripts).
+fn run_one(
+    ws: crate::workspace::Workspace,
+    once: bool,
+    now: Option<String>,
+    no_serve: bool,
+) -> Result<()> {
+    use crate::engine::daemon;
+    let exe = std::env::current_exe()?;
+    // one daemon per journal, one pass too: held for its life
+    let me = daemon::Daemon::current();
+    let lock = crate::engine::lock::take(&ws, &format!("{}, pid {}", me.name, me.pid))
+        .map_err(|e| anyhow!(e))?;
+    if once {
+        let at = match &now {
+            Some(t) => t
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .map_err(|_| anyhow!("--now takes an RFC 3339 time, not {t}"))?,
+            None => chrono::Utc::now(),
+        };
+        let pass = daemon::run_once(&ws, at, &exe);
+        // a Chrome a #browser step started ends with the pass
+        crate::browser::keeper::Keeper::global().stop();
+        report(&pass, None);
+        pass?;
+        return Ok(());
+    }
+    use crate::engine::http;
+    // its port first: a daemon that cannot listen starts nothing
+    let listening = if no_serve {
+        None
+    } else {
+        Some(http::listen(&ws)?)
+    };
+    let served = match &listening {
+        Some((l, _)) => Some(l.local_addr()?.port()),
+        None => None,
+    };
+    let running = crate::engine::running::Running::start(
+        ws.clone(),
+        &exe,
+        lock,
+        report,
+        false,
+        served,
+        None,
+    )?;
+    if let Some((_, Some(note))) = &listening {
+        running
+            .log
+            .write("port.changed", serde_json::json!({ "why": note }));
+    }
+    let (log, stopper) = (running.log.clone(), running.stopper());
+    stop_on_signal(
+        // its connectors end with it, those deaf to stdin too
+        move || crate::engine::stop::end(&[stopper], crate::engine::stop::GRACE),
+        move || crate::engine::log::last(&[log], "daemon.stopped"),
+    );
+    eprintln!(
+        "itero: running the workflows in {}, each as it comes due (Ctrl-C stops); log: .itero/itero.log",
+        ws.root.display()
+    );
+    let engine = running.engine.clone();
+    match listening {
+        None => {
+            // runs until the process is stopped
+            let _running = running;
+            loop {
+                std::thread::park();
+            }
+        }
+        Some((listener, _)) => {
+            let port = listener.local_addr()?.port();
+            eprintln!("itero: serving on http://127.0.0.1:{port}/");
+            let api = format!("http://127.0.0.1:{port}/");
+            let routes = http::router(
+                ws.clone(),
+                engine,
+                port,
+                api,
+                crate::answer::workspace::RunBy::Workspace,
+            );
+            http::serve(routes, listener)?;
+        }
+    }
+    Ok(())
+}
+
 fn dispatch(cli: Cli) -> Result<()> {
     let workspace = || crate::workspace::find(&std::env::current_dir()?);
     let context = cli.context.clone();
@@ -849,7 +951,14 @@ fn dispatch(cli: Cli) -> Result<()> {
     }
     if matches!(
         cli.cmd,
-        Cmd::Daemon { .. } | Cmd::Manager | Cmd::Worker | Cmd::Watchdog { .. }
+        Cmd::Daemon { .. }
+            | Cmd::Manager
+            | Cmd::Worker
+            | Cmd::Watchdog { .. }
+            | Cmd::Workspace {
+                cmd: WorkspaceCmd::Daemon { .. },
+                ..
+            }
     ) {
         ignore_sigpipe();
     }
@@ -969,87 +1078,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             now,
             no_serve,
             ..
-        } => {
-            use crate::engine::daemon;
-            let ws = workspace()?;
-            let exe = std::env::current_exe()?;
-            // one daemon per journal, one pass too: held for its life
-            let me = daemon::Daemon::current();
-            let lock = crate::engine::lock::take(&ws, &format!("{}, pid {}", me.name, me.pid))
-                .map_err(|e| anyhow!(e))?;
-            if once {
-                let at = match &now {
-                    Some(t) => t
-                        .parse::<chrono::DateTime<chrono::Utc>>()
-                        .map_err(|_| anyhow!("--now takes an RFC 3339 time, not {t}"))?,
-                    None => chrono::Utc::now(),
-                };
-                let pass = daemon::run_once(&ws, at, &exe);
-                // a Chrome a #browser step started ends with the pass
-                crate::browser::keeper::Keeper::global().stop();
-                report(&pass, None);
-                pass?;
-                return Ok(());
-            }
-            use crate::engine::http;
-            // its port first: a daemon that cannot listen starts nothing
-            let listening = if no_serve {
-                None
-            } else {
-                Some(http::listen(&ws)?)
-            };
-            let served = match &listening {
-                Some((l, _)) => Some(l.local_addr()?.port()),
-                None => None,
-            };
-            let running = crate::engine::running::Running::start(
-                ws.clone(),
-                &exe,
-                lock,
-                report,
-                false,
-                served,
-                None,
-            )?;
-            if let Some((_, Some(note))) = &listening {
-                running
-                    .log
-                    .write("port.changed", serde_json::json!({ "why": note }));
-            }
-            let (log, stopper) = (running.log.clone(), running.stopper());
-            stop_on_signal(
-                // its connectors end with it, those deaf to stdin too
-                move || crate::engine::stop::end(&[stopper], crate::engine::stop::GRACE),
-                move || crate::engine::log::last(&[log], "daemon.stopped"),
-            );
-            eprintln!(
-                "itero: running the workflows in {}, each as it comes due (Ctrl-C stops); log: .itero/itero.log",
-                ws.root.display()
-            );
-            let engine = running.engine.clone();
-            match listening {
-                None => {
-                    // runs until the process is stopped
-                    let _running = running;
-                    loop {
-                        std::thread::park();
-                    }
-                }
-                Some((listener, _)) => {
-                    let port = listener.local_addr()?.port();
-                    eprintln!("itero: serving on http://127.0.0.1:{port}/");
-                    let api = format!("http://127.0.0.1:{port}/");
-                    let routes = http::router(
-                        ws.clone(),
-                        engine,
-                        port,
-                        api,
-                        crate::answer::workspace::RunBy::Workspace,
-                    );
-                    http::serve(routes, listener)?;
-                }
-            }
-        }
+        } => run_one(workspace()?, once, now, no_serve)?,
         Cmd::Emit(args) => emit::all(args)?,
         Cmd::Browser {
             cmd:
@@ -1106,6 +1135,11 @@ fn dispatch(cli: Cli) -> Result<()> {
                     none("list")?;
                     workspace::list(json, crate::context::chosen(context.as_deref())?)?
                 }
+                WorkspaceCmd::Daemon {
+                    once,
+                    now,
+                    no_serve,
+                } => run_one(chosen()?, once, now, no_serve)?,
                 WorkspaceCmd::Info { json } => top::info(&client()?, json)?,
                 WorkspaceCmd::Check { json } => top::check(&client()?, json)?,
                 WorkspaceCmd::Which { name, json } => top::which(&client()?, &name, json)?,

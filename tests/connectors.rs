@@ -443,7 +443,7 @@ fn connector_ends_with(d: &std::path::Path, root: &std::path::Path, args: &[&str
 fn a_connector_deaf_to_its_stdin_ends_with_its_daemon() {
     let d = tempfile::tempdir().unwrap();
     let root = deaf_connector(d.path());
-    connector_ends_with(d.path(), &root, &["daemon", "--no-serve"]);
+    connector_ends_with(d.path(), &root, &["ws", "daemon", "--no-serve"]);
 }
 
 #[test]
@@ -461,5 +461,5 @@ fn what_a_connector_runs_ends_with_its_daemon_too() {
         d.path(),
         "#!/bin/sh\nsleep 600 &\necho $! > kulak.pid\nwait\n",
     );
-    connector_ends_with(d.path(), &root, &["daemon", "--no-serve"]);
+    connector_ends_with(d.path(), &root, &["ws", "daemon", "--no-serve"]);
 }

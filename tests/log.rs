@@ -193,7 +193,7 @@ fn a_daemon_says_when_it_starts_and_stops() {
     );
     let mut daemon = stop::Daemon(
         std::process::Command::new(exe())
-            .args(["daemon", "--no-serve"])
+            .args(["ws", "daemon", "--no-serve"])
             .current_dir(root)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

@@ -91,7 +91,7 @@ fn each_new_mail_is_shown_once_as_it_arrives_and_old_mail_never() {
     .unwrap();
     let daemon = Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .current_dir(&ws)
             .env("ITERO_NOTIFY_LOG", &log)
             .env("ITERO_NO_SECRET_STORE", "1")
@@ -165,7 +165,7 @@ fn a_mail_is_shown_however_late_the_watch_is_set() {
     .unwrap();
     let _daemon = Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .current_dir(&ws)
             .env("ITERO_NOTIFY_LOG", &log)
             .env("ITERO_NO_SECRET_STORE", "1")
@@ -235,7 +235,7 @@ fn headers_are_shown_as_mail_programs_meant_them() {
     .unwrap();
     let daemon = Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .current_dir(&ws)
             .env("ITERO_NOTIFY_LOG", &log)
             .env("ITERO_NO_SECRET_STORE", "1")

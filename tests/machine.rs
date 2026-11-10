@@ -389,7 +389,7 @@ fn a_workspace_run_in_the_foreground_is_left_to_it() {
     m.ok(&a, &["workspace", "add"]);
     m.ok(&b, &["workspace", "add"]);
     let mut own = m.command(&a);
-    own.arg("daemon")
+    own.args(["ws", "daemon"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

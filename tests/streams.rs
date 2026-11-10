@@ -101,7 +101,7 @@ impl Ws {
     fn daemon(&self) -> Daemon {
         let child = self
             .command(&self.root)
-            .arg("daemon")
+            .args(["ws", "daemon"])
             .stderr(std::fs::File::create(self.d.path().join("söylenen")).unwrap())
             .spawn()
             .unwrap();
