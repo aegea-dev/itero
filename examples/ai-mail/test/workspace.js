@@ -38,7 +38,7 @@ export class Workspace {
 
   /** One daemon pass, as if it were `now` (an RFC 3339 time). */
   pass(now = new Date().toISOString().replace(/\.\d+Z$/, "Z")) {
-    this.itero("daemon", "--once", "--now", now);
+    this.itero("ws", "daemon", "--once", "--now", now);
   }
 
   /** The runs, newest first: { id, name, workflow, status, ... }. */

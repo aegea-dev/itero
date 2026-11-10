@@ -47,9 +47,9 @@ export class Workspace {
     };
   }
 
-  /** Starts `itero daemon`, and waits until its API answers. */
+  /** Starts `itero ws daemon`, and waits until its API answers. */
   async start() {
-    this.daemon = Bun.spawn([bin, "daemon"], { cwd: this.dir, env: this.env, stdout: "ignore", stderr: "ignore" });
+    this.daemon = Bun.spawn([bin, "ws", "daemon"], { cwd: this.dir, env: this.env, stdout: "ignore", stderr: "ignore" });
     await until("the daemon's API", async () => {
       try {
         return (await fetch(`${this.api}/health`)).ok;

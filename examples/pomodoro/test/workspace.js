@@ -38,7 +38,7 @@ export class Workspace {
 
   /** One daemon pass: it ends once its steps have. */
   pass() {
-    this.itero("daemon", "--once");
+    this.itero("ws", "daemon", "--once");
   }
 
   /** The runs, newest first: { id, name, workflow, status, ... }. */
