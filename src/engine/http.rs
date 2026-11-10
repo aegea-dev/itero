@@ -69,6 +69,7 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16, api: String, run_by
         .route("/check", get(check))
         .route("/info", get(info))
         .route("/which/{name}", get(which))
+        .route("/secrets/{name}", post(keep_secret))
         .route("/browser/tabs", post(open_watch));
     // under the machine's API, the machine's router guards it (its Host
     // check locally, a token where it is opened) and says its version
@@ -704,6 +705,7 @@ fn machine_routes() -> Router<MachineShared> {
     Router::new()
         .route("/health", get(machine_health))
         .route("/workspaces", get(workspaces))
+        .route("/secrets/{name}", post(keep_machine_secret))
         .route(
             "/workspaces/{name}",
             axum::routing::put(apply_workspace)
@@ -772,6 +774,67 @@ async fn workspaces(State(s): State<MachineShared>) -> Result<Json<Value>, Reply
     serde_json::to_value(listed)
         .map(Json)
         .map_err(|e| internal(e.into()))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SecretValue {
+    value: String,
+}
+
+/// A secret sent to be kept in this server's OS store: for `ws` alone, or
+/// for every workspace; 409 when it keeps none, saying where it reads
+/// them from instead.
+fn keep(ws: Option<&Workspace>, name: &str, value: &str) -> Result<Json<Value>, Reply> {
+    use super::secrets;
+    if !secrets::valid_name(name) {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            format!("{name}: a secret's name is a letter or _, then letters, digits or _"),
+        ));
+    }
+    if value.is_empty() {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            format!("{name}: an empty secret is not kept"),
+        ));
+    }
+    if secrets::store_off() {
+        return Err(fail(StatusCode::CONFLICT, secrets::none_kept(name)));
+    }
+    let kept = match ws {
+        Some(ws) => ws.id().and_then(|id| secrets::set_for(&id, name, value)),
+        None => secrets::set(name, value),
+    };
+    kept.map(|_| Json(json!({ "kept": name }))).map_err(|e| {
+        fail(
+            StatusCode::CONFLICT,
+            format!("{}: {e:#}", secrets::none_kept(name)),
+        )
+    })
+}
+
+/// `POST /secrets/{name}` `{"value": ...}`, on a workspace's routes: kept
+/// for that workspace alone.
+async fn keep_secret(
+    State(s): State<Shared>,
+    Path(name): Path<String>,
+    body: Result<Json<SecretValue>, JsonRejection>,
+) -> Result<Json<Value>, Reply> {
+    let Json(v) = body.map_err(|r| fail(r.status(), r.body_text()))?;
+    blocking(&s, move |ws| keep(Some(ws), &name, &v.value).map(|j| j.0)).await
+}
+
+/// `POST /secrets/{name}` `{"value": ...}`, on the machine's routes: kept
+/// for every workspace on it.
+async fn keep_machine_secret(
+    Path(name): Path<String>,
+    body: Result<Json<SecretValue>, JsonRejection>,
+) -> Result<Json<Value>, Reply> {
+    let Json(v) = body.map_err(|r| fail(r.status(), r.body_text()))?;
+    tokio::task::spawn_blocking(move || keep(None, &name, &v.value))
+        .await
+        .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
 }
 
 /// The largest `PUT /workspaces/{name}` body: 64 MiB of files, in base64.

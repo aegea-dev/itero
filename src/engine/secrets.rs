@@ -55,13 +55,62 @@ pub fn get(name: &str) -> Option<String> {
 }
 
 /// A `$$NAME` in the workspace: its own secret, else the machine's, else
-/// its `.env`, else the environment.
+/// its `.env`, else the secrets folder's (its own file, then the
+/// machine's), else the environment.
 pub fn get_in(ws: &Workspace, name: &str) -> Option<String> {
     own_key(ws, name)
         .and_then(|key| from_store(&key))
         .or_else(|| from_store(name))
         .or_else(|| dot_env(&ws.root, name))
+        .or_else(|| from_folder(ws, name))
         .or_else(|| std::env::var(name).ok())
+}
+
+/// The variable the machine's daemon names its secrets folder in
+/// (server.json's `secrets`), for itself and every process it starts.
+pub const FOLDER: &str = "ITERO_SECRETS";
+
+/// A secret from the folder of secrets the platform mounts, a file each:
+/// the workspace's own (`<its name on the list>.NAME`), else `NAME`; its
+/// last newline left out. A file there that cannot be read is said once.
+fn from_folder(ws: &Workspace, name: &str) -> Option<String> {
+    let dir = std::path::PathBuf::from(std::env::var_os(FOLDER)?);
+    let listed = crate::machine::list_path()
+        .and_then(|p| crate::machine::List::read(&p))
+        .ok()
+        .and_then(|l| {
+            l.workspaces
+                .into_iter()
+                .find(|e| e.folder == ws.root)
+                .map(|e| e.name)
+        });
+    let files = listed
+        .map(|w| dir.join(format!("{w}.{name}")))
+        .into_iter()
+        .chain([dir.join(name)]);
+    for f in files {
+        match std::fs::read_to_string(&f) {
+            Ok(t) => {
+                let t = t.strip_suffix('\n').unwrap_or(&t);
+                return Some(t.strip_suffix('\r').unwrap_or(t).to_string());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+                if REPORTED.set(()).is_ok() {
+                    eprintln!("itero: {}: {e}", f.display());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// What a server without a store answers to a secret sent to it.
+pub fn none_kept(name: &str) -> String {
+    format!(
+        "this server keeps no secrets: set {name} in its environment, or a file {name} in its secrets folder (server.json's secrets)"
+    )
 }
 
 /// A workspace's own secret's name in the store.
