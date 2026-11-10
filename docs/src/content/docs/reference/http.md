@@ -24,6 +24,9 @@ an error is `{"error": "..."}` with its status.
 | `GET /actions` | each action and its files |
 | `GET /actions/errors` | which actions break runs, or one action's failures |
 | `GET /connectors` | each connector, once for each set of args |
+| `GET /check` | what is wrong in the workspace, and what it found |
+| `GET /info` | the workspace, its limits and the daemon answering |
+| `GET /which/{name}` | where a workflow, action or connector of that name is |
 
 ## Only from this machine
 
@@ -269,6 +272,48 @@ connector, once for each set of args the workflows give it:
 [ { "type": "mail.received", "file": "connectors/mail.received",
     "args": { "box": "INBOX" } } ]
 ```
+
+## GET /check
+
+The same as [`itero ws check --json`](/commands/check/): each workflow
+and what its steps use, each connector, and every problem, `errors` and
+`warnings`, each a `message` and its address `at`:
+
+```json
+{ "workflows": [ { "name": "greet", "file": "workflows/greet.json", "runs": 1,
+      "uses": [ { "action": "notify", "built_in": true } ], "...": "..." } ],
+  "connectors": [ { "type": "mail.received", "file": "/Users/me/home/connectors/mail.received" } ],
+  "notes": [],
+  "errors": [ { "message": "no action ship in the actions folders",
+                "at": "home/workflows/order/steps/#ship" } ],
+  "warnings": [] }
+```
+
+Errors are part of the report, so it answers 200 with them; `itero ws
+check` exits 1 when there are any. What an action needs on its `PATH`,
+and where `#ai` sends, are as the daemon's machine has them.
+
+## GET /info
+
+The same as [`itero ws info --json`](/commands/workspace/#info): the
+`workspace`, its `limits`, `notifications`, and the `daemon` answering:
+its id, name, start, pid, host and itero, `running` (true), its `port`,
+`api` (its address) and `run_by`, `workspace` for its own daemon or
+`machine` for [the machine's](#one-itero-per-machine).
+
+## GET /which/\{name\}
+
+The same as [`itero ws which <name> --json`](/commands/which/): the
+workflow, the action (each version) and the connector of that name, and
+where each is:
+
+```json
+[ { "kind": "workflow", "path": "workflows/shop/gönder.json" },
+  { "kind": "action", "path": "actions/shipping/gönder" } ]
+```
+
+`%23` is `#`: `/which/%23gönder` looks among the actions only. 404 when
+nothing has that name.
 
 ## One itero per machine
 

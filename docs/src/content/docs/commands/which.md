@@ -32,6 +32,8 @@ action    built in
   one, and each of an action's versions has its line.
 - `#name` (in quotes, for the shell) looks for the action only.
 - A name nothing has is an error, with exit 1.
+- `--json` gives the same JSON as the API's
+  [`GET /which/{name}`](/reference/http/#get-whichname).
 
 itero reads the folders each time, so nothing is kept that could go stale.
 [`itero ws wf list`](/commands/workflow/#list) shows each workflow's file too.
