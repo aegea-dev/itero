@@ -35,6 +35,19 @@ pub fn workspaces() -> ArgValueCandidates {
     })
 }
 
+/// The contexts' names, `local` first.
+pub fn contexts() -> ArgValueCandidates {
+    ArgValueCandidates::new(|| {
+        let all = crate::context::Contexts::path()
+            .and_then(|p| crate::context::Contexts::read(&p))
+            .unwrap_or_default();
+        names(
+            std::iter::once(crate::context::LOCAL.to_string())
+                .chain(all.contexts.into_iter().map(|c| c.name)),
+        )
+    })
+}
+
 pub fn workflows() -> ArgValueCandidates {
     ArgValueCandidates::new(|| {
         names(

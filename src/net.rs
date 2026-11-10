@@ -12,6 +12,16 @@ pub fn client(timeout: Duration) -> reqwest::Result<reqwest::blocking::Client> {
         .build()
 }
 
+/// An HTTP error's innermost cause, what a person can act on
+/// ("Connection refused"), not reqwest's outer "error sending request".
+pub fn cause(e: &reqwest::Error) -> String {
+    let mut inner: &dyn std::error::Error = e;
+    while let Some(next) = inner.source() {
+        inner = next;
+    }
+    inner.to_string()
+}
+
 /// A blocking client for a server on a Unix socket (itero-ai's), giving
 /// up after `timeout`; URLs name any host, which is not looked up.
 #[cfg(unix)]
