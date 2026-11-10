@@ -11,6 +11,9 @@ resolve there. Your actions are programs of their own and keep the
 system's. The local model's server, `itero-ai`, needs glibc 2.34 or later
 (Ubuntu 22.04, Debian 12, RHEL 9 and later).
 
+To run itero as a server in Docker or on Kubernetes instead, see
+[In a container](/guides/container/).
+
 ## Homebrew
 
 ```bash

@@ -50,6 +50,8 @@ Private/local context may exist outside this repository, but it must not be quot
 - Lint gate, any warning fails: make lint-check
 - Tests and clippy on Linux, in Docker: make test-linux
 - Tests that need Docker (container actions; IMAP, POP3 and Gmail against GreenMail): make test-docker
+- Container images for this machine (itero:dev, itero:dev-alpine): make image
+- Both images run with the Compose example, end to end (needs Docker): make test-image
 - Check the engine's model with TLC, in Docker: make model
 - Check that each of the model's rules can fail: make model-test
 - Security audit of Cargo.lock: make audit

@@ -98,6 +98,7 @@ export default defineConfig({
 						{ label: "The daemon's own workflows", slug: 'guides/maintenance' },
 						{ label: 'One itero per machine', slug: 'guides/machine' },
 						{ label: 'Start at login', slug: 'guides/service' },
+						{ label: 'In a container', slug: 'guides/container' },
 					],
 				},
 				{
