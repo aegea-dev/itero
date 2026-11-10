@@ -111,7 +111,11 @@ impl Ws {
         until("the daemon's port", || {
             std::fs::read_to_string(&kept).is_ok_and(|p| p.trim().parse::<u16>().is_ok())
         });
-        w.port = std::fs::read_to_string(&kept).unwrap().trim().parse().unwrap();
+        w.port = std::fs::read_to_string(&kept)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         until("the API", || {
             http()
                 .get(w.url("/health"))
@@ -252,7 +256,10 @@ fn refused(w: &Ws, args: &[&str], path: &str, status: u16) -> String {
 fn fails_alike(w: &Ws, args: &[&str], message: &str) {
     for args in [args.to_vec(), w.remote(args)] {
         let said = w.cli_fails(&args);
-        assert!(said.contains(message), "{args:?}: {said:?} lacks {message:?}");
+        assert!(
+            said.contains(message),
+            "{args:?}: {said:?} lacks {message:?}"
+        );
     }
 }
 
@@ -457,7 +464,11 @@ fn a_bad_event_and_a_cancel_are_refused_alike() {
         Some(json!({ "type": "tek", "data": {} })),
     );
     assert_eq!(code, 400, "{api}");
-    fails_alike(&w, &["ws", "emit", "tek", "{}"], api["error"].as_str().unwrap());
+    fails_alike(
+        &w,
+        &["ws", "emit", "tek", "{}"],
+        api["error"].as_str().unwrap(),
+    );
     // an event a daemon has handled: 409, what it started, in both
     let sent = w.cli(&["ws", "emit", "sipariş.verildi", "{}"]);
     let id = sent["id"].as_str().unwrap().to_string();
@@ -633,7 +644,11 @@ fn the_text_is_the_same_over_a_context() {
     ] {
         let text = |args: &[&str]| {
             let o = w.command().args(args).output().unwrap();
-            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+            assert!(
+                o.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
             (
                 String::from_utf8_lossy(&o.stdout).into_owned(),
                 String::from_utf8_lossy(&o.stderr).into_owned(),

@@ -261,7 +261,12 @@ fn two_workspaces(m: &Machine) -> (Daemon, String, String, String) {
         let w = m.d.path().join("projeler").join(folder);
         std::fs::create_dir_all(&w).unwrap();
         std::fs::write(w.join("itero.config.json"), "{}").unwrap();
-        let o = m.command().current_dir(&w).args(["ws", "add"]).output().unwrap();
+        let o = m
+            .command()
+            .current_dir(&w)
+            .args(["ws", "add"])
+            .output()
+            .unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         let ws = itero::workspace::find(&w).unwrap();
         names.push(
@@ -284,7 +289,11 @@ fn answered_by(m: &Machine, args: &[&str], env: Option<&str>) -> String {
         c.env("ITERO_CONTEXT", e);
     }
     let o = c.output().unwrap();
-    assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        o.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
     let v: Value = serde_json::from_slice(&o.stdout).unwrap();
     v["workspace"]["name"].as_str().unwrap().to_string()
 }

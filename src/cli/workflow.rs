@@ -1,6 +1,6 @@
 //! `itero ws wf`: the workflows and their runs.
-use crate::answer::Client;
 use super::out::{ago, show, table, text};
+use crate::answer::Client;
 use crate::answer::runs;
 use anyhow::Result;
 use serde_json::Value;

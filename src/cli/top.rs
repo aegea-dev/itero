@@ -1,7 +1,7 @@
 //! The machine and the workspace as a whole: `info`, `service status`, and
 //! `ws info`, `ws check`, `ws which`.
-use crate::answer::Client;
 use super::out::{show, text};
+use crate::answer::Client;
 use crate::answer::workspace::{RunBy, Runner};
 use crate::engine::journal::Journal;
 use crate::workspace::Workspace;

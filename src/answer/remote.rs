@@ -170,7 +170,10 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(matches!(refusal("üretim", 400, json!({ "error": "x" })), Fault::Bad(_)));
+        assert!(matches!(
+            refusal("üretim", 400, json!({ "error": "x" })),
+            Fault::Bad(_)
+        ));
         let f = refusal("üretim", 401, json!({ "error": "no token" }));
         assert!(f.to_string().contains("üretim refused its token"), "{f}");
         let f = refusal("üretim", 502, Value::Null);

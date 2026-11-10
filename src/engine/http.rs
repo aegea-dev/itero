@@ -227,7 +227,6 @@ struct EventQuery {
     wait: Option<u64>,
 }
 
-
 /// Asks a run to stop: 202; 409 when it has ended, 404 when there is none.
 async fn stop_run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Reply, Reply> {
     let wake = s.engine.wake.clone();

@@ -1,7 +1,7 @@
 //! `itero ws ev`: the events for the workspace no daemon has handled yet,
 //! and taking one back.
-use crate::answer::Client;
 use super::out::{show, table, text};
+use crate::answer::Client;
 use crate::engine::journal::Journal;
 use crate::workspace::Workspace;
 use anyhow::Result;
