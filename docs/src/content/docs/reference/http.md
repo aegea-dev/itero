@@ -385,7 +385,9 @@ next, `itero.config.json` last), the others removed. Its own `.itero/`
 (journal, log), `.env` and `.git/` are never sent or touched, and the
 daemon reads the new files as it reads a local edit.
 
-It answers what it did, the paths in each:
+It answers once the daemon has read its list again: a workspace made is
+running by then (or `GET /workspaces` says why not), so an event sent
+right after reaches it. Its answer is what it did, the paths in each:
 
 ```json
 { "created": false, "added": ["actions/ship"],

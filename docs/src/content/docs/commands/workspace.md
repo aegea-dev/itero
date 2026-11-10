@@ -113,7 +113,9 @@ itero ws ./shop daemon          # a folder's, from elsewhere
 `itero ws apply --context <name>` sends this folder's workspace to that
 [context](/commands/context/)'s server: made there the first time (on
 its list, its daemon runs it), made to match after. Files gone here are
-removed there, so a workflow deleted here stops running there too.
+removed there, so a workflow deleted here stops running there too. It
+returns once the server runs what it sent, so `itero ws emit --context
+prod` right after reaches it.
 
 ```sh
 itero ws apply --context prod             # the context's workspace
