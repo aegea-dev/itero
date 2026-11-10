@@ -1,0 +1,4 @@
+#!/bin/sh
+# A greeting for $ad (the step's arg), through jq, in both images
+# shellcheck disable=SC2154
+jq -jn --arg ad "$ad" '"merhaba " + $ad'

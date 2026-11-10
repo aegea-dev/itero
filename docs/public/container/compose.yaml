@@ -1,0 +1,27 @@
+# itero in a container: one server, its state on a volume.
+# Beside this file, its server.json. Make the first token, then start it:
+#   docker compose run --rm itero token create laptop
+#   docker compose up -d
+# https://docs.itero.sh/guides/container/
+services:
+  itero:
+    image: ${ITERO_IMAGE:-ghcr.io/aegea-dev/itero:latest}
+    restart: unless-stopped
+    ports:
+      - "${ITERO_PORT:-8443}:8443"
+    volumes:
+      - itero:/var/lib/itero
+      - ./server.json:/etc/itero/server.json:ro
+    # Chrome (#browser) needs more than Docker's 64 MB of /dev/shm
+    shm_size: 1gb
+    # a stop is SIGTERM: connectors get 3 s; as long as Kubernetes gives
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8443/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  itero: {}

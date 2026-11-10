@@ -1,0 +1,132 @@
+# itero on k3s (or any Kubernetes): one server in one pod, its state on a
+# ReadWriteOnce volume (a block device: never NFS or EFS). Make the first
+# token before the StatefulSet starts:
+# https://docs.itero.sh/guides/container/#kubernetes
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: itero
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: itero
+  namespace: itero
+data:
+  server.json: |
+    { "listen": "0.0.0.0:8443" }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: itero
+  namespace: itero
+spec:
+  # one server: its journals are SQLite on this pod's own volume
+  replicas: 1
+  serviceName: itero
+  selector:
+    matchLabels:
+      app: itero
+  template:
+    metadata:
+      labels:
+        app: itero
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: itero
+          image: ghcr.io/aegea-dev/itero:0.40.0
+          ports:
+            - name: api
+              containerPort: 8443
+            # a workspace's webhook connector: itero webhook --host 0.0.0.0 --port 8788
+            - name: webhook
+              containerPort: 8788
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/itero
+            - name: config
+              mountPath: /etc/itero/server.json
+              subPath: server.json
+              readOnly: true
+            # Chrome (#browser) needs more than 64 MB of /dev/shm
+            - name: shm
+              mountPath: /dev/shm
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: api
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: api
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: itero
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: itero
+  namespace: itero
+spec:
+  selector:
+    app: itero
+  ports:
+    - name: api
+      port: 8443
+      targetPort: api
+    - name: webhook
+      port: 8788
+      targetPort: webhook
+---
+# Traefik (k3s's own) or F5's NGINX Ingress Controller serve this; give
+# your host, and a TLS secret your cluster's issuer makes
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: itero
+  namespace: itero
+spec:
+  tls:
+    - hosts: ["itero.example.com"]
+      secretName: itero-tls
+  rules:
+    - host: itero.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: itero
+                port:
+                  name: api
