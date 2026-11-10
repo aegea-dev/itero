@@ -117,6 +117,7 @@ export default defineConfig({
 						{ label: 'Concepts', slug: 'reference/concepts' },
 						{ label: 'Glossary', slug: 'reference/glossary' },
 						{ label: 'itero.config.json', slug: 'reference/itero-config' },
+						{ label: 'server.json', slug: 'reference/server-json' },
 						{ label: 'Workflow files', slug: 'reference/workflow-file' },
 						{ label: 'Actions', slug: 'reference/action-file' },
 						{ label: 'HTTP API', slug: 'reference/http' },

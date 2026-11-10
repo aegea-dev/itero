@@ -293,7 +293,7 @@ pub fn secret(ws: Option<&Workspace>, name: &str, file: Option<PathBuf>) -> Resu
 
 /// `itero service install`: the machine's service, `itero watchdog
 /// --all`, installed and started.
-pub fn service_install(port: Option<u16>) -> Result<()> {
+pub fn service_install() -> Result<()> {
     use crate::engine::service;
     let exe = std::env::current_exe()?;
     let state = crate::machine::state_dir()?;
@@ -307,15 +307,15 @@ pub fn service_install(port: Option<u16>) -> Result<()> {
         .unwrap_or_else(|| home.join(".config"));
     remove_old_services(&service::old_services(&home, &config))?;
     let path = std::env::var("PATH").ok();
-    service::install(service::machine_ctx(&exe, &home, &state, port, path))?;
+    service::install(service::machine_ctx(&exe, &home, &state, path))?;
     println!(
         "installed: {} runs every workspace on this machine's list (itero workspace list); it starts at login",
         service::MACHINE
     );
-    match port {
-        Some(p) => println!("API: http://127.0.0.1:{p}/"),
-        None => println!("API: on the port it keeps, as itero service status says"),
-    }
+    println!(
+        "API: on the port {} gives, else the one it keeps, as itero service status says",
+        crate::server::Server::default_path()?.display()
+    );
     println!("log: {}", state.join("daemon.log").display());
     println!("it keeps this shell's PATH; install again after changing it");
     Ok(())

@@ -10,7 +10,7 @@ when you log in, and is restarted if it stops. Its commands work from
 any folder.
 
 ```sh
-itero service install [--port <port>]
+itero service install
 itero service status [--json]
 itero service start | stop | restart
 itero service uninstall
@@ -18,7 +18,7 @@ itero service uninstall
 
 | Command | Does |
 |---|---|
-| `install` | runs the machine's daemon as a service (a launchd agent on macOS, a systemd user unit on Linux), from login on, kept up by a watchdog; `--port` fixes its port |
+| `install` | runs the machine's daemon as a service (a launchd agent on macOS, a systemd user unit on Linux), from login on, kept up by a watchdog; its settings are in [`server.json`](/reference/server-json/) |
 | `status` | the service's state, and the daemon's health: its pid, its port, each workspace's passes and last error |
 | `start` | starts the installed service |
 | `stop` | stops it; it starts again at your next login |
@@ -26,9 +26,9 @@ itero service uninstall
 | `uninstall` | stops the service and removes it; the workspaces, their journals and logs stay |
 
 ```
-$ itero service install --port 8787
+$ itero service install
 installed: dev.aegea.itero.daemon runs every workspace on this machine's list (itero workspace list); it starts at login
-API: http://127.0.0.1:8787/
+API: on the port /Users/me/.config/itero/server.json gives, else the one it keeps, as itero service status says
 log: /Users/me/.local/state/itero/daemon.log
 it keeps this shell's PATH; install again after changing it
 ```

@@ -6,7 +6,7 @@ fn the_machines_service_runs_the_watchdog_over_every_workspace() {
     let home = Path::new("/Users/biri");
     let state = Path::new("/Users/biri/.local/state/itero");
     let exe = Path::new("/opt/homebrew/bin/itero");
-    let ctx = machine_ctx(exe, home, state, Some(7600), Some("/usr/bin".into()));
+    let ctx = machine_ctx(exe, home, state, Some("/usr/bin".into()));
     assert_eq!(ctx.label.to_qualified_name(), MACHINE);
     assert_eq!(ctx.program, exe);
     let args: Vec<String> = ctx
@@ -14,28 +14,18 @@ fn the_machines_service_runs_the_watchdog_over_every_workspace() {
         .iter()
         .map(|a| a.to_string_lossy().into())
         .collect();
+    // no settings in the unit: the daemon reads server.json at its start
     assert_eq!(
         args,
         [
             "watchdog",
             "--all",
-            "--port",
-            "7600",
             "--log",
             "/Users/biri/.local/state/itero/daemon.log"
         ]
     );
     assert_eq!(ctx.working_directory.as_deref(), Some(home));
     assert!(ctx.autostart);
-    // no port: the daemon keeps the one it is given
-    let ctx = machine_ctx(exe, home, state, None, None);
-    let args: Vec<String> = ctx
-        .args
-        .iter()
-        .map(|a| a.to_string_lossy().into())
-        .collect();
-    assert_eq!(&args[..2], ["watchdog", "--all"]);
-    assert!(!args.contains(&"--port".to_string()));
 }
 
 #[test]
