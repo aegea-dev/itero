@@ -680,9 +680,17 @@ fn info_over_a_context_is_the_servers() {
     let w = Ws::new();
     let local = w.cli(&["info"]);
     let remote = w.cli(&w.remote(&["info"]));
-    // the same daemon, its workspaces, as its /health says
+    // the same daemon, the same workspaces, as its /health says; not
+    // their passes, which the daemon counts on between the two asks
     assert_eq!(remote["daemon"], local["daemon"], "{remote}");
-    assert_eq!(remote["workspaces"], local["workspaces"], "{remote}");
+    let names = |v: &Value| {
+        v["workspaces"]
+            .as_object()
+            .map(|w| w.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    assert_eq!(names(&remote), names(&local), "{remote}");
+    assert_eq!(names(&remote), std::slice::from_ref(&w.name), "{remote}");
     assert_eq!(
         remote["url"],
         format!("http://127.0.0.1:{}/", w.port).as_str(),
