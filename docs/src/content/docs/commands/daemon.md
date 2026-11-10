@@ -9,11 +9,13 @@ schedules come due and steps run; leave it running in a terminal, or use
 
 ```sh
 itero daemon [--no-serve]
-itero daemon --all [--port <port>] [--no-serve]
+itero daemon --all [--config <path>] [--no-serve]
 ```
 
 `--all` runs every workspace on the machine's list instead of this
-folder's, on one port: see [One itero per machine](/guides/machine/).
+folder's, on one port: see [One itero per machine](/guides/machine/). Its
+settings, its port among them, are in
+[`server.json`](/reference/server-json/).
 
 It starts the workspace's [connectors](/guides/connectors/), watches the
 [paths](/guides/connectors/#watching-files) its workflows name, takes
@@ -40,7 +42,7 @@ while a slow step still runs. Between passes it waits and uses no CPU.
 | Option | Does |
 |---|---|
 | `--all` | every workspace on the machine's list ([`itero workspace`](/commands/workspace/)) |
-| `--port <port>` | with `--all`: the machine's port (else the one kept, else one the OS gives) |
+| `--config <path>` | with `--all`: its settings from this file, not the config folder's [`server.json`](/reference/server-json/) |
 | `--no-serve` | the passes only, no HTTP API |
 
 ```

@@ -79,8 +79,9 @@ journal a newer itero made is not left `missing`.
 
 ## One API
 
-The daemon serves one port, `--port` when given, else the one it kept
-from its last start (in `~/.local/state/itero/port`):
+The daemon serves one port: the `port` in
+[`server.json`](/reference/server-json/) when it gives one, else the one
+it kept from its last start (in `~/.local/state/itero/port`):
 
 | Route | Does |
 |---|---|
