@@ -11,13 +11,16 @@ folder: `$XDG_CONFIG_HOME/itero/server.json`, else
 another file instead.
 
 ```json
-{ "port": 8787, "listen": "0.0.0.0:8443" }
+{ "port": 8787,
+  "listen": "0.0.0.0:8443",
+  "tls": { "cert": "/etc/itero/tls/cert.pem", "key": "/etc/itero/tls/key.pem" } }
 ```
 
 | Setting | Is |
 |---|---|
 | `port` | the API's port on `127.0.0.1`, from 1 to 65535. Without it, the port the daemon kept from its last start, else one the OS gives, which it keeps |
 | `listen` | an address and a port where the API is opened too, beside the local one: there every request needs a [token](/commands/token/). Without it, the API answers on `127.0.0.1` only |
+| `tls` | `cert`, the certificate's PEM file (its chain after it), and `key`, its private key's: `listen` serves HTTPS with them. Without it, plain HTTP |
 
 ## Opening the API
 
@@ -31,9 +34,14 @@ token's name (`laptop: POST /ws/shop/events`). The local API on
 the service's watchdog.
 
 The daemon does not start opened when no token exists, as nobody could
-reach it. It serves plain HTTP there, and says so when it starts: put a
-proxy that adds TLS in front (Caddy, Traefik, a load balancer), or keep
-`listen` on a network of your own.
+reach it.
+
+With `tls`, `listen` serves HTTPS (TLS 1.2 and 1.3, through rustls) with
+that certificate, read and checked against its key when the daemon
+starts: after renewing it, `itero service restart`. Without `tls` it
+serves plain HTTP and says so when it starts: then put a proxy that adds
+TLS in front (Caddy, Traefik, a load balancer), or keep `listen` on a
+network of your own. The local API stays plain HTTP on `127.0.0.1`.
 
 The daemon reads it when it starts: after a change, `itero service
 restart`. With no file there, the daemon runs as it always has; a file
