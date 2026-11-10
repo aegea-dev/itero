@@ -33,7 +33,7 @@ A name is a letter or `_`, then letters, digits or `_`.
 ## One workspace's secret
 
 `itero ws secret` keeps a secret for the workspace of this folder, or the
-one `--ws <name>` names. Its `$$NAME` finds it before the machine's, so one
+one named after `ws` (`itero ws quiet-river secret NAME`). Its `$$NAME` finds it before the machine's, so one
 workspace can use another account without changing the others. It stays
 with the workspace when the workspace is renamed.
 

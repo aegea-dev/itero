@@ -7,7 +7,8 @@ The commands at the top level are about the machine and its daemon, and
 work from any folder. Everything about one workspace is under
 [`itero ws`](/commands/workspace/): it acts on the workspace of the folder
 it runs in (the nearest folder upwards with an `itero.config.json`), or the
-one `--ws <name>` names; with `--context <name>`, a workspace on that
+one named right after `ws`, by its name on the list or its path
+(`itero ws quiet-river wf runs`); with `--context <name>`, a workspace on that
 [context](/commands/context/)'s server. `itero help <command>` shows a
 command's options, and every command that prints something takes
 `--json`.

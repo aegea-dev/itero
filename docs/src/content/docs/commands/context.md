@@ -57,13 +57,13 @@ machine, and says the same as it would here: the same text, the same
 
 ```sh
 itero ws wf runs --context prod             # prod's runs, in its default workspace
-itero ws check --context prod --ws billing  # another workspace on prod
+itero ws billing check --context prod       # another workspace on prod
 ITERO_CONTEXT=staging itero ws ev list      # for a script
 ```
 
 The context is `--context`, else `ITERO_CONTEXT`, else the one in use
-(`itero context use`), else this machine. The workspace is `--ws`, else
-the context's; with neither, the command names the server's workspaces
+(`itero context use`), else this machine. The workspace is the one named
+after `ws`, else the context's (a path is this machine's, so refused); with neither, the command names the server's workspaces
 and asks which.
 
 These go to the server: `ws info`, `ws check`, `ws which`, `ws emit`

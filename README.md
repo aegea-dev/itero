@@ -153,7 +153,7 @@ a name stays its file name, and `itero ws which <name>` says where it is.
 Commands at the top level are the machine's: `itero daemon`, `itero service
 install|status|start|stop|restart|uninstall`, `itero info`, `itero emit`, `itero secret`,
 `itero ai`, `itero watch`, `itero webhook`, `itero completion`. Everything about one workspace
-is under `itero ws`, in its folder or with `--ws <name>`: `add|list|remove`,
+is under `itero ws`, in its folder or named after it (`itero ws <name> ...`): `add|list|remove`,
 `info`, `check`, `which`, `emit <type> '<data>'`, `secret`, `wf list|runs|stop`,
 `ac list|errors`, `cn list`, `ev list|cancel`.
 What the daemon does is in `.itero/itero.log`, one JSON line each.
