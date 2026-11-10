@@ -93,3 +93,16 @@ See the [HTTP API](/reference/http/#one-itero-per-machine). A `ws` command
 finds the daemon running its workspace, whichever it is;
 `itero ws info` shows its address. [`itero info`](/commands/info/), from any
 folder, shows the machine's daemon: the itero it runs, and each workspace.
+
+## From another machine
+
+A [context](/commands/context/) names a machine's daemon by its address,
+so the same `itero ws` commands reach it from elsewhere:
+
+```sh
+itero context add office http://127.0.0.1:8787 --ws quiet-river
+itero ws wf runs --context office
+```
+
+The daemon's API answers on `127.0.0.1` only, so for now a context
+reaches a daemon on the same machine.

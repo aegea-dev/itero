@@ -49,6 +49,31 @@ $ itero context list
 `local` is built in: this machine, as itero works without any context.
 It cannot be added or removed.
 
+## Commands over a context
+
+With a context, a workspace command asks that server instead of this
+machine, and says the same as it would here: the same text, the same
+`--json`.
+
+```sh
+itero ws wf runs --context prod             # prod's runs, in its default workspace
+itero ws check --context prod --ws billing  # another workspace on prod
+ITERO_CONTEXT=staging itero ws ev list      # for a script
+```
+
+The context is `--context`, else `ITERO_CONTEXT`, else the one in use
+(`itero context use`), else this machine. The workspace is `--ws`, else
+the context's; with neither, the command names the server's workspaces
+and asks which.
+
+These go to the server: `ws info`, `ws check`, `ws which`, `ws emit`
+(`--wait` up to 10 minutes), `ws wf list`, `ws wf runs`, `ws wf stop`,
+`ws ac list`, `ws ac errors`, `ws cn list`, `ws ev list` and `ws ev
+cancel`. The commands about this machine (`daemon`, `service`, `ws add`,
+`ws remove`, `ws list`, `secret`, `emit` to every workspace, `info`,
+`ai`, `browser`, `watch`, `webhook`) work here only: given `--context`,
+they say so; the context in use does not change them.
+
 ## Where they are kept
 
 In `contexts.json` in itero's config folder: `$XDG_CONFIG_HOME/itero/`,
