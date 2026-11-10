@@ -108,6 +108,33 @@ itero ws daemon                 # this folder's
 itero ws ./shop daemon          # a folder's, from elsewhere
 ```
 
+## `apply`
+
+`itero ws apply --context <name>` sends this folder's workspace to that
+[context](/commands/context/)'s server: made there the first time (on
+its list, its daemon runs it), made to match after. Files gone here are
+removed there, so a workflow deleted here stops running there too.
+
+```sh
+itero ws apply --context prod             # the context's workspace
+itero ws shop apply --context prod        # or one named
+itero ws apply --dry-run --context prod   # what it would do
+```
+
+```
+$ itero ws apply --context prod
+~ workflows/order.json
++ actions/ship
+- workflows/old.json
+```
+
+Every file in the folder goes, but this machine's own: `.itero/` (the
+journal and log: the server has its own), `.env` (values differ from one
+environment to another) and `.git/`. A symlink is refused, as it points
+at this machine; so is more than 64 MiB in all. Secrets never travel:
+set them on the server. `--json` gives what the server answered: see
+[`PUT /workspaces/{name}`](/reference/http/#put-workspacesname).
+
 ## `info`
 
 `itero ws info` tells you about the workspace and the daemon running it,
