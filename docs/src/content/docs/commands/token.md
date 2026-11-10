@@ -4,8 +4,9 @@ description: The tokens a server lets in, each shown once and kept as its hash.
 ---
 
 `itero token` makes the tokens other machines sign in to this server
-with: a [context](/commands/context/) holds one and sends it with every
-request. A token reaches the whole server, every workspace on it. Run
+with, where [`server.json`](/reference/server-json/#opening-the-api)'s
+`listen` opens its API: a [context](/commands/context/) holds one and
+sends it with every request. A token reaches the whole server, every workspace on it. Run
 these on the server itself.
 
 ```sh

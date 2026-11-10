@@ -105,5 +105,16 @@ itero context add office http://127.0.0.1:8787 --ws quiet-river
 itero ws wf runs --context office
 ```
 
-The daemon's API answers on `127.0.0.1` only, so for now a context
-reaches a daemon on the same machine.
+The daemon's API answers on `127.0.0.1` only, unless its
+[`server.json`](/reference/server-json/#opening-the-api) opens it. On the
+server, make a token and open the API:
+
+```sh
+itero token create laptop   # prints the token once
+```
+
+add `"listen": "0.0.0.0:8443"` to `~/.config/itero/server.json`, and
+`itero service restart`;
+
+then, on your machine, `itero context add office https://office.example.com
+--ws quiet-river` with that token, behind a proxy that adds TLS.

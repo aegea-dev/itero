@@ -11,12 +11,29 @@ folder: `$XDG_CONFIG_HOME/itero/server.json`, else
 another file instead.
 
 ```json
-{ "port": 8787 }
+{ "port": 8787, "listen": "0.0.0.0:8443" }
 ```
 
 | Setting | Is |
 |---|---|
 | `port` | the API's port on `127.0.0.1`, from 1 to 65535. Without it, the port the daemon kept from its last start, else one the OS gives, which it keeps |
+| `listen` | an address and a port where the API is opened too, beside the local one: there every request needs a [token](/commands/token/). Without it, the API answers on `127.0.0.1` only |
+
+## Opening the API
+
+With `listen`, the daemon serves the same routes on a second listener.
+There, every request needs `Authorization: Bearer <token>`, a token
+[`itero token create`](/commands/token/) made on this machine; without
+one it answers 401. Any `Host` is taken there, as the token is what a web
+page cannot add. A request that changes something is logged with its
+token's name (`laptop: POST /ws/shop/events`). The local API on
+`127.0.0.1:<port>` stays as it is, for this machine's own commands and
+the service's watchdog.
+
+The daemon does not start opened when no token exists, as nobody could
+reach it. It serves plain HTTP there, and says so when it starts: put a
+proxy that adds TLS in front (Caddy, Traefik, a load balancer), or keep
+`listen` on a network of your own.
 
 The daemon reads it when it starts: after a change, `itero service
 restart`. With no file there, the daemon runs as it always has; a file
