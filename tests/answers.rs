@@ -696,3 +696,36 @@ fn info_over_a_context_is_the_servers() {
     );
     assert!(text.contains(&w.name), "{text}");
 }
+
+#[test]
+fn every_answer_says_its_itero_and_a_too_old_one_is_refused() {
+    let w = Ws::new();
+    let me = env!("CARGO_PKG_VERSION");
+    for url in [
+        format!("http://127.0.0.1:{}/health", w.port),
+        w.url("/runs"),
+        w.url("/runs/yok"),
+    ] {
+        let r = http().get(&url).send().unwrap();
+        assert_eq!(r.headers()["itero-version"], me, "{url}");
+    }
+    // older in its compatibility number: refused, both versions said
+    let r = http()
+        .get(w.url("/runs"))
+        .header("Itero-Version", "0.0.1")
+        .send()
+        .unwrap();
+    assert_eq!(r.status(), 400);
+    assert_eq!(r.headers()["itero-version"], me);
+    let v: Value = r.json().unwrap();
+    let m = v["error"].as_str().unwrap();
+    assert!(m.contains("0.0.1") && m.contains(me), "{m}");
+    // the same, a newer one, or none (curl, a script): served
+    for given in [Some(me), Some("99.0.0"), None] {
+        let mut r = http().get(w.url("/runs"));
+        if let Some(g) = given {
+            r = r.header("Itero-Version", g);
+        }
+        assert_eq!(r.send().unwrap().status(), 200, "{given:?}");
+    }
+}

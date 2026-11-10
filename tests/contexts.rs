@@ -367,3 +367,88 @@ fn a_command_about_this_machine_refuses_a_context_given_to_it() {
         assert!(said.contains("works on this machine"), "{args:?}: {said}");
     }
 }
+
+/// A server saying it runs itero `version`: `/health` as itero's, and
+/// an empty list for anything else.
+fn another_itero(version: &'static str) -> String {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://127.0.0.1:{}/", l.local_addr().unwrap().port());
+    std::thread::spawn(move || {
+        for mut s in l.incoming().flatten() {
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).unwrap_or(0);
+            let asked = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let body = if asked.starts_with("GET /health") {
+                json!({ "ok": true, "daemon": { "pid": 7, "itero": version } }).to_string()
+            } else {
+                "[]".to_string()
+            };
+            let _ = write!(
+                s,
+                "HTTP/1.1 200 OK\r\nItero-Version: {version}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    url
+}
+
+#[test]
+fn a_server_running_another_itero_is_said_once() {
+    let m = Machine::new();
+    let url = another_itero("9.9.9");
+    m.ok(&["context", "add", "başka", &url], Some(""));
+    let o = m.run(&["--context", "başka", "ws", "list"], None);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let said = String::from_utf8_lossy(&o.stderr);
+    let warning = format!(
+        "başka runs itero 9.9.9, this itero is {}",
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(said.matches(&warning).count(), 1, "{said}");
+    // the same itero: nothing said
+    let m = Machine::new();
+    let url = another_itero(env!("CARGO_PKG_VERSION"));
+    m.ok(&["context", "add", "aynı", &url], Some(""));
+    let o = m.run(&["--context", "aynı", "ws", "list"], None);
+    assert!(!String::from_utf8_lossy(&o.stderr).contains("runs itero"));
+}
+
+/// A server refusing every request as an itero newer than this one
+/// does: 400 and its message.
+fn refusing() -> String {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://127.0.0.1:{}/", l.local_addr().unwrap().port());
+    std::thread::spawn(move || {
+        for mut s in l.incoming().flatten() {
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf);
+            let body = json!({ "error": "this server runs itero 9.9.9; itero 0.1.0 is too old for it: upgrade itero" })
+                .to_string();
+            let _ = write!(
+                s,
+                "HTTP/1.1 400 Bad Request\r\nItero-Version: 9.9.9\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    url
+}
+
+#[test]
+fn a_cli_too_old_for_the_server_is_told_so() {
+    let m = Machine::new();
+    let url = refusing();
+    // adding the context: the server's own words, not a guess
+    let said = m.fails(&["context", "add", "yeni", &url], Some(""));
+    assert!(said.contains("too old for it: upgrade itero"), "{said}");
+    // a command over a context added before the server moved on
+    std::fs::create_dir_all(m.d.path().join("ayar/itero")).unwrap();
+    std::fs::write(
+        m.file(),
+        json!({ "contexts": [{ "name": "yeni", "url": url, "ws": "çalışma" }] }).to_string(),
+    )
+    .unwrap();
+    let said = m.fails(&["ws", "info", "--context", "yeni"], None);
+    assert!(said.contains("too old for it: upgrade itero"), "{said}");
+}

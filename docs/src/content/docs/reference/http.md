@@ -28,6 +28,16 @@ an error is `{"error": "..."}` with its status.
 | `GET /info` | the workspace, its limits and the daemon answering |
 | `GET /which/{name}` | where a workflow, action or connector of that name is |
 
+## Itero-Version
+
+Every answer has an `Itero-Version` header: the itero the daemon runs.
+A request may say its own the same way; one from an itero older in the
+compatibility number (the minor version below 1.0, the major from 1.0)
+is refused with 400, saying both versions. A newer one is served, and a
+request that says none (curl, a script) is served too. The CLI says its
+version on every request it sends over a
+[context](/commands/context/).
+
 ## Only from this machine
 
 Unless [`server.json`](/reference/server-json/#opening-the-api) opens it
