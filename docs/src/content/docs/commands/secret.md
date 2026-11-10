@@ -30,6 +30,15 @@ LM_STUDIO_TOKEN: kept in the OS secret store
 
 A name is a letter or `_`, then letters, digits or `_`.
 
+## On a server
+
+With [`--context`](/commands/context/), it keeps the secret in that
+server's OS store instead: `itero secret API_KEY --context prod`, or
+`itero ws shop secret API_KEY --context prod` for one workspace there.
+A server without a store says so, and where it reads secrets from
+instead ([On a server](/guides/secrets/#on-a-server)). It is never sent
+over plain HTTP to another machine.
+
 ## One workspace's secret
 
 `itero ws secret` keeps a secret for the workspace of this folder, or the

@@ -20,6 +20,7 @@ another file instead.
 |---|---|
 | `port` | the API's port on `127.0.0.1`, from 1 to 65535. Without it, the port the daemon kept from its last start, else one the OS gives, which it keeps |
 | `listen` | an address and a port where the API is opened too, beside the local one: there every request needs a [token](/commands/token/). Without it, the API answers on `127.0.0.1` only |
+| `secrets` | a folder of secrets the platform mounts, a file each, named after the secret (`/run/secrets/API_KEY`): `$$API_KEY` reads it ([On a server](/guides/secrets/#on-a-server)) |
 | `tls` | `cert`, the certificate's PEM file (its chain after it), and `key`, its private key's: `listen` serves HTTPS with them. Without it, plain HTTP |
 
 ## Opening the API
