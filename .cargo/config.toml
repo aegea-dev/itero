@@ -4,3 +4,14 @@
 # program. It takes the suite from about two minutes to about four.
 [env]
 RUST_TEST_THREADS = "1"
+
+# Every test's itero gets config and state folders of the test run's own,
+# never the developer's: a context in use (contexts.json), ITERO_CONTEXT,
+# or the machine's daemon running on this machine (its port is in the
+# state folder) would otherwise change what a test's itero does, and CI
+# has none of them. A test that wants folders of its own sets them on its
+# commands, which wins. (`cargo run` gets these too: an itero run so is a
+# test's, apart from the machine's.)
+XDG_CONFIG_HOME = { value = "target/test-home/config", relative = true, force = true }
+XDG_STATE_HOME = { value = "target/test-home/state", relative = true, force = true }
+ITERO_CONTEXT = { value = "", force = true }
