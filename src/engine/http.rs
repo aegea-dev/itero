@@ -871,15 +871,24 @@ struct ApplyQuery {
 
 /// `PUT /workspaces/{name}`: a workspace's files, as `itero ws apply`
 /// sends them: made the first time, mirrored after; `?dry_run=true` says
-/// what it would do.
+/// what it would do. It answers once the daemon has read its list again,
+/// not when the list's watcher next looks: a workspace made is running
+/// then (or `/workspaces` says why not), so an event sent at once
+/// reaches it.
 async fn apply_workspace(
+    State(s): State<MachineShared>,
     Path(name): Path<String>,
     Query(q): Query<ApplyQuery>,
     body: Result<Json<crate::answer::apply::Files>, JsonRejection>,
 ) -> Result<Json<Value>, Reply> {
     let Json(files) = body.map_err(|r| fail(r.status(), r.body_text()))?;
     let applied = tokio::task::spawn_blocking(move || {
-        crate::answer::apply::apply(&name, &files, q.dry_run, &crate::cli::workspace_words())
+        let applied =
+            crate::answer::apply::apply(&name, &files, q.dry_run, &crate::cli::workspace_words())?;
+        if !q.dry_run {
+            s.machine.sync()?;
+        }
+        Ok::<_, crate::answer::Fault>(applied)
     })
     .await
     .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
