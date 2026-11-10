@@ -311,3 +311,76 @@ fn tls_needs_listen_and_both_files_every_problem_told() {
         assert!(said.contains(problem), "{problem}: {said}");
     }
 }
+
+impl Machine {
+    /// An opened daemon with TLS, a token for it, and a client that
+    /// trusts its certificate authority.
+    fn opened_tls(&self, key_mode: u32) -> (Opened, String, reqwest::blocking::Client) {
+        use std::os::unix::fs::PermissionsExt;
+        let token = self.ok(&["token", "create", "kişi"]).trim().to_string();
+        let (authority, cert, key) = certificates();
+        let (cert, key) = self.tls_files(&cert, &key);
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(key_mode)).unwrap();
+        self.server_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
+        let o = self.opened();
+        itero::net::client(Duration::from_secs(1)).unwrap();
+        let https = reqwest::blocking::Client::builder()
+            .tls_certs_only([reqwest::Certificate::from_pem(authority.as_bytes()).unwrap()])
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        (o, token, https)
+    }
+}
+
+#[test]
+fn idle_connections_do_not_hold_up_a_client_and_are_closed() {
+    use std::io::Read;
+    let m = Machine::new();
+    let (o, token, https) = m.opened_tls(0o600);
+    // connections that never start a handshake
+    let idle: Vec<std::net::TcpStream> = (0..8)
+        .map(|_| std::net::TcpStream::connect(("127.0.0.1", o.opened)).unwrap())
+        .collect();
+    let began = Instant::now();
+    let url = format!("https://127.0.0.1:{}/health", o.opened);
+    let r = https.get(&url).bearer_auth(&token).send().unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        began.elapsed()
+    );
+    // one that stays silent is closed once the handshake's time is up
+    let mut one = idle.into_iter().next().unwrap();
+    one.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    let began = Instant::now();
+    let read = one.read(&mut [0u8; 16]);
+    assert!(
+        matches!(read, Ok(0)),
+        "{read:?} after {:?}",
+        began.elapsed()
+    );
+}
+
+#[test]
+fn a_key_others_can_read_is_said_at_the_start() {
+    let m = Machine::new();
+    let (o, _, _) = m.opened_tls(0o644);
+    let said = std::fs::read_to_string(&o.said).unwrap();
+    assert!(said.contains("anahtar.pem: readable by others"), "{said}");
+}
+
+#[test]
+fn a_folder_for_the_certificate_is_told_with_the_other_problems() {
+    let m = Machine::new();
+    let d = m.d.path().join("tls");
+    std::fs::create_dir_all(&d).unwrap();
+    m.server_json(json!({ "listen": "127.0.0.1:0",
+                          "tls": { "cert": d.display().to_string(), "key": "/yok/anahtar.pem" } }));
+    let o = m.command().args(["daemon", "--all"]).output().unwrap();
+    assert!(!o.status.success());
+    let said = String::from_utf8_lossy(&o.stderr);
+    assert!(said.contains("is not a file"), "{said}");
+    assert!(said.contains("tls.key: /yok/anahtar.pem:"), "{said}");
+}

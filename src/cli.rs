@@ -935,27 +935,30 @@ fn dispatch(cli: Cli) -> Result<()> {
                     }
                     let port = listener.local_addr()?.port();
                     eprintln!("itero: serving on http://127.0.0.1:{port}/");
-                    let mut served = vec![(
-                        crate::engine::http::machine_router(machine.clone(), port),
+                    let mut served = vec![crate::engine::http::Served {
+                        router: crate::engine::http::machine_router(machine.clone(), port),
                         listener,
-                        None,
-                    )];
+                        tls: None,
+                    }];
                     if let Some(opened) = opened {
                         let at = opened.local_addr()?;
                         eprintln!("itero: opened on {at}");
                         match &server.tls {
                             Some(t) => {
-                                eprintln!("itero: HTTPS on {at}, with {}", t.cert.display())
+                                eprintln!("itero: HTTPS on {at}, with {}", t.cert.display());
+                                for w in crate::server::tls_warnings(t) {
+                                    eprintln!("itero: warning: {w}");
+                                }
                             }
                             None => eprintln!(
                                 "itero: serving without TLS on {at}: tokens cross the network in clear unless a proxy in front adds TLS"
                             ),
                         }
-                        served.push((
-                            crate::engine::http::opened_router(machine, port),
-                            opened,
+                        served.push(crate::engine::http::Served {
+                            router: crate::engine::http::opened_router(machine, port),
+                            listener: opened,
                             tls,
-                        ));
+                        });
                     }
                     crate::engine::http::serve_all(served)?;
                 }

@@ -126,8 +126,18 @@ fn tls(v: &Value) -> Result<Tls, Vec<String>> {
                 problems.push(format!("tls.{k}: {what} PEM file's path, not {}", m[k]));
                 None
             }
-            Some(Some(p)) => match std::fs::File::open(p) {
-                Ok(_) => Some(PathBuf::from(p)),
+            Some(Some(p)) => match std::fs::metadata(p) {
+                Ok(m) if !m.is_file() => {
+                    problems.push(format!("tls.{k}: {p} is not a file"));
+                    None
+                }
+                Ok(_) => match std::fs::File::open(p) {
+                    Ok(_) => Some(PathBuf::from(p)),
+                    Err(e) => {
+                        problems.push(format!("tls.{k}: {p}: {e}"));
+                        None
+                    }
+                },
                 Err(e) => {
                     problems.push(format!("tls.{k}: {p}: {e}"));
                     None
@@ -141,6 +151,26 @@ fn tls(v: &Value) -> Result<Tls, Vec<String>> {
         (Some(cert), Some(key), true) => Ok(Tls { cert, key }),
         _ => Err(problems),
     }
+}
+
+/// What is worth saying about `t` and not wrong: a private key others on
+/// this machine can read. Not refused: a Kubernetes secret is mounted
+/// 0644 by default, readable by the pod's own user alone.
+pub fn tls_warnings(t: &Tls) -> Vec<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(m) = std::fs::metadata(&t.key)
+            && m.permissions().mode() & 0o077 != 0
+        {
+            return vec![format!(
+                "{}: readable by others (mode {:o}): chmod 600 it, unless only this server's user can reach it",
+                t.key.display(),
+                m.permissions().mode() & 0o777
+            )];
+        }
+    }
+    vec![]
 }
 
 /// The TLS settings for `t`: its certificate chain and its key, read
