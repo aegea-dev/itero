@@ -681,24 +681,46 @@ struct MachineShared {
 
 /// The machine's routes, for `itero daemon` on `port`: its health,
 /// its workspaces, and each running workspace's own routes under
-/// `/ws/<name>/`.
+/// `/ws/<name>/`. The probes (`probes`) take any Host.
 pub fn machine_router(machine: Arc<super::machine::Machine>, port: u16) -> Router {
     machine_routes()
         .layer(middleware::from_fn_with_state(port, local_only_on))
         .layer(middleware::from_fn(versioned))
+        .merge(probes())
         .with_state(MachineShared { machine, port })
 }
 
 /// The machine's routes as served where `server.json`'s `listen` opens
 /// them: every request with a token `itero token create` made, any Host.
-/// `port` is the local API's, which a workspace's `info` names.
+/// `port` is the local API's, which a workspace's `info` names. The
+/// probes (`probes`) need no token.
 pub fn opened_router(machine: Arc<super::machine::Machine>, port: u16) -> Router {
     // the token first: a request without one learns nothing, its version
-    // included
+    // included; the probes are merged after, outside both
     machine_routes()
         .layer(middleware::from_fn(versioned))
         .layer(middleware::from_fn(bearer))
+        .merge(probes())
         .with_state(MachineShared { machine, port })
+}
+
+/// `/livez` and `/readyz`, for a platform's probes (Kubernetes, Docker's
+/// healthcheck): no token, no version, any Host, and nothing said but
+/// whether the daemon serves and has started its workspaces once. One
+/// workspace's long pass does not fail `/livez`: a restart would stop
+/// every workspace for one, as the watchdog's rule for this daemon says.
+fn probes() -> Router<MachineShared> {
+    Router::new()
+        .route("/livez", get(|| async { "ok\n" }))
+        .route("/readyz", get(readyz))
+}
+
+async fn readyz(State(s): State<MachineShared>) -> (StatusCode, &'static str) {
+    if s.machine.ready() {
+        (StatusCode::OK, "ok\n")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "starting\n")
+    }
 }
 
 fn machine_routes() -> Router<MachineShared> {

@@ -46,6 +46,13 @@ While Chrome runs, any program on the machine can reach that port, and
 with it the logged-in profile. On a machine you share with other users,
 keep that in mind before logging in to anything there.
 
+On Linux as root, Chrome starts without its sandbox, which refuses root.
+In a container running as its own user, Chrome cannot use its sandbox
+either: set `ITERO_BROWSER_SANDBOX=off` there. `on`, or no value, keeps
+the rule above; any other value stops the step, saying so. Chrome in a
+container also needs more `/dev/shm` than Docker's 64 MB (`docker run
+--shm-size=1g`).
+
 ## What a step does
 
 | Arg | Does | `$output` |
