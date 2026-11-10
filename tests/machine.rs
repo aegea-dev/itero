@@ -505,6 +505,10 @@ fn info_in_a_listed_workspace_names_the_machines_daemon() {
     assert_eq!(d["run_by"], "machine", "{v}");
     let api = format!("http://127.0.0.1:{port}/ws/{na}/");
     assert_eq!(d["api"], api.as_str(), "{v}");
+    // the route under the machine's API says the same
+    let (code, route) = get(port, &format!("/ws/{na}/info"));
+    assert_eq!(code, 200, "{route}");
+    assert_eq!(route, v);
     let text = m.ok(&a, &["ws", "info"]);
     assert!(
         text.contains(&api) && text.contains("the machine's daemon"),

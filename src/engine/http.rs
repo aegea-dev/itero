@@ -4,6 +4,7 @@
 //! on 127.0.0.1 or localhost.
 use super::daemon::Health;
 use super::journal::Journal;
+use crate::answer::workspace::{RunBy, Runner};
 use crate::workspace::Workspace;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, Request, State};
@@ -31,6 +32,9 @@ struct Shared {
     engine: Arc<Engine>,
     /// The port it serves on: the only Host it answers.
     port: u16,
+    /// Its address, ending in `/`, and whose daemon serves it.
+    api: String,
+    run_by: RunBy,
 }
 
 type Reply = (StatusCode, Json<Value>);
@@ -39,12 +43,15 @@ fn fail(code: StatusCode, message: impl Into<String>) -> Reply {
     (code, Json(json!({ "error": message.into() })))
 }
 
-/// The API's routes, for the workspace `ws`, served on `port`.
-pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16) -> Router {
+/// The API's routes, for the workspace `ws`, served on `port` at `api`
+/// (ending in `/`) by the daemon `run_by` says.
+pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16, api: String, run_by: RunBy) -> Router {
     let s = Shared {
         ws: Arc::new(ws),
         engine,
         port,
+        api,
+        run_by,
     };
     Router::new()
         .route("/health", get(health))
@@ -59,6 +66,9 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16) -> Router {
         .route("/actions", get(actions))
         .route("/actions/errors", get(action_errors))
         .route("/connectors", get(connectors))
+        .route("/check", get(check))
+        .route("/info", get(info))
+        .route("/which/{name}", get(which))
         .route("/browser/tabs", post(open_watch))
         .layer(middleware::from_fn_with_state(s.clone(), local_only))
         .with_state(s)
@@ -431,6 +441,36 @@ async fn workflows(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
     answered(&s, crate::answer::workflows::list).await
 }
 
+/// `GET /check`: what is wrong in the workspace, every problem, and what
+/// it found. A report with errors is still 200: the request did not fail.
+async fn check(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
+    answered(&s, crate::answer::workspace::check).await
+}
+
+/// `GET /info`: the workspace, its limits, and this daemon running it.
+async fn info(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
+    let daemon = Runner::Running {
+        daemon: s
+            .engine
+            .health
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .daemon
+            .clone(),
+        running: true,
+        port: s.port,
+        api: s.api.clone(),
+        run_by: s.run_by,
+    };
+    answered(&s, move |ws| crate::answer::workspace::info(ws, daemon)).await
+}
+
+/// `GET /which/{name}`: where the workflow, action and connector so named
+/// are; `%23name` (`#name`) looks among the actions only.
+async fn which(State(s): State<Shared>, Path(name): Path<String>) -> Result<Json<Value>, Reply> {
+    answered(&s, move |ws| crate::answer::workspace::which(ws, &name)).await
+}
+
 /// The daemon's socket on 127.0.0.1, bound before anything else starts:
 /// the manifest's port; else the one kept from the last start; else (none
 /// kept, or it is taken) one the OS gives, which is kept. With a note when
@@ -581,7 +621,11 @@ async fn in_workspace(
         Ok(uri) => *req.uri_mut() = uri,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     }
-    match router(ws, engine, s.port).oneshot(req).await {
+    let api = format!("http://127.0.0.1:{}/ws/{name}/", s.port);
+    match router(ws, engine, s.port, api, RunBy::Machine)
+        .oneshot(req)
+        .await
+    {
         Ok(r) => r,
         Err(e) => match e {},
     }

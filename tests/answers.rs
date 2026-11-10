@@ -458,3 +458,85 @@ fn a_misspelt_parameter_is_refused_not_ignored() {
         assert_eq!(code, 400, "{path}: {v}");
     }
 }
+
+/// `itero <args> --json`, failing or not: whether it succeeded, and its
+/// JSON.
+fn cli_json(w: &Ws, args: &[&str]) -> (bool, Value) {
+    let o = w.command().args(args).arg("--json").output().unwrap();
+    let v = serde_json::from_slice(&o.stdout)
+        .unwrap_or_else(|e| panic!("{args:?}: {e}: {}", String::from_utf8_lossy(&o.stderr)));
+    (o.status.success(), v)
+}
+
+#[test]
+fn a_check_is_the_same_from_the_cli_and_the_api() {
+    let w = Ws::new();
+    same(&w, &["ws", "check"], "/check");
+    let (_, v) = w.get("/check");
+    assert_eq!(v["errors"], json!([]), "{v}");
+    let sipariş = v["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "sipariş")
+        .unwrap();
+    assert_eq!(sipariş["runs"], 1, "{v}");
+    assert_eq!(sipariş["uses"][0]["action"], "yaz", "{v}");
+    // two errors and a warning: all three told, by both
+    std::fs::write(
+        w.root.join("workflows/eksik.json"),
+        json!({ "on": [{ "event": "eksik.oldu" }], "steps": ["#yok", "hiç"] }).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        w.root.join("workflows/uyarı.json"),
+        json!({ "on": [{ "event": "uyarı.geldi" }],
+                "steps": [{ "#notify": { "args": { "başlık": "çay" } } }] })
+        .to_string(),
+    )
+    .unwrap();
+    let (code, api) = w.get("/check");
+    assert_eq!(code, 200, "a report, not a failed request: {api}");
+    let (ok, cli) = cli_json(&w, &["ws", "check"]);
+    assert!(!ok, "the CLI fails when there are errors: {cli}");
+    assert_eq!(cli, api);
+    assert_eq!(api["errors"].as_array().unwrap().len(), 2, "{api}");
+    assert_eq!(api["warnings"].as_array().unwrap().len(), 1, "{api}");
+}
+
+#[test]
+fn info_is_the_same_from_the_cli_and_the_api() {
+    let w = Ws::new();
+    same(&w, &["ws", "info"], "/info");
+    let (_, v) = w.get("/info");
+    let d = &v["daemon"];
+    assert_eq!(d["running"], true, "{v}");
+    assert_eq!(d["run_by"], "workspace", "{v}");
+    assert_eq!(d["port"], w.port, "{v}");
+    assert_eq!(d["api"], w.url("/").as_str(), "{v}");
+    assert_eq!(v["workspace"]["path"], w.root.display().to_string(), "{v}");
+}
+
+#[test]
+fn which_is_the_same_from_the_cli_and_the_api() {
+    let w = Ws::new();
+    // a workflow and an action both named bekle
+    same(&w, &["ws", "which", "bekle"], "/which/bekle");
+    let (_, v) = w.get("/which/bekle");
+    assert_eq!(
+        v,
+        json!([
+            { "kind": "workflow", "path": "workflows/bekle.json" },
+            { "kind": "action", "path": "actions/bekle" },
+        ])
+    );
+    // # looks among the actions only
+    same(&w, &["ws", "which", "#bekle"], "/which/%23bekle");
+    same(
+        &w,
+        &["ws", "which", "kapı.açıldı"],
+        "/which/kap%C4%B1.a%C3%A7%C4%B1ld%C4%B1",
+    );
+    let m = refused(&w, &["ws", "which", "yok"], "/which/yok", 404);
+    assert!(m.contains("nothing named yok"), "{m}");
+}

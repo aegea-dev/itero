@@ -6,6 +6,7 @@ pub mod events;
 pub mod kinds;
 pub mod runs;
 pub mod workflows;
+pub mod workspace;
 
 use crate::workspace::Workspace;
 
@@ -122,6 +123,29 @@ impl Client {
     pub fn workflows(&self) -> Result<workflows::List, Fault> {
         match self {
             Client::Local(ws) => workflows::list(ws),
+        }
+    }
+
+    pub fn check(&self) -> Result<workspace::Report, Fault> {
+        match self {
+            Client::Local(ws) => workspace::check(ws),
+        }
+    }
+
+    /// The workspace; on this machine, the daemon running it is what
+    /// `probe` finds (the route that answers is that daemon).
+    pub fn info(
+        &self,
+        probe: impl FnOnce() -> Result<workspace::Runner, Fault>,
+    ) -> Result<workspace::Info, Fault> {
+        match self {
+            Client::Local(ws) => workspace::info(ws, probe()?),
+        }
+    }
+
+    pub fn which(&self, name: &str) -> Result<Vec<workspace::Found>, Fault> {
+        match self {
+            Client::Local(ws) => workspace::which(ws, name),
         }
     }
 }
