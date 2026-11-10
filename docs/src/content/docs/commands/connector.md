@@ -13,7 +13,8 @@ workflows that listen to it, in their `on` entry
 itero ws cn list
 ```
 
-It takes `--json`, to print JSON for scripts instead of a table.
+It takes `--json`, to print JSON for scripts instead of a table: the same
+JSON as the API's [`GET /connectors`](/reference/http/#get-connectors).
 
 ## list
 

@@ -38,7 +38,7 @@ impl Ws {
         use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
         let root = d.path().join("çalışma");
-        for dir in ["workflows", "actions"] {
+        for dir in ["workflows", "actions", "connectors"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
         let root = root.canonicalize().unwrap();
@@ -64,6 +64,17 @@ impl Ws {
             std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // a connector given args, which tells nothing, and ends when its
+        // stdin closes (the daemon has gone), as a connector should
+        let kapı = root.join("connectors/kapı.açıldı");
+        std::fs::write(&kapı, "#!/bin/sh\nexec cat >/dev/null\n").unwrap();
+        std::fs::set_permissions(&kapı, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(
+            root.join("workflows/kapı.json"),
+            json!({ "on": [{ "event": "kapı.açıldı", "args": { "kat": "üst" } }], "steps": ["#yaz"] })
+                .to_string(),
+        )
+        .unwrap();
         let mut w = Ws {
             d,
             root,
@@ -393,4 +404,57 @@ fn a_bad_event_and_a_cancel_are_refused_alike() {
     let message = api["error"].as_str().unwrap();
     let said = w.cli_fails(&["ws", "ev", "cancel", "yok-böyle"]);
     assert!(said.contains(message), "{said:?} lacks {message:?}");
+}
+
+#[test]
+fn actions_connectors_and_breaks_are_the_same_from_the_cli_and_the_api() {
+    let w = Ws::new();
+    same(&w, &["ws", "ac", "list"], "/actions");
+    let (_, v) = w.get("/actions");
+    let boz = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == "boz")
+        .unwrap();
+    assert_eq!(boz["files"], json!(["actions/boz"]), "{v}");
+    assert!(
+        v.as_array().unwrap().iter().any(|a| a["built_in"] == true),
+        "{v}"
+    );
+    same(&w, &["ws", "cn", "list"], "/connectors");
+    let (_, v) = w.get("/connectors");
+    assert_eq!(v[0]["type"], "kapı.açıldı", "{v}");
+    assert_eq!(v[0]["args"], json!({ "kat": "üst" }), "{v}");
+    same(&w, &["ws", "ac", "errors"], "/actions/errors");
+    let (_, v) = w.get("/actions/errors");
+    assert_eq!(v[0]["action"], "boz", "{v}");
+    assert_eq!(v[0]["errors"], 1, "{v}");
+    same(
+        &w,
+        &["ws", "ac", "errors", "boz"],
+        "/actions/errors?action=boz",
+    );
+    same(
+        &w,
+        &["ws", "ac", "errors", "#boz", "--limit", "1"],
+        "/actions/errors?action=%23boz&limit=1",
+    );
+    let (_, v) = w.get("/actions/errors?action=boz");
+    assert_eq!(v[0]["why"], "exit 1: olmadı", "{v}");
+    // an action that never broke a run: none, not a mistake
+    same(
+        &w,
+        &["ws", "ac", "errors", "yaz"],
+        "/actions/errors?action=yaz",
+    );
+}
+
+#[test]
+fn a_misspelt_parameter_is_refused_not_ignored() {
+    let w = Ws::new();
+    for path in ["/actions/errors?acton=boz", "/runs?statsu=error"] {
+        let (code, v) = w.get(path);
+        assert_eq!(code, 400, "{path}: {v}");
+    }
 }

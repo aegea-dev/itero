@@ -3,6 +3,7 @@
 //! different things. The CLI reaches them through a [`Client`]: on this
 //! machine, in the same process, with no daemon needed.
 pub mod events;
+pub mod kinds;
 pub mod runs;
 pub mod workflows;
 
@@ -91,6 +92,30 @@ impl Client {
     pub fn emit(&self, e: &events::Emit) -> Result<events::Emitted, Fault> {
         match self {
             Client::Local(ws) => events::emit(ws, e, || events::nudge(ws)),
+        }
+    }
+
+    pub fn actions(&self) -> Result<Vec<kinds::Action>, Fault> {
+        match self {
+            Client::Local(ws) => kinds::actions(ws),
+        }
+    }
+
+    pub fn connectors(&self) -> Result<Vec<kinds::Connector>, Fault> {
+        match self {
+            Client::Local(ws) => kinds::connectors(ws),
+        }
+    }
+
+    pub fn errors_by_action(&self, limit: usize) -> Result<Vec<kinds::Breaks>, Fault> {
+        match self {
+            Client::Local(ws) => kinds::errors_by_action(ws, limit),
+        }
+    }
+
+    pub fn failures_of(&self, action: &str, limit: usize) -> Result<Vec<kinds::Broke>, Fault> {
+        match self {
+            Client::Local(ws) => kinds::failures_of(ws, action, limit),
         }
     }
 

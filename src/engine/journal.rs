@@ -168,6 +168,27 @@ pub struct Recorded {
     pub note: Option<String>,
 }
 
+/// An action and how it breaks runs: how often, when and why last.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Breaks {
+    pub action: String,
+    pub errors: usize,
+    pub last: String,
+    pub why: Option<String>,
+    /// The last run it broke, by name.
+    pub run: String,
+}
+
+/// A run an action broke.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Broke {
+    pub when: String,
+    pub workflow: String,
+    pub run: String,
+    pub id: String,
+    pub why: Option<String>,
+}
+
 /// A run as the journal holds it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Run {
@@ -1060,6 +1081,63 @@ impl Journal {
     /// The newest `limit` runs, of one workflow or all but those in
     /// `apart`, ended one way (the kind of `ended`: done, failed, error,
     /// split) or any, newest first.
+    /// Each action runs ended in error at, newest failure first, at most
+    /// `limit`: its name (without `#`), how many runs it broke, and its
+    /// newest failure's time, why and run name. Only those rows are read.
+    pub fn breaks(&self, limit: usize) -> Result<Vec<Breaks>> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut s = self.db.prepare(
+            "SELECT substr(step, 2), errors, at, why, name FROM (
+               SELECT json_extract(runtime, '$.failed_step') AS step,
+                      COALESCE(ended, started) AS at,
+                      json_extract(runtime, '$.why') AS why, name, started, id,
+                      COUNT(*) OVER (PARTITION BY json_extract(runtime, '$.failed_step')) AS errors,
+                      ROW_NUMBER() OVER (PARTITION BY json_extract(runtime, '$.failed_step')
+                                         ORDER BY started DESC, id DESC) AS nth
+               FROM runs
+               WHERE json_extract(runtime, '$.ended.kind') = 'error'
+                 AND json_extract(runtime, '$.failed_step') LIKE '#%')
+             WHERE nth = 1 ORDER BY started DESC, id DESC LIMIT ?1",
+        )?;
+        let rows = s
+            .query_map(params![limit], |r| {
+                Ok(Breaks {
+                    action: r.get(0)?,
+                    errors: r.get::<_, i64>(1)? as usize,
+                    last: r.get(2)?,
+                    why: r.get(3)?,
+                    run: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// The runs that ended in error at action `name` (without `#`), newest
+    /// first, at most `limit`: when, workflow, run name, id, why.
+    pub fn broken_at(&self, name: &str, limit: usize) -> Result<Vec<Broke>> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut s = self.db.prepare(
+            "SELECT COALESCE(ended, started), workflow, name, id, json_extract(runtime, '$.why')
+             FROM runs
+             WHERE json_extract(runtime, '$.ended.kind') = 'error'
+               AND json_extract(runtime, '$.failed_step') = '#' || ?1
+             ORDER BY started DESC, id DESC LIMIT ?2",
+        )?;
+        let rows = s
+            .query_map(params![name, limit], |r| {
+                Ok(Broke {
+                    when: r.get(0)?,
+                    workflow: r.get(1)?,
+                    run: r.get(2)?,
+                    id: r.get(3)?,
+                    why: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
     pub fn runs_page(
         &self,
         workflow: Option<&str>,

@@ -56,6 +56,9 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16) -> Router {
         .route("/runs/{id}", get(run))
         .route("/runs/{id}/stop", post(stop_run))
         .route("/workflows", get(workflows))
+        .route("/actions", get(actions))
+        .route("/actions/errors", get(action_errors))
+        .route("/connectors", get(connectors))
         .route("/browser/tabs", post(open_watch))
         .layer(middleware::from_fn_with_state(s.clone(), local_only))
         .with_state(s)
@@ -388,6 +391,39 @@ async fn runs(
 /// `GET /runs/{id}`: a run's story, by id or name.
 async fn run(State(s): State<Shared>, Path(id): Path<String>) -> Result<Json<Value>, Reply> {
     answered(&s, move |ws| crate::answer::runs::one(ws, &id)).await
+}
+
+/// `GET /actions`: each action and its files, the built-in ones too.
+async fn actions(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
+    answered(&s, crate::answer::kinds::actions).await
+}
+
+/// `GET /connectors`: each connector, once for each set of args.
+async fn connectors(State(s): State<Shared>) -> Result<Json<Value>, Reply> {
+    answered(&s, crate::answer::kinds::connectors).await
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ErrorsQuery {
+    /// One action's failures, instead of each action's.
+    action: Option<String>,
+    /// At most this many: as many as `itero ws ac errors` unless given.
+    limit: Option<usize>,
+}
+
+/// `GET /actions/errors`: which actions break runs; with `action`, that
+/// action's failures, newest first.
+async fn action_errors(
+    State(s): State<Shared>,
+    Query(q): Query<ErrorsQuery>,
+) -> Result<Json<Value>, Reply> {
+    use crate::answer::kinds;
+    let limit = q.limit.unwrap_or(kinds::ERRORS_SHOWN);
+    match q.action {
+        Some(a) => answered(&s, move |ws| kinds::failures_of(ws, &a, limit)).await,
+        None => answered(&s, move |ws| kinds::errors_by_action(ws, limit)).await,
+    }
 }
 
 /// `GET /workflows`: each workflow, and whether a daemon takes events.
