@@ -688,6 +688,12 @@ fn health_at(api: &str) -> Option<serde_json::Value> {
         .ok()
 }
 
+/// Where a command's questions about `ws` go: this machine's workspace,
+/// answered in the same process.
+fn client(ws: &crate::workspace::Workspace) -> crate::answer::Client {
+    crate::answer::Client::Local(ws.clone())
+}
+
 /// The daemon running a workspace, and where its API is.
 struct Answering {
     /// The API's address, ending in `/`.
@@ -881,7 +887,15 @@ fn dispatch(cli: Cli) -> Result<()> {
                 Some((listener, _)) => {
                     let port = listener.local_addr()?.port();
                     eprintln!("itero: serving on http://127.0.0.1:{port}/");
-                    http::serve(http::router(ws.clone(), engine, port), listener)?;
+                    let api = format!("http://127.0.0.1:{port}/");
+                    let routes = http::router(
+                        ws.clone(),
+                        engine,
+                        port,
+                        api,
+                        crate::answer::workspace::RunBy::Workspace,
+                    );
+                    http::serve(routes, listener)?;
                 }
             }
         }

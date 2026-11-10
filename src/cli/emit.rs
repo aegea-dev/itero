@@ -66,7 +66,7 @@ pub fn one(ws: &Workspace, args: EmitArgs) -> Result<()> {
         data: data(&args)?,
         wait: wait(&args)?,
     };
-    let mut sent = match crate::answer::Client::Local(ws.clone()).emit(&e)? {
+    let mut sent = match super::client(ws).emit(&e)? {
         Emitted::Waited(w) => {
             println!("{}", serde_json::to_string_pretty(&w)?);
             match w.how() {

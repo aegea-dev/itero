@@ -1,5 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use itero::answer::workspace::RunBy;
 use itero::engine::daemon::Health;
 use itero::engine::http::{Engine, router};
 use serde_json::{Value, json};
@@ -16,7 +17,8 @@ fn app(d: &std::path::Path) -> (axum::Router, std::sync::mpsc::Receiver<()>) {
         wake,
         streams: Default::default(),
     });
-    (router(ws, engine, 8790), woken)
+    let api = "http://127.0.0.1:8790/".to_string();
+    (router(ws, engine, 8790, api, RunBy::Workspace), woken)
 }
 
 fn get(path: &str) -> Request<Body> {

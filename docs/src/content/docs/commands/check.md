@@ -77,7 +77,9 @@ is not a list (nothing inside it is checked, so one mistake is told once).
 Run it after every edit.
 
 `--json` gives the same as `errors` and `warnings`, each a `message` and
-its address `at`, beside what it could read.
+its address `at`, beside what it could read: the same JSON as the API's
+[`GET /check`](/reference/http/#get-check), which answers 200 with the
+errors in it.
 
 A warning does not fail the check. It says what is likely a mix-up: a
 secret that is also an environment variable, an `#ai` key written out that

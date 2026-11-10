@@ -69,7 +69,7 @@ pub fn stamp(t: DateTime<Utc>) -> String {
 }
 
 /// One life of the daemon: from its start to its end.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Daemon {
     pub id: String,
     /// Two random words.

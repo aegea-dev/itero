@@ -1,14 +1,10 @@
 //! `itero ws wf`: the workflows and their runs.
+use super::client;
 use super::out::{ago, show, table, text};
-use crate::answer::{Client, runs};
+use crate::answer::runs;
 use crate::workspace::Workspace;
 use anyhow::Result;
 use serde_json::Value;
-
-/// This machine's workspace `ws`, as the commands ask it.
-fn client(ws: &Workspace) -> Client {
-    Client::Local(ws.clone())
-}
 
 /// Each workflow: its file, what starts it, its runs and the last, and
 /// whether a daemon takes its events.

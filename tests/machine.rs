@@ -505,6 +505,10 @@ fn info_in_a_listed_workspace_names_the_machines_daemon() {
     assert_eq!(d["run_by"], "machine", "{v}");
     let api = format!("http://127.0.0.1:{port}/ws/{na}/");
     assert_eq!(d["api"], api.as_str(), "{v}");
+    // the route under the machine's API says the same
+    let (code, route) = get(port, &format!("/ws/{na}/info"));
+    assert_eq!(code, 200, "{route}");
+    assert_eq!(route, v);
     let text = m.ok(&a, &["ws", "info"]);
     assert!(
         text.contains(&api) && text.contains("the machine's daemon"),
@@ -513,6 +517,38 @@ fn info_in_a_listed_workspace_names_the_machines_daemon() {
     // `itero ws emit --wait` waits on the same daemon
     let out = m.ok(&a, &["ws", "emit", "deneme.geldi", "--wait"]);
     assert!(a.join("çıktı").is_file(), "{out}");
+}
+
+#[test]
+fn the_machines_api_passes_an_encoded_path_on_as_it_came() {
+    use std::os::unix::fs::PermissionsExt;
+    let m = Machine::new();
+    let a = m.busy_workspace("bir");
+    let gönder = a.join("actions/gönder");
+    std::fs::write(&gönder, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&gönder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    m.ok(&a, &["workspace", "add"]);
+    let na = m.journal_name(&a);
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    until("a running", || {
+        get(port, &format!("/ws/{na}/health")).0 == 200
+    });
+    // `#` and a letter past ASCII, each percent-encoded in the path, reach
+    // the workspace as they were sent
+    for (name, path) in [("#yaz", "%23yaz"), ("gönder", "g%C3%B6nder")] {
+        let (code, route) = get(port, &format!("/ws/{na}/which/{path}"));
+        assert_eq!(code, 200, "{name}: {route}");
+        assert_eq!(
+            route,
+            m.json(&a, &["ws", "which", name, "--json"]),
+            "{name}"
+        );
+    }
+    // a route with a parameter of its own sees only that one
+    let (code, v) = get(port, &format!("/ws/{na}/runs/yok"));
+    assert_eq!(code, 404, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("no run yok"), "{v}");
 }
 
 #[test]

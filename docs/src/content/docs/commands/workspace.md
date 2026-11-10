@@ -101,7 +101,8 @@ made it, what its manifest says it is, and its `limits`. Then the daemon running
 one answers on the port: its id, name, start, pid, host, itero version and port.
 Last, whether notifications can be shown: on macOS, macOS's setting for
 Itero (`allowed`, `off`, `not asked`) and the copy of Itero.app that
-notifies; on Linux, the notifier it uses.
+notifies; on Linux, the notifier it uses. `--json` gives the same JSON as
+the API's [`GET /info`](/reference/http/#get-info).
 
 ```
 $ itero ws info
