@@ -19,6 +19,6 @@ Add one line to your shell's startup file:
 | bash | `source <(itero completion bash)` | `~/.bashrc` |
 | fish | `itero completion fish \| source` | `~/.config/fish/config.fish` |
 
-Then, in a workspace (or with `--ws <name>`), `itero ws wf runs <Tab>` offers the latest runs' names,
+Then, in a workspace (or with one named after `ws`), `itero ws wf runs <Tab>` offers the latest runs' names,
 and `itero ws ac errors <Tab>` your actions. The names come from the
 workspace you are in, as it is now.

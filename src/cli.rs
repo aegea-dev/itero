@@ -119,8 +119,8 @@ pub enum Cmd {
     /// One workspace: its workflows, actions and connectors, and the machine's list
     #[command(visible_alias = "ws")]
     Workspace {
-        /// The workspace, by its name on the machine's list (itero ws list); else this folder's
-        #[arg(long, global = true, value_name = "NAME", add = complete::workspaces())]
+        /// The workspace: its name on the machine's list (itero ws list), or its folder's path (with a /); else this folder's
+        #[arg(value_name = "WORKSPACE", add = complete::workspaces())]
         ws: Option<String>,
         #[command(subcommand)]
         cmd: WorkspaceCmd,
@@ -487,7 +487,7 @@ pub enum ContextCmd {
         name: String,
         /// Its server's address, like https://itero.example.com
         url: String,
-        /// The workspace its commands mean when --ws names none
+        /// The workspace its commands mean when they name none
         #[arg(long, value_name = "NAME")]
         ws: Option<String>,
     },
@@ -1064,11 +1064,13 @@ fn dispatch(cli: Cli) -> Result<()> {
                 match &ws {
                     Some(name) if what == "remove" => {
                         bail!(
-                            "itero ws remove takes no --ws: itero ws remove {name} removes it, from any folder"
+                            "itero ws remove takes no workspace before it: itero ws remove {name} removes it, from any folder"
                         )
                     }
                     Some(_) => {
-                        bail!("itero ws {what} takes no --ws: run it in the workspace's folder")
+                        bail!(
+                            "itero ws {what} takes no workspace before it: run it in the workspace's folder"
+                        )
                     }
                     None => Ok(()),
                 }

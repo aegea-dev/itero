@@ -30,18 +30,23 @@ Each page: [`check`](/commands/check/), [`which`](/commands/which/),
 
 ## Which workspace
 
-A `ws` command acts on the workspace of the folder it runs in. `--ws <name>`,
-a name from `itero ws list`, picks another, from any folder, anywhere after
-`ws`:
+A `ws` command acts on the workspace of the folder it runs in. Another is
+named right after `ws`, from any folder: by its name from `itero ws list`,
+or by its folder's path (a word with a `/` in it, or `.` or `..`), listed
+or not:
 
 ```sh
-itero ws wf runs --ws quiet-river
-itero ws --ws quiet-river info
+itero ws quiet-river wf runs
+itero ws quiet-river info
+itero ws ~/projects/shop check
+itero ws ./shop wf list
 ```
 
-A name not on the list is an error. `add` takes no `--ws` (it adds the
-folder it runs in), and neither do `list` and `remove`, which are about the
-list.
+A name not on the list is an error; to mean a folder named like a word,
+write `./shop`. Outside any workspace, with none named, a `ws` command
+says the names on the list. `add` takes no workspace before it (it adds
+the folder it runs in), and neither do `list` and `remove`, which are
+about the list.
 
 ## `add`
 

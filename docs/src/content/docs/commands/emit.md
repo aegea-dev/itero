@@ -16,7 +16,7 @@ itero emit <type> ['<data>' | --file <path>]
 ```
 
 `itero ws emit` picks the workspace of the folder it runs in, or the one
-`--ws <name>` names.
+named after `ws` (`itero ws quiet-river emit ...`).
 
 An event has a type, two or more words joined by dots (`order.placed`), and
 data, a JSON object. It is saved at once, so one sent while the daemon is
@@ -59,12 +59,12 @@ no daemon is running: it waits for itero daemon
 Long or generated data is easier from a file, or from stdin with `-`:
 
 ```sh
-itero ws --ws ready-meadow emit --file ~/wf/request.json pomodoro.start
+itero ws ready-meadow emit --file ~/wf/request.json pomodoro.start
 jq -n '{minutes: 25}' | itero ws emit pomodoro.start --file -
 ```
 
 The file holds one JSON object, sent as it is: nothing in it is filled. A
-relative path is from the folder you run in, also with `--ws`. A file that
+relative path is from the folder you run in, also with a workspace named. A file that
 cannot be read, is not JSON or is not an object is an error naming it, and
 nothing is sent; so is giving both `--file` and `<data>`.
 

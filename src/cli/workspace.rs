@@ -7,19 +7,43 @@ use crate::workspace::Workspace;
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
-/// The workspace a `ws` command is about: the one named on the machine's
-/// list, else the folder's.
-pub fn chosen(name: Option<&str>) -> Result<Workspace> {
-    let Some(name) = name else {
-        return crate::workspace::find(&std::env::current_dir()?);
-    };
-    Ok(crate::engine::machine::open(&listed(name)?)?.0)
+/// Whether the word after `ws` is a path (a `/` in it, or `.` or `..`),
+/// not a name on the machine's list.
+pub fn is_path(word: &str) -> bool {
+    word.contains('/') || word == "." || word == ".."
 }
 
-/// Where a workspace command goes: this machine's workspace (`--ws` on
-/// its list, else this folder's), or, with a context, its server's
-/// workspace (`--ws`, else the context's; with neither, which one is asked,
-/// never guessed).
+/// The workspace a `ws` command is about: at the path given (the nearest
+/// folder from there up with an `itero.config.json`), the one named on
+/// the machine's list, else the folder's it runs in; outside one, with
+/// none given, the list's names are said.
+pub fn chosen(name: Option<&str>) -> Result<Workspace> {
+    match name {
+        Some(p) if is_path(p) => crate::workspace::find(std::path::Path::new(p))
+            .with_context(|| format!("{p}: no workspace there")),
+        Some(name) => Ok(crate::engine::machine::open(&listed(name)?)?.0),
+        None => {
+            let here = std::env::current_dir()?;
+            crate::workspace::find(&here).map_err(|e| {
+                let names: Vec<String> = List::read(&list_path().unwrap_or_default())
+                    .map(|l| l.workspaces.into_iter().map(|e| e.name).collect())
+                    .unwrap_or_default();
+                let listed = match names.is_empty() {
+                    true => "none on the list yet".to_string(),
+                    false => format!("on the list: {}", names.join(", ")),
+                };
+                anyhow::anyhow!(
+                    "which workspace: itero ws NAME <command> or itero ws PATH <command> names one ({listed}); here: {e:#}"
+                )
+            })
+        }
+    }
+}
+
+/// Where a workspace command goes: this machine's workspace (as `chosen`
+/// finds it), or, with a context, its server's workspace (the name given,
+/// else the context's; with neither, which one is asked, never guessed;
+/// a path is this machine's, so refused).
 pub fn target(
     ws: Option<&str>,
     context: Option<crate::context::Context>,
@@ -28,6 +52,13 @@ pub fn target(
     let Some(c) = context else {
         return Ok(Client::Local(Box::new(chosen(ws)?)));
     };
+    if let Some(p) = ws.filter(|w| is_path(w)) {
+        bail!(
+            "{p}: a path is this machine's: give {}'s workspace by its name (itero ws list --context {})",
+            c.name,
+            c.name
+        );
+    }
     let ws = match ws.map(String::from).or(c.ws.clone()) {
         Some(w) => w,
         None => {
@@ -35,7 +66,7 @@ pub fn target(
                 remote::server(&c.name, &c.url, c.token.as_deref(), &["workspaces"])?;
             let names: Vec<&str> = listed.iter().filter_map(|w| w["name"].as_str()).collect();
             bail!(
-                "which workspace on {}: --ws one of {} (or itero context add {} {} --ws NAME)",
+                "which workspace on {}: itero ws NAME <command>, one of {} (or itero context add {} {} --ws NAME)",
                 c.name,
                 names.join(", "),
                 c.name,
