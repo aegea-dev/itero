@@ -520,6 +520,38 @@ fn info_in_a_listed_workspace_names_the_machines_daemon() {
 }
 
 #[test]
+fn the_machines_api_passes_an_encoded_path_on_as_it_came() {
+    use std::os::unix::fs::PermissionsExt;
+    let m = Machine::new();
+    let a = m.busy_workspace("bir");
+    let gönder = a.join("actions/gönder");
+    std::fs::write(&gönder, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&gönder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    m.ok(&a, &["workspace", "add"]);
+    let na = m.journal_name(&a);
+    let port = free_port();
+    let _d = m.daemon_all_on(port);
+    until("a running", || {
+        get(port, &format!("/ws/{na}/health")).0 == 200
+    });
+    // `#` and a letter past ASCII, each percent-encoded in the path, reach
+    // the workspace as they were sent
+    for (name, path) in [("#yaz", "%23yaz"), ("gönder", "g%C3%B6nder")] {
+        let (code, route) = get(port, &format!("/ws/{na}/which/{path}"));
+        assert_eq!(code, 200, "{name}: {route}");
+        assert_eq!(
+            route,
+            m.json(&a, &["ws", "which", name, "--json"]),
+            "{name}"
+        );
+    }
+    // a route with a parameter of its own sees only that one
+    let (code, v) = get(port, &format!("/ws/{na}/runs/yok"));
+    assert_eq!(code, 404, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("no run yok"), "{v}");
+}
+
+#[test]
 fn one_itero_ai_for_every_workspace_of_the_daemon() {
     let bin = Path::new(env!("CARGO_BIN_EXE_itero")).with_file_name("itero-ai");
     assert!(

@@ -601,7 +601,7 @@ async fn machine_event(
 async fn in_workspace(
     State(s): State<MachineShared>,
     Path(params): Path<std::collections::HashMap<String, String>>,
-    mut req: Request,
+    req: Request,
 ) -> Response {
     use tower::ServiceExt;
     let name = params.get("name").cloned().unwrap_or_default();
@@ -612,18 +612,29 @@ async fn in_workspace(
         )
         .into_response();
     };
-    let rest = params.get("rest").cloned().unwrap_or_default();
+    // the rest of the path as it was sent, still percent-encoded: decoded,
+    // a `%23` would become `#` and end the path there
+    let rest = req.uri().path().splitn(4, '/').nth(3).unwrap_or_default();
     let path = match req.uri().query() {
         Some(q) => format!("/{rest}?{q}"),
         None => format!("/{rest}"),
     };
-    match path.parse() {
-        Ok(uri) => *req.uri_mut() = uri,
+    let uri: axum::http::Uri = match path.parse() {
+        Ok(uri) => uri,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e.to_string()).into_response(),
-    }
+    };
+    // a request of its own, as if sent to the workspace's port: the
+    // parameters this route took (`name`, `rest`) stay behind, or the
+    // workspace's route would see them beside its own
+    let (parts, body) = req.into_parts();
+    let mut inner = Request::new(body);
+    *inner.method_mut() = parts.method;
+    *inner.uri_mut() = uri;
+    *inner.version_mut() = parts.version;
+    *inner.headers_mut() = parts.headers;
     let api = format!("http://127.0.0.1:{}/ws/{name}/", s.port);
     match router(ws, engine, s.port, api, RunBy::Machine)
-        .oneshot(req)
+        .oneshot(inner)
         .await
     {
         Ok(r) => r,
