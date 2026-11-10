@@ -103,7 +103,10 @@ fn ask<T: DeserializeOwned>(
             .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
     }
     let http = crate::net::client(timeout).map_err(|e| Fault::Internal(e.into()))?;
-    let mut req = http.request(method, to);
+    let mut req = http.request(method, to).header(
+        crate::engine::http::VERSION_HEADER,
+        env!("CARGO_PKG_VERSION"),
+    );
     if let Some(t) = token {
         req = req.bearer_auth(t);
     }
@@ -117,6 +120,9 @@ fn ask<T: DeserializeOwned>(
         ))
     })?;
     let status = r.status().as_u16();
+    if let Some(theirs) = r.headers().get(crate::engine::http::VERSION_HEADER) {
+        differs(name, &String::from_utf8_lossy(theirs.as_bytes()));
+    }
     let text = r
         .text()
         .map_err(|e| Fault::Internal(anyhow!("{name}: {}", crate::net::cause(&e))))?;
@@ -126,6 +132,15 @@ fn ask<T: DeserializeOwned>(
     }
     serde_json::from_value(answer)
         .map_err(|e| Fault::Internal(anyhow!("{name}: an answer this itero cannot read: {e}")))
+}
+
+/// Says on stderr, once a command, that the server runs another itero.
+fn differs(name: &str, theirs: &str) {
+    static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let me = env!("CARGO_PKG_VERSION");
+    if theirs != me && !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        eprintln!("{name} runs itero {theirs}, this itero is {me}");
+    }
 }
 
 /// A refusal from the server as the same `Fault` the route made of it.

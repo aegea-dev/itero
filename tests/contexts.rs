@@ -367,3 +367,49 @@ fn a_command_about_this_machine_refuses_a_context_given_to_it() {
         assert!(said.contains("works on this machine"), "{args:?}: {said}");
     }
 }
+
+/// A server saying it runs itero `version`: `/health` as itero's, and
+/// an empty list for anything else.
+fn another_itero(version: &'static str) -> String {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://127.0.0.1:{}/", l.local_addr().unwrap().port());
+    std::thread::spawn(move || {
+        for mut s in l.incoming().flatten() {
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).unwrap_or(0);
+            let asked = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let body = if asked.starts_with("GET /health") {
+                json!({ "ok": true, "daemon": { "pid": 7, "itero": version } }).to_string()
+            } else {
+                "[]".to_string()
+            };
+            let _ = write!(
+                s,
+                "HTTP/1.1 200 OK\r\nItero-Version: {version}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    url
+}
+
+#[test]
+fn a_server_running_another_itero_is_said_once() {
+    let m = Machine::new();
+    let url = another_itero("9.9.9");
+    m.ok(&["context", "add", "başka", &url], Some(""));
+    let o = m.run(&["--context", "başka", "ws", "list"], None);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let said = String::from_utf8_lossy(&o.stderr);
+    let warning = format!(
+        "başka runs itero 9.9.9, this itero is {}",
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(said.matches(&warning).count(), 1, "{said}");
+    // the same itero: nothing said
+    let m = Machine::new();
+    let url = another_itero(env!("CARGO_PKG_VERSION"));
+    m.ok(&["context", "add", "aynı", &url], Some(""));
+    let o = m.run(&["--context", "aynı", "ws", "list"], None);
+    assert!(!String::from_utf8_lossy(&o.stderr).contains("runs itero"));
+}

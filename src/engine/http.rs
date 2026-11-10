@@ -76,7 +76,53 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16, api: String, run_by
         RunBy::Workspace => routes.layer(middleware::from_fn_with_state(s.clone(), local_only)),
         RunBy::Machine => routes,
     };
-    routes.with_state(s)
+    routes.layer(middleware::from_fn(versioned)).with_state(s)
+}
+
+/// The header an itero says its version in, asking or answering.
+pub const VERSION_HEADER: &str = "itero-version";
+
+/// Says this itero's version on every answer, and refuses (400) a
+/// request from an itero too old for it, saying both. A request that
+/// says none (curl, a script) is served.
+async fn versioned(req: Request, next: Next) -> Response {
+    let me = env!("CARGO_PKG_VERSION");
+    let theirs = req
+        .headers()
+        .get(VERSION_HEADER)
+        .map(|h| String::from_utf8_lossy(h.as_bytes()).into_owned());
+    let mut answer = match theirs.and_then(|t| refused(me, &t)) {
+        Some(why) => fail(StatusCode::BAD_REQUEST, why).into_response(),
+        None => next.run(req).await,
+    };
+    answer
+        .headers_mut()
+        .insert(VERSION_HEADER, axum::http::HeaderValue::from_static(me));
+    answer
+}
+
+/// Why a server running itero `server` refuses an itero `client`: one
+/// older in the compatibility number (the minor below 1.0, the major from
+/// 1.0), or not a version. A newer one is served.
+pub fn refused(server: &str, client: &str) -> Option<String> {
+    fn parse(v: &str) -> Option<(u64, u64)> {
+        let core = v.split(['-', '+']).next()?;
+        let mut parts = core.split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next()?.parse().ok()?;
+        parts.next()?.parse::<u64>().ok()?;
+        Some((major, minor))
+    }
+    let Some((cmaj, cmin)) = parse(client) else {
+        return Some(format!("Itero-Version: {client:?} is not an itero version"));
+    };
+    let (smaj, smin) = parse(server)?;
+    let older = cmaj < smaj || (smaj == 0 && cmaj == 0 && cmin < smin);
+    older.then(|| {
+        format!(
+            "this server runs itero {server}; itero {client} is too old for it: curl -fsSL https://itero.sh/install | sh puts a new one in place"
+        )
+    })
 }
 
 /// `POST /browser/tabs`, `{"headless": true}` or `{}`: a browser window
@@ -538,6 +584,7 @@ struct MachineShared {
 pub fn machine_router(machine: Arc<super::machine::Machine>, port: u16) -> Router {
     machine_routes()
         .layer(middleware::from_fn_with_state(port, local_only_on))
+        .layer(middleware::from_fn(versioned))
         .with_state(MachineShared { machine, port })
 }
 
@@ -547,6 +594,7 @@ pub fn machine_router(machine: Arc<super::machine::Machine>, port: u16) -> Route
 pub fn opened_router(machine: Arc<super::machine::Machine>, port: u16) -> Router {
     machine_routes()
         .layer(middleware::from_fn(bearer))
+        .layer(middleware::from_fn(versioned))
         .with_state(MachineShared { machine, port })
 }
 
@@ -744,4 +792,25 @@ pub fn listen_machine(port: Option<u16>) -> anyhow::Result<std::net::TcpListener
 pub fn machine_port() -> Option<u16> {
     let file = crate::machine::state_dir().ok()?.join("port");
     std::fs::read_to_string(file).ok()?.trim().parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refused;
+
+    #[test]
+    fn an_older_compatibility_number_is_refused_and_a_newer_one_served() {
+        assert!(refused("0.40.0", "0.39.1").is_some());
+        assert!(refused("0.40.3", "0.40.0").is_none());
+        assert!(refused("0.40.0", "0.41.0").is_none());
+        assert!(refused("1.9.0", "1.2.0").is_none());
+        assert!(refused("2.0.0", "1.9.0").is_some());
+        assert!(refused("0.40.0", "1.0.0").is_none());
+        assert!(refused("0.40.0", "0.40.0-rc.1").is_none());
+        assert!(
+            refused("0.40.0", "sürüm")
+                .unwrap()
+                .contains("not an itero version")
+        );
+    }
 }

@@ -119,7 +119,10 @@ pub fn server_url(url: &str) -> Result<String, String> {
 /// the itero it runs, or why it cannot be used, told as context `name`.
 pub fn check(name: &str, url: &str, token: Option<&str>) -> Result<String> {
     let http = crate::net::client(std::time::Duration::from_secs(10))?;
-    let mut req = http.get(format!("{url}health"));
+    let mut req = http.get(format!("{url}health")).header(
+        crate::engine::http::VERSION_HEADER,
+        env!("CARGO_PKG_VERSION"),
+    );
     if let Some(t) = token {
         req = req.bearer_auth(t);
     }
