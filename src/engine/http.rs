@@ -704,6 +704,11 @@ fn machine_routes() -> Router<MachineShared> {
     Router::new()
         .route("/health", get(machine_health))
         .route("/workspaces", get(workspaces))
+        .route(
+            "/workspaces/{name}",
+            axum::routing::put(apply_workspace)
+                .layer(axum::extract::DefaultBodyLimit::max(APPLY_LIMIT)),
+        )
         .route("/events", post(machine_event))
         .route("/ws/{name}", axum::routing::any(in_workspace))
         .route("/ws/{name}/{*rest}", axum::routing::any(in_workspace))
@@ -765,6 +770,36 @@ async fn workspaces(State(s): State<MachineShared>) -> Result<Json<Value>, Reply
             .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
             .map_err(fault)?;
     serde_json::to_value(listed)
+        .map(Json)
+        .map_err(|e| internal(e.into()))
+}
+
+/// The largest `PUT /workspaces/{name}` body: 64 MiB of files, in base64.
+const APPLY_LIMIT: usize = 96 * 1024 * 1024;
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplyQuery {
+    #[serde(default)]
+    dry_run: bool,
+}
+
+/// `PUT /workspaces/{name}`: a workspace's files, as `itero ws apply`
+/// sends them: made the first time, mirrored after; `?dry_run=true` says
+/// what it would do.
+async fn apply_workspace(
+    Path(name): Path<String>,
+    Query(q): Query<ApplyQuery>,
+    body: Result<Json<crate::answer::apply::Files>, JsonRejection>,
+) -> Result<Json<Value>, Reply> {
+    let Json(files) = body.map_err(|r| fail(r.status(), r.body_text()))?;
+    let applied = tokio::task::spawn_blocking(move || {
+        crate::answer::apply::apply(&name, &files, q.dry_run, &crate::cli::workspace_words())
+    })
+    .await
+    .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(fault)?;
+    serde_json::to_value(applied)
         .map(Json)
         .map_err(|e| internal(e.into()))
 }

@@ -31,11 +31,7 @@ fn workspace() -> Option<crate::workspace::Workspace> {
 
 /// Whether `w` is one of `itero ws`'s subcommands or their aliases.
 fn is_subcommand(w: &str) -> bool {
-    let cmd = <super::Cli as clap::CommandFactory>::command();
-    cmd.find_subcommand("ws").is_some_and(|ws| {
-        ws.get_subcommands()
-            .any(|s| s.get_name() == w || s.get_all_aliases().any(|a| a == w))
-    })
+    super::workspace_words().iter().any(|s| s == w)
 }
 
 fn names(list: impl IntoIterator<Item = String>) -> Vec<CompletionCandidate> {
