@@ -183,6 +183,37 @@ fn the_first_apply_makes_the_workspace_and_it_runs() {
 }
 
 #[test]
+fn an_event_right_after_an_apply_reaches_what_was_applied() {
+    let s = Server::new();
+    let out = s.d.path().join("çıktı");
+    let files = workspace(&out);
+    // the first apply: the workspace runs when its answer comes, so an
+    // event sent at once reaches it
+    assert_eq!(s.apply("dükkan", &borrowed(&files), false).0, 200);
+    assert_eq!(state_of(&s, "dükkan").as_deref(), Some("running"));
+    let sent = s.emit("dükkan", "selam.geldi");
+    assert_eq!(sent["starts"], json!(["selam"]), "{sent}");
+    until("selam's action to write", || out.exists());
+    // a later apply adds a workflow: an event for it sent at once runs it
+    let yeni = s.d.path().join("yeni");
+    let mut more = files.clone();
+    more.push((
+        "workflows/yeni.json".into(),
+        json!({ "on": [{ "event": "yeni.geldi" }], "steps": ["#yeni"] }).to_string(),
+        false,
+    ));
+    more.push((
+        "actions/yeni".into(),
+        format!("#!/bin/sh\necho ışık > '{}'\n", yeni.display()),
+        true,
+    ));
+    assert_eq!(s.apply("dükkan", &borrowed(&more), false).0, 200);
+    let sent = s.emit("dükkan", "yeni.geldi");
+    assert_eq!(sent["starts"], json!(["yeni"]), "{sent}");
+    until("yeni's action to write", || yeni.exists());
+}
+
+#[test]
 fn a_later_apply_mirrors_and_a_dry_run_writes_nothing() {
     let s = Server::new();
     let out = s.d.path().join("çıktı");
