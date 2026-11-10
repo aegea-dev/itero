@@ -142,10 +142,11 @@ pub enum Target {
     /// `itero daemon` in a workspace: its port is read at each check, as
     /// the OS may give it another one at a start.
     Workspace(Box<crate::workspace::Workspace>),
-    /// `itero daemon --all`: every workspace on the machine's list, on
-    /// `port` or the one the daemon kept. Its /health has no pass of its
-    /// own, so a stuck workspace never restarts it: the daemon tells it.
-    Machine { port: Option<u16> },
+    /// `itero daemon --all`: every workspace on the machine's list, its
+    /// settings from `config` (else the config folder's `server.json`).
+    /// Its /health has no pass of its own, so a stuck workspace never
+    /// restarts it: the daemon tells it.
+    Machine { config: Option<PathBuf> },
 }
 
 impl Target {
@@ -153,10 +154,10 @@ impl Target {
     pub fn args(&self) -> Vec<String> {
         match self {
             Target::Workspace(_) => vec!["daemon".into()],
-            Target::Machine { port } => {
+            Target::Machine { config } => {
                 let mut a = vec!["daemon".to_string(), "--all".into()];
-                if let Some(p) = port {
-                    a.extend(["--port".into(), p.to_string()]);
+                if let Some(c) = config {
+                    a.extend(["--config".into(), c.display().to_string()]);
                 }
                 a
             }
@@ -167,7 +168,13 @@ impl Target {
     pub fn port(&self) -> Option<u16> {
         match self {
             Target::Workspace(ws) => ws.daemon_port(),
-            Target::Machine { port } => port.or_else(super::http::machine_port),
+            // the port server.json gives, as the daemon reads it at its
+            // start; a file it cannot read, the daemon refuses and says
+            // why, and the watchdog asks the port it kept
+            Target::Machine { config } => crate::server::Server::read(config.as_deref())
+                .ok()
+                .and_then(|s| s.port)
+                .or_else(super::http::machine_port),
         }
     }
 }

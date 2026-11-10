@@ -222,10 +222,19 @@ fn a_watchdog_restarts_a_daemon_that_dies() {
 #[test]
 fn the_machines_watchdog_runs_the_daemon_over_every_workspace() {
     use itero::engine::watchdog::Target;
-    let t = Target::Machine { port: Some(7600) };
-    assert_eq!(t.args(), ["daemon", "--all", "--port", "7600"]);
+    let d = tempfile::tempdir().unwrap();
+    let file = d.path().join("sunucu.json");
+    std::fs::write(&file, r#"{ "port": 7600 }"#).unwrap();
+    let t = Target::Machine {
+        config: Some(file.clone()),
+    };
+    // the daemon reads the same file; the watchdog checks its port
+    assert_eq!(
+        t.args(),
+        ["daemon", "--all", "--config", file.to_str().unwrap()]
+    );
     assert_eq!(t.port(), Some(7600));
-    let t = Target::Machine { port: None };
+    let t = Target::Machine { config: None };
     assert_eq!(t.args(), ["daemon", "--all"]);
 }
 
@@ -239,12 +248,14 @@ fn a_watchdog_over_every_workspace_restarts_its_daemon() {
         .unwrap()
         .port();
     let log = d.path().join("watchdog.log");
+    let file = d.path().join("sunucu.json");
+    std::fs::write(&file, format!(r#"{{ "port": {port} }}"#)).unwrap();
     let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_itero"));
     c.args([
         "watchdog",
         "--all",
-        "--port",
-        &port.to_string(),
+        "--config",
+        file.to_str().unwrap(),
         "--check-every",
         "1",
         "--log",

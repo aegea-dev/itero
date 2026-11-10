@@ -395,7 +395,7 @@ fn the_stream_works_through_the_machine_api() {
     let port = free_port();
     let _d = Daemon(
         w.command(w.d.path())
-            .args(["daemon", "--all", "--port", &port.to_string()])
+            .args(["daemon", "--all", "--config", &server_file(&w, port)])
             .stderr(Stdio::null())
             .spawn()
             .unwrap(),
@@ -516,7 +516,7 @@ fn the_log_stream_works_through_the_machine_api() {
     let port = free_port();
     let _d = Daemon(
         w.command(w.d.path())
-            .args(["daemon", "--all", "--port", &port.to_string()])
+            .args(["daemon", "--all", "--config", &server_file(&w, port)])
             .stderr(Stdio::null())
             .spawn()
             .unwrap(),
@@ -537,4 +537,11 @@ fn the_log_stream_works_through_the_machine_api() {
     assert_eq!(r.status(), 202);
     let id: Value = r.json().unwrap();
     assert_eq!(messages(&l, 1), [id["id"].as_str().unwrap()]);
+}
+
+/// A `server.json` in the test's folder saying `port`, for `--config`.
+fn server_file(w: &Ws, port: u16) -> String {
+    let p = w.d.path().join(format!("sunucu-{port}.json"));
+    std::fs::write(&p, format!(r#"{{ "port": {port} }}"#)).unwrap();
+    p.display().to_string()
 }

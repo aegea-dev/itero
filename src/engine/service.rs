@@ -22,18 +22,14 @@ pub fn machine_label() -> ServiceLabel {
 /// The machine's service: `itero watchdog --all` from the home folder,
 /// its log in itero's state folder, with `path` (the installing shell's
 /// `PATH`: a service starts with a bare one, which would not find mail, uv
-/// or bun).
+/// or bun). No settings: the daemon reads `server.json` at each start.
 pub fn machine_ctx(
     exe: &Path,
     home: &Path,
     state: &Path,
-    port: Option<u16>,
     path: Option<String>,
 ) -> ServiceInstallCtx {
     let mut args: Vec<OsString> = vec!["watchdog".into(), "--all".into()];
-    if let Some(p) = port {
-        args.extend(["--port".into(), p.to_string().into()]);
-    }
     args.extend(["--log".into(), state.join("daemon.log").into_os_string()]);
     ServiceInstallCtx {
         label: machine_label(),
@@ -291,7 +287,6 @@ mod tests {
             Path::new("/usr/local/bin/itero"),
             Path::new("/Users/çalışan"),
             Path::new("/Users/çalışan/.local/state/itero"),
-            None,
             None,
         )
     }

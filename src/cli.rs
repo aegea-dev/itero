@@ -54,9 +54,9 @@ pub enum Cmd {
         /// Every workspace on the machine's list (itero workspace list), not this folder's
         #[arg(long, conflicts_with = "once")]
         all: bool,
-        /// With --all: the machine's port (else the one kept, else one the OS gives)
-        #[arg(long, requires = "all")]
-        port: Option<u16>,
+        /// With --all: its settings from this file, not the config folder's server.json
+        #[arg(long, requires = "all", value_name = "PATH")]
+        config: Option<std::path::PathBuf>,
         /// One pass, then stop: for tests and scripts, so hidden
         #[arg(long, hide = true)]
         once: bool,
@@ -197,9 +197,9 @@ pub enum Cmd {
         /// Keep `itero daemon --all` running: every workspace on the machine's list
         #[arg(long)]
         all: bool,
-        /// With --all: the machine's port
-        #[arg(long, requires = "all")]
-        port: Option<u16>,
+        /// With --all: the daemon's settings from this file, not the config folder's server.json
+        #[arg(long, requires = "all", value_name = "PATH")]
+        config: Option<std::path::PathBuf>,
     },
 }
 
@@ -502,11 +502,7 @@ pub enum ContextCmd {
 #[derive(Subcommand)]
 pub enum ServiceCmd {
     /// Run the machine's daemon (every workspace on its list) as a service, at login
-    Install {
-        /// The machine's port (else the one kept, else one the OS gives)
-        #[arg(long)]
-        port: Option<u16>,
-    },
+    Install,
     /// Stop and remove the service
     Uninstall,
     /// The service's state and the daemon's health
@@ -787,15 +783,17 @@ fn dispatch(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::Daemon {
             all: true,
-            port,
+            config,
             no_serve,
             ..
         } => {
-            // its port first: a daemon that cannot listen starts nothing
+            // its settings, then its port: a daemon that cannot listen
+            // starts nothing
+            let server = crate::server::Server::read(config.as_deref())?;
             let listener = if no_serve {
                 None
             } else {
-                Some(crate::engine::http::listen_machine(port)?)
+                Some(crate::engine::http::listen_machine(server.port)?)
             };
             crate::ai::keeper::Keeper::global().for_machine();
             crate::browser::keeper::Keeper::global().for_machine();
@@ -1126,7 +1124,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             use crate::engine::service;
             let label = service::machine_label();
             match cmd {
-                ServiceCmd::Install { port } => top::service_install(port)?,
+                ServiceCmd::Install => top::service_install()?,
                 ServiceCmd::Uninstall => {
                     if service::uninstall(&label)? {
                         println!(
@@ -1160,11 +1158,11 @@ fn dispatch(cli: Cli) -> Result<()> {
             stale_after,
             log,
             all,
-            port,
+            config,
         } => {
             use crate::engine::watchdog::{Options, Rules, Target, run};
             let target = if all {
-                Target::Machine { port }
+                Target::Machine { config }
             } else {
                 Target::Workspace(Box::new(workspace()?))
             };
