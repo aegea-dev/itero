@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// The settings `server.json` may have.
-const SETTINGS: &[&str] = &["port", "listen", "tls"];
+const SETTINGS: &[&str] = &["port", "listen", "tls", "secrets"];
 
 /// The settings `tls` may have.
 const TLS: &[&str] = &["cert", "key"];
@@ -22,6 +22,9 @@ pub struct Server {
     pub listen: Option<std::net::SocketAddr>,
     /// The certificate `listen` serves HTTPS with; none: plain HTTP.
     pub tls: Option<Tls>,
+    /// A folder of secrets the platform mounts, a file each
+    /// (`/run/secrets/API_KEY`): `$$API_KEY` reads it.
+    pub secrets: Option<PathBuf>,
 }
 
 /// A certificate (its chain) and its private key, PEM files.
@@ -84,6 +87,13 @@ fn parse(text: &str) -> Result<Server, Vec<String>> {
                 None => problems.push(format!(
                     "listen: an address and a port, like 0.0.0.0:8443, not {v}"
                 )),
+            },
+            "secrets" => match v.as_str() {
+                Some(p) if Path::new(p).is_dir() => s.secrets = Some(PathBuf::from(p)),
+                Some(p) => problems.push(format!(
+                    "secrets: {p}: not a folder there (the folder of secrets, a file each)"
+                )),
+                None => problems.push(format!("secrets: a folder's path, not {v}")),
             },
             "tls" => match tls(v) {
                 Ok(t) => s.tls = Some(t),

@@ -97,6 +97,27 @@ pub fn apply(
     )
 }
 
+/// `POST` `body` to the server's route at `path` (its own, or a
+/// workspace's when `path` starts with `ws/<name>`).
+pub fn post_server<T: DeserializeOwned>(
+    name: &str,
+    url: &str,
+    token: Option<&str>,
+    path: &[&str],
+    body: &Value,
+) -> Result<T, Fault> {
+    ask(
+        name,
+        url,
+        token,
+        Method::POST,
+        path,
+        &[],
+        Some(body),
+        TIMEOUT,
+    )
+}
+
 /// `GET` the server's own route at `path` (not a workspace's): its
 /// `/workspaces`, its `/health`.
 pub fn server<T: DeserializeOwned>(

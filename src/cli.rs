@@ -815,9 +815,9 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
         Cmd::Workspace { cmd, .. } => match cmd {
             WorkspaceCmd::Add => "ws add",
             WorkspaceCmd::Remove { .. } => "ws remove",
-            WorkspaceCmd::Secret { .. } => "ws secret",
             WorkspaceCmd::Daemon { .. } => "ws daemon",
             WorkspaceCmd::List { .. }
+            | WorkspaceCmd::Secret { .. }
             | WorkspaceCmd::Apply { .. }
             | WorkspaceCmd::Info { .. }
             | WorkspaceCmd::Check { .. }
@@ -829,7 +829,7 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
             | WorkspaceCmd::Connector { .. } => return None,
         },
         // the server's daemon, over a context
-        Cmd::Info { .. } => return None,
+        Cmd::Info { .. } | Cmd::Secret { .. } => return None,
         // they only say where a command moved
         Cmd::MovedCheck { .. }
         | Cmd::MovedWhich { .. }
@@ -842,7 +842,6 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
         Cmd::Worker => "worker",
         Cmd::Service { .. } => "service",
         Cmd::Emit(_) => "emit",
-        Cmd::Secret { .. } => "secret",
         Cmd::Ai { .. } => "ai",
         Cmd::Completion { .. } => "completion",
         Cmd::Context { .. } => "context",
@@ -1014,6 +1013,12 @@ fn dispatch(cli: Cli) -> Result<()> {
             // its settings, then its port: a daemon that cannot listen
             // starts nothing
             let server = crate::server::Server::read(config.as_deref())?;
+            if let Some(dir) = &server.secrets {
+                // SAFETY: set before this daemon starts any thread, so no
+                // other reads the environment meanwhile; every process it
+                // starts (workers, connectors) inherits it
+                unsafe { std::env::set_var(crate::engine::secrets::FOLDER, dir) };
+            }
             if let (Some(at), true) = (server.listen, no_serve) {
                 bail!("server.json opens the API on {at}, and --no-serve serves none");
             }
@@ -1190,7 +1195,22 @@ fn dispatch(cli: Cli) -> Result<()> {
                 WorkspaceCmd::Check { json } => top::check(&client()?, json)?,
                 WorkspaceCmd::Which { name, json } => top::which(&client()?, &name, json)?,
                 WorkspaceCmd::Emit(args) => emit::one(&client()?, args)?,
-                WorkspaceCmd::Secret { name, file } => top::secret(Some(&chosen()?), &name, file)?,
+                WorkspaceCmd::Secret { name, file } => {
+                    match crate::context::chosen(context.as_deref())? {
+                        None => top::secret(Some(&chosen()?), &name, file)?,
+                        Some(c) => {
+                            let to = workspace::remote_target(ws.as_deref(), c)?;
+                            top::send_secret(
+                                &to.name,
+                                &to.url,
+                                to.token.as_deref(),
+                                Some(&to.ws),
+                                &name,
+                                file,
+                            )?
+                        }
+                    }
+                }
                 WorkspaceCmd::Workflow { cmd } => {
                     let c = client()?;
                     match cmd {
@@ -1298,7 +1318,10 @@ fn dispatch(cli: Cli) -> Result<()> {
                 None => ai::defaults(json)?,
             },
         },
-        Cmd::Secret { name, file } => top::secret(None, &name, file)?,
+        Cmd::Secret { name, file } => match crate::context::chosen(context.as_deref())? {
+            None => top::secret(None, &name, file)?,
+            Some(c) => top::send_secret(&c.name, &c.url, c.token.as_deref(), None, &name, file)?,
+        },
         Cmd::Info { json } => top::machine_info(json, crate::context::chosen(context.as_deref())?)?,
         Cmd::Watch { path, command } => {
             let watch = crate::connectors::Watch::new(&path)?;

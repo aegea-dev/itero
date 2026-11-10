@@ -363,7 +363,6 @@ fn a_command_about_this_machine_refuses_a_context_given_to_it() {
         &["ws", "daemon"],
         &["service", "status"],
         &["ws", "add"],
-        &["secret", "ANAHTAR"],
         &["emit", "kapı.açıldı"],
     ] {
         let mut a = args.to_vec();

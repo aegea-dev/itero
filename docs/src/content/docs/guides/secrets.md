@@ -137,6 +137,38 @@ it, so prefer those for anything sensitive.
 its own. What it prints becomes its result, which is saved in the journal
 and the log, so an action should never print a secret.
 
+## On a server
+
+A server or a container often has no OS secret store. There a secret
+comes from the platform, as Kubernetes Secrets, Docker secrets and
+systemd credentials give them:
+
+- **its environment**, as on any machine;
+- **a folder of files**, one per secret, named after it, which
+  [`server.json`](/reference/server-json/)'s `secrets` names:
+
+```json
+{ "secrets": "/run/secrets" }
+```
+
+`$$API_KEY` then reads `/run/secrets/API_KEY` (its last newline left
+out), after the OS store and `.env`, before the environment. A file
+`/run/secrets/<workspace>.API_KEY` is that workspace's own, and comes
+first.
+
+On a server that has an OS secret store, keep one from your machine
+over a [context](/commands/context/):
+
+```sh
+itero secret API_KEY --context prod            # for every workspace on it
+itero ws shop secret API_KEY --context prod    # for shop alone
+```
+
+A server without one says so, and where it reads secrets from instead.
+A secret is never sent over plain HTTP to another machine: give the
+context an `https://` address. Secrets never travel with
+[`itero ws apply`](/commands/workspace/#apply).
+
 ## Tests and CI
 
 `ITERO_NO_SECRET_STORE` set keeps itero away from the store: a `$$NAME`

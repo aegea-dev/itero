@@ -292,9 +292,9 @@ pub fn which(c: &Client, name: &str, json: bool) -> Result<()> {
 
 /// `itero secret` and `itero ws secret`: kept in the store for every
 /// workspace, or for `ws` alone.
-pub fn secret(ws: Option<&Workspace>, name: &str, file: Option<PathBuf>) -> Result<()> {
-    use crate::engine::secrets;
-    secrets::ready(name)?;
+/// A secret's value: from `file` (its last newline left out), else asked
+/// for without echo; empty is refused.
+fn secret_value(name: &str, file: Option<PathBuf>) -> Result<String> {
     let value = match file {
         Some(f) => {
             let t = std::fs::read_to_string(&f)
@@ -307,6 +307,51 @@ pub fn secret(ws: Option<&Workspace>, name: &str, file: Option<PathBuf>) -> Resu
     if value.is_empty() {
         bail!("{name}: an empty secret is not kept");
     }
+    Ok(value)
+}
+
+/// `itero secret` and `itero ws secret` over a context: sent to its
+/// server (`url`), kept in its OS store for workspace `ws`, or for every
+/// one; never over plain HTTP to a host other than this machine.
+pub fn send_secret(
+    context: &str,
+    url: &str,
+    token: Option<&str>,
+    ws: Option<&str>,
+    name: &str,
+    file: Option<PathBuf>,
+) -> Result<()> {
+    if !crate::engine::secrets::valid_name(name) {
+        bail!("{name}: a secret's name is a letter or _, then letters, digits or _");
+    }
+    let to =
+        reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("{context}: its URL {url}: {e}"))?;
+    let here = matches!(to.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"));
+    if to.scheme() == "http" && !here {
+        bail!(
+            "{name} is not sent over plain HTTP to {}: give {context} an https:// address",
+            to.host_str().unwrap_or(url)
+        );
+    }
+    let value = secret_value(name, file)?;
+    let body = json!({ "value": value });
+    let mut path = vec![];
+    if let Some(w) = ws {
+        path.extend(["ws", w]);
+    }
+    path.extend(["secrets", name]);
+    let _: Value = crate::answer::remote::post_server(context, url, token, &path, &body)?;
+    match ws {
+        Some(w) => println!("{name}: kept for workspace {w} on {context}"),
+        None => println!("{name}: kept on {context}"),
+    }
+    Ok(())
+}
+
+pub fn secret(ws: Option<&Workspace>, name: &str, file: Option<PathBuf>) -> Result<()> {
+    use crate::engine::secrets;
+    secrets::ready(name)?;
+    let value = secret_value(name, file)?;
     match ws {
         None => {
             secrets::set(name, &value)?;
