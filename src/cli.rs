@@ -1,5 +1,6 @@
 //! The command line.
 mod ai;
+mod apply;
 mod complete;
 mod context;
 mod emit;
@@ -414,6 +415,14 @@ pub enum ConnectorCmd {
 pub enum WorkspaceCmd {
     /// Add this workspace to the machine's list: the machine's daemon runs it
     Add,
+    /// Send this folder's workspace to a context's server: made there the first time, made to match after
+    Apply {
+        /// Say what it would add, change and remove, and send nothing to keep
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Run this workspace's workflows alone, in the foreground, as each comes due
     Daemon {
         /// One pass, then stop: for tests and scripts, so hidden
@@ -809,6 +818,7 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
             WorkspaceCmd::Secret { .. } => "ws secret",
             WorkspaceCmd::Daemon { .. } => "ws daemon",
             WorkspaceCmd::List { .. }
+            | WorkspaceCmd::Apply { .. }
             | WorkspaceCmd::Info { .. }
             | WorkspaceCmd::Check { .. }
             | WorkspaceCmd::Which { .. }
@@ -1166,6 +1176,16 @@ fn dispatch(cli: Cli) -> Result<()> {
                     now,
                     no_serve,
                 } => run_one(chosen()?, once, now, no_serve)?,
+                WorkspaceCmd::Apply { dry_run, json } => {
+                    let Some(c) = crate::context::chosen(context.as_deref())? else {
+                        bail!(
+                            "itero ws apply sends this folder's workspace to a server: give it --context NAME (itero context list lists them)"
+                        );
+                    };
+                    let here = workspace()?;
+                    let to = workspace::remote_target(ws.as_deref(), c)?;
+                    apply::run(&to, &here.root, dry_run, json)?
+                }
                 WorkspaceCmd::Info { json } => top::info(&client()?, json)?,
                 WorkspaceCmd::Check { json } => top::check(&client()?, json)?,
                 WorkspaceCmd::Which { name, json } => top::which(&client()?, &name, json)?,
