@@ -35,6 +35,41 @@ fn xdg_dir(var: &str, under_home: &str, get: impl Fn(&str) -> Option<String>) ->
     Ok(PathBuf::from(home).join(under_home).join("itero"))
 }
 
+/// Writes `text` to `p` whole, readable by its owner only (it holds
+/// tokens or their hashes): to a file beside it, made 0600, then renamed
+/// over it, so no reader sees half of it.
+pub fn write_private(p: &Path, text: &str) -> Result<()> {
+    use std::io::Write;
+    let dir = p.parent().context("a file in a folder")?;
+    std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
+    let tmp = p.with_extension("json.tmp");
+    let mut f = private_file(&tmp).with_context(|| tmp.display().to_string())?;
+    f.write_all(text.as_bytes())
+        .with_context(|| tmp.display().to_string())?;
+    drop(f);
+    std::fs::rename(&tmp, p).with_context(|| p.display().to_string())
+}
+
+/// A new file, truncated, that only its owner may read or write.
+#[cfg(unix)]
+fn private_file(p: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(p)?;
+    // a file already there keeps its mode: make it 0600 too
+    f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(f)
+}
+
+#[cfg(not(unix))]
+fn private_file(p: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::create(p)
+}
+
 /// The list's file.
 pub fn list_path() -> Result<PathBuf> {
     Ok(state_dir()?.join("workspaces.json"))

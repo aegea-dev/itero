@@ -22,6 +22,17 @@ const NOUNS: [&str; 64] = [
     "willow", "wolf",
 ];
 
+/// What a name a person gives (a context's, a token's) may be.
+pub const PLAIN: &str = "a name is letters, digits, - and _";
+
+/// Whether `name` is letters, digits, `-` and `_`, and not empty.
+pub fn plain(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+}
+
 /// A new random name.
 pub fn random() -> String {
     let n = RandomState::new().build_hasher().finish();

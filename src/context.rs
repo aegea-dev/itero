@@ -45,18 +45,9 @@ impl Contexts {
         }
     }
 
-    /// Writes it whole, readable by its owner only (it holds tokens):
-    /// to a file beside it, made 0600, then renamed over it.
+    /// Writes it whole, readable by its owner only (it holds tokens).
     pub fn write(&self, p: &Path) -> Result<()> {
-        use std::io::Write;
-        let dir = p.parent().context("contexts.json is in a folder")?;
-        std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
-        let tmp = p.with_extension("json.tmp");
-        let mut f = private_file(&tmp).with_context(|| tmp.display().to_string())?;
-        f.write_all((serde_json::to_string_pretty(self)? + "\n").as_bytes())
-            .with_context(|| tmp.display().to_string())?;
-        drop(f);
-        std::fs::rename(&tmp, p).with_context(|| p.display().to_string())
+        crate::machine::write_private(p, &(serde_json::to_string_pretty(self)? + "\n"))
     }
 
     pub fn get(&self, name: &str) -> Option<&Context> {
@@ -105,36 +96,12 @@ pub fn chosen(flag: Option<&str>) -> Result<Option<Context>> {
     }
 }
 
-/// A new file, truncated, that only its owner may read or write.
-#[cfg(unix)]
-fn private_file(p: &Path) -> std::io::Result<std::fs::File> {
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(p)?;
-    // a file already there keeps its mode: make it 0600 too
-    f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    Ok(f)
-}
-
-#[cfg(not(unix))]
-fn private_file(p: &Path) -> std::io::Result<std::fs::File> {
-    std::fs::File::create(p)
-}
-
 /// Why `name` cannot be a context's name, if it cannot.
 pub fn bad_name(name: &str) -> Option<String> {
     if name == LOCAL {
         return Some(format!("{LOCAL} is this machine: it is built in"));
     }
-    let ok = !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_');
-    (!ok).then(|| format!("{name}: a name is letters, digits, - and _"))
+    (!crate::names::plain(name)).then(|| format!("{name}: {}", crate::names::PLAIN))
 }
 
 /// `url` as a server's root, ending in `/`; or why it is not one.
