@@ -337,6 +337,7 @@ check:
 |---|---|
 | `GET /health` | the daemon, each running workspace's passes and connectors by name, itero-ai |
 | `GET /workspaces` | each listed workspace: `name`, `folder`, `state`, `why`, `last_run`; the same as `itero ws list --json` |
+| `PUT /workspaces/{name}` | a workspace's files: makes it the first time, and makes its folder hold those files after ([below](#put-workspacesname)) |
 | `POST /events` | an event for every workspace on the list, as [`itero emit`](/commands/emit/#every-workspace) sends it |
 | `/ws/<name>/...` | that workspace's routes above: `POST /ws/<name>/events`, `GET /ws/<name>/runs` |
 
@@ -361,3 +362,28 @@ no `?wait=`: that is `POST /ws/<name>/events?wait=`.
 
 A name that is not running there is 404, saying to look at
 `itero workspace list`.
+
+### PUT /workspaces/\{name\}
+
+A workspace's files, every one: `{"files": [{"path": "workflows/order.json",
+"executable": false, "content": "<base64>"}, ...]}`, `itero.config.json`
+among them. When no workspace on the list has the name, it is made in
+`workspaces/<name>/` in itero's state folder, put on the list, and the
+daemon starts it. Then its folder is made to hold those files and no
+others: each written whole (actions and connectors first, workflows
+next, `itero.config.json` last), the others removed. Its own `.itero/`
+(journal, log), `.env` and `.git/` are never sent or touched, and the
+daemon reads the new files as it reads a local edit.
+
+It answers what it did, the paths in each:
+
+```json
+{ "created": false, "added": ["actions/ship"],
+  "changed": ["workflows/order.json"], "removed": ["workflows/old.json"] }
+```
+
+`?dry_run=true` answers the same and writes nothing. A path outside the
+folder, one of the server's own, a file sent twice, content that is not
+base64, no `itero.config.json`, or a name a `ws` command has (`list`):
+400, every problem at once. The body may be up to 96 MiB.
+

@@ -844,6 +844,23 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
     })
 }
 
+/// The words that can follow `itero ws` as a command: its subcommands'
+/// names and aliases. A workspace cannot be named one of them, or
+/// `itero ws <name> ...` could not tell it from the command.
+pub fn workspace_words() -> Vec<String> {
+    let cmd = <Cli as clap::CommandFactory>::command();
+    cmd.find_subcommand("ws")
+        .map(|ws| {
+            ws.get_subcommands()
+                .flat_map(|s| {
+                    std::iter::once(s.get_name().to_string())
+                        .chain(s.get_all_aliases().map(String::from))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Says, at the machine's daemon's start in a workspace's folder that is
 /// not on the list, that it does not run that one: a newcomer's
 /// `itero daemon` in their folder otherwise runs nothing of theirs.

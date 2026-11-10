@@ -2,6 +2,7 @@
 //! its API route both call the function here, so the two never say
 //! different things. The CLI reaches them through a [`Client`]: on this
 //! machine, in the same process, with no daemon needed.
+pub mod apply;
 pub mod events;
 pub mod kinds;
 pub mod machine;
