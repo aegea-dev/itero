@@ -149,3 +149,22 @@ fn every_window_is_drawn_however_many_are_open() {
         assert_eq!(drawn, Ok(serde_json::json!(true)), "window {n}");
     }
 }
+
+#[test]
+fn the_sandbox_is_dropped_as_root_on_linux_or_when_told() {
+    use std::ffi::OsStr;
+    // unset, empty or on: the rule as it was, root on Linux only
+    for v in [None, Some(OsStr::new("")), Some(OsStr::new("on"))] {
+        assert_eq!(chrome::no_sandbox(v, false), Ok(false), "{v:?}");
+        assert_eq!(chrome::no_sandbox(v, true), Ok(true), "{v:?}");
+    }
+    // off: a container's user, whom Chrome's sandbox cannot serve
+    assert_eq!(chrome::no_sandbox(Some(OsStr::new("off")), false), Ok(true));
+    // anything else is a mistake, said with what it takes
+    let e = chrome::no_sandbox(Some(OsStr::new("kapalı")), false).unwrap_err();
+    assert!(
+        e.contains("ITERO_BROWSER_SANDBOX") && e.contains("kapalı"),
+        "{e}"
+    );
+    assert!(e.contains("on or off"), "{e}");
+}

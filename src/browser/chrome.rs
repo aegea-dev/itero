@@ -94,10 +94,33 @@ pub struct Launched {
 /// How long Chrome is given to say its port.
 const START: Duration = Duration::from_secs(20);
 
+/// Whether Chrome starts without its sandbox. `ITERO_BROWSER_SANDBOX=off`
+/// says so: a container's own user, whose Chrome cannot make the user
+/// namespaces its sandbox needs. Unset, empty or `on`: only as root on
+/// Linux, where the sandbox refuses to start. Anything else is a mistake.
+pub fn no_sandbox(var: Option<&std::ffi::OsStr>, root_on_linux: bool) -> Result<bool, String> {
+    match var.map(|v| v.to_str()) {
+        None | Some(Some("" | "on")) => Ok(root_on_linux),
+        Some(Some("off")) => Ok(true),
+        Some(Some(v)) => Err(format!("ITERO_BROWSER_SANDBOX is {v}: on or off")),
+        Some(None) => Err("ITERO_BROWSER_SANDBOX is not text: on or off".into()),
+    }
+}
+
 /// Starts Chrome on `profile`: port 0, so Chrome picks a free one and
 /// writes it to `DevToolsActivePort` there; none of Chrome's own first-run
 /// pages, prompts or bars.
 pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String> {
+    // before anything is made or stopped: a wrong value fails first
+    #[cfg(target_os = "linux")]
+    // SAFETY: geteuid has no preconditions
+    let root_on_linux = unsafe { libc::geteuid() } == 0;
+    #[cfg(not(target_os = "linux"))]
+    let root_on_linux = false;
+    let drop_sandbox = no_sandbox(
+        std::env::var_os("ITERO_BROWSER_SANDBOX").as_deref(),
+        root_on_linux,
+    )?;
     std::fs::create_dir_all(profile).map_err(|e| format!("{}: {e}", profile.display()))?;
     stop_left_over(profile)?;
     write_prefs(profile)?;
@@ -132,10 +155,7 @@ pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String
         // a test's Chrome reaches only the test's own server
         c.arg("--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1");
     }
-    #[cfg(target_os = "linux")]
-    // SAFETY: geteuid has no preconditions
-    if unsafe { libc::geteuid() } == 0 {
-        // root, as in a container: Chrome's sandbox refuses to start
+    if drop_sandbox {
         c.arg("--no-sandbox");
     }
     c.arg("about:blank");
