@@ -842,7 +842,7 @@ fn emit_says_what_a_message_starts() {
     let said = err(&o);
     assert!(said.contains("starts: kayıt, sipariş"), "{said}");
     assert!(
-        said.contains("no daemon is running: it waits for itero daemon"),
+        said.contains("no daemon is running: it waits for one (itero daemon"),
         "{said}"
     );
     let o = itero(d.path(), &["ws", "emit", "order.places", "{}"]);

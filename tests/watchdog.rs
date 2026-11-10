@@ -229,13 +229,10 @@ fn the_machines_watchdog_runs_the_daemon_over_every_workspace() {
         config: Some(file.clone()),
     };
     // the daemon reads the same file; the watchdog checks its port
-    assert_eq!(
-        t.args(),
-        ["daemon", "--all", "--config", file.to_str().unwrap()]
-    );
+    assert_eq!(t.args(), ["daemon", "--config", file.to_str().unwrap()]);
     assert_eq!(t.port(), Some(7600));
     let t = Target::Machine { config: None };
-    assert_eq!(t.args(), ["daemon", "--all"]);
+    assert_eq!(t.args(), ["daemon"]);
 }
 
 #[test]

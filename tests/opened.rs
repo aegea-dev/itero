@@ -88,7 +88,7 @@ impl Machine {
         let said = self.d.path().join("said.txt");
         let child = self
             .command()
-            .args(["daemon", "--all"])
+            .args(["daemon"])
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(&said).unwrap())
             .spawn()
@@ -188,7 +188,7 @@ fn the_opened_api_lets_in_a_token_and_nobody_else() {
 fn opened_with_no_token_it_does_not_start() {
     let m = Machine::new();
     m.server_json(json!({ "listen": "127.0.0.1:0" }));
-    let o = m.command().args(["daemon", "--all"]).output().unwrap();
+    let o = m.command().args(["daemon"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
     assert!(
@@ -202,11 +202,7 @@ fn listen_with_no_serve_is_a_mistake() {
     let m = Machine::new();
     m.ok(&["token", "create", "kişi"]);
     m.server_json(json!({ "listen": "127.0.0.1:0" }));
-    let o = m
-        .command()
-        .args(["daemon", "--all", "--no-serve"])
-        .output()
-        .unwrap();
+    let o = m.command().args(["daemon", "--no-serve"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
     assert!(said.contains("--no-serve"), "{said}");
@@ -216,7 +212,7 @@ fn listen_with_no_serve_is_a_mistake() {
 fn listen_must_be_an_address_and_a_port() {
     let m = Machine::new();
     m.server_json(json!({ "listen": "her yerde" }));
-    let o = m.command().args(["daemon", "--all"]).output().unwrap();
+    let o = m.command().args(["daemon"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
     assert!(
@@ -291,7 +287,7 @@ fn a_key_that_is_not_the_certificates_stops_the_daemon() {
     let (_, _, other) = certificates();
     let (cert, key) = m.tls_files(&cert, &other);
     m.server_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
-    let o = m.command().args(["daemon", "--all"]).output().unwrap();
+    let o = m.command().args(["daemon"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
     assert!(said.contains("anahtar.pem"), "{said}");
@@ -301,7 +297,7 @@ fn a_key_that_is_not_the_certificates_stops_the_daemon() {
 fn tls_needs_listen_and_both_files_every_problem_told() {
     let m = Machine::new();
     m.server_json(json!({ "tls": { "cert": "/yok/sertifika.pem", "fazla": 1 } }));
-    let o = m.command().args(["daemon", "--all"]).output().unwrap();
+    let o = m.command().args(["daemon"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
     for problem in [
@@ -380,7 +376,7 @@ fn a_folder_for_the_certificate_is_told_with_the_other_problems() {
     std::fs::create_dir_all(&d).unwrap();
     m.server_json(json!({ "listen": "127.0.0.1:0",
                           "tls": { "cert": d.display().to_string(), "key": "/yok/anahtar.pem" } }));
-    let o = m.command().args(["daemon", "--all"]).output().unwrap();
+    let o = m.command().args(["daemon"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
     assert!(said.contains("is not a file"), "{said}");

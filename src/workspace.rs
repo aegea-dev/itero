@@ -183,7 +183,7 @@ pub struct Workspace {
     /// `description` and the person's own keys.
     pub meta: Map<String, Value>,
     pub limits: Limits,
-    /// On the machine's list: run by `itero daemon --all`, whose one scan
+    /// On the machine's list: run by `itero daemon`, whose one scan
     /// for models stands for the built-in `models` workflow.
     pub machine: bool,
     /// Its id, once read (`id`).

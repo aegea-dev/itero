@@ -407,8 +407,8 @@ pub enum Runner {
     },
 }
 
-/// Whose daemon runs a workspace: the machine's (`itero daemon --all`)
-/// or its own (`itero daemon` in its folder).
+/// Whose daemon runs a workspace: the machine's (`itero daemon`) or its
+/// own (`itero ws daemon`).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RunBy {

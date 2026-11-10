@@ -1,4 +1,4 @@
-//! The machine's list of workspaces, which one `itero daemon --all`
+//! The machine's list of workspaces, which one `itero daemon`
 //! runs: state the commands write, in itero's state folder.
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};

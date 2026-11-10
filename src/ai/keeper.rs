@@ -57,7 +57,7 @@ impl Keeper {
         })
     }
 
-    /// For the machine's daemon (`itero daemon --all`): one itero-ai on one
+    /// For the machine's daemon (`itero daemon`): one itero-ai on one
     /// socket for every workspace, and what happens to it told to each.
     pub fn for_machine(&self) {
         self.machine

@@ -1,6 +1,6 @@
 //! One workspace's threads in a daemon: its connectors, its path watcher,
 //! its alarm and its pass loop, started together and stopped together.
-//! `itero daemon` in a folder runs one; `itero daemon --all` runs one per
+//! `itero ws daemon` runs one; `itero daemon` runs one per
 //! workspace on the machine's list.
 use super::daemon::{self, Health, Pass};
 use super::http::Engine;

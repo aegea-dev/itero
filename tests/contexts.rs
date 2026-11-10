@@ -82,7 +82,7 @@ impl Machine {
     fn server(&self) -> (Daemon, String) {
         let child = self
             .command()
-            .args(["daemon", "--all"])
+            .args(["daemon"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

@@ -53,23 +53,17 @@ pub struct EmitArgs {
 
 #[derive(Subcommand)]
 pub enum Cmd {
-    /// Run the workspace's workflows: their schedules, events and jobs, as each comes due
+    /// Run every workspace on the machine's list: their schedules, events and jobs, as each comes due
     Daemon {
-        /// Every workspace on the machine's list (itero workspace list), not this folder's
-        #[arg(long, conflicts_with = "once")]
-        all: bool,
-        /// With --all: its settings from this file, not the config folder's server.json
-        #[arg(long, requires = "all", value_name = "PATH")]
+        /// Its settings from this file, not the config folder's server.json
+        #[arg(long, value_name = "PATH")]
         config: Option<std::path::PathBuf>,
-        /// One pass, then stop: for tests and scripts, so hidden
-        #[arg(long, hide = true)]
-        once: bool,
-        /// The time to run at, with --once (RFC 3339; for tests)
-        #[arg(long, requires = "once", hide = true)]
-        now: Option<String>,
         /// The passes only: no HTTP API
         #[arg(long)]
         no_serve: bool,
+        /// Moved: itero daemon runs every listed workspace now
+        #[arg(long, hide = true)]
+        all: bool,
     },
     /// Moved: `itero ws check`
     #[command(name = "check", hide = true, disable_help_flag = true)]
@@ -203,7 +197,7 @@ pub enum Cmd {
         /// Where its lines and the daemon's stderr go
         #[arg(long)]
         log: Option<std::path::PathBuf>,
-        /// Keep `itero daemon --all` running: every workspace on the machine's list
+        /// Keep `itero daemon` running: every workspace on the machine's list (without it, this folder's `itero ws daemon`)
         #[arg(long)]
         all: bool,
         /// With --all: the daemon's settings from this file, not the config folder's server.json
@@ -850,6 +844,26 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
     })
 }
 
+/// Says, at the machine's daemon's start in a workspace's folder that is
+/// not on the list, that it does not run that one: a newcomer's
+/// `itero daemon` in their folder otherwise runs nothing of theirs.
+fn here_unlisted() {
+    let Ok(ws) = std::env::current_dir()
+        .and_then(|d| crate::workspace::find(&d).map_err(|e| std::io::Error::other(e.to_string())))
+    else {
+        return;
+    };
+    let listed = crate::machine::list_path()
+        .and_then(|p| crate::machine::List::read(&p))
+        .map(|l| l.workspaces.iter().any(|e| e.folder == ws.root))
+        .unwrap_or(false);
+    if !listed {
+        eprintln!(
+            "itero: this folder's workspace is not on the machine's list, so this daemon does not run it: itero ws add puts it there (itero ws daemon runs it alone)"
+        );
+    }
+}
+
 /// One workspace's daemon, alone, in the foreground: `itero ws daemon`.
 /// `once`: one pass at `now` (tests and scripts).
 fn run_one(
@@ -963,12 +977,13 @@ fn dispatch(cli: Cli) -> Result<()> {
         ignore_sigpipe();
     }
     match cli.cmd {
+        Cmd::Daemon { all: true, .. } => bail!(
+            "itero daemon runs every workspace on the machine's list now: drop --all (itero ws daemon runs one alone)"
+        ),
         Cmd::Daemon {
-            all: true,
-            config,
-            no_serve,
-            ..
+            config, no_serve, ..
         } => {
+            here_unlisted();
             // its settings, then its port: a daemon that cannot listen
             // starts nothing
             let server = crate::server::Server::read(config.as_deref())?;
@@ -1073,12 +1088,6 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
             }
         }
-        Cmd::Daemon {
-            once,
-            now,
-            no_serve,
-            ..
-        } => run_one(workspace()?, once, now, no_serve)?,
         Cmd::Emit(args) => emit::all(args)?,
         Cmd::Browser {
             cmd:

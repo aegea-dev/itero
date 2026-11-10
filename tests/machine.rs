@@ -123,7 +123,7 @@ impl Machine {
     fn daemon_all(&self) -> Daemon {
         let child = self
             .command(self.d.path())
-            .args(["daemon", "--all"])
+            .args(["daemon"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -143,7 +143,7 @@ impl Machine {
     fn daemon_all_on(&self, port: u16) -> Daemon {
         let child = self
             .command(self.d.path())
-            .args(["daemon", "--all", "--config", &self.server_file(port)])
+            .args(["daemon", "--config", &self.server_file(port)])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -156,7 +156,7 @@ impl Machine {
     fn daemon_all_said(&self, port: u16, said: &Path) -> Daemon {
         let child = self
             .command(self.d.path())
-            .args(["daemon", "--all", "--config", &self.server_file(port)])
+            .args(["daemon", "--config", &self.server_file(port)])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(said).unwrap())
@@ -460,7 +460,7 @@ fn a_stuck_workspace_is_told_and_the_others_run_on() {
     let port = free_port();
     let child = m
         .command(m.d.path())
-        .args(["daemon", "--all", "--config", &m.server_file(port)])
+        .args(["daemon", "--config", &m.server_file(port)])
         .env("ITERO_STUCK_AFTER", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
