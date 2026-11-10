@@ -75,6 +75,18 @@ add`, `ws remove`, `secret`, `emit` to every workspace, `ai`, `browser`,
 `watch`, `webhook`) work here only: given `--context`, they say so; the
 context in use does not change them.
 
+## Another itero on the server
+
+Over a context, the CLI and the server say their itero versions to each
+other. When they differ, the command says so once, on stderr:
+
+```
+prod runs itero 0.39.0, this itero is 0.38.0
+```
+
+A server refuses a CLI older than it in the compatibility number (the
+minor version below 1.0): upgrade this itero then. A newer CLI is served.
+
 ## Where they are kept
 
 In `contexts.json` in itero's config folder: `$XDG_CONFIG_HOME/itero/`,
