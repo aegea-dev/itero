@@ -41,6 +41,9 @@ pub struct Machine {
     /// Every running workspace's stop is under it: a workspace started
     /// after it was set is stopped at once.
     stop: std::sync::Arc<super::stop::Stop>,
+    /// Set once the first read of the list has started its workspaces:
+    /// `/readyz` answers 200 from then on.
+    ready: std::sync::atomic::AtomicBool,
 }
 
 impl Machine {
@@ -54,12 +57,18 @@ impl Machine {
             syncing: Mutex::new(()),
             port,
             stop: Default::default(),
+            ready: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     /// What stops every workspace it runs, those it starts later too.
     pub fn stopper(&self) -> std::sync::Arc<super::stop::Stop> {
         self.stop.clone()
+    }
+
+    /// Whether the first read of the list has started its workspaces.
+    pub fn ready(&self) -> bool {
+        self.ready.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Reads the list, and starts or stops workspaces to match it.
@@ -282,6 +291,7 @@ impl Machine {
         let mut backend = crate::watch::open_many(&[dir.clone(), dir.join(MODELS_WANTED)])?;
         let mut d = Debouncer::new(Duration::from_millis(200), Duration::from_secs(2));
         self.sync()?;
+        self.ready.store(true, std::sync::atomic::Ordering::SeqCst);
         loop {
             let timeout = d
                 .due()

@@ -382,3 +382,47 @@ fn a_folder_for_the_certificate_is_told_with_the_other_problems() {
     assert!(said.contains("is not a file"), "{said}");
     assert!(said.contains("tls.key: /yok/anahtar.pem:"), "{said}");
 }
+
+#[test]
+fn probes_answer_anyone_and_say_nothing_else() {
+    let m = Machine::new();
+    m.ok(&["token", "create", "kişi"]);
+    m.listed();
+    m.server_json(json!({ "listen": "127.0.0.1:0" }));
+    let o = m.opened();
+    for port in [o.opened, o.local] {
+        // ready once the list has been read once: "starting" until then
+        let end = Instant::now() + Duration::from_secs(20);
+        loop {
+            let r = http()
+                .get(format!("http://127.0.0.1:{port}/readyz"))
+                .send()
+                .unwrap();
+            assert!(r.headers().get("itero-version").is_none());
+            let code = r.status().as_u16();
+            let text = r.text().unwrap();
+            if code == 200 {
+                assert_eq!(text, "ok\n");
+                break;
+            }
+            assert_eq!((code, text.as_str()), (503, "starting\n"));
+            assert!(Instant::now() < end, "not ready in 20s");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let r = http()
+            .get(format!("http://127.0.0.1:{port}/livez"))
+            .send()
+            .unwrap();
+        assert_eq!(r.status(), 200);
+        assert!(r.headers().get("itero-version").is_none());
+        assert_eq!(r.text().unwrap(), "ok\n");
+    }
+    // any Host, even on the local API: they say nothing worth guarding
+    assert_eq!(
+        status(o.local, "/livez", None, Some("itero.örnek.test")),
+        200
+    );
+    // everything else on the opened listener still needs the token
+    assert_eq!(status(o.opened, "/health", None, None), 401);
+    assert_eq!(status(o.opened, "/workspaces", None, None), 401);
+}
