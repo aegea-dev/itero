@@ -69,10 +69,11 @@ and asks which.
 These go to the server: `ws info`, `ws check`, `ws which`, `ws emit`
 (`--wait` up to 10 minutes), `ws wf list`, `ws wf runs`, `ws wf stop`,
 `ws ac list`, `ws ac errors`, `ws cn list`, `ws ev list` and `ws ev
-cancel`. The commands about this machine (`daemon`, `service`, `ws add`,
-`ws remove`, `ws list`, `secret`, `emit` to every workspace, `info`,
-`ai`, `browser`, `watch`, `webhook`) work here only: given `--context`,
-they say so; the context in use does not change them.
+cancel`; and, about the server itself, `ws list` (its list) and `info`
+(its daemon). The commands about this machine (`daemon`, `service`, `ws
+add`, `ws remove`, `secret`, `emit` to every workspace, `ai`, `browser`,
+`watch`, `webhook`) work here only: given `--context`, they say so; the
+context in use does not change them.
 
 ## Where they are kept
 

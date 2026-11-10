@@ -324,14 +324,16 @@ check:
 | Route | Does |
 |---|---|
 | `GET /health` | the daemon, each running workspace's passes and connectors by name, itero-ai |
-| `GET /workspaces` | each listed workspace: `name`, `folder`, `state`, `why` |
+| `GET /workspaces` | each listed workspace: `name`, `folder`, `state`, `why`, `last_run`; the same as `itero ws list --json` |
 | `POST /events` | an event for every workspace on the list, as [`itero emit`](/commands/emit/#every-workspace) sends it |
 | `/ws/<name>/...` | that workspace's routes above: `POST /ws/<name>/events`, `GET /ws/<name>/runs` |
 
 ```json
-[{ "name": "quiet-river", "folder": "/Users/me/projects/home", "state": "running", "why": null },
+[{ "name": "quiet-river", "folder": "/Users/me/projects/home", "state": "running", "why": null,
+   "last_run": "2026-11-10T09:12:03Z" },
  { "name": "misty-lake", "folder": "/Users/me/projects/mail", "state": "stopped",
-   "why": "/Users/me/projects/mail: this workspace is run by brave-otter, pid 4211 already" }]
+   "why": "/Users/me/projects/mail: this workspace is run by brave-otter, pid 4211 already",
+   "last_run": null }]
 ```
 
 `POST /events` takes the same body as a workspace's, and answers 202 with

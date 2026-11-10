@@ -9,7 +9,12 @@ question after an upgrade is which itero it runs. For one workspace, see
 
 ```sh
 itero info [--json]
+itero info --context <name>
 ```
+
+With [`--context`](/commands/context/), it tells the daemon of that
+server instead: its address, pid, itero version and start, and each
+workspace.
 
 This itero's version, then the daemon that runs the machine's list: its
 pid, port, itero version and start, and each workspace with its passes and
