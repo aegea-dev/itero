@@ -22,6 +22,7 @@ command's options, and every command that prints something takes
 | [`emit`](/commands/emit/) | sends an event to every workspace on the machine's list |
 | [`secret`](/commands/secret/) | keeps a secret for every workspace, in the OS secret store |
 | [`context`](/commands/context/) | the itero servers you work with: dev, staging, production |
+| [`token`](/commands/token/) | the tokens this server lets in, each shown once |
 | [`ai`](/commands/ai/) | the local models `#ai` steps use |
 | [`watch`](/commands/watch/) | for connectors: a line per change to a file or folder |
 | [`browser watch`](/commands/browser/) | for connectors: a line per change on a page in Chrome |

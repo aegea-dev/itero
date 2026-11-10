@@ -63,6 +63,7 @@ export default defineConfig({
 						{ label: 'emit', slug: 'commands/emit' },
 						{ label: 'secret', slug: 'commands/secret' },
 						{ label: 'context', slug: 'commands/context' },
+						{ label: 'token', slug: 'commands/token' },
 						{
 							label: 'workspace (ws)',
 							items: [
