@@ -879,6 +879,11 @@ fn dispatch(cli: Cli) -> Result<()> {
             } else {
                 Some(crate::engine::http::listen_machine(server.port)?)
             };
+            // its certificate read and checked now, as its port is bound
+            let tls = match &server.tls {
+                Some(t) => Some(crate::server::tls_config(t)?),
+                None => None,
+            };
             let opened =
                 match server.listen {
                     Some(at) => Some(std::net::TcpListener::bind(at).map_err(|e| {
@@ -933,14 +938,24 @@ fn dispatch(cli: Cli) -> Result<()> {
                     let mut served = vec![(
                         crate::engine::http::machine_router(machine.clone(), port),
                         listener,
+                        None,
                     )];
                     if let Some(opened) = opened {
                         let at = opened.local_addr()?;
                         eprintln!("itero: opened on {at}");
-                        eprintln!(
-                            "itero: serving without TLS on {at}: tokens cross the network in clear unless a proxy in front adds TLS"
-                        );
-                        served.push((crate::engine::http::opened_router(machine, port), opened));
+                        match &server.tls {
+                            Some(t) => {
+                                eprintln!("itero: HTTPS on {at}, with {}", t.cert.display())
+                            }
+                            None => eprintln!(
+                                "itero: serving without TLS on {at}: tokens cross the network in clear unless a proxy in front adds TLS"
+                            ),
+                        }
+                        served.push((
+                            crate::engine::http::opened_router(machine, port),
+                            opened,
+                            tls,
+                        ));
                     }
                     crate::engine::http::serve_all(served)?;
                 }

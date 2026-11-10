@@ -503,19 +503,30 @@ pub fn listen(ws: &Workspace) -> anyhow::Result<(std::net::TcpListener, Option<S
 
 /// Serves `router` on `listener` until the process ends.
 pub fn serve(router: Router, listener: std::net::TcpListener) -> anyhow::Result<()> {
-    serve_all(vec![(router, listener)])
+    serve_all(vec![(router, listener, None)])
 }
 
+/// A router, its listener, and the TLS it serves with, if any.
+pub type Served = (
+    Router,
+    std::net::TcpListener,
+    Option<Arc<rustls::ServerConfig>>,
+);
+
 /// Serves each router on its listener, on one runtime, until one stops:
-/// the local API and, when opened, the opened one beside it.
-pub fn serve_all(served: Vec<(Router, std::net::TcpListener)>) -> anyhow::Result<()> {
+/// the local API and, when opened, the opened one beside it, HTTPS when
+/// it has TLS.
+pub fn serve_all(served: Vec<Served>) -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
         let mut all = tokio::task::JoinSet::new();
-        for (router, listener) in served {
+        for (router, listener, tls) in served {
             listener.set_nonblocking(true)?;
             let listener = tokio::net::TcpListener::from_std(listener)?;
-            all.spawn(async move { axum::serve(listener, router).await });
+            match tls {
+                None => all.spawn(async move { axum::serve(listener, router).await }),
+                Some(tls) => all.spawn(serve_tls(listener, router, tls)),
+            };
         }
         // a listener that ends ends the daemon's serving, as one alone did
         if let Some(ended) = all.join_next().await {
@@ -523,6 +534,32 @@ pub fn serve_all(served: Vec<(Router, std::net::TcpListener)>) -> anyhow::Result
         }
         Ok(())
     })
+}
+
+/// Serves `router` over TLS on `listener`: each connection's handshake,
+/// then HTTP/1.1, on a task of its own.
+async fn serve_tls(
+    listener: tokio::net::TcpListener,
+    router: Router,
+    tls: Arc<rustls::ServerConfig>,
+) -> std::io::Result<()> {
+    let acceptor = tokio_rustls::TlsAcceptor::from(tls);
+    loop {
+        let (tcp, _) = listener.accept().await?;
+        let (acceptor, router) = (acceptor.clone(), router.clone());
+        tokio::spawn(async move {
+            // a handshake that fails (plain HTTP sent to it, a client that
+            // does not trust the certificate) or a connection that breaks
+            // ends that connection only: the client is the one told
+            let Ok(stream) = acceptor.accept(tcp).await else {
+                return;
+            };
+            let service = hyper_util::service::TowerToHyperService::new(router);
+            let _ = hyper::server::conn::http1::Builder::new()
+                .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                .await;
+        });
+    }
 }
 
 /// What the machine's routes share.
