@@ -3,6 +3,7 @@ pub mod answer;
 pub mod browser;
 pub mod cli;
 pub mod connectors;
+pub mod context;
 pub mod engine;
 mod file_arg;
 pub mod flow;

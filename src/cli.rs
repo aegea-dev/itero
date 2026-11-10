@@ -1,6 +1,7 @@
 //! The command line.
 mod ai;
 mod complete;
+mod context;
 mod emit;
 mod event;
 mod kinds;
@@ -129,6 +130,11 @@ pub enum Cmd {
     Completion {
         /// bash, zsh or fish
         shell: Shell,
+    },
+    /// The itero deployments this CLI talks to: each its server, token and workspace
+    Context {
+        #[command(subcommand)]
+        cmd: ContextCmd,
     },
     /// Start the machine's daemon at login, kept up by a watchdog
     Service {
@@ -461,6 +467,35 @@ pub enum WorkspaceCmd {
     List {
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ContextCmd {
+    /// Add one, checked first: its server's URL; its token is asked for (or ITERO_TOKEN)
+    Add {
+        /// Its name: letters, digits, - and _
+        name: String,
+        /// Its server's address, like https://itero.example.com
+        url: String,
+        /// The workspace its commands mean when --ws names none
+        #[arg(long, value_name = "NAME")]
+        ws: Option<String>,
+    },
+    /// The one in use from now on (local: this machine)
+    Use {
+        #[arg(add = complete::contexts())]
+        name: String,
+    },
+    /// Each one, the current one marked
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Take one out
+    Remove {
+        #[arg(add = complete::contexts())]
+        name: String,
     },
 }
 
@@ -1081,6 +1116,12 @@ fn dispatch(cli: Cli) -> Result<()> {
             end_with_stdin(|| {});
             webhook.run()?;
         }
+        Cmd::Context { cmd } => match cmd {
+            ContextCmd::Add { name, url, ws } => context::add(&name, &url, ws)?,
+            ContextCmd::Use { name } => context::use_(&name)?,
+            ContextCmd::List { json } => context::list(json)?,
+            ContextCmd::Remove { name } => context::remove(&name)?,
+        },
         Cmd::Service { cmd } => {
             use crate::engine::service;
             let label = service::machine_label();

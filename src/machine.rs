@@ -4,18 +4,35 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// itero's state folder: `$XDG_STATE_HOME/itero`, else
-/// `~/.local/state/itero`, on every OS.
+/// itero's state folder, what itero writes: `$XDG_STATE_HOME/itero`,
+/// else `~/.local/state/itero`, on every OS.
 pub fn state_dir() -> Result<PathBuf> {
     state_dir_from(|k| std::env::var(k).ok())
 }
 
+/// itero's config folder, what its user writes: `$XDG_CONFIG_HOME/itero`,
+/// else `~/.config/itero`, on every OS (`/etc/itero` with
+/// `XDG_CONFIG_HOME=/etc`).
+pub fn config_dir() -> Result<PathBuf> {
+    config_dir_from(|k| std::env::var(k).ok())
+}
+
 fn state_dir_from(get: impl Fn(&str) -> Option<String>) -> Result<PathBuf> {
-    if let Some(x) = get("XDG_STATE_HOME").filter(|x| !x.is_empty()) {
+    xdg_dir("XDG_STATE_HOME", ".local/state", get)
+}
+
+fn config_dir_from(get: impl Fn(&str) -> Option<String>) -> Result<PathBuf> {
+    xdg_dir("XDG_CONFIG_HOME", ".config", get)
+}
+
+/// `$<var>/itero`, else `~/<under_home>/itero`: an empty variable is not
+/// set, as the XDG Base Directory spec says.
+fn xdg_dir(var: &str, under_home: &str, get: impl Fn(&str) -> Option<String>) -> Result<PathBuf> {
+    if let Some(x) = get(var).filter(|x| !x.is_empty()) {
         return Ok(PathBuf::from(x).join("itero"));
     }
     let home = get("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join(".local/state/itero"))
+    Ok(PathBuf::from(home).join(under_home).join("itero"))
 }
 
 /// The list's file.
@@ -132,5 +149,28 @@ mod tests {
         assert_eq!(got, PathBuf::from("/durum/itero"));
         let got = state_dir_from(|k| (k == "HOME").then(|| "/ev".into())).unwrap();
         assert_eq!(got, PathBuf::from("/ev/.local/state/itero"));
+    }
+
+    #[test]
+    fn the_config_folder_follows_xdg_config_home() {
+        let got = config_dir_from(|k| match k {
+            "XDG_CONFIG_HOME" => Some("/ayar".into()),
+            "HOME" => Some("/ev".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(got, PathBuf::from("/ayar/itero"));
+        // empty is not set, as the XDG spec says
+        let got = config_dir_from(|k| match k {
+            "XDG_CONFIG_HOME" => Some(String::new()),
+            "HOME" => Some("/ev".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(got, PathBuf::from("/ev/.config/itero"));
+        // a container's /etc/itero, by XDG_CONFIG_HOME=/etc
+        let got = config_dir_from(|k| (k == "XDG_CONFIG_HOME").then(|| "/etc".into())).unwrap();
+        assert_eq!(got, PathBuf::from("/etc/itero"));
+        assert!(config_dir_from(|_| None).is_err());
     }
 }
