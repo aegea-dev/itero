@@ -135,7 +135,17 @@ pub fn check(name: &str, url: &str, token: Option<&str>) -> Result<String> {
         401 | 403 => {
             bail!("{name} refused the token: give it one from itero token create on its server")
         }
-        s => bail!("{name} ({url}) answered {s} to /health: is it an itero server?"),
+        s => {
+            // an itero that refuses says why (this itero too old for it)
+            let said: Option<String> = r
+                .json::<serde_json::Value>()
+                .ok()
+                .and_then(|v| v["error"].as_str().map(String::from));
+            match said {
+                Some(why) => bail!("{name} ({url}): {why}"),
+                None => bail!("{name} ({url}) answered {s} to /health: is it an itero server?"),
+            }
+        }
     }
     let v: serde_json::Value = r
         .json()

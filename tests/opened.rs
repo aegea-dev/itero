@@ -153,6 +153,8 @@ fn the_opened_api_lets_in_a_token_and_nobody_else() {
         .unwrap();
     assert_eq!(r.status(), 401);
     assert_eq!(r.headers()["www-authenticate"], "Bearer");
+    // a stranger learns nothing, not even which itero answers
+    assert!(r.headers().get("itero-version").is_none());
     let v: Value = r.json().unwrap();
     assert!(v["error"].as_str().unwrap().contains("token"), "{v}");
     assert_eq!(status(o.opened, "/health", Some("itero_yanlış"), None), 401);

@@ -71,12 +71,14 @@ pub fn router(ws: Workspace, engine: Arc<Engine>, port: u16, api: String, run_by
         .route("/which/{name}", get(which))
         .route("/browser/tabs", post(open_watch));
     // under the machine's API, the machine's router guards it (its Host
-    // check locally, a token where it is opened)
+    // check locally, a token where it is opened) and says its version
     let routes = match run_by {
-        RunBy::Workspace => routes.layer(middleware::from_fn_with_state(s.clone(), local_only)),
+        RunBy::Workspace => routes
+            .layer(middleware::from_fn_with_state(s.clone(), local_only))
+            .layer(middleware::from_fn(versioned)),
         RunBy::Machine => routes,
     };
-    routes.layer(middleware::from_fn(versioned)).with_state(s)
+    routes.with_state(s)
 }
 
 /// The header an itero says its version in, asking or answering.
@@ -120,7 +122,7 @@ pub fn refused(server: &str, client: &str) -> Option<String> {
     let older = cmaj < smaj || (smaj == 0 && cmaj == 0 && cmin < smin);
     older.then(|| {
         format!(
-            "this server runs itero {server}; itero {client} is too old for it: curl -fsSL https://itero.sh/install | sh puts a new one in place"
+            "this server runs itero {server}; itero {client} is too old for it: upgrade itero (brew upgrade itero, or curl -fsSL https://itero.sh/install | sh)"
         )
     })
 }
@@ -592,9 +594,11 @@ pub fn machine_router(machine: Arc<super::machine::Machine>, port: u16) -> Route
 /// them: every request with a token `itero token create` made, any Host.
 /// `port` is the local API's, which a workspace's `info` names.
 pub fn opened_router(machine: Arc<super::machine::Machine>, port: u16) -> Router {
+    // the token first: a request without one learns nothing, its version
+    // included
     machine_routes()
-        .layer(middleware::from_fn(bearer))
         .layer(middleware::from_fn(versioned))
+        .layer(middleware::from_fn(bearer))
         .with_state(MachineShared { machine, port })
 }
 
