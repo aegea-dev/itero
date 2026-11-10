@@ -1096,3 +1096,25 @@ fn add_says_whether_the_machines_daemon_runs_the_workspace() {
     let said = m.ok(&good, &["ws", "add"]);
     assert!(said.contains("the machine's daemon runs it"), "{said}");
 }
+
+#[test]
+fn a_workspace_the_running_daemon_has_not_read_yet_is_pending() {
+    let m = Machine::new();
+    let w = m.workspace("yeni");
+    // a daemon answers, and has none of the list yet
+    fake_machine(
+        &m,
+        serde_json::json!({ "ok": true, "daemon": { "pid": 7, "itero": env!("CARGO_PKG_VERSION") } }),
+        serde_json::json!([]),
+    );
+    m.ok(&w, &["ws", "add"]);
+    let v = m.json(&w, &["ws", "list", "--json"]);
+    assert_eq!(v[0]["state"], "pending", "{v}");
+    assert!(v[0]["why"].as_str().unwrap().contains("takes it up"), "{v}");
+    // with no daemon answering, it is stopped
+    let m = Machine::new();
+    let w = m.workspace("yeni");
+    m.ok(&w, &["ws", "add"]);
+    let v = m.json(&w, &["ws", "list", "--json"]);
+    assert_eq!(v[0]["state"], "stopped", "{v}");
+}

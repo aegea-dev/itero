@@ -780,9 +780,9 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
         Cmd::Workspace { cmd, .. } => match cmd {
             WorkspaceCmd::Add => "ws add",
             WorkspaceCmd::Remove { .. } => "ws remove",
-            WorkspaceCmd::List { .. } => "ws list",
             WorkspaceCmd::Secret { .. } => "ws secret",
-            WorkspaceCmd::Info { .. }
+            WorkspaceCmd::List { .. }
+            | WorkspaceCmd::Info { .. }
             | WorkspaceCmd::Check { .. }
             | WorkspaceCmd::Which { .. }
             | WorkspaceCmd::Emit(_)
@@ -791,6 +791,8 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
             | WorkspaceCmd::Event { .. }
             | WorkspaceCmd::Connector { .. } => return None,
         },
+        // the server's daemon, over a context
+        Cmd::Info { .. } => return None,
         // they only say where a command moved
         Cmd::MovedCheck { .. }
         | Cmd::MovedWhich { .. }
@@ -804,7 +806,6 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
         Cmd::Service { .. } => "service",
         Cmd::Emit(_) => "emit",
         Cmd::Secret { .. } => "secret",
-        Cmd::Info { .. } => "info",
         Cmd::Ai { .. } => "ai",
         Cmd::Completion { .. } => "completion",
         Cmd::Context { .. } => "context",
@@ -1033,7 +1034,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
                 WorkspaceCmd::List { json } => {
                     none("list")?;
-                    workspace::list(json)?
+                    workspace::list(json, crate::context::chosen(context.as_deref())?)?
                 }
                 WorkspaceCmd::Info { json } => top::info(&client()?, json)?,
                 WorkspaceCmd::Check { json } => top::check(&client()?, json)?,
@@ -1148,7 +1149,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             },
         },
         Cmd::Secret { name, file } => top::secret(None, &name, file)?,
-        Cmd::Info { json } => top::machine_info(json)?,
+        Cmd::Info { json } => top::machine_info(json, crate::context::chosen(context.as_deref())?)?,
         Cmd::Watch { path, command } => {
             let watch = crate::connectors::Watch::new(&path)?;
             end_with_stdin(crate::connectors::end_run);

@@ -541,8 +541,18 @@ async fn machine_health(State(s): State<MachineShared>) -> Json<Value> {
     }))
 }
 
-async fn workspaces(State(s): State<MachineShared>) -> Json<Value> {
-    Json(Value::Array(s.machine.states()))
+/// `GET /workspaces`: the machine's list, each as it is now: the same
+/// answer as `itero ws list --json`.
+async fn workspaces(State(s): State<MachineShared>) -> Result<Json<Value>, Reply> {
+    let seen = s.machine.seen();
+    let listed =
+        tokio::task::spawn_blocking(move || crate::answer::machine::workspaces(Some(&seen)))
+            .await
+            .map_err(|e| fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .map_err(fault)?;
+    serde_json::to_value(listed)
+        .map(Json)
+        .map_err(|e| internal(e.into()))
 }
 
 /// `POST /events`: an event for every workspace on the machine's list, as

@@ -205,7 +205,40 @@ fn workspace_lines(workspaces: &Value) {
 }
 
 /// `itero info`: this itero, and the machine's daemon as its `/health` says.
-pub fn machine_info(json: bool) -> Result<()> {
+/// With a context, the server's daemon as its `/health` says, under its
+/// address: notifications are this machine's, so not its.
+pub fn machine_info(json: bool, context: Option<crate::context::Context>) -> Result<()> {
+    let Some(c) = context else {
+        return info_here(json);
+    };
+    let this = env!("CARGO_PKG_VERSION");
+    let h: Value = crate::answer::remote::server(&c.name, &c.url, c.token.as_deref(), &["health"])?;
+    let v = json!({
+        "itero": this,
+        "url": c.url,
+        "daemon": h["daemon"],
+        "workspaces": h["workspaces"],
+        "ai": h["ai"],
+    });
+    show(json, &v, |v| {
+        println!("itero {this}");
+        println!("{}: {}", c.name, c.url);
+        let d = &v["daemon"];
+        println!(
+            "daemon: pid {}, itero {}, started {}",
+            d["pid"],
+            text(&d["itero"]),
+            text(&d["started"])
+        );
+        workspace_lines(&v["workspaces"]);
+        if let Some(state) = v["ai"]["state"].as_str() {
+            println!("ai: {state} {}", text(&v["ai"]["model"]));
+        }
+    })
+}
+
+/// `itero info` on this machine.
+fn info_here(json: bool) -> Result<()> {
     let this = env!("CARGO_PKG_VERSION");
     let port = crate::engine::http::machine_port();
     let health = port.and_then(super::daemon_health);

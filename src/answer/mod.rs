@@ -4,6 +4,7 @@
 //! machine, in the same process, with no daemon needed.
 pub mod events;
 pub mod kinds;
+pub mod machine;
 pub mod remote;
 pub mod runs;
 pub mod workflows;
