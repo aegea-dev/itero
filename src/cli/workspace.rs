@@ -5,7 +5,7 @@ use crate::engine::journal::Journal;
 use crate::machine::{Entry, List, list_path};
 use crate::workspace::Workspace;
 use anyhow::{Context, Result, bail};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// The workspace a `ws` command is about: the one named on the machine's
 /// list, else the folder's.
@@ -173,22 +173,6 @@ pub fn remove(name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// A listed workspace as it is now: `missing` when its folder is gone or
-/// holds another workspace, else `stopped` (no daemon runs it).
-fn state(e: &Entry) -> (Value, Value) {
-    match crate::engine::machine::open(e) {
-        Err(_) => (json!("missing"), Value::Null),
-        Ok((_, j)) => {
-            let last = j
-                .runs_page(None, None, &[], 1)
-                .ok()
-                .and_then(|r| r.into_iter().next())
-                .map(|r| json!(r.started));
-            (json!("stopped"), last.unwrap_or(Value::Null))
-        }
-    }
-}
-
 /// The machine daemon's own view of its workspaces, when one answers.
 /// What the machine's daemon, when one answers, says of a workspace: its
 /// name and state there and why (none when it is not on its list), and
@@ -211,12 +195,15 @@ pub(crate) fn machine_says(root: &std::path::Path) -> Option<MachineSays> {
         .and_then(|h| h["daemon"]["itero"].as_str().map(str::to_string));
     Some(MachineSays {
         name: entry.and_then(|w| w["name"].as_str().map(str::to_string)),
-        state: entry.map(|w| {
-            (
-                w["state"].as_str().unwrap_or("unknown").to_string(),
-                w["why"].as_str().map(str::to_string),
-            )
-        }),
+        // one it has not read yet has no state there yet
+        state: entry
+            .filter(|w| w["state"] != crate::answer::machine::PENDING)
+            .map(|w| {
+                (
+                    w["state"].as_str().unwrap_or("unknown").to_string(),
+                    w["why"].as_str().map(str::to_string),
+                )
+            }),
         itero,
     })
 }
@@ -267,25 +254,31 @@ pub(crate) fn daemon_states() -> Option<Vec<Value>> {
 }
 
 /// `itero workspace list`: each listed workspace's name, folder, state
-/// (the daemon's, when one runs) and last run.
-pub fn list(json_out: bool) -> Result<()> {
-    let list = List::read(&list_path()?)?;
-    let running = daemon_states().unwrap_or_default();
-    let rows: Vec<Value> = list
-        .workspaces
-        .iter()
-        .map(|e| {
-            let (mut state, last) = state(e);
-            let mut why = Value::Null;
-            if let Some(d) = running.iter().find(|d| d["name"] == e.name.as_str()) {
-                state = d["state"].clone();
-                why = d["why"].clone();
-            }
-            json!({ "name": e.name, "folder": e.folder.display().to_string(),
-                    "state": state, "why": why, "last_run": last })
-        })
-        .collect();
-    let v = Value::Array(rows);
+/// (the daemon's, when one runs) and last run; with a context, its
+/// server's list.
+pub fn list(json_out: bool, context: Option<crate::context::Context>) -> Result<()> {
+    use crate::answer::machine::{Seen, workspaces};
+    let listed = match context {
+        Some(c) => {
+            crate::answer::remote::server(&c.name, &c.url, c.token.as_deref(), &["workspaces"])?
+        }
+        None => {
+            // what the machine's daemon, when one answers, says of each
+            let seen: Option<Vec<Seen>> = daemon_states().map(|all| {
+                all.iter()
+                    .filter_map(|d| {
+                        Some(Seen {
+                            name: d["name"].as_str()?.to_string(),
+                            state: d["state"].as_str()?.to_string(),
+                            why: d["why"].as_str().map(String::from),
+                        })
+                    })
+                    .collect()
+            });
+            workspaces(seen.as_deref())?
+        }
+    };
+    let v = serde_json::to_value(listed)?;
     show(json_out, &v, |v| {
         let now = chrono::Utc::now();
         let mut t = vec![vec![

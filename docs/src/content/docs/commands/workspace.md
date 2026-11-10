@@ -77,8 +77,11 @@ journal stay.
 
 Each listed workspace: its name, folder, state and last run. The state
 is the running daemon's when one answers (`running`, `stuck`, `failed`,
-`stopped` with why), else `stopped`, or `missing` when its folder is gone
-or holds another workspace.
+`stopped` with why, or `pending` until it reads a workspace just added),
+else `stopped`, or `missing` when its folder is gone or holds another
+workspace. `--json` gives the same JSON as the machine's
+[`GET /workspaces`](/reference/http/#one-itero-per-machine); with
+[`--context`](/commands/context/), that server's list.
 
 ```
 $ itero ws list

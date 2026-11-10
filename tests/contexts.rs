@@ -358,10 +358,8 @@ fn a_command_about_this_machine_refuses_a_context_given_to_it() {
         &["daemon"][..],
         &["service", "status"],
         &["ws", "add"],
-        &["ws", "list"],
         &["secret", "ANAHTAR"],
         &["emit", "kapı.açıldı"],
-        &["info"],
     ] {
         let mut a = args.to_vec();
         a.extend(["--context", "uzak"]);

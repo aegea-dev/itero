@@ -157,16 +157,18 @@ impl Machine {
         })
     }
 
-    /// Each listed workspace: its name, folder, state and why.
-    pub fn states(&self) -> Vec<Value> {
-        let mut out: Vec<Value> = self
+    /// What it says of each workspace it has: its state and why.
+    pub fn seen(&self) -> Vec<crate::answer::machine::Seen> {
+        use crate::answer::machine::Seen;
+        let mut out: Vec<Seen> = self
             .running
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .values()
-            .map(|r| {
-                json!({ "name": r.name, "folder": r.ws.root.display().to_string(),
-                        "state": r.state(), "why": null })
+            .map(|r| Seen {
+                name: r.name.clone(),
+                state: r.state().to_string(),
+                why: None,
             })
             .collect();
         out.extend(
@@ -174,12 +176,12 @@ impl Machine {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .values()
-                .map(|(e, i)| {
-                    json!({ "name": e.name, "folder": e.folder.display().to_string(),
-                            "state": i.state, "why": i.why })
+                .map(|(e, i)| Seen {
+                    name: e.name.clone(),
+                    state: i.state.to_string(),
+                    why: Some(i.why.clone()),
                 }),
         );
-        out.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
         out
     }
 

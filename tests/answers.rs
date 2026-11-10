@@ -657,3 +657,42 @@ fn the_text_is_the_same_over_a_context() {
         assert_eq!(text(args), text(&w.remote(args)), "{args:?}");
     }
 }
+
+#[test]
+fn the_machines_list_is_the_same_from_the_cli_and_the_api() {
+    let w = Ws::new();
+    let api: Value = http()
+        .get(format!("http://127.0.0.1:{}/workspaces", w.port))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(w.cli(&["ws", "list"]), api);
+    assert_eq!(w.cli(&w.remote(&["ws", "list"])), api, "over a context");
+    let me = &api[0];
+    assert_eq!(me["name"], w.name.as_str(), "{api}");
+    assert_eq!(me["state"], "running", "{api}");
+    assert!(me["last_run"].is_string(), "the runs it has: {api}");
+}
+
+#[test]
+fn info_over_a_context_is_the_servers() {
+    let w = Ws::new();
+    let local = w.cli(&["info"]);
+    let remote = w.cli(&w.remote(&["info"]));
+    // the same daemon, its workspaces, as its /health says
+    assert_eq!(remote["daemon"], local["daemon"], "{remote}");
+    assert_eq!(remote["workspaces"], local["workspaces"], "{remote}");
+    assert_eq!(
+        remote["url"],
+        format!("http://127.0.0.1:{}/", w.port).as_str(),
+        "{remote}"
+    );
+    let o = w.command().args(w.remote(&["info"])).output().unwrap();
+    let text = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        text.contains(&format!("{CONTEXT}: http://127.0.0.1:{}/", w.port)),
+        "{text}"
+    );
+    assert!(text.contains(&w.name), "{text}");
+}
