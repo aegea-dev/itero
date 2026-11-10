@@ -224,3 +224,165 @@ fn listen_must_be_an_address_and_a_port() {
         "{said}"
     );
 }
+
+/// A certificate authority, and a certificate it signed for 127.0.0.1
+/// with its key: (authority, certificate, key), PEM.
+fn certificates() -> (String, String, String) {
+    use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
+    let mut authority = CertificateParams::new(Vec::<String>::new()).unwrap();
+    authority.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let authority = CertifiedIssuer::self_signed(authority, KeyPair::generate().unwrap()).unwrap();
+    let key = KeyPair::generate().unwrap();
+    let cert = CertificateParams::new(vec!["127.0.0.1".to_string()])
+        .unwrap()
+        .signed_by(&key, &authority)
+        .unwrap();
+    (authority.pem(), cert.pem(), key.serialize_pem())
+}
+
+impl Machine {
+    /// `tls` files written in the machine's folder: their paths.
+    fn tls_files(&self, cert: &str, key: &str) -> (String, String) {
+        let d = self.d.path().join("tls");
+        std::fs::create_dir_all(&d).unwrap();
+        let (c, k) = (d.join("sertifika.pem"), d.join("anahtar.pem"));
+        std::fs::write(&c, cert).unwrap();
+        std::fs::write(&k, key).unwrap();
+        (c.display().to_string(), k.display().to_string())
+    }
+}
+
+#[test]
+fn tls_serves_the_opened_api_over_https() {
+    let m = Machine::new();
+    let token = m.ok(&["token", "create", "kişi"]).trim().to_string();
+    let (authority, cert, key) = certificates();
+    let (cert, key) = m.tls_files(&cert, &key);
+    m.server_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
+    let o = m.opened();
+    // reqwest's rustls needs ring as the process's provider, as itero's does
+    itero::net::client(Duration::from_secs(1)).unwrap();
+    let https = reqwest::blocking::Client::builder()
+        .tls_certs_only([reqwest::Certificate::from_pem(authority.as_bytes()).unwrap()])
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let url = format!("https://127.0.0.1:{}/health", o.opened);
+    let r = https.get(&url).bearer_auth(&token).send().unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        https.get(&url).send().unwrap().status(),
+        401,
+        "a token still"
+    );
+    // plain HTTP to it gets no answer
+    assert_eq!(status(o.opened, "/health", Some(&token), None), 0);
+    let said = std::fs::read_to_string(&o.said).unwrap();
+    assert!(!said.contains("without TLS"), "{said}");
+    // the local API beside it stays plain HTTP
+    assert_eq!(status(o.local, "/health", None, None), 200);
+}
+
+#[test]
+fn a_key_that_is_not_the_certificates_stops_the_daemon() {
+    let m = Machine::new();
+    m.ok(&["token", "create", "kişi"]);
+    let (_, cert, _) = certificates();
+    let (_, _, other) = certificates();
+    let (cert, key) = m.tls_files(&cert, &other);
+    m.server_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
+    let o = m.command().args(["daemon", "--all"]).output().unwrap();
+    assert!(!o.status.success());
+    let said = String::from_utf8_lossy(&o.stderr);
+    assert!(said.contains("anahtar.pem"), "{said}");
+}
+
+#[test]
+fn tls_needs_listen_and_both_files_every_problem_told() {
+    let m = Machine::new();
+    m.server_json(json!({ "tls": { "cert": "/yok/sertifika.pem", "fazla": 1 } }));
+    let o = m.command().args(["daemon", "--all"]).output().unwrap();
+    assert!(!o.status.success());
+    let said = String::from_utf8_lossy(&o.stderr);
+    for problem in [
+        "tls: for listen, which is not given",
+        "tls.key: the private key's PEM file, not given",
+        "tls.fazla: not a setting of tls (cert, key)",
+        "tls.cert: /yok/sertifika.pem:",
+    ] {
+        assert!(said.contains(problem), "{problem}: {said}");
+    }
+}
+
+impl Machine {
+    /// An opened daemon with TLS, a token for it, and a client that
+    /// trusts its certificate authority.
+    fn opened_tls(&self, key_mode: u32) -> (Opened, String, reqwest::blocking::Client) {
+        use std::os::unix::fs::PermissionsExt;
+        let token = self.ok(&["token", "create", "kişi"]).trim().to_string();
+        let (authority, cert, key) = certificates();
+        let (cert, key) = self.tls_files(&cert, &key);
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(key_mode)).unwrap();
+        self.server_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
+        let o = self.opened();
+        itero::net::client(Duration::from_secs(1)).unwrap();
+        let https = reqwest::blocking::Client::builder()
+            .tls_certs_only([reqwest::Certificate::from_pem(authority.as_bytes()).unwrap()])
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        (o, token, https)
+    }
+}
+
+#[test]
+fn idle_connections_do_not_hold_up_a_client_and_are_closed() {
+    use std::io::Read;
+    let m = Machine::new();
+    let (o, token, https) = m.opened_tls(0o600);
+    // connections that never start a handshake
+    let idle: Vec<std::net::TcpStream> = (0..8)
+        .map(|_| std::net::TcpStream::connect(("127.0.0.1", o.opened)).unwrap())
+        .collect();
+    let began = Instant::now();
+    let url = format!("https://127.0.0.1:{}/health", o.opened);
+    let r = https.get(&url).bearer_auth(&token).send().unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        began.elapsed()
+    );
+    // one that stays silent is closed once the handshake's time is up
+    let mut one = idle.into_iter().next().unwrap();
+    one.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    let began = Instant::now();
+    let read = one.read(&mut [0u8; 16]);
+    assert!(
+        matches!(read, Ok(0)),
+        "{read:?} after {:?}",
+        began.elapsed()
+    );
+}
+
+#[test]
+fn a_key_others_can_read_is_said_at_the_start() {
+    let m = Machine::new();
+    let (o, _, _) = m.opened_tls(0o644);
+    let said = std::fs::read_to_string(&o.said).unwrap();
+    assert!(said.contains("anahtar.pem: readable by others"), "{said}");
+}
+
+#[test]
+fn a_folder_for_the_certificate_is_told_with_the_other_problems() {
+    let m = Machine::new();
+    let d = m.d.path().join("tls");
+    std::fs::create_dir_all(&d).unwrap();
+    m.server_json(json!({ "listen": "127.0.0.1:0",
+                          "tls": { "cert": d.display().to_string(), "key": "/yok/anahtar.pem" } }));
+    let o = m.command().args(["daemon", "--all"]).output().unwrap();
+    assert!(!o.status.success());
+    let said = String::from_utf8_lossy(&o.stderr);
+    assert!(said.contains("is not a file"), "{said}");
+    assert!(said.contains("tls.key: /yok/anahtar.pem:"), "{said}");
+}

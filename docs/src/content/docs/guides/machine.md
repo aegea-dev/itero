@@ -116,5 +116,6 @@ itero token create laptop   # prints the token once
 add `"listen": "0.0.0.0:8443"` to `~/.config/itero/server.json`, and
 `itero service restart`;
 
-then, on your machine, `itero context add office https://office.example.com
---ws quiet-river` with that token, behind a proxy that adds TLS.
+with a `tls` certificate beside it, or behind a proxy that adds TLS; then,
+on your machine, `itero context add office https://office.example.com:8443
+--ws quiet-river` with that token.
