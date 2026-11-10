@@ -10,7 +10,7 @@ some five edits a second. Two workflows watch the stream:
   most once in 10 minutes per page.
 
 ```sh
-itero daemon
+itero ws daemon
 ```
 
 It needs `curl` and `jq`.

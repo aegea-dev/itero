@@ -4,7 +4,7 @@ Replies from your own app reach the step waiting for them. One workflow
 takes every webhook and sends the events the others use.
 
     echo 'APP_TOKEN=a-long-random-value' > .env
-    itero daemon
+    itero ws daemon
 
 Then ask, and answer as your app would:
 

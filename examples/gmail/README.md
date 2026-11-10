@@ -22,7 +22,7 @@ workspace's `.env`, which `itero ws add` keeps out of git.
 
 ```sh
 itero secret GMAIL_PASS     # the app password, without its spaces
-itero daemon
+itero ws daemon
 ```
 
 The first start only notes where the inbox is; each mail after that is

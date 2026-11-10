@@ -10,7 +10,7 @@ bringing its own packages with its own tools; itero installs nothing.
   bun/check-order                      Bun installs zod on the first run
   docker/to-markdown                   pandoc in Docker (pandoc/minimal)
 
-Run `itero daemon` in this folder, then from another terminal:
+Run `itero ws daemon` in this folder, then from another terminal:
   itero ws emit --wait title.received '{"title": "Çok Güzel Bir Başlık"}'
   itero ws emit --wait reminder.requested '{"text": "yarın 15:00"}'
   itero ws emit --wait page.links '{"url": "https://www.rust-lang.org"}'

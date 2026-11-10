@@ -35,7 +35,7 @@ workflow's `timeout` (an hour), and its `error` step posts that too, with
 `why`. Without `buttons` or `wait`, the run ends as soon as it is shown,
 and is posted then.
 
-Run `itero daemon` in this folder.
+Run `itero ws daemon` in this folder.
 
 ## Tests
 

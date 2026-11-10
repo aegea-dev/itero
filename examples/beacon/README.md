@@ -6,7 +6,7 @@ is asked; every 10 minutes the disk's free space is checked.
 When a site goes down, comes back, or the disk runs low, you hear about
 it once.
 
-Run `itero daemon` in this folder and leave it running. The first check
+Run `itero ws daemon` in this folder and leave it running. The first check
 tells you what it watches; after that, only changes. Your own sites:
 the `sites` arg of `#check-sites` in `workflows/sites.json` (the disk's
 `min_free` is in `workflows/disk.json`). Your own checks: an action that
