@@ -297,15 +297,15 @@ fn site(page: &str) -> Value {
     let origin: String = page.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
     let get = |path: &str| -> Value {
         let got = crate::net::client(Duration::from_secs(10))
-            .map_err(|e| e.to_string())
+            .map_err(|e| crate::net::cause(&e))
             .and_then(|c| {
                 c.get(format!("{origin}{path}"))
                     .send()
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| crate::net::cause(&e))
             })
             .and_then(|r| {
                 let ok = r.status().is_success();
-                r.text().map(|t| (ok, t)).map_err(|e| e.to_string())
+                r.text().map(|t| (ok, t)).map_err(|e| crate::net::cause(&e))
             });
         match got {
             Ok((true, text)) => json!({ "found": true, "size": text.len(), "text": text }),

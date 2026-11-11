@@ -48,3 +48,17 @@ fn waiting_for_an_event_that_never_comes_times_out() {
     // still usable after a timeout
     assert_eq!(t.eval("1 + 1").unwrap(), json!(2));
 }
+
+#[test]
+fn a_browser_that_cannot_be_reached_says_why() {
+    // a port nothing listens on any more: the request is refused, and the
+    // error says so, not only reqwest's "error sending request"
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let e = cdp::new_window(port, "about:blank").unwrap_err();
+    assert!(e.starts_with("the browser: "), "{e}");
+    assert!(e.to_lowercase().contains("refused"), "{e}");
+}

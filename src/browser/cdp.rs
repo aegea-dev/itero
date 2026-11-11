@@ -182,9 +182,11 @@ fn http(method: reqwest::Method, port: u16, path: &str) -> Result<String, String
     let r = c
         .request(method, format!("http://127.0.0.1:{port}{path}"))
         .send()
-        .map_err(|e| format!("the browser: {e}"))?;
+        .map_err(|e| format!("the browser: {}", crate::net::cause(&e)))?;
     let ok = r.status().is_success();
-    let body = r.text().map_err(|e| format!("the browser: {e}"))?;
+    let body = r
+        .text()
+        .map_err(|e| format!("the browser: {}", crate::net::cause(&e)))?;
     if ok {
         Ok(body)
     } else {

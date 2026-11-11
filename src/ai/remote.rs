@@ -330,7 +330,7 @@ pub fn run(
         }
         let resp = req
             .send()
-            .map_err(|e| fail(format!("{url} did not answer: {e}")))?;
+            .map_err(|e| fail(format!("{url} did not answer: {}", crate::net::cause(&e))))?;
         let status = resp.status();
         if !status.is_success() {
             let v: Value = resp.json().unwrap_or_default();
@@ -349,7 +349,7 @@ pub fn run(
             read_stream(api, resp, told)?
         } else {
             resp.json()
-                .map_err(|e| fail(format!("reading the answer: {e}")))?
+                .map_err(|e| fail(format!("reading the answer: {}", crate::net::cause(&e))))?
         };
         super::step::log_answer(r, url, model, started.elapsed(), &v);
         return Ok(Outcome::Done(output(env, &answer_text(api, &v)?)?));
