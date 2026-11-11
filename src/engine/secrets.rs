@@ -75,15 +75,7 @@ pub const FOLDER: &str = "ITERO_SECRETS";
 /// last newline left out. A file there that cannot be read is said once.
 fn from_folder(ws: &Workspace, name: &str) -> Option<String> {
     let dir = std::path::PathBuf::from(std::env::var_os(FOLDER)?);
-    let listed = crate::machine::list_path()
-        .and_then(|p| crate::machine::List::read(&p))
-        .ok()
-        .and_then(|l| {
-            l.workspaces
-                .into_iter()
-                .find(|e| e.folder == ws.root)
-                .map(|e| e.name)
-        });
+    let listed = crate::machine::listed_name(&ws.root);
     let files = listed
         .map(|w| dir.join(format!("{w}.{name}")))
         .into_iter()

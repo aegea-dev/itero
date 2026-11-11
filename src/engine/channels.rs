@@ -1,8 +1,67 @@
 //! Where `#notify` sends on a machine whose `daemon.json` lists `notify`
 //! channels: each channel's body, and sending to them.
 use crate::engine::worker::Note;
-use crate::settings::Format;
+use crate::settings::{Channel, Format, secret_of};
 use serde_json::{Map, Value, json};
+use std::path::PathBuf;
+use std::time::Duration;
+
+/// How the machine daemon hands its channels to a `#notify` step: in
+/// that built-in's own environment only, never another action's.
+pub const CHANNELS_ENV: &str = "ITERO_NOTIFY_CHANNELS";
+
+/// How long a channel has to take a notification.
+const TAKE: Duration = Duration::from_secs(10);
+
+/// Sends `n` to each of `channels`, in order, every one tried; an error
+/// names each that did not take it (by its place and host, never its
+/// url) and why. A `$$NAME` url is the machine's secret, read now.
+pub fn send(
+    channels: &[Channel],
+    n: &Note,
+    workspace: Option<&str>,
+    workflow: &str,
+) -> Result<(), String> {
+    let folder = std::env::var_os(crate::engine::secrets::FOLDER).map(PathBuf::from);
+    let client =
+        crate::net::client(TAKE).map_err(|e| format!("#notify: {}", crate::net::cause(&e)))?;
+    let mut failed = vec![];
+    for (i, c) in channels.iter().enumerate() {
+        let url = match secret_of(&c.url) {
+            None => c.url.clone(),
+            Some(name) => match crate::engine::secrets::machine(folder.as_deref(), name) {
+                Some(u) if u.starts_with("http://") || u.starts_with("https://") => u,
+                Some(_) => {
+                    failed.push(format!(
+                        "notify[{i}]: the secret {name} is not an http:// or https:// address"
+                    ));
+                    continue;
+                }
+                None => {
+                    failed.push(format!("notify[{i}]: no secret {name}"));
+                    continue;
+                }
+            },
+        };
+        let at = format!("notify[{i}] ({})", host(&url));
+        let (to, b) = match body(c.format, &url, n, workspace, workflow) {
+            Ok(x) => x,
+            Err(e) => {
+                failed.push(format!("{at}: {e}"));
+                continue;
+            }
+        };
+        match client.post(&to).json(&b).send() {
+            Ok(r) if r.status().is_success() => {}
+            Ok(r) => failed.push(format!("{at}: {}", r.status())),
+            Err(e) => failed.push(format!("{at}: {}", crate::net::cause(&e))),
+        }
+    }
+    match failed.is_empty() {
+        true => Ok(()),
+        false => Err(format!("#notify: not sent to {}", failed.join("; "))),
+    }
+}
 
 /// Where to POST `n` for a channel at `url` taking `format`, and what:
 /// `workspace` (its name on the machine's list) and `workflow` say where

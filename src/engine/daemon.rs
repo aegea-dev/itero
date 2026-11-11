@@ -1680,6 +1680,13 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         let at: Vec<String> = job.path.iter().map(|n| n.to_string()).collect();
         env.insert("ITERO_BROWSER_STEP".into(), at.join("."));
     }
+    // the built-in #notify sends to the machine daemon's channels, when
+    // daemon.json lists any: given to that built-in alone
+    let channels = crate::settings::channels();
+    if file == Path::new(worker::NOTIFY) && !channels.is_empty() {
+        let list = serde_json::to_string(channels).map_err(|e| format!("the channels: {e}"))?;
+        env.insert(super::channels::CHANNELS_ENV.into(), list);
+    }
     Ok(StepRun {
         file,
         root: ws.root.clone(),

@@ -45,6 +45,8 @@ pub struct Web {
     pub port: u16,
     /// Each request's path and query, as it came.
     pub requests: Arc<Mutex<Vec<String>>>,
+    /// Each request with a body: its path and query, and the body.
+    pub bodies: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 impl Web {
@@ -57,26 +59,43 @@ pub fn serve(pages: Vec<Page>) -> Web {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
     let requests = Arc::new(Mutex::new(Vec::new()));
+    let bodies = Arc::new(Mutex::new(Vec::new()));
     let seen = requests.clone();
+    let posted = bodies.clone();
     std::thread::spawn(move || {
         for s in listener.incoming() {
             let Ok(mut s) = s else { continue };
             let pages = pages.clone();
             let seen = seen.clone();
+            let posted = posted.clone();
             std::thread::spawn(move || {
                 let mut r = BufReader::new(s.try_clone().unwrap());
                 let mut first = String::new();
                 if r.read_line(&mut first).is_err() {
                     return;
                 }
+                let mut length = 0;
                 loop {
                     let mut h = String::new();
                     if r.read_line(&mut h).unwrap_or(0) == 0 || h == "\r\n" {
                         break;
                     }
+                    if let Some((k, v)) = h.split_once(':')
+                        && k.eq_ignore_ascii_case("content-length")
+                    {
+                        length = v.trim().parse().unwrap_or(0);
+                    }
                 }
                 let target = first.split(' ').nth(1).unwrap_or("/").to_string();
                 seen.lock().unwrap().push(target.clone());
+                if length > 0 {
+                    let mut body = vec![0u8; length];
+                    if std::io::Read::read_exact(&mut r, &mut body).is_err() {
+                        return;
+                    }
+                    let body = String::from_utf8_lossy(&body).into_owned();
+                    posted.lock().unwrap().push((target.clone(), body));
+                }
                 let path = target.split('?').next().unwrap_or("/");
                 let page = pages
                     .iter()
@@ -103,7 +122,11 @@ pub fn serve(pages: Vec<Page>) -> Web {
             });
         }
     });
-    Web { port, requests }
+    Web {
+        port,
+        requests,
+        bodies,
+    }
 }
 
 /// `%C4%B1` as `ı`: Chrome asks for non-ASCII paths percent-encoded.

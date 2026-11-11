@@ -37,6 +37,7 @@ pub struct Settings {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Channel {
     pub url: String,
+    #[serde(default)]
     pub format: Format,
 }
 
