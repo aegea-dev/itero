@@ -1,4 +1,4 @@
-//! The one way itero makes an HTTP client.
+//! The one way itero makes an HTTP client, and serves an HTTP connection.
 
 use std::time::Duration;
 
@@ -54,4 +54,19 @@ fn ring() {
         // needs.
         let _ = rustls::crypto::ring::default_provider().install_default();
     });
+}
+
+/// How long a connection has to send a request's headers, its first or
+/// the next on a connection kept alive, before it is closed.
+pub const HEADERS: Duration = Duration::from_secs(10);
+
+/// The one way itero serves an HTTP connection: HTTP/1, each request's
+/// headers within `HEADERS`, so a client that sends nothing, one that
+/// sends them slowly and a connection kept alive and left idle are each
+/// closed, and hold no file descriptor for ever.
+pub fn http1() -> hyper::server::conn::http1::Builder {
+    let mut b = hyper::server::conn::http1::Builder::new();
+    b.timer(hyper_util::rt::TokioTimer::new())
+        .header_read_timeout(HEADERS);
+    b
 }

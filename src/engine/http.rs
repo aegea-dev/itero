@@ -569,7 +569,7 @@ pub struct Served {
 
 /// Serves each router on its listener, on one runtime, until one stops:
 /// the local API and, when opened, the opened one beside it, HTTPS when
-/// it has TLS. Both go through axum::serve.
+/// it has TLS.
 pub fn serve_all(served: Vec<Served>) -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
@@ -582,13 +582,8 @@ pub fn serve_all(served: Vec<Served>) -> anyhow::Result<()> {
         {
             listener.set_nonblocking(true)?;
             let listener = tokio::net::TcpListener::from_std(listener)?;
-            match tls {
-                None => all.spawn(async move { axum::serve(listener, router).await }),
-                Some(tls) => {
-                    let listener = TlsListener::new(listener, tls)?;
-                    all.spawn(async move { axum::serve(listener, router).await })
-                }
-            };
+            let tls = tls.map(tokio_rustls::TlsAcceptor::from);
+            all.spawn(serve_on(listener, router, tls));
         }
         // a listener that ends ends the daemon's serving, as one alone did
         if let Some(ended) = all.join_next().await {
@@ -602,74 +597,56 @@ pub fn serve_all(served: Vec<Served>) -> anyhow::Result<()> {
 /// handshake before it is closed.
 const HANDSHAKE: std::time::Duration = std::time::Duration::from_secs(10);
 
-type TlsConnection = (
-    tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
-    std::net::SocketAddr,
-);
-
-/// A TLS listener for axum::serve: TCP connections accepted on a task of
-/// their own (an error logged and retried after a second, as axum's own
-/// listener does), each handshake on a task of its own under `HANDSHAKE`,
-/// so a slow or silent client holds up no other; the connections whose
-/// handshake completed, handed over in turn.
-struct TlsListener {
-    done: tokio::sync::mpsc::Receiver<TlsConnection>,
-    addr: std::net::SocketAddr,
-}
-
-impl TlsListener {
-    fn new(
-        listener: tokio::net::TcpListener,
-        tls: Arc<rustls::ServerConfig>,
-    ) -> std::io::Result<TlsListener> {
-        let addr = listener.local_addr()?;
-        let acceptor = tokio_rustls::TlsAcceptor::from(tls);
-        let (tx, done) = tokio::sync::mpsc::channel(64);
+/// Serves `router` on each connection `listener` accepts, each on a task
+/// of its own, after its TLS handshake when there is `tls`: a slow or
+/// silent client holds up no other. An error accepting (too many open
+/// files, a client gone mid-accept) is said and tried again after a
+/// second; the listener lives on.
+async fn serve_on(
+    listener: tokio::net::TcpListener,
+    router: Router,
+    tls: Option<tokio_rustls::TlsAcceptor>,
+) -> anyhow::Result<()> {
+    let addr = listener.local_addr()?;
+    loop {
+        let tcp = match listener.accept().await {
+            Ok((tcp, _)) => tcp,
+            Err(e) => {
+                eprintln!("itero: accepting on {addr}: {e}");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+        let (router, tls) = (router.clone(), tls.clone());
         tokio::spawn(async move {
-            while !tx.is_closed() {
-                let (tcp, peer) = match listener.accept().await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        // too many open files, a client gone mid-accept:
-                        // the listener lives on
-                        eprintln!("itero: accepting on {addr}: {e}");
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                        continue;
-                    }
-                };
-                let (acceptor, tx) = (acceptor.clone(), tx.clone());
-                tokio::spawn(async move {
-                    // a handshake that fails (plain HTTP sent to it, a
-                    // client that does not trust the certificate) or takes
-                    // too long ends that connection only: the client is
-                    // the one told
+            match tls {
+                None => serve_connection(tcp, router).await,
+                // a handshake that fails (plain HTTP sent to it, a client
+                // that does not trust the certificate) or takes too long
+                // ends that connection only: the client is the one told
+                Some(acceptor) => {
                     if let Ok(Ok(stream)) =
                         tokio::time::timeout(HANDSHAKE, acceptor.accept(tcp)).await
                     {
-                        let _ = tx.send((stream, peer)).await;
+                        serve_connection(stream, router).await;
                     }
-                });
+                }
             }
         });
-        Ok(TlsListener { done, addr })
     }
 }
 
-impl axum::serve::Listener for TlsListener {
-    type Io = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
-    type Addr = std::net::SocketAddr;
-
-    async fn accept(&mut self) -> TlsConnection {
-        match self.done.recv().await {
-            Some(c) => c,
-            // the accepting task has ended: nothing more comes
-            None => std::future::pending().await,
-        }
-    }
-
-    fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
-        Ok(self.addr)
-    }
+/// Serves `router` on one connection until it ends: the client closes
+/// it, it breaks, or its headers are later than `net::HEADERS`. Each ends
+/// that connection only, so none is said.
+async fn serve_connection<I>(io: I, router: Router)
+where
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let service = hyper_util::service::TowerToHyperService::new(router);
+    let _ = crate::net::http1()
+        .serve_connection(hyper_util::rt::TokioIo::new(io), service)
+        .await;
 }
 
 /// What the machine's routes share.

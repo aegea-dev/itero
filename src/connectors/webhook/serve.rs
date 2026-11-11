@@ -202,7 +202,7 @@ pub fn serve(
             };
             let service = TowerToHyperService::new(app.clone());
             tokio::spawn(async move {
-                let conn = hyper::server::conn::http1::Builder::new()
+                let conn = crate::net::http1()
                     .keep_alive(false)
                     .serve_connection(TokioIo::new(stream), service);
                 let _ = tokio::time::timeout(life, conn).await;
