@@ -667,7 +667,7 @@ pub fn machine_router(machine: Arc<super::machine::Machine>, port: u16) -> Route
         .with_state(MachineShared { machine, port })
 }
 
-/// The machine's routes as served where `server.json`'s `listen` opens
+/// The machine's routes as served where `daemon.json`'s `listen` opens
 /// them: every request with a token `itero token create` made, any Host.
 /// `port` is the local API's, which a workspace's `info` names. The
 /// probes (`probes`) need no token.

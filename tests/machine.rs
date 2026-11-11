@@ -132,14 +132,14 @@ impl Machine {
         Daemon(child)
     }
 
-    /// A `server.json` of this machine's own saying `port`, for `--config`.
+    /// A `daemon.json` of this machine's own saying `port`, for `--config`.
     fn server_file(&self, port: u16) -> String {
         let p = self.d.path().join(format!("sunucu-{port}.json"));
         std::fs::write(&p, format!(r#"{{ "port": {port} }}"#)).unwrap();
         p.display().to_string()
     }
 
-    /// `itero daemon --all` on `port` (its `server.json`).
+    /// `itero daemon --all` on `port` (its `daemon.json`).
     fn daemon_all_on(&self, port: u16) -> Daemon {
         let child = self
             .command(self.d.path())

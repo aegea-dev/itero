@@ -67,7 +67,7 @@ pub fn get_in(ws: &Workspace, name: &str) -> Option<String> {
 }
 
 /// The variable the machine's daemon names its secrets folder in
-/// (server.json's `secrets`), for itself and every process it starts.
+/// (daemon.json's `secrets`), for itself and every process it starts.
 pub const FOLDER: &str = "ITERO_SECRETS";
 
 /// A secret from the folder of secrets the platform mounts, a file each:
@@ -109,7 +109,7 @@ fn from_folder(ws: &Workspace, name: &str) -> Option<String> {
 /// What a server without a store answers to a secret sent to it.
 pub fn none_kept(name: &str) -> String {
     format!(
-        "this server keeps no secrets: set {name} in its environment, or a file {name} in its secrets folder (server.json's secrets)"
+        "this server keeps no secrets: set {name} in its environment, or a file {name} in its secrets folder (daemon.json's secrets)"
     )
 }
 

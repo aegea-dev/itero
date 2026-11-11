@@ -1,11 +1,11 @@
-//! `server.json`: how the machine's daemon serves, in itero's config
+//! `daemon.json`: how the machine's daemon serves, in itero's config
 //! folder (or the file `--config` names), read at the daemon's start.
 //! None there is the daemon as it has always been.
 use anyhow::{Result, bail};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-/// The settings `server.json` may have.
+/// The settings `daemon.json` may have.
 const SETTINGS: &[&str] = &["port", "listen", "tls", "secrets"];
 
 /// The settings `tls` may have.
@@ -13,7 +13,7 @@ const TLS: &[&str] = &["cert", "key"];
 
 /// How the machine's daemon serves.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Server {
+pub struct Settings {
     /// The local API's port on 127.0.0.1; none: the one it kept, else
     /// one the OS gives.
     pub port: Option<u16>,
@@ -34,48 +34,61 @@ pub struct Tls {
     pub key: PathBuf,
 }
 
-impl Server {
-    /// `<config folder>/server.json`.
+impl Settings {
+    /// `<config folder>/daemon.json`.
     pub fn default_path() -> Result<PathBuf> {
-        Ok(crate::machine::config_dir()?.join("server.json"))
+        Ok(crate::machine::config_dir()?.join("daemon.json"))
     }
 
     /// The file `config` names, else the default one; the default one not
-    /// there is no settings, a named one not there is a mistake.
-    pub fn read(config: Option<&Path>) -> Result<Server> {
+    /// there is no settings, a named one not there is a mistake. Every
+    /// problem is told at once, a `server.json` beside it among them.
+    pub fn read(config: Option<&Path>) -> Result<Settings> {
         let (path, given) = match config {
             Some(p) => (p.to_path_buf(), true),
-            None => (Server::default_path()?, false),
+            None => (Settings::default_path()?, false),
         };
-        let text = match std::fs::read_to_string(&path) {
-            Ok(t) => t,
+        let mut problems = left_from_before(&path).into_iter().collect::<Vec<_>>();
+        let settings = match std::fs::read_to_string(&path) {
+            Ok(text) => match parse(&text) {
+                Ok(s) => Some(s),
+                Err(p) => {
+                    let at = path.display();
+                    problems.extend(p.iter().map(|p| format!("{at}: {p}")));
+                    None
+                }
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && !given => {
-                return Ok(Server::default());
+                Some(Settings::default())
             }
-            Err(e) => bail!("{}: {e}", path.display()),
+            Err(e) => {
+                problems.push(format!("{}: {e}", path.display()));
+                None
+            }
         };
-        parse(&text).map_err(|problems| {
-            let at = path.display();
-            anyhow::anyhow!(
-                "{}",
-                problems
-                    .iter()
-                    .map(|p| format!("{at}: {p}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-        })
+        match settings {
+            Some(s) if problems.is_empty() => Ok(s),
+            _ => bail!("{}", problems.join("\n")),
+        }
     }
 }
 
+/// A `server.json` beside `path`: what itero read before 0.41. Left
+/// alone, its settings would be ignored without a word (a daemon meant
+/// to listen on 0.0.0.0 staying local), so it stops the daemon.
+fn left_from_before(path: &Path) -> Option<String> {
+    let old = path.with_file_name("server.json");
+    (old != path && old.exists()).then(|| format!("{}: rename it to daemon.json", old.display()))
+}
+
 /// The settings in `text`, or every problem in it.
-fn parse(text: &str) -> Result<Server, Vec<String>> {
+fn parse(text: &str) -> Result<Settings, Vec<String>> {
     let v: Value = serde_json::from_str(text).map_err(|e| vec![format!("not JSON: {e}")])?;
     let Value::Object(m) = v else {
-        return Err(vec!["server.json is a JSON object of settings".into()]);
+        return Err(vec!["daemon.json is a JSON object of settings".into()]);
     };
     let mut problems = vec![];
-    let mut s = Server::default();
+    let mut s = Settings::default();
     for (k, v) in &m {
         match k.as_str() {
             "port" => match v.as_u64().filter(|p| (1..=65535).contains(p)) {
@@ -100,7 +113,7 @@ fn parse(text: &str) -> Result<Server, Vec<String>> {
                 Err(p) => problems.extend(p),
             },
             _ => problems.push(format!(
-                "{k}: not a setting of server.json ({})",
+                "{k}: not a setting of daemon.json ({})",
                 SETTINGS.join(", ")
             )),
         }
@@ -215,7 +228,7 @@ mod tests {
     #[test]
     fn a_port_is_read() {
         assert_eq!(parse(r#"{"port": 8787}"#).unwrap().port, Some(8787));
-        assert_eq!(parse("{}").unwrap(), Server::default());
+        assert_eq!(parse("{}").unwrap(), Settings::default());
     }
 
     #[test]
@@ -234,10 +247,10 @@ mod tests {
     #[test]
     fn a_named_file_must_be_there_and_the_default_need_not() {
         let d = tempfile::tempdir().unwrap();
-        let e = Server::read(Some(&d.path().join("yok.json"))).unwrap_err();
+        let e = Settings::read(Some(&d.path().join("yok.json"))).unwrap_err();
         assert!(e.to_string().contains("yok.json"), "{e}");
         let f = d.path().join("sunucu.json");
         std::fs::write(&f, r#"{"port": 9}"#).unwrap();
-        assert_eq!(Server::read(Some(&f)).unwrap().port, Some(9));
+        assert_eq!(Settings::read(Some(&f)).unwrap().port, Some(9));
     }
 }

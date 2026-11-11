@@ -14,7 +14,7 @@ fn the_machines_service_runs_the_watchdog_over_every_workspace() {
         .iter()
         .map(|a| a.to_string_lossy().into())
         .collect();
-    // no settings in the unit: the daemon reads server.json at its start
+    // no settings in the unit: the daemon reads daemon.json at its start
     assert_eq!(
         args,
         [

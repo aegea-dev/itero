@@ -392,7 +392,7 @@ pub fn service_install() -> Result<()> {
     );
     println!(
         "API: on the port {} gives, else the one it keeps, as itero service status says",
-        crate::server::Server::default_path()?.display()
+        crate::settings::Settings::default_path()?.display()
     );
     println!("log: {}", state.join("daemon.log").display());
     println!("it keeps this shell's PATH; install again after changing it");

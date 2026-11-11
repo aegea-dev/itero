@@ -1,4 +1,4 @@
-//! Secrets on a server: from a folder the platform mounts (server.json's
+//! Secrets on a server: from a folder the platform mounts (daemon.json's
 //! `secrets`), and `itero secret --context` to the server's OS store,
 //! never over plain HTTP to another host. Every command runs with HOME,
 //! XDG_CONFIG_HOME and XDG_STATE_HOME in a temporary folder.
@@ -122,8 +122,8 @@ impl Machine {
         }
     }
 
-    fn server_json(&self, v: serde_json::Value) {
-        let p = self.d.path().join("ayar/itero/server.json");
+    fn daemon_json(&self, v: serde_json::Value) {
+        let p = self.d.path().join("ayar/itero/daemon.json");
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, v.to_string()).unwrap();
     }
@@ -137,7 +137,7 @@ fn a_secret_in_the_servers_folder_reaches_a_step_its_workspaces_first() {
     let folder = m.d.path().join("sırlar");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("ANAHTAR"), "genel\n").unwrap();
-    m.server_json(json!({ "secrets": folder.display().to_string() }));
+    m.daemon_json(json!({ "secrets": folder.display().to_string() }));
     let (_d, _) = m.daemon(&name);
     let o = m.run(&w, &["ws", "emit", "yaz.geldi"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
@@ -157,7 +157,7 @@ fn a_secret_in_the_servers_folder_reaches_a_step_its_workspaces_first() {
 #[test]
 fn the_secrets_setting_must_be_a_folder() {
     let m = Machine::new();
-    m.server_json(json!({ "secrets": "/yok/sırlar" }));
+    m.daemon_json(json!({ "secrets": "/yok/sırlar" }));
     let o = m.run(m.d.path(), &["daemon", "--no-serve"]);
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);

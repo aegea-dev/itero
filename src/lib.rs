@@ -13,7 +13,7 @@ pub mod needs;
 pub mod net;
 pub mod plist;
 pub mod problem;
-pub mod server;
+pub mod settings;
 pub mod token;
 pub mod watch;
 pub mod workspace;
