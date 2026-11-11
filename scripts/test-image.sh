@@ -24,7 +24,7 @@ cleanup() {
 	rm -rf "$work"
 }
 trap cleanup EXIT INT TERM
-cp "$root/docs/public/container/compose.yaml" "$root/docs/public/container/server.json" "$work/"
+cp "$root/docs/public/container/compose.yaml" "$root/docs/public/container/daemon.json" "$work/"
 
 fail() {
 	echo "test-image: $*" >&2

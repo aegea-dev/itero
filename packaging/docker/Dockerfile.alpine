@@ -8,7 +8,7 @@ RUN apk add --no-cache tini ca-certificates curl jq \
  && adduser -u 10001 -G itero -h /var/lib/itero -H -s /sbin/nologin -D itero \
  && mkdir -p /var/lib/itero /etc/itero \
  && chown itero:itero /var/lib/itero \
- && echo '{}' > /etc/itero/server.json
+ && echo '{}' > /etc/itero/daemon.json
 COPY bin/${TARGETARCH}/itero /usr/local/bin/itero
 COPY bin/${TARGETARCH}/THIRD-PARTY-LICENSES /usr/share/doc/itero/THIRD-PARTY-LICENSES
 # (the check skipped on the first line takes ITERO_NO_SECRET_STORE for a
@@ -26,4 +26,4 @@ WORKDIR /var/lib/itero
 VOLUME /var/lib/itero
 EXPOSE 8443
 ENTRYPOINT ["tini", "--", "itero"]
-CMD ["daemon", "--config", "/etc/itero/server.json"]
+CMD ["daemon", "--config", "/etc/itero/daemon.json"]

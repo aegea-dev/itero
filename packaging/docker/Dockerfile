@@ -14,7 +14,7 @@ RUN apt-get update \
       --shell /usr/sbin/nologin itero \
  && mkdir -p /var/lib/itero /etc/itero \
  && chown itero:itero /var/lib/itero \
- && echo '{}' > /etc/itero/server.json
+ && echo '{}' > /etc/itero/daemon.json
 COPY bin/${TARGETARCH}/itero /usr/local/bin/itero
 COPY bin/${TARGETARCH}/THIRD-PARTY-LICENSES /usr/share/doc/itero/THIRD-PARTY-LICENSES
 # (the check skipped on the first line takes ITERO_NO_SECRET_STORE for a
@@ -35,7 +35,7 @@ WORKDIR /var/lib/itero
 VOLUME /var/lib/itero
 EXPOSE 8443
 # tini forwards SIGTERM and reaps what the steps leave behind. The
-# daemon's settings: /etc/itero/server.json, {} (local only) unless one is
+# daemon's settings: /etc/itero/daemon.json, {} (local only) unless one is
 # mounted over it, as Compose and Kubernetes do.
 ENTRYPOINT ["tini", "--", "itero"]
-CMD ["daemon", "--config", "/etc/itero/server.json"]
+CMD ["daemon", "--config", "/etc/itero/daemon.json"]

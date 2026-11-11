@@ -16,7 +16,7 @@ itero ws daemon [--no-serve]
 A workspace is on the list once [`itero ws add`](/commands/workspace/)
 put it there: see [One itero per machine](/guides/machine/). The daemon's
 settings, its port among them, are in
-[`server.json`](/reference/server-json/). Run in a workspace's folder that
+[`daemon.json`](/reference/daemon-json/). Run in a workspace's folder that
 is not on the list, it says so when it starts.
 
 `itero ws daemon` runs one workspace alone, in the foreground: the
@@ -48,7 +48,7 @@ while a slow step still runs. Between passes it waits and uses no CPU.
 
 | Option | Does |
 |---|---|
-| `--config <path>` | its settings from this file, not the config folder's [`server.json`](/reference/server-json/) |
+| `--config <path>` | its settings from this file, not the config folder's [`daemon.json`](/reference/daemon-json/) |
 | `--no-serve` | the passes only, no HTTP API |
 
 `itero daemon --all`, from before, is refused and says the new form.

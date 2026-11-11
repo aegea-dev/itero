@@ -22,7 +22,7 @@ pub fn machine_label() -> ServiceLabel {
 /// The machine's service: `itero watchdog --all` from the home folder,
 /// its log in itero's state folder, with `path` (the installing shell's
 /// `PATH`: a service starts with a bare one, which would not find mail, uv
-/// or bun). No settings: the daemon reads `server.json` at each start.
+/// or bun). No settings: the daemon reads `daemon.json` at each start.
 pub fn machine_ctx(
     exe: &Path,
     home: &Path,

@@ -143,7 +143,7 @@ pub enum Target {
     /// the OS may give it another one at a start.
     Workspace(Box<crate::workspace::Workspace>),
     /// `itero daemon`: every workspace on the machine's list, its
-    /// settings from `config` (else the config folder's `server.json`).
+    /// settings from `config` (else the config folder's `daemon.json`).
     /// Its /health has no pass of its own, so a stuck workspace never
     /// restarts it: the daemon tells it.
     Machine { config: Option<PathBuf> },
@@ -168,10 +168,10 @@ impl Target {
     pub fn port(&self) -> Option<u16> {
         match self {
             Target::Workspace(ws) => ws.daemon_port(),
-            // the port server.json gives, as the daemon reads it at its
+            // the port daemon.json gives, as the daemon reads it at its
             // start; a file it cannot read, the daemon refuses and says
             // why, and the watchdog asks the port it kept
-            Target::Machine { config } => crate::server::Server::read(config.as_deref())
+            Target::Machine { config } => crate::settings::Settings::read(config.as_deref())
                 .ok()
                 .and_then(|s| s.port)
                 .or_else(super::http::machine_port),

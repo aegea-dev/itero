@@ -1,13 +1,13 @@
 ---
-title: server.json
+title: daemon.json
 description: How the machine's daemon serves, read at its start.
 ---
 
-`server.json` holds the settings of the machine's daemon
+`daemon.json` holds the settings of the machine's daemon
 ([`itero daemon`](/commands/daemon/), which
 [`itero service`](/commands/service/) runs). It is in itero's config
-folder: `$XDG_CONFIG_HOME/itero/server.json`, else
-`~/.config/itero/server.json`. `itero daemon --config <path>` reads
+folder: `$XDG_CONFIG_HOME/itero/daemon.json`, else
+`~/.config/itero/daemon.json`. `itero daemon --config <path>` reads
 another file instead.
 
 ```json
@@ -58,12 +58,16 @@ before it serves anything, with every problem told at once:
 
 ```
 $ itero daemon
-error: /Users/me/.config/itero/server.json: port: a number from 1 to 65535, not "8787"
-/Users/me/.config/itero/server.json: prot: not a setting of server.json (port)
+error: /Users/me/.config/itero/daemon.json: port: a number from 1 to 65535, not "8787"
+/Users/me/.config/itero/daemon.json: prot: not a setting of daemon.json (port)
 ```
 
+Up to 0.40 the file was `server.json`. A `server.json` left beside the
+file read stops the daemon too, saying to rename it, so its settings
+are never ignored without a word.
+
 On a server or in a container, run `itero daemon --config
-/etc/itero/server.json` with `XDG_STATE_HOME=/var/lib`, so the daemon's
+/etc/itero/daemon.json` with `XDG_STATE_HOME=/var/lib`, so the daemon's
 state is in `/var/lib/itero/`, as itero's images do
 ([In a container](/guides/container/)). Setting `XDG_CONFIG_HOME=/etc`
 would also find the file, but every program the daemon's actions run

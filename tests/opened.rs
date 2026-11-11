@@ -1,4 +1,4 @@
-//! The machine's daemon opened by `server.json`'s `listen`: a second
+//! The machine's daemon opened by `daemon.json`'s `listen`: a second
 //! listener with the same routes, every request there with a token
 //! `itero token create` made, any Host; the local API beside it as it
 //! was. Every command runs with HOME, XDG_CONFIG_HOME and XDG_STATE_HOME
@@ -56,8 +56,8 @@ impl Machine {
         String::from_utf8_lossy(&o.stdout).into_owned()
     }
 
-    fn server_json(&self, v: Value) {
-        let p = self.d.path().join("ayar/itero/server.json");
+    fn daemon_json(&self, v: Value) {
+        let p = self.d.path().join("ayar/itero/daemon.json");
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, v.to_string()).unwrap();
     }
@@ -144,7 +144,7 @@ fn the_opened_api_lets_in_a_token_and_nobody_else() {
     let m = Machine::new();
     let token = m.ok(&["token", "create", "kişi"]).trim().to_string();
     let name = m.listed();
-    m.server_json(json!({ "listen": "127.0.0.1:0" }));
+    m.daemon_json(json!({ "listen": "127.0.0.1:0" }));
     let o = m.opened();
     // no token, a wrong one: 401, saying how to sign in
     let r = http()
@@ -187,7 +187,7 @@ fn the_opened_api_lets_in_a_token_and_nobody_else() {
 #[test]
 fn opened_with_no_token_it_does_not_start() {
     let m = Machine::new();
-    m.server_json(json!({ "listen": "127.0.0.1:0" }));
+    m.daemon_json(json!({ "listen": "127.0.0.1:0" }));
     let o = m.command().args(["daemon"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
@@ -201,7 +201,7 @@ fn opened_with_no_token_it_does_not_start() {
 fn listen_with_no_serve_is_a_mistake() {
     let m = Machine::new();
     m.ok(&["token", "create", "kişi"]);
-    m.server_json(json!({ "listen": "127.0.0.1:0" }));
+    m.daemon_json(json!({ "listen": "127.0.0.1:0" }));
     let o = m.command().args(["daemon", "--no-serve"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
@@ -211,7 +211,7 @@ fn listen_with_no_serve_is_a_mistake() {
 #[test]
 fn listen_must_be_an_address_and_a_port() {
     let m = Machine::new();
-    m.server_json(json!({ "listen": "her yerde" }));
+    m.daemon_json(json!({ "listen": "her yerde" }));
     let o = m.command().args(["daemon"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
@@ -254,7 +254,7 @@ fn tls_serves_the_opened_api_over_https() {
     let token = m.ok(&["token", "create", "kişi"]).trim().to_string();
     let (authority, cert, key) = certificates();
     let (cert, key) = m.tls_files(&cert, &key);
-    m.server_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
+    m.daemon_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
     let o = m.opened();
     // reqwest's rustls needs ring as the process's provider, as itero's does
     itero::net::client(Duration::from_secs(1)).unwrap();
@@ -286,7 +286,7 @@ fn a_key_that_is_not_the_certificates_stops_the_daemon() {
     let (_, cert, _) = certificates();
     let (_, _, other) = certificates();
     let (cert, key) = m.tls_files(&cert, &other);
-    m.server_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
+    m.daemon_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
     let o = m.command().args(["daemon"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
@@ -296,7 +296,7 @@ fn a_key_that_is_not_the_certificates_stops_the_daemon() {
 #[test]
 fn tls_needs_listen_and_both_files_every_problem_told() {
     let m = Machine::new();
-    m.server_json(json!({ "tls": { "cert": "/yok/sertifika.pem", "fazla": 1 } }));
+    m.daemon_json(json!({ "tls": { "cert": "/yok/sertifika.pem", "fazla": 1 } }));
     let o = m.command().args(["daemon"]).output().unwrap();
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
@@ -319,7 +319,7 @@ impl Machine {
         let (authority, cert, key) = certificates();
         let (cert, key) = self.tls_files(&cert, &key);
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(key_mode)).unwrap();
-        self.server_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
+        self.daemon_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
         let o = self.opened();
         itero::net::client(Duration::from_secs(1)).unwrap();
         let https = reqwest::blocking::Client::builder()
@@ -374,7 +374,7 @@ fn a_folder_for_the_certificate_is_told_with_the_other_problems() {
     let m = Machine::new();
     let d = m.d.path().join("tls");
     std::fs::create_dir_all(&d).unwrap();
-    m.server_json(json!({ "listen": "127.0.0.1:0",
+    m.daemon_json(json!({ "listen": "127.0.0.1:0",
                           "tls": { "cert": d.display().to_string(), "key": "/yok/anahtar.pem" } }));
     let o = m.command().args(["daemon"]).output().unwrap();
     assert!(!o.status.success());
@@ -388,7 +388,7 @@ fn probes_answer_anyone_and_say_nothing_else() {
     let m = Machine::new();
     m.ok(&["token", "create", "kişi"]);
     m.listed();
-    m.server_json(json!({ "listen": "127.0.0.1:0" }));
+    m.daemon_json(json!({ "listen": "127.0.0.1:0" }));
     let o = m.opened();
     for port in [o.opened, o.local] {
         // ready once the list has been read once: "starting" until then
@@ -489,7 +489,7 @@ fn a_request_slower_than_the_header_limit_is_closed_on_the_local_api() {
     let m = Machine::new();
     m.ok(&["token", "create", "kişi"]);
     let name = m.listed();
-    m.server_json(json!({ "listen": "127.0.0.1:0" }));
+    m.daemon_json(json!({ "listen": "127.0.0.1:0" }));
     let o = m.opened();
     let port = o.local;
     let host = format!("Host: 127.0.0.1:{port}\r\n");
@@ -562,7 +562,7 @@ fn a_request_slower_than_the_header_limit_is_closed_on_the_opened_api_over_tls()
     let token = m.ok(&["token", "create", "kişi"]).trim().to_string();
     let (authority, cert, key) = certificates();
     let (cert, key) = m.tls_files(&cert, &key);
-    m.server_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
+    m.daemon_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
     let o = m.opened();
     let mut roots = rustls::RootCertStore::empty();
     roots

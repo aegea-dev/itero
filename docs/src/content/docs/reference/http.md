@@ -45,7 +45,7 @@ version on every request it sends over a
 
 ## Only from this machine
 
-Unless [`server.json`](/reference/server-json/#opening-the-api) opens it
+Unless [`daemon.json`](/reference/daemon-json/#opening-the-api) opens it
 to other hosts, where every request needs a token, the API is this
 machine's. A request whose `Host` header is not `127.0.0.1:<port>` or
 `localhost:<port>` is refused with 403, so a web page cannot reach the API

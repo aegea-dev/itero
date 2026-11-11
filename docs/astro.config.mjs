@@ -21,6 +21,8 @@ export default defineConfig({
 		'/commands/config/': '/commands/workflow/',
 		'/commands/args/': '/commands/action/',
 		'/guides/messages/': '/guides/connectors/',
+		// server.json became daemon.json (2026-11-11)
+		'/reference/server-json/': '/reference/daemon-json/',
 		// the #ai guide became the itero-ai group (2026-10-29)
 		'/guides/ai/': '/ai/workflows/',
 	},
@@ -119,7 +121,7 @@ export default defineConfig({
 						{ label: 'Concepts', slug: 'reference/concepts' },
 						{ label: 'Glossary', slug: 'reference/glossary' },
 						{ label: 'itero.config.json', slug: 'reference/itero-config' },
-						{ label: 'server.json', slug: 'reference/server-json' },
+						{ label: 'daemon.json', slug: 'reference/daemon-json' },
 						{ label: 'Workflow files', slug: 'reference/workflow-file' },
 						{ label: 'Actions', slug: 'reference/action-file' },
 						{ label: 'HTTP API', slug: 'reference/http' },

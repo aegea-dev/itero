@@ -56,7 +56,7 @@ pub struct EmitArgs {
 pub enum Cmd {
     /// Run every workspace on the machine's list: their schedules, events and jobs, as each comes due
     Daemon {
-        /// Its settings from this file, not the config folder's server.json
+        /// Its settings from this file, not the config folder's daemon.json
         #[arg(long, value_name = "PATH")]
         config: Option<std::path::PathBuf>,
         /// The passes only: no HTTP API
@@ -201,7 +201,7 @@ pub enum Cmd {
         /// Keep `itero daemon` running: every workspace on the machine's list (without it, this folder's `itero ws daemon`)
         #[arg(long)]
         all: bool,
-        /// With --all: the daemon's settings from this file, not the config folder's server.json
+        /// With --all: the daemon's settings from this file, not the config folder's daemon.json
         #[arg(long, requires = "all", value_name = "PATH")]
         config: Option<std::path::PathBuf>,
     },
@@ -1012,18 +1012,18 @@ fn dispatch(cli: Cli) -> Result<()> {
             here_unlisted();
             // its settings, then its port: a daemon that cannot listen
             // starts nothing
-            let server = crate::server::Server::read(config.as_deref())?;
-            if let Some(dir) = &server.secrets {
+            let settings = crate::settings::Settings::read(config.as_deref())?;
+            if let Some(dir) = &settings.secrets {
                 // SAFETY: set before this daemon starts any thread, so no
                 // other reads the environment meanwhile; every process it
                 // starts (workers, connectors) inherits it
                 unsafe { std::env::set_var(crate::engine::secrets::FOLDER, dir) };
             }
-            if let (Some(at), true) = (server.listen, no_serve) {
-                bail!("server.json opens the API on {at}, and --no-serve serves none");
+            if let (Some(at), true) = (settings.listen, no_serve) {
+                bail!("daemon.json opens the API on {at}, and --no-serve serves none");
             }
             // opened, a token must be able to reach it
-            if let Some(at) = server.listen
+            if let Some(at) = settings.listen
                 && crate::token::none()?
             {
                 bail!(
@@ -1033,17 +1033,17 @@ fn dispatch(cli: Cli) -> Result<()> {
             let listener = if no_serve {
                 None
             } else {
-                Some(crate::engine::http::listen_machine(server.port)?)
+                Some(crate::engine::http::listen_machine(settings.port)?)
             };
             // its certificate read and checked now, as its port is bound
-            let tls = match &server.tls {
-                Some(t) => Some(crate::server::tls_config(t)?),
+            let tls = match &settings.tls {
+                Some(t) => Some(crate::settings::tls_config(t)?),
                 None => None,
             };
             let opened =
-                match server.listen {
+                match settings.listen {
                     Some(at) => Some(std::net::TcpListener::bind(at).map_err(|e| {
-                        anyhow!("cannot listen on {at} (server.json's listen): {e}")
+                        anyhow!("cannot listen on {at} (daemon.json's listen): {e}")
                     })?),
                     None => None,
                 };
@@ -1099,10 +1099,10 @@ fn dispatch(cli: Cli) -> Result<()> {
                     if let Some(opened) = opened {
                         let at = opened.local_addr()?;
                         eprintln!("itero: opened on {at}");
-                        match &server.tls {
+                        match &settings.tls {
                             Some(t) => {
                                 eprintln!("itero: HTTPS on {at}, with {}", t.cert.display());
-                                for w in crate::server::tls_warnings(t) {
+                                for w in crate::settings::tls_warnings(t) {
                                     eprintln!("itero: warning: {w}");
                                 }
                             }

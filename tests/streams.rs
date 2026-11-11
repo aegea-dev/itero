@@ -548,7 +548,7 @@ fn the_log_stream_works_through_the_machine_api() {
     assert_eq!(messages(&l, 1), [id["id"].as_str().unwrap()]);
 }
 
-/// A `server.json` in the test's folder saying `port`, for `--config`.
+/// A `daemon.json` in the test's folder saying `port`, for `--config`.
 fn server_file(w: &Ws, port: u16) -> String {
     let p = w.d.path().join(format!("sunucu-{port}.json"));
     std::fs::write(&p, format!(r#"{{ "port": {port} }}"#)).unwrap();

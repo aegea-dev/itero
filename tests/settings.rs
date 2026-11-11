@@ -1,4 +1,4 @@
-//! `server.json`: how the machine's daemon serves, read at its start from
+//! `daemon.json`: how the machine's daemon serves, read at its start from
 //! itero's config folder, or the file `--config` names. Every command runs
 //! with HOME, XDG_CONFIG_HOME and XDG_STATE_HOME in a temporary folder.
 #![cfg(unix)]
@@ -32,9 +32,9 @@ impl Machine {
         c
     }
 
-    /// The default `server.json`, written with `text`.
-    fn server_json(&self, text: &str) -> PathBuf {
-        let p = self.d.path().join("ayar/itero/server.json");
+    /// The default `daemon.json`, written with `text`.
+    fn daemon_json(&self, text: &str) -> PathBuf {
+        let p = self.d.path().join("ayar/itero/daemon.json");
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, text).unwrap();
         p
@@ -112,7 +112,7 @@ fn port_in_the_file_is_the_local_port() {
     let (d, port) = m.daemon(&[]);
     drop(d);
     std::fs::remove_file(m.kept_port()).unwrap();
-    m.server_json(&format!(r#"{{ "port": {port} }}"#));
+    m.daemon_json(&format!(r#"{{ "port": {port} }}"#));
     let (_d, again) = m.daemon(&[]);
     assert_eq!(again, port);
 }
@@ -120,13 +120,13 @@ fn port_in_the_file_is_the_local_port() {
 #[test]
 fn every_problem_is_told_at_once_and_nothing_is_served() {
     let m = Machine::new();
-    let file = m.server_json(r#"{ "port": "sekiz", "dinle": 1, "fazla": true }"#);
+    let file = m.daemon_json(r#"{ "port": "sekiz", "dinle": 1, "fazla": true }"#);
     let said = m.refused(&[]);
     let at = file.display().to_string();
     for problem in [
         "port: a number from 1 to 65535, not \"sekiz\"",
-        "dinle: not a setting of server.json",
-        "fazla: not a setting of server.json",
+        "dinle: not a setting of daemon.json",
+        "fazla: not a setting of daemon.json",
     ] {
         assert!(said.contains(&format!("{at}: {problem}")), "{said}");
     }
@@ -136,11 +136,11 @@ fn every_problem_is_told_at_once_and_nothing_is_served() {
 #[test]
 fn a_file_that_is_not_json_or_not_an_object_is_said() {
     let m = Machine::new();
-    m.server_json("{ port: 1 ");
+    m.daemon_json("{ port: 1 ");
     assert!(m.refused(&[]).contains("not JSON"));
-    m.server_json("[1]");
+    m.daemon_json("[1]");
     assert!(m.refused(&[]).contains("a JSON object"));
-    m.server_json(r#"{ "port": 70000 }"#);
+    m.daemon_json(r#"{ "port": 70000 }"#);
     assert!(
         m.refused(&[])
             .contains("port: a number from 1 to 65535, not 70000")
@@ -207,4 +207,39 @@ fn in_a_workspace_off_the_list_it_says_it_does_not_run_it() {
         assert!(Instant::now() < end, "waited 20s for the note: {text}");
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+#[test]
+fn a_server_json_left_from_before_stops_the_daemon_saying_to_rename_it() {
+    let m = Machine::new();
+    // itero 0.40 and before read server.json: left alone, its settings
+    // would be ignored without a word (a daemon meant to listen on
+    // 0.0.0.0 staying local)
+    let old = m.d.path().join("ayar/itero/server.json");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::write(&old, r#"{ "listen": "0.0.0.0:8443" }"#).unwrap();
+    let rename = format!("{}: rename it to daemon.json", old.display());
+    let said = m.refused(&[]);
+    assert!(said.contains(&rename), "{said}");
+    assert!(!m.kept_port().exists(), "nothing listened");
+    // beside a daemon.json too, told with that file's own problems
+    m.daemon_json(r#"{ "fazla": 1 }"#);
+    let said = m.refused(&[]);
+    assert!(said.contains(&rename), "{said}");
+    assert!(
+        said.contains("fazla: not a setting of daemon.json"),
+        "{said}"
+    );
+    // beside the file --config names, as a mounted one beside the image's
+    let elsewhere = m.d.path().join("etc");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let given = elsewhere.join("daemon.json");
+    std::fs::write(&given, "{}").unwrap();
+    std::fs::write(elsewhere.join("server.json"), "{}").unwrap();
+    let said = m.refused(&["--config", given.to_str().unwrap()]);
+    let rename = format!(
+        "{}: rename it to daemon.json",
+        elsewhere.join("server.json").display()
+    );
+    assert!(said.contains(&rename), "{said}");
 }
