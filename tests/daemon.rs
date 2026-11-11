@@ -1681,9 +1681,30 @@ fn watching(ws: &Ws) -> std::sync::mpsc::Receiver<()> {
     std::thread::spawn(move || {
         itero::engine::daemon::watch_paths(&w, &wake, &log, &Default::default())
     });
-    // its first look
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    // its first look done: the log says what it watches now, or what it
+    // could not watch (a path whose folder is not there yet)
+    let end = std::time::Instant::now() + secs(10);
+    while !ws
+        .log()
+        .iter()
+        .any(|l| l["event"] == "paths.watched" || l["event"] == "error")
+    {
+        assert!(
+            std::time::Instant::now() < end,
+            "no first look in 10 s; the log:\n{}",
+            lines(&ws.log())
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     woken
+}
+
+/// Log lines, one JSON object each, for a failure's message.
+fn lines(log: &[Value]) -> String {
+    log.iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn secs(n: u64) -> std::time::Duration {
@@ -1708,13 +1729,30 @@ fn an_edit_to_a_workflow_or_the_manifest_wakes_the_daemon_and_nothing_else_does(
         json!({"on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"]}),
     );
     let woken = watching(&ws);
-    // idle, nothing wakes it
-    assert!(woken.recv_timeout(secs(2)).is_err());
+    // idle, nothing wakes it; when something does, the log says what (an
+    // own file's change is files.changed, a watched path's a message)
+    if woken.recv_timeout(secs(2)).is_ok() {
+        panic!(
+            "woken while idle; path messages: {}; the log:\n{}",
+            path_messages(&ws),
+            lines(&ws.log())
+        );
+    }
     ws.flow(
         "dinle",
         json!({"on": [{ "event": "kişi.gitti" }], "steps": ["#selamla"]}),
     );
     woken.recv_timeout(secs(5)).expect("a workflow edited");
+    // the log says which file woke it, and how
+    let edited = ws.log().into_iter().find(|l| l["event"] == "files.changed");
+    let files = edited.expect("files.changed in the log")["files"].clone();
+    assert!(
+        files.as_array().unwrap().iter().any(|f| f["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("workflows/dinle.json")),
+        "{files}"
+    );
     ws.flow(
         "yeni",
         json!({"on": [{ "event": "kişi.geldi" }], "steps": ["#selamla"]}),

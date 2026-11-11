@@ -34,6 +34,7 @@ workflow is [internal](/guides/maintenance/).
 | `run.skipped` | a schedule came due and the workflow's `on` did not hold |
 | `connector.started`, `connector.ended`, `connector.gave-up` | `connector`, `why` |
 | `paths.watched` | `paths`: every path watched now |
+| `files.changed` | `files`: the workspace's own files that changed (a workflow, `itero.config.json`), each with its `path` and `kind` (`created`, `changed`, `removed`, `renamed`, `rescan`): the daemon reads them again |
 | `reply.sent`, `reply.failed` | `url`, `run`, and for `reply.failed` `why`: a callback taken, or to be tried again |
 | `error` | `why`: what went wrong in the daemon itself |
 

@@ -413,10 +413,21 @@ pub fn watch_paths(
             }
         }
         let mut woke = false;
+        // the workspace's own files that changed, each as the watch saw it:
+        // logged, so a wake says what woke it
+        let mut changed = vec![];
         for c in d.take(Instant::now()) {
             if own.contains(&c.path) {
                 look = true;
                 woke = true;
+                let seen = match c.kind {
+                    Kind::Created => "created",
+                    Kind::Changed => "changed",
+                    Kind::Removed => "removed",
+                    Kind::Renamed => "renamed",
+                    Kind::Rescan => "rescan",
+                };
+                changed.push(json!({ "path": c.path.display().to_string(), "kind": seen }));
             }
             if lookouts.contains(&c.path) {
                 look = true;
@@ -441,6 +452,9 @@ pub fn watch_paths(
                 Ok(()) => woke = true,
                 Err(e) => log.write("error", json!({ "why": format!("{e:#}") })),
             }
+        }
+        if !changed.is_empty() {
+            log.write("files.changed", json!({ "files": changed }));
         }
         if woke {
             let _ = wake.send(());
