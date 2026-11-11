@@ -88,22 +88,35 @@ fn from_folder(ws: &Workspace, name: &str) -> Option<String> {
         .map(|w| dir.join(format!("{w}.{name}")))
         .into_iter()
         .chain([dir.join(name)]);
-    for f in files {
-        match std::fs::read_to_string(&f) {
-            Ok(t) => {
-                let t = t.strip_suffix('\n').unwrap_or(&t);
-                return Some(t.strip_suffix('\r').unwrap_or(t).to_string());
+    files.into_iter().find_map(|f| from_file(&f))
+}
+
+/// A secret of the machine's, never a workspace's (a `notify` channel's
+/// url): `folder`'s file `name`, else the store's `name`, else the
+/// environment's.
+pub fn machine(folder: Option<&std::path::Path>, name: &str) -> Option<String> {
+    folder
+        .and_then(|d| from_file(&d.join(name)))
+        .or_else(|| get(name))
+}
+
+/// A secret's file, its last newline left out; none when it is not
+/// there. One that cannot be read is said, once.
+fn from_file(f: &std::path::Path) -> Option<String> {
+    match std::fs::read_to_string(f) {
+        Ok(t) => {
+            let t = t.strip_suffix('\n').unwrap_or(&t);
+            Some(t.strip_suffix('\r').unwrap_or(t).to_string())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+            if REPORTED.set(()).is_ok() {
+                eprintln!("itero: {}: {e}", f.display());
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-                if REPORTED.set(()).is_ok() {
-                    eprintln!("itero: {}: {e}", f.display());
-                }
-            }
+            None
         }
     }
-    None
 }
 
 /// What a server without a store answers to a secret sent to it.

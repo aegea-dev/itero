@@ -6,10 +6,13 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// The settings `daemon.json` may have.
-const SETTINGS: &[&str] = &["port", "listen", "tls", "secrets"];
+const SETTINGS: &[&str] = &["port", "listen", "tls", "secrets", "notify"];
 
 /// The settings `tls` may have.
 const TLS: &[&str] = &["cert", "key"];
+
+/// The settings a channel in `notify` may have.
+const CHANNEL: &[&str] = &["url", "format"];
 
 /// How the machine's daemon serves.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -25,6 +28,51 @@ pub struct Settings {
     /// A folder of secrets the platform mounts, a file each
     /// (`/run/secrets/API_KEY`): `$$API_KEY` reads it.
     pub secrets: Option<PathBuf>,
+    /// Where `#notify` sends instead of the desktop: none, the desktop.
+    pub notify: Vec<Channel>,
+}
+
+/// A place `#notify` POSTs to: an http(s) address, or `$$NAME`, a secret
+/// of the machine's holding one; and the body it takes.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Channel {
+    pub url: String,
+    pub format: Format,
+}
+
+/// The body a channel takes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Format {
+    /// `{"title", "subtitle", "text", "url", "workspace", "workflow"}`
+    #[default]
+    Json,
+    /// ntfy's JSON publishing
+    Ntfy,
+    /// a Slack incoming webhook's (Mattermost and Google Chat read its text)
+    Slack,
+    /// a Discord webhook's
+    Discord,
+}
+
+/// The formats, as `format` names them.
+const FORMATS: &[(&str, Format)] = &[
+    ("json", Format::Json),
+    ("ntfy", Format::Ntfy),
+    ("slack", Format::Slack),
+    ("discord", Format::Discord),
+];
+
+static CHANNELS: std::sync::OnceLock<Vec<Channel>> = std::sync::OnceLock::new();
+
+/// Keeps the machine daemon's channels, once, at its start.
+pub fn set_channels(c: Vec<Channel>) {
+    let _ = CHANNELS.set(c);
+}
+
+/// The channels `#notify` sends to here: none outside `itero daemon`.
+pub fn channels() -> &'static [Channel] {
+    CHANNELS.get().map_or(&[], Vec::as_slice)
 }
 
 /// A certificate (its chain) and its private key, PEM files.
@@ -50,14 +98,15 @@ impl Settings {
         };
         let mut problems = left_from_before(&path).into_iter().collect::<Vec<_>>();
         let settings = match std::fs::read_to_string(&path) {
-            Ok(text) => match parse(&text) {
-                Ok(s) => Some(s),
-                Err(p) => {
-                    let at = path.display();
-                    problems.extend(p.iter().map(|p| format!("{at}: {p}")));
-                    None
-                }
-            },
+            Ok(text) => {
+                // the secrets the channels it could read name, beside the
+                // file's own problems: every problem in one run
+                let (s, mut found) = parse_all(&text);
+                found.extend(missing_secrets(&s));
+                let at = path.display();
+                problems.extend(found.iter().map(|p| format!("{at}: {p}")));
+                Some(s)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && !given => {
                 Some(Settings::default())
             }
@@ -82,10 +131,25 @@ fn left_from_before(path: &Path) -> Option<String> {
 }
 
 /// The settings in `text`, or every problem in it.
+#[cfg(test)]
 fn parse(text: &str) -> Result<Settings, Vec<String>> {
-    let v: Value = serde_json::from_str(text).map_err(|e| vec![format!("not JSON: {e}")])?;
+    match parse_all(text) {
+        (s, p) if p.is_empty() => Ok(s),
+        (_, p) => Err(p),
+    }
+}
+
+/// The settings in `text` that could be read, and every problem in it.
+fn parse_all(text: &str) -> (Settings, Vec<String>) {
+    let v: Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(e) => return (Settings::default(), vec![format!("not JSON: {e}")]),
+    };
     let Value::Object(m) = v else {
-        return Err(vec!["daemon.json is a JSON object of settings".into()]);
+        return (
+            Settings::default(),
+            vec!["daemon.json is a JSON object of settings".into()],
+        );
     };
     let mut problems = vec![];
     let mut s = Settings::default();
@@ -108,6 +172,11 @@ fn parse(text: &str) -> Result<Settings, Vec<String>> {
                 )),
                 None => problems.push(format!("secrets: a folder's path, not {v}")),
             },
+            "notify" => {
+                let (c, p) = channels_in(v);
+                s.notify = c;
+                problems.extend(p);
+            }
             "tls" => match tls(v) {
                 Ok(t) => s.tls = Some(t),
                 Err(p) => problems.extend(p),
@@ -121,10 +190,115 @@ fn parse(text: &str) -> Result<Settings, Vec<String>> {
     if m.contains_key("tls") && !m.contains_key("listen") {
         problems.push("tls: for listen, which is not given".into());
     }
-    match problems.is_empty() {
-        true => Ok(s),
-        false => Err(problems),
+    (s, problems)
+}
+
+/// The secret a channel's url names (`$$NAME`), if it names one.
+pub fn secret_of(url: &str) -> Option<&str> {
+    url.strip_prefix("$$")
+}
+
+/// `notify`'s channels that could be read, and every problem in them. A
+/// url is never echoed: one written in the file may be a secret.
+fn channels_in(v: &Value) -> (Vec<Channel>, Vec<String>) {
+    let Value::Array(list) = v else {
+        return (
+            vec![],
+            vec![format!(
+                "notify: a list of channels, each with url and format, not {}",
+                kind(v)
+            )],
+        );
+    };
+    if list.is_empty() {
+        return (
+            vec![],
+            vec!["notify: an empty list: leave notify out for the desktop".into()],
+        );
     }
+    let mut problems = vec![];
+    let mut out = vec![];
+    for (i, c) in list.iter().enumerate() {
+        let Value::Object(m) = c else {
+            problems.push(format!(
+                "notify[{i}]: a channel is an object with url and format"
+            ));
+            continue;
+        };
+        for k in m.keys().filter(|k| !CHANNEL.contains(&k.as_str())) {
+            problems.push(format!(
+                "notify[{i}].{k}: not a setting of a channel ({})",
+                CHANNEL.join(", ")
+            ));
+        }
+        let url = match m.get("url") {
+            None => {
+                problems.push(format!("notify[{i}].url: not given"));
+                None
+            }
+            Some(Value::String(u))
+                if u.starts_with("http://")
+                    || u.starts_with("https://")
+                    || secret_of(u).is_some_and(crate::engine::secrets::valid_name) =>
+            {
+                Some(u.clone())
+            }
+            Some(_) => {
+                problems.push(format!(
+                    "notify[{i}].url: an http:// or https:// address, or $$NAME"
+                ));
+                None
+            }
+        };
+        let format = match m.get("format") {
+            None => Some(Format::default()),
+            Some(f) => match FORMATS.iter().find(|(n, _)| Some(*n) == f.as_str()) {
+                Some((_, f)) => Some(*f),
+                None => {
+                    let names: Vec<&str> = FORMATS.iter().map(|(n, _)| *n).collect();
+                    problems.push(format!(
+                        "notify[{i}].format: one of {}, not {f}",
+                        names.join(", ")
+                    ));
+                    None
+                }
+            },
+        };
+        if let (Some(url), Some(format)) = (url, format) {
+            out.push(Channel { url, format });
+        }
+    }
+    (out, problems)
+}
+
+/// What kind of JSON `v` is, to say it without its value.
+fn kind(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "a list",
+        Value::Object(_) => "an object",
+    }
+}
+
+/// The channels whose `$$NAME` names no secret of the machine's.
+fn missing_secrets(s: &Settings) -> Vec<String> {
+    s.notify
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| {
+            let name = secret_of(&c.url)?;
+            crate::engine::secrets::machine(s.secrets.as_deref(), name)
+                .is_none()
+                .then(|| {
+                    format!(
+                        "notify[{i}].url: no secret {name} (the secrets folder, the store, or the environment)"
+                    )
+                })
+        })
+        .collect()
 }
 
 /// `tls`'s two files, each there and readable; or every problem.
@@ -242,6 +416,56 @@ mod tests {
         assert!(p[1].starts_with("dinle: not a setting"), "{p:?}");
         assert_eq!(parse("[]").unwrap_err().len(), 1);
         assert!(parse("{").unwrap_err()[0].starts_with("not JSON"));
+    }
+
+    #[test]
+    fn notify_is_a_list_of_channels_every_problem_told() {
+        let s = parse(
+            r#"{ "notify": [
+                { "url": "https://ntfy.sh/uyarılar", "format": "ntfy" },
+                { "url": "$$KANAL" } ] }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            s.notify,
+            vec![
+                Channel {
+                    url: "https://ntfy.sh/uyarılar".into(),
+                    format: Format::Ntfy
+                },
+                Channel {
+                    url: "$$KANAL".into(),
+                    format: Format::Json
+                },
+            ]
+        );
+        let e = parse(
+            r#"{ "notify": [
+                { "url": "ftp://örnek.test/gizli", "format": "teams", "renk": 1 },
+                { "format": "slack" }, "düz", { "url": "$$1yanlış" } ] }"#,
+        )
+        .unwrap_err();
+        for p in [
+            // the value is never echoed: a URL written in the file may be
+            // a secret
+            "notify[0].url: an http:// or https:// address, or $$NAME",
+            "notify[0].format: one of json, ntfy, slack, discord, not \"teams\"",
+            "notify[0].renk: not a setting of a channel (url, format)",
+            "notify[1].url: not given",
+            "notify[2]: a channel is an object with url and format",
+            "notify[3].url: an http:// or https:// address, or $$NAME",
+        ] {
+            assert!(e.iter().any(|x| x == p), "{p} in {e:#?}");
+        }
+        assert_eq!(e.len(), 6, "{e:#?}");
+        assert!(!e.iter().any(|x| x.contains("gizli")), "{e:#?}");
+        assert_eq!(
+            parse(r#"{ "notify": [] }"#).unwrap_err(),
+            vec!["notify: an empty list: leave notify out for the desktop".to_string()]
+        );
+        assert!(
+            parse(r#"{ "notify": "x" }"#).unwrap_err()[0].starts_with("notify: a list of channels"),
+        );
     }
 
     #[test]

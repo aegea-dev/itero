@@ -243,3 +243,19 @@ fn a_server_json_left_from_before_stops_the_daemon_saying_to_rename_it() {
     );
     assert!(said.contains(&rename), "{said}");
 }
+
+#[test]
+fn a_channel_whose_secret_is_not_there_is_told_with_the_others() {
+    let m = Machine::new();
+    let file = m.daemon_json(r#"{ "notify": [ { "url": "$$YOK_KANAL" }, { "url": "x" } ] }"#);
+    let said = m.refused(&[]);
+    let at = file.display().to_string();
+    assert!(
+        said.contains(&format!("{at}: notify[0].url: no secret YOK_KANAL")),
+        "{said}"
+    );
+    assert!(
+        said.contains(&format!("{at}: notify[1].url: an http://")),
+        "{said}"
+    );
+}
