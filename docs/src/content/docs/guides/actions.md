@@ -96,7 +96,12 @@ in `itero.config.json` is the action's, whatever the version.
 ## Built in
 
 `#notify` shows a desktop notification: through Itero.app on macOS
-(`osascript` without it), `notify-send` on Linux.
+(`osascript` without it), `notify-send` on Linux. On a machine whose
+[`daemon.json`](/reference/daemon-json/#notifications) lists `notify`
+channels (a server, which has no desktop), it sends its `title`,
+`subtitle`, `text` and `url` to them instead; the same workflow runs on
+both. `buttons`, `wait` and clicks need a desktop: a channel cannot
+answer.
 
 | Arg | Is |
 |---|---|
