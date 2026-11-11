@@ -157,10 +157,11 @@ changes from one machine to another: `"callback": "$$WEBHOOK_URL"`.
 - **The log has the body,** as it has every event's data.
 - **Floods.** A request that fails its check is never saved, so it starts no
   run and fills no disk. Each hook takes 32 requests at once, and answers 503
-  past that while the others go on. Each connection carries one request and
-  lives 30 seconds, and a body is at most 5 MiB. Many open connections can
-  still fill the process's file descriptors for those 30 seconds, and only a
-  tunnel or proxy, which sees who is sending, can stop them coming.
+  past that while the others go on. Each connection carries one request,
+  sends its headers within 10 seconds and lives 30, and a body is at most
+  5 MiB. Many open connections can still fill the process's file
+  descriptors for those seconds, and only a tunnel or proxy, which sees who
+  is sending, can stop them coming.
 
 A webhook that must stay apart from a flood on another gets its own connector
 and port, best on its own hostname:

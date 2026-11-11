@@ -426,3 +426,173 @@ fn probes_answer_anyone_and_say_nothing_else() {
     assert_eq!(status(o.opened, "/health", None, None), 401);
     assert_eq!(status(o.opened, "/workspaces", None, None), 401);
 }
+
+/// How long the daemon waits for a request's headers (`HEADERS` in
+/// `src/net.rs`), and how long a test waits past it.
+const HEADERS: Duration = Duration::from_secs(10);
+const SLACK: Duration = Duration::from_secs(10);
+
+/// Reads `c` until the daemon closes it: how long that took from `from`,
+/// or why it was not closed within `HEADERS` and `SLACK`. Whatever the
+/// daemon writes before closing is read and left.
+fn closed(c: &mut impl std::io::Read, from: Instant) -> Result<Duration, String> {
+    let mut buf = [0u8; 4096];
+    loop {
+        match c.read(&mut buf) {
+            Ok(0) => return Ok(from.elapsed()),
+            Ok(_) => {}
+            // a TLS connection closed with no close_notify reads as an
+            // unexpected end: closed all the same
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::UnexpectedEof
+                ) =>
+            {
+                return Ok(from.elapsed());
+            }
+            Err(e) => return Err(format!("still open after {:?}: {e}", from.elapsed())),
+        }
+    }
+}
+
+/// A plain connection to `port`, reads waiting up to `HEADERS` and `SLACK`.
+fn connect(port: u16) -> std::net::TcpStream {
+    let c = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    c.set_read_timeout(Some(HEADERS + SLACK)).unwrap();
+    c
+}
+
+/// A connection to wait on: how long it took to be closed, or why not.
+type Case = Box<dyn FnOnce() -> Result<Duration, String> + Send>;
+
+/// Each case on its own thread, so they wait out the limit together.
+fn all_closed(cases: Vec<(&'static str, Case)>) {
+    let waits: Vec<_> = cases
+        .into_iter()
+        .map(|(name, case)| (name, std::thread::spawn(case)))
+        .collect();
+    let mut wrong = Vec::new();
+    for (name, wait) in waits {
+        match wait.join().unwrap() {
+            Ok(took) if took >= HEADERS - Duration::from_secs(1) => {}
+            Ok(took) => wrong.push(format!("{name}: closed early, after {took:?}")),
+            Err(why) => wrong.push(format!("{name}: {why}")),
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn a_request_slower_than_the_header_limit_is_closed_on_the_local_api() {
+    use std::io::{Read, Write};
+    let m = Machine::new();
+    m.ok(&["token", "create", "kişi"]);
+    let name = m.listed();
+    m.server_json(json!({ "listen": "127.0.0.1:0" }));
+    let o = m.opened();
+    let port = o.local;
+    let host = format!("Host: 127.0.0.1:{port}\r\n");
+    // a log stream answered before: an answer being written is not a
+    // request being read, and stays open past the limit
+    let mut stream = connect(port);
+    write!(stream, "GET /ws/{name}/log/stream HTTP/1.1\r\n{host}\r\n").unwrap();
+    let mut head = [0u8; 12];
+    stream.read_exact(&mut head).unwrap();
+    assert_eq!(&head, b"HTTP/1.1 200");
+    let h = host.clone();
+    all_closed(vec![
+        (
+            "a client that sends nothing",
+            Box::new(move || {
+                let mut c = connect(port);
+                closed(&mut c, Instant::now())
+            }),
+        ),
+        (
+            "a client that sends half its headers",
+            Box::new(move || {
+                let mut c = connect(port);
+                let from = Instant::now();
+                write!(c, "GET /health HTTP/1.1\r\n{h}").unwrap();
+                closed(&mut c, from)
+            }),
+        ),
+        (
+            "a kept-alive connection left idle",
+            Box::new(move || {
+                let mut c = connect(port);
+                write!(c, "GET /livez HTTP/1.1\r\n{host}\r\n").unwrap();
+                let mut answer = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !answer.ends_with(b"ok\n") {
+                    let n = c.read(&mut buf).map_err(|e| format!("no answer: {e}"))?;
+                    if n == 0 {
+                        return Err("closed before its answer".into());
+                    }
+                    answer.extend_from_slice(&buf[..n]);
+                }
+                closed(&mut c, Instant::now())
+            }),
+        ),
+    ]);
+    // the stream answered before is still open: a read times out (or
+    // reads a line the daemon logged), it does not end
+    stream
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    match stream.read(&mut [0u8; 1024]) {
+        Ok(0) => panic!("the log stream was closed"),
+        Ok(_) => {}
+        Err(e) => assert!(
+            matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "{e}"
+        ),
+    }
+}
+
+#[test]
+fn a_request_slower_than_the_header_limit_is_closed_on_the_opened_api_over_tls() {
+    use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
+    use std::io::Write;
+    let m = Machine::new();
+    let token = m.ok(&["token", "create", "kişi"]).trim().to_string();
+    let (authority, cert, key) = certificates();
+    let (cert, key) = m.tls_files(&cert, &key);
+    m.server_json(json!({ "listen": "127.0.0.1:0", "tls": { "cert": cert, "key": key } }));
+    let o = m.opened();
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(CertificateDer::from_pem_slice(authority.as_bytes()).unwrap())
+        .unwrap();
+    let config = std::sync::Arc::new(
+        rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth(),
+    );
+    let port = o.opened;
+    all_closed(vec![(
+        "a client past its handshake that sends half its headers",
+        Box::new(move || {
+            let tls =
+                rustls::ClientConnection::new(config, ServerName::try_from("127.0.0.1").unwrap())
+                    .unwrap();
+            let mut c = rustls::StreamOwned::new(tls, connect(port));
+            // the handshake is done once the first bytes are written
+            write!(
+                c,
+                "GET /health HTTP/1.1\r\nHost: itero.örnek.test\r\nAuthorization: Bearer {token}\r\n"
+            )
+            .map_err(|e| format!("no handshake: {e}"))?;
+            c.flush().unwrap();
+            closed(&mut c, Instant::now())
+        }),
+    )]);
+}

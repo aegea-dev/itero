@@ -42,7 +42,8 @@ reach it.
 With `tls`, `listen` serves HTTPS (TLS 1.2 and 1.3, through rustls) with
 that certificate, read and checked against its key when the daemon
 starts: after renewing it, `itero service restart`. A connection has 10
-seconds to finish its handshake. The daemon warns when the key file is
+seconds to finish its handshake, then 10 to send each request's
+headers, as on every [listener](/reference/http/). The daemon warns when the key file is
 readable by others on the machine (`chmod 600` it). Without `tls` it
 serves plain HTTP and says so when it starts: then put a proxy that adds
 TLS in front (Caddy, Traefik, a load balancer), or keep `listen` on a

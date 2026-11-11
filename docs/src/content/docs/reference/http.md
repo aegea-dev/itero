@@ -9,6 +9,11 @@ the OS gives, which `itero ws info` shows; an app that calls the API sets
 one. The examples here use 8787. Answers are JSON;
 an error is `{"error": "..."}` with its status.
 
+A connection has 10 seconds to send a request's headers, its first and
+each next one on a connection kept alive; one that sends nothing or
+sends them slowly is closed. An answer being sent has no limit: a
+stream stays open as long as the client reads it.
+
 | Route | Does |
 |---|---|
 | `GET /health` | the workspace, the daemon, its passes and its connectors |
