@@ -2,6 +2,7 @@
 //! event (`steps::decide`), the journal, the daemon's passes, and the
 //! workers that run actions.
 pub mod alarm;
+pub mod channels;
 pub mod daemon;
 pub mod events;
 pub mod follow;
