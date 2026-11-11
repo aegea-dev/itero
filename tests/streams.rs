@@ -467,9 +467,18 @@ fn a_half_written_line_comes_once_it_ends() {
     use std::io::Write;
     let w = Ws::new();
     let _d = w.daemon();
+    let path = w.root.join(".itero/itero.log");
+    // the daemon's own start-up lines written first: its first pass (the
+    // routing of itero.daemon.started) and its connector's start. A line
+    // of its own written between the two halves below would split them;
+    // after these, nothing in this test makes it write
+    until("the daemon's start-up lines", || {
+        let h: Value = http().get(w.url("/health")).send().unwrap().json().unwrap();
+        let log = std::fs::read_to_string(&path).unwrap_or_default();
+        h["passes"].as_u64() >= Some(1) && log.contains(r#""event":"connector.started""#)
+    });
     // one line asked: a half sent as one would end the stream there
     let l = follow(&w.url("/log/stream?count=1"));
-    let path = w.root.join(".itero/itero.log");
     let append = |text: &str| {
         let mut f = std::fs::OpenOptions::new()
             .append(true)
