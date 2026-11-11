@@ -1,0 +1,110 @@
+name: Image
+
+# The container images, from a release's static musl archives (so the
+# binary in the image is the one in the release): Debian with what the
+# examples use, Alpine small (packaging/docker/). Both architectures in
+# one buildx run; QEMU runs the arm64 package install.
+#
+# release.yml calls it on a tag, after the archives are uploaded to the
+# draft, with push. Run by hand it is the dry run: it builds both images
+# from a release's archives and pushes nothing unless asked, so this job
+# can run before a tag depends on it:
+#   gh workflow run image.yml -f tag=v0.40.0
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: the release whose archives go in the images (vX.Y.Z)
+        required: true
+        type: string
+      push:
+        description: push the images to ghcr.io
+        required: true
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: the release whose archives go in the images (vX.Y.Z)
+        required: true
+        type: string
+      push:
+        description: push the images to ghcr.io (no is the dry run)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: container images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      # reads the release's archives: a draft is visible only with write
+      # access (with read, gh release download says "release not found")
+      contents: write
+      packages: write # pushes ghcr.io/aegea-dev/itero
+    env:
+      TAG: ${{ inputs.tag }}
+      PUSH: ${{ inputs.push }}
+    steps:
+      - name: The tag is a version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "tag must be vX.Y.Z, not $TAG" >&2
+            exit 1
+          fi
+
+      # the Dockerfiles as they are at the tag, beside its binaries
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Each architecture's itero, from its archive
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for pair in amd64:x86_64 arm64:aarch64; do
+            arch="${pair%%:*}"; cpu="${pair#*:}"
+            name="itero-$TAG-$cpu-unknown-linux-musl"
+            gh release download "$TAG" --pattern "$name.tar.gz" --pattern "$name.sha256" --dir /tmp/dl
+            (cd /tmp/dl && sha256sum -c "$name.sha256")
+            mkdir -p "image/bin/$arch"
+            tar xzf "/tmp/dl/$name.tar.gz" -C "image/bin/$arch" ./itero ./THIRD-PARTY-LICENSES
+          done
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        if: inputs.push
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # without push, the result stays in buildx's cache: the dry run
+      - name: Build both images, and push them when asked
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${TAG#v}"
+          minor="${v%.*}"
+          repo=ghcr.io/aegea-dev/itero
+          out=--output=type=cacheonly
+          if [ "$PUSH" = true ]; then out=--push; fi
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -f packaging/docker/Dockerfile \
+            --label "org.opencontainers.image.version=$v" \
+            -t "$repo:$v" -t "$repo:$minor" -t "$repo:latest" "$out" image
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -f packaging/docker/Dockerfile.alpine \
+            --label "org.opencontainers.image.version=$v" \
+            -t "$repo:$v-alpine" -t "$repo:$minor-alpine" -t "$repo:alpine" "$out" image

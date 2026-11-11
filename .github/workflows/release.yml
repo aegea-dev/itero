@@ -113,63 +113,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 --clobber
 
-  # The container images, from the static musl archives just uploaded (so
-  # the binary in the image is the one in the release): Debian with what
-  # the examples use, Alpine small (packaging/docker/). Both architectures
-  # in one buildx run; QEMU runs the arm64 package install.
+  # The container images, from the archives just uploaded to the draft
+  # (image.yml, which also runs by hand as a dry run). A called workflow
+  # gets no more than this job grants: it reads the draft (write access
+  # sees a draft) and pushes to ghcr.io.
   image:
     needs: build
-    name: container images
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
     permissions:
-      contents: read
-      packages: write # pushes ghcr.io/aegea-dev/itero
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-
-      - name: Each architecture's itero, from its archive
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          tag="$GITHUB_REF_NAME"
-          for pair in amd64:x86_64 arm64:aarch64; do
-            arch="${pair%%:*}"; cpu="${pair#*:}"
-            name="itero-$tag-$cpu-unknown-linux-musl"
-            gh release download "$tag" --pattern "$name.tar.gz" --pattern "$name.sha256" --dir /tmp/dl
-            (cd /tmp/dl && sha256sum -c "$name.sha256")
-            mkdir -p "image/bin/$arch"
-            tar xzf "/tmp/dl/$name.tar.gz" -C "image/bin/$arch" ./itero ./THIRD-PARTY-LICENSES
-          done
-
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push both images
-        shell: bash
-        run: |
-          set -euo pipefail
-          v="${GITHUB_REF_NAME#v}"
-          minor="${v%.*}"
-          repo=ghcr.io/aegea-dev/itero
-          docker buildx build --platform linux/amd64,linux/arm64 \
-            -f packaging/docker/Dockerfile \
-            --label "org.opencontainers.image.version=$v" \
-            -t "$repo:$v" -t "$repo:$minor" -t "$repo:latest" --push image
-          docker buildx build --platform linux/amd64,linux/arm64 \
-            -f packaging/docker/Dockerfile.alpine \
-            --label "org.opencontainers.image.version=$v" \
-            -t "$repo:$v-alpine" -t "$repo:$minor-alpine" -t "$repo:alpine" --push image
+      contents: write
+      packages: write
+    uses: ./.github/workflows/image.yml
+    with:
+      tag: ${{ github.ref_name }}
+      push: true
 
   # a failed image keeps the release a draft, as a failed build does
   publish:
