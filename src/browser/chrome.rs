@@ -109,8 +109,19 @@ pub fn no_sandbox(var: Option<&std::ffi::OsStr>, root_on_linux: bool) -> Result<
 
 /// Starts Chrome on `profile`: port 0, so Chrome picks a free one and
 /// writes it to `DevToolsActivePort` there; none of Chrome's own first-run
-/// pages, prompts or bars.
+/// pages, prompts or bars. Its stderr goes nowhere.
 pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String> {
+    launch_with(exe, mode, profile, Stdio::null())
+}
+
+/// `launch`, with Chrome's stderr sent to `stderr`: a test keeps it, to say
+/// why its Chrome stopped answering.
+pub fn launch_with(
+    exe: &Path,
+    mode: Mode,
+    profile: &Path,
+    stderr: Stdio,
+) -> Result<Launched, String> {
     // before anything is made or stopped: a wrong value fails first
     #[cfg(target_os = "linux")]
     // SAFETY: geteuid has no preconditions
@@ -145,7 +156,7 @@ pub fn launch(exe: &Path, mode: Mode, profile: &Path) -> Result<Launched, String
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(stderr);
     if mode == Mode::Headless {
         // nobody scrolls by hand there; where a scrollbar takes room
         // (Linux), a whole-page screenshot would lose its width

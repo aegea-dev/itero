@@ -174,7 +174,7 @@ fn api() -> Result<String, String> {
 }
 
 fn http() -> Result<reqwest::blocking::Client, String> {
-    crate::net::client(Duration::from_secs(60)).map_err(|e| e.to_string())
+    crate::net::client(Duration::from_secs(60)).map_err(|e| crate::net::cause(&e))
 }
 
 /// A window of the daemon's Chrome, and the response that keeps it: the
@@ -191,9 +191,11 @@ fn open(api: &str, headless: bool) -> Result<(Tab, impl Sized), String> {
         .post(format!("{api}/tabs"))
         .json(&body)
         .send()
-        .map_err(|e| format!("the daemon at {api}: {e}"))?;
+        .map_err(|e| format!("the daemon at {api}: {}", crate::net::cause(&e)))?;
     if !r.status().is_success() {
-        let v: Value = r.json().map_err(|e| format!("the daemon said: {e}"))?;
+        let v: Value = r
+            .json()
+            .map_err(|e| format!("the daemon said: {}", crate::net::cause(&e)))?;
         return Err(format!(
             "the daemon: {}",
             v["error"].as_str().unwrap_or("failed")

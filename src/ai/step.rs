@@ -426,7 +426,12 @@ pub fn run(r: &StepRun, told: &(dyn Fn(Option<&str>) + Sync)) -> Result<Outcome,
         .post("http://itero-ai/v1/chat/completions")
         .json(&body)
         .send()
-        .map_err(|e| fail(format!("itero-ai did not answer: {e}")))?;
+        .map_err(|e| {
+            fail(format!(
+                "itero-ai did not answer: {}",
+                crate::net::cause(&e)
+            ))
+        })?;
     let status = resp.status();
     if !status.is_success() {
         let v: Value = resp.json().unwrap_or_default();

@@ -70,7 +70,10 @@ fn started_once_used_again_and_after_a_bad_end_started_after_a_pause() {
     assert_eq!(k.socket(&ws).unwrap(), sock, "the one running is used");
     assert_eq!(kinds(&ws), vec!["itero.ai.started"]);
     let took = data(&ws, "itero.ai.started")["seconds"].as_f64().unwrap();
-    assert!((1.0..30.0).contains(&took), "it took {took} s to answer");
+    // up to the keeper's own limit: a first start compiles Metal's shaders,
+    // 31 s on a CI runner's Mac with an empty cache
+    let limit = itero::ai::START.as_secs_f64();
+    assert!((1.0..limit).contains(&took), "it took {took} s to answer");
     assert_eq!(k.health().unwrap().state, "running");
 
     // ended badly (killed): it is not started again before its pause. The

@@ -18,8 +18,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// How long a new itero-ai may take to answer. Its first start on a
-/// machine compiles llama.cpp's GPU kernels: 15 s on an M1 Max.
-const START: Duration = Duration::from_secs(60);
+/// machine compiles llama.cpp's GPU kernels: 15 s on an M1 Max, 31 s on
+/// a CI runner's Mac with an empty Metal cache.
+pub const START: Duration = Duration::from_secs(60);
 
 /// itero's cache, the same on every OS, as Hugging Face's
 /// `~/.cache/huggingface`: `$XDG_CACHE_HOME/itero`, else `~/.cache/itero`.
