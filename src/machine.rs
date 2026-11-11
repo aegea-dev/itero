@@ -75,6 +75,16 @@ pub fn list_path() -> Result<PathBuf> {
     Ok(state_dir()?.join("workspaces.json"))
 }
 
+/// A workspace's name on the machine's list, by its folder; none when
+/// it is not on it, or the list cannot be read.
+pub fn listed_name(root: &Path) -> Option<String> {
+    let list = List::read(&list_path().ok()?).ok()?;
+    list.workspaces
+        .into_iter()
+        .find(|e| e.folder == root)
+        .map(|e| e.name)
+}
+
 /// One workspace on the list.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entry {

@@ -10,6 +10,9 @@ themselves: workflow files, actions, connectors. It says what the
 workspace is and how it runs, never values to work on: those come from
 an event, a step's args, or the workspace's `.env` ([Secrets and
 environment variables](/guides/secrets/)). A workflow reads it, read-only, as `$config`.
+What belongs to the machine running it, not the workspace, is in
+[`daemon.json`](/reference/daemon-json/)
+([Which file?](/reference/concepts/#which-file)).
 
 ```json
 {

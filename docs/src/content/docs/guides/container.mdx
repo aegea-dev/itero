@@ -119,6 +119,20 @@ container, start it with `--host 0.0.0.0`: Compose publishes its port
 (add it to `ports`), and on Kubernetes the Service's `webhook` port
 reaches it.
 
+## Notifications
+
+A container has no desktop, so a workspace's `#notify` there needs a
+channel: list one in `daemon.json` beside `listen`, a webhook's URL as a
+secret ([Secrets](#secrets)):
+
+```json
+{ "listen": "0.0.0.0:8443",
+  "notify": [{ "url": "$$SLACK_WEBHOOK", "format": "slack" }] }
+```
+
+Without one, `#notify` fails, saying to add one
+([Notifications](/reference/daemon-json/#notifications)).
+
 ## Stopping
 
 A stop is SIGTERM: the daemon's connectors get 3 seconds to end, then

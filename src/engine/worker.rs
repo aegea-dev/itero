@@ -272,6 +272,35 @@ fn notify(r: &StepRun) -> Result<Outcome, Failure> {
         None => vec![],
     };
     let wait = !buttons.is_empty() || r.env.get("wait").is_some_and(|w| w == "true");
+    // a machine with daemon.json's notify channels sends to them instead
+    // of a desktop
+    if let Some(list) = r.env.get(super::channels::CHANNELS_ENV) {
+        let channels: Vec<crate::settings::Channel> = serde_json::from_str(list)
+            .map_err(|e| format!("#notify: {}: {e}", super::channels::CHANNELS_ENV))?;
+        if wait {
+            return Err(Failure::Error(
+                "#notify waits for an answer, which needs a desktop: daemon.json's notify channels cannot answer"
+                    .into(),
+            ));
+        }
+        let note = Note {
+            title: get("title").unwrap_or_else(|| "itero".into()),
+            text,
+            subtitle: get("subtitle"),
+            url: get("url"),
+            ..Default::default()
+        };
+        if let Some(u) = &note.url
+            && !openable(u)
+        {
+            return Err(Failure::Error(format!(
+                "#notify's url is http or https: {u}"
+            )));
+        }
+        let workspace = crate::machine::listed_name(&r.root);
+        super::channels::send(&channels, &note, workspace.as_deref(), &r.workflow)?;
+        return Ok(Outcome::Done(Value::String(String::new())));
+    }
     if wait && r.waiting_since.is_some() {
         // the click that came, its `$event`; none yet: still waiting, for
         // the same notification
@@ -454,7 +483,7 @@ fn first_that_runs(ways: Vec<(PathBuf, Vec<String>)>) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "no way to show a notification here (tried {}): install libnotify's notify-send",
+        "no way to show a notification here (tried {}): install libnotify's notify-send, or add a channel to daemon.json's notify",
         tried.join(", ")
     ))
 }
@@ -1077,11 +1106,15 @@ mod notifier_tests {
             first_that_runs(vec![sh("echo olmadı >&2; exit 3"), sh("exit 0")]),
             Err("sh: olmadı".into())
         );
-        // none there: which were tried
+        // none there: which were tried, and the ways out (a server has
+        // no desktop: a channel)
         let e = first_that_runs(vec![(none, vec![]), (PathBuf::from("/yok/öteki"), vec![])])
             .unwrap_err();
         assert!(
-            e.contains("tried /yok/bildirici, /yok/öteki") && e.contains("notify-send"),
+            e.contains("tried /yok/bildirici, /yok/öteki")
+                && e.ends_with(
+                    "install libnotify's notify-send, or add a channel to daemon.json's notify"
+                ),
             "{e}"
         );
         // there, but not a program

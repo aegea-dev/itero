@@ -137,3 +137,20 @@ writes it. When one is in its list more than once, `/1`, `/2` tell them
 apart; `#ai` and `#ai/1` are the same step, so a step keeps its address
 when a second one is added. A workflow used as a step has its own
 address: `home/workflows/daily/...`.
+
+## Which file?
+
+Two files hold settings. One question tells them apart: does the setting
+travel with the workspace, or describe the machine?
+
+| | [`itero.config.json`](/reference/itero-config/) | [`daemon.json`](/reference/daemon-json/) |
+|---|---|---|
+| Belongs to | the workspace | the machine's daemon |
+| Lives | in the workspace's folder, its repo | in itero's config folder (`~/.config/itero/`, `/etc/itero/` in the images), never in a repo |
+| The same everywhere | yes: cloned, synced or applied, it comes along | no: each machine has its own |
+| Says | what the workspace is, how it runs, its workflows, actions and connectors | where the daemon listens, its TLS, its secrets folder, where `#notify` sends |
+| Written by | the workspace's author | whoever runs the machine |
+
+So `#notify` in a workflow says only "notify": on a Mac it shows on the
+desktop, and on a server it goes to the channels that server's
+`daemon.json` lists.

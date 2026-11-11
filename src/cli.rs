@@ -1019,6 +1019,8 @@ fn dispatch(cli: Cli) -> Result<()> {
                 // starts (workers, connectors) inherits it
                 unsafe { std::env::set_var(crate::engine::secrets::FOLDER, dir) };
             }
+            // where its workspaces' #notify sends, instead of a desktop
+            crate::settings::set_channels(settings.notify.clone());
             if let (Some(at), true) = (settings.listen, no_serve) {
                 bail!("daemon.json opens the API on {at}, and --no-serve serves none");
             }

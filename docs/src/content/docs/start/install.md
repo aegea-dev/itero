@@ -71,6 +71,10 @@ Notifications. itero keeps its own copy of it in
 upgrade, so the permission stays. Without the app they go through
 `osascript` and show as Script Editor's.
 
+A server has no desktop: there `#notify` sends to the channels its
+[`daemon.json`](/reference/daemon-json/#notifications) lists (ntfy,
+Slack, Discord, or an endpoint of yours).
+
 On Linux, itero uses the first of `notify-send` (libnotify), `gdbus` (the
 freedesktop notification service) and `kdialog` (KDE) that it finds.
 
