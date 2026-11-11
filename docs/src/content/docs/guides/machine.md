@@ -81,7 +81,7 @@ journal a newer itero made is not left `missing`.
 ## One API
 
 The daemon serves one port: the `port` in
-[`server.json`](/reference/server-json/) when it gives one, else the one
+[`daemon.json`](/reference/daemon-json/) when it gives one, else the one
 it kept from its last start (in `~/.local/state/itero/port`):
 
 | Route | Does |
@@ -107,14 +107,14 @@ itero ws wf runs --context office
 ```
 
 The daemon's API answers on `127.0.0.1` only, unless its
-[`server.json`](/reference/server-json/#opening-the-api) opens it. On the
+[`daemon.json`](/reference/daemon-json/#opening-the-api) opens it. On the
 server, make a token and open the API:
 
 ```sh
 itero token create laptop   # prints the token once
 ```
 
-add `"listen": "0.0.0.0:8443"` to `~/.config/itero/server.json`, and
+add `"listen": "0.0.0.0:8443"` to `~/.config/itero/daemon.json`, and
 `itero service restart`;
 
 with a `tls` certificate beside it, or behind a proxy that adds TLS; then,

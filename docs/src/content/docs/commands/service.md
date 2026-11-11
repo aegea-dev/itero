@@ -18,7 +18,7 @@ itero service uninstall
 
 | Command | Does |
 |---|---|
-| `install` | runs the machine's daemon as a service (a launchd agent on macOS, a systemd user unit on Linux), from login on, kept up by a watchdog; its settings are in [`server.json`](/reference/server-json/) |
+| `install` | runs the machine's daemon as a service (a launchd agent on macOS, a systemd user unit on Linux), from login on, kept up by a watchdog; its settings are in [`daemon.json`](/reference/daemon-json/) |
 | `status` | the service's state, and the daemon's health: its pid, its port, each workspace's passes and last error |
 | `start` | starts the installed service |
 | `stop` | stops it; it starts again at your next login |
@@ -28,7 +28,7 @@ itero service uninstall
 ```
 $ itero service install
 installed: dev.aegea.itero.daemon runs every workspace on this machine's list (itero workspace list); it starts at login
-API: on the port /Users/me/.config/itero/server.json gives, else the one it keeps, as itero service status says
+API: on the port /Users/me/.config/itero/daemon.json gives, else the one it keeps, as itero service status says
 log: /Users/me/.local/state/itero/daemon.log
 it keeps this shell's PATH; install again after changing it
 ```

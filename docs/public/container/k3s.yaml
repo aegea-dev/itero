@@ -13,7 +13,7 @@ metadata:
   name: itero
   namespace: itero
 data:
-  server.json: |
+  daemon.json: |
     { "listen": "0.0.0.0:8443" }
 ---
 apiVersion: apps/v1
@@ -58,8 +58,8 @@ spec:
             - name: state
               mountPath: /var/lib/itero
             - name: config
-              mountPath: /etc/itero/server.json
-              subPath: server.json
+              mountPath: /etc/itero/daemon.json
+              subPath: daemon.json
               readOnly: true
             # Chrome (#browser) needs more than 64 MB of /dev/shm
             - name: shm

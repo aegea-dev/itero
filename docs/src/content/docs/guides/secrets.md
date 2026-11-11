@@ -145,7 +145,7 @@ systemd credentials give them:
 
 - **its environment**, as on any machine;
 - **a folder of files**, one per secret, named after it, which
-  [`server.json`](/reference/server-json/)'s `secrets` names:
+  [`daemon.json`](/reference/daemon-json/)'s `secrets` names:
 
 ```json
 { "secrets": "/run/secrets" }

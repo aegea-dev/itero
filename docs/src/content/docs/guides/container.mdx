@@ -5,7 +5,7 @@ description: One itero server in Docker Compose or on Kubernetes, its state on a
 
 import { Code } from '@astrojs/starlight/components';
 import compose from '../../../../public/container/compose.yaml?raw';
-import server from '../../../../public/container/server.json?raw';
+import settings from '../../../../public/container/daemon.json?raw';
 import k3s from '../../../../public/container/k3s.yaml?raw';
 
 Run itero as a server in a container, then put the workspaces you make on
@@ -21,7 +21,7 @@ every workspace on its list, their journals and folders on one volume.
 | `ghcr.io/aegea-dev/itero:0.40.0-alpine` (`:0.40-alpine`, `:alpine`) | Alpine, with curl and jq: small, for those who add their own (`FROM` it, then `apk add`) |
 
 Both run `itero daemon` under tini as user 10001, for amd64 and arm64.
-`server.json` is `/etc/itero/server.json`, the state `/var/lib/itero/`.
+`daemon.json` is `/etc/itero/daemon.json`, the state `/var/lib/itero/`.
 There is no OS secret store in a container: secrets come from the
 environment or a mounted folder ([Secrets](#secrets)).
 
@@ -35,12 +35,12 @@ Fetch the two files into a folder:
 
 ```sh
 curl -fsSLO https://docs.itero.sh/container/compose.yaml
-curl -fsSLO https://docs.itero.sh/container/server.json
+curl -fsSLO https://docs.itero.sh/container/daemon.json
 ```
 
 <Code code={compose} lang="yaml" title="compose.yaml" />
 
-<Code code={server} lang="json" title="server.json" />
+<Code code={settings} lang="json" title="daemon.json" />
 
 An opened daemon does not start until a token can reach it, so make the
 first one before the first start; it is printed once, on your terminal:
@@ -58,7 +58,7 @@ itero ws apply --context home
 ```
 
 `listen` serves plain HTTP: put a proxy with TLS in front (Caddy,
-Traefik), or give `server.json` a `tls` ([server.json](/reference/server-json/)).
+Traefik), or give `daemon.json` a `tls` ([daemon.json](/reference/daemon-json/)).
 
 ## Kubernetes
 
@@ -96,7 +96,7 @@ log. The probes, `/livez` and `/readyz`, need no token
 
 A container has no OS secret store: a workspace's `$$NAME` reads the
 environment, or a folder of secrets the platform mounts, a file each.
-Name the folder in `server.json`, and mount it:
+Name the folder in `daemon.json`, and mount it:
 
 ```json
 { "listen": "0.0.0.0:8443", "secrets": "/run/secrets" }
