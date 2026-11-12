@@ -199,6 +199,17 @@ test-ai: ## Run itero-ai's tests with Qwen3.5-4B, at temperature 0 (local only)
 test-install: ## Install from a local release through the install script, in temp folders
 	sh scripts/test-install.sh
 
+.PHONY: bench
+bench: build ## Measure how fast events are taken and runs end, on this machine (results in target/bench)
+	sh scripts/bench.sh
+
+.PHONY: bench-linux
+bench-linux: image ## The same, on Linux: in the Alpine image built from this tree (Docker)
+	mkdir -p target/bench
+	docker run --rm -v "$(CURDIR)/scripts:/scripts:ro" -v "$(CURDIR)/target/bench:/out" \
+		-e ITERO=/usr/local/bin/itero -e BENCH_OUT=/out -e BENCH_N -e BENCH_K -e BENCH_REQUESTS \
+		--entrypoint sh itero:dev-alpine /scripts/bench.sh
+
 .PHONY: test-linux
 test-linux: ## Run the tests and clippy on Linux, in Docker
 	sh scripts/test-linux.sh
