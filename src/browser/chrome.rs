@@ -122,6 +122,19 @@ pub fn launch_with(
     profile: &Path,
     stderr: Stdio,
 ) -> Result<Launched, String> {
+    launch_within(exe, mode, profile, stderr, START)
+}
+
+/// `launch_with`, giving up when Chrome gives no port within `limit`:
+/// then the error names each of its processes, with its state, its kernel
+/// wait and its CPU time, to tell one busy from one waiting.
+pub fn launch_within(
+    exe: &Path,
+    mode: Mode,
+    profile: &Path,
+    stderr: Stdio,
+    limit: Duration,
+) -> Result<Launched, String> {
     // before anything is made or stopped: a wrong value fails first
     #[cfg(target_os = "linux")]
     // SAFETY: geteuid has no preconditions
@@ -170,6 +183,10 @@ pub fn launch_with(
         // a test's Chrome reaches only the test's own server
         c.arg("--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1");
     }
+    if std::env::var_os("ITERO_TEST_BROWSER_VERBOSE").is_some() {
+        // a test's Chrome logs what it does, for a test that fails to say
+        c.args(["--enable-logging=stderr", "--v=1"]);
+    }
     if drop_sandbox {
         c.arg("--no-sandbox");
     }
@@ -177,7 +194,7 @@ pub fn launch_with(
     let mut child = c
         .spawn()
         .map_err(|e| format!("cannot start {}: {e}", exe.display()))?;
-    let end = Instant::now() + START;
+    let end = Instant::now() + limit;
     loop {
         if let Ok(text) = std::fs::read_to_string(&active)
             && let Some(port) = text.lines().next().and_then(|l| l.trim().parse().ok())
@@ -188,11 +205,42 @@ pub fn launch_with(
             return Err(format!("Chrome ended as it started ({status})"));
         }
         if Instant::now() > end {
+            // what each of its processes is doing, before they are stopped
+            let processes = group_processes(child.id());
             stop(&mut child);
-            return Err(format!("Chrome gave no port in {} s", START.as_secs()));
+            return Err(format!(
+                "Chrome gave no port in {} s; its processes (pid, state, kernel wait, CPU time, command):\n{processes}",
+                limit.as_secs()
+            ));
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Each live process in process group `group`, a line each: its pid,
+/// state, kernel wait (`wchan`), CPU time and command (cut short).
+fn group_processes(group: u32) -> String {
+    let run = |program: &str, args: &[&str]| {
+        Command::new(program)
+            .args(args)
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    let Some(pids) = run("pgrep", &["-g", &group.to_string()]) else {
+        return "  (pgrep could not be run)".into();
+    };
+    let lines: Vec<String> = pids
+        .lines()
+        .filter_map(|pid| run("ps", &["-o", "pid=,stat=,wchan=,time=,command=", "-p", pid]))
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .map(|l| format!("  {}", l.chars().take(160).collect::<String>()))
+        .collect();
+    if lines.is_empty() {
+        return "  (none left)".into();
+    }
+    lines.join("\n")
 }
 
 /// How long a Chrome asked to end is given before it is killed.

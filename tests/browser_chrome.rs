@@ -222,7 +222,13 @@ fn a_chrome_that_fails_to_start_says_what_it_printed() {
     let d = tempfile::tempdir().unwrap();
     // a "Chrome" that says why and ends at once, as a broken one does
     let fake = d.path().join("krom");
-    std::fs::write(&fake, "#!/bin/sh\necho 'sandbox açılamadı' >&2\nexit 1\n").unwrap();
+    // it also says what it was started with, to show the test's Chrome
+    // logs verbosely
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\necho \"$@\" >&2\necho 'sandbox açılamadı' >&2\nexit 1\n",
+    )
+    .unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
     let Err(e) = std::panic::catch_unwind(|| test_chrome::start_with(&fake)) else {
         panic!("a Chrome that ends at once started");
@@ -230,6 +236,66 @@ fn a_chrome_that_fails_to_start_says_what_it_printed() {
     let said = e.downcast_ref::<String>().cloned().unwrap_or_default();
     assert!(said.contains("ended as it started"), "{said}");
     assert!(said.contains("sandbox açılamadı"), "{said}");
+    assert!(said.contains("--enable-logging=stderr --v=1"), "{said}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_chrome_that_gives_no_port_names_its_processes() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    // a "Chrome" that starts a child and never gives a port
+    let fake = d.path().join("krom");
+    std::fs::write(&fake, "#!/bin/sh\nsleep 37 &\nwait\n").unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let e = chrome::launch_within(
+        &fake,
+        Mode::Headless,
+        &d.path().join("profil"),
+        std::process::Stdio::null(),
+        std::time::Duration::from_secs(1),
+    )
+    .err()
+    .expect("no port, an error");
+    assert!(e.starts_with("Chrome gave no port in 1 s"), "{e}");
+    // each of its processes, with its state, kernel wait and CPU time
+    assert!(
+        e.contains("pid, state, kernel wait, CPU time, command"),
+        "{e}"
+    );
+    assert!(e.contains("sleep 37"), "{e}");
+    assert!(e.contains(&fake.display().to_string()), "{e}");
+}
+
+#[test]
+fn a_long_log_is_told_by_its_start_and_its_end() {
+    let text: String = (1..=500).map(|i| format!("satır {i}\n")).collect();
+    let told = test_chrome::head_and_tail(&text);
+    assert!(
+        told.contains("satır 1\n") && told.contains("satır 40\n"),
+        "{told}"
+    );
+    assert!(
+        !told.contains("satır 41\n") && !told.contains("satır 380\n"),
+        "{told}"
+    );
+    assert!(told.contains("(340 lines left out)"), "{told}");
+    assert!(
+        told.contains("satır 381\n") && told.contains("satır 500\n"),
+        "{told}"
+    );
+    assert_eq!(test_chrome::head_and_tail("kısa\n"), "kısa\n");
+}
+
+#[test]
+fn the_cache_folder_is_listed_with_sizes() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("fontconfig")).unwrap();
+    std::fs::write(d.path().join("fontconfig/yazı.cache-9"), vec![0u8; 2048]).unwrap();
+    let listed = test_chrome::listing(d.path());
+    assert!(listed.contains("fontconfig/yazı.cache-9"), "{listed}");
+    assert!(listed.contains("2048"), "{listed}");
+    assert_eq!(test_chrome::listing(&d.path().join("yok")), "(not there)");
 }
 
 #[test]
