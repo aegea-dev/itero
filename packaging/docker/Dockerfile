@@ -5,8 +5,8 @@
 # release's own binary (release.yml), or scripts/image.sh's build.
 FROM debian:13-slim
 ARG TARGETARCH
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=3 update \
+ && apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
       tini ca-certificates curl jq python3 git imagemagick chromium \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 10001 itero \
