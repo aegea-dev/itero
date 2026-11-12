@@ -30,6 +30,7 @@ make fmt          # format; use this, not bare `cargo fmt`
 make fmt-check    # what CI runs
 make lint-check   # clippy, warnings fail
 make test-linux   # the tests and clippy on Linux, in Docker
+make bench        # how fast events are taken and runs end (make bench-linux: in Docker)
 make verify       # every gate: fmt, check, clippy, tests, audit, docs
 ```
 

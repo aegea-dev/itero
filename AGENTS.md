@@ -49,6 +49,7 @@ Private/local context may exist outside this repository, but it must not be quot
 - Lint (list clippy warnings): make lint
 - Lint gate, any warning fails: make lint-check
 - Tests and clippy on Linux, in Docker: make test-linux
+- How fast events are taken and runs end (pick-up, runs a second, the webhook listener), results added to target/bench/results.jsonl: make bench; on Linux in the Alpine image: make bench-linux
 - Tests that need Docker (container actions; IMAP, POP3 and Gmail against GreenMail): make test-docker
 - Container images for this machine (itero:dev, itero:dev-alpine): make image
 - Both images run with the Compose example, end to end (needs Docker): make test-image
