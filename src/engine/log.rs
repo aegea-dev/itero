@@ -82,10 +82,9 @@ impl Log {
 
     fn append(&self, event: &str, fields: Value) {
         let mut line = Map::new();
-        line.insert(
-            "time".into(),
-            super::daemon::stamp(chrono::Utc::now()).into(),
-        );
+        // to the microsecond: what happens within a millisecond is told apart
+        let time = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+        line.insert("time".into(), time.into());
         line.insert("workspace".into(), self.workspace.clone().into());
         line.insert("daemon".into(), self.daemon.clone().into());
         line.insert("event".into(), event.into());
