@@ -156,8 +156,11 @@ const AFTER_FAILURE: chrono::Duration = chrono::Duration::minutes(1);
 
 /// Runs a pass each time something arrives on `woken` (a message, a line
 /// from a connector, a watched path or an edit, the alarm), until its
-/// senders are gone or `stop` is set. After a pass the alarm is set to the next due time,
-/// or to none; between passes the daemon waits, with no timeout. Each pass
+/// senders are gone or `stop` is set. A pass under way takes the wakes
+/// itself (`wake` is the sender its workers wake it with too), so what
+/// comes meanwhile is taken at once, not after the pass. After a pass the
+/// alarm is set to the next due time, or to none; between passes the
+/// daemon waits, with no timeout. Each pass
 /// is recorded in `health`, `beat` hears of its start and end, and
 /// `report` of its outcome; a pass that fails never stops the next.
 #[allow(clippy::too_many_arguments)]
@@ -165,6 +168,7 @@ pub fn run_loop(
     ws: &Workspace,
     exe: &Path,
     alarm: &super::alarm::Alarm,
+    wake: &Sender<()>,
     woken: &Receiver<()>,
     health: &Mutex<Health>,
     stop: &super::stop::Stop,
@@ -176,7 +180,7 @@ pub fn run_loop(
         let now = Utc::now();
         lock().busy_since = Some(stamp(now));
         beat(true);
-        let pass = run_once(ws, now, exe);
+        let pass = runs_pass(ws, now, exe, wake, woken);
         beat(false);
         {
             let mut h = lock();
@@ -203,7 +207,8 @@ pub fn run_loop(
         if let Err(e) = alarm.set(next) {
             report(&Err(anyhow!("cannot set the alarm for the next pass: {e}")));
         }
-        if woken.recv().is_err() || stop.is_set() {
+        // a stop's wake may have been taken by the pass
+        if stop.is_set() || woken.recv().is_err() || stop.is_set() {
             return;
         }
         // several wake-ups while a pass ran need only one more pass
@@ -327,10 +332,10 @@ fn wanted_paths(ws: &Workspace) -> (Vec<PathBuf>, Vec<String>) {
 /// once quiet for half a second, sends `itero.path.changed`; an edit to the
 /// workspace's own files wakes the daemon, which reads them again, and
 /// moves the watches. A path whose folder is not there yet is watched for
-/// from the nearest folder that is. `Workspace::wake_file`, touched by
-/// other processes once they saved a message, wakes the daemon too. It
-/// waits in the kernel, with no timeout while nothing is pending. Runs for
-/// good.
+/// from the nearest folder that is. It waits in the kernel, with no timeout
+/// while nothing is pending, until `stop` is set: a stop writes
+/// `Workspace::stop_file`, which it watches for that alone. (Other
+/// processes wake the daemon through the wake pipe, `super::wake`.)
 pub fn watch_paths(
     ws: &Workspace,
     wake: &std::sync::mpsc::Sender<()>,
@@ -354,7 +359,7 @@ pub fn watch_paths(
     let mut said = vec![];
     let mut look = true;
     let (mut paths, mut own, mut lookouts) = (vec![], vec![], vec![]);
-    let poke = ws.wake_file();
+    let poke = ws.stop_file();
     loop {
         if look {
             let mut errors;
@@ -401,7 +406,7 @@ pub fn watch_paths(
             .due()
             .map(|at| at.saturating_duration_since(Instant::now()));
         let waited = backend.wait(timeout);
-        // a stop touches the wake file, so the wait ends
+        // a stop writes the stop file, so the wait ends
         if stop.is_set() {
             return;
         }
@@ -431,9 +436,6 @@ pub fn watch_paths(
             }
             if lookouts.contains(&c.path) {
                 look = true;
-            }
-            if c.path == poke {
-                woke = true;
             }
             if !paths.contains(&c.path) {
                 continue;
@@ -471,7 +473,25 @@ fn defined(ws: &Workspace, name: &str) -> bool {
 /// One pass over a workspace; `exe` is the itero binary, run as `itero
 /// manager` and `itero worker`. Ends by posting the callbacks due.
 pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
-    runs_pass(ws, now, exe)
+    // woken by its workers, and by other processes through the wake pipe,
+    // as the daemon's passes are
+    let (wake, woken) = std::sync::mpsc::channel();
+    let pipe = super::wake::open(ws)?;
+    let log = Log::new(ws, &Journal::open(ws)?.workspace()?.id);
+    let stop = super::stop::Stop::default();
+    std::thread::scope(|scope| {
+        let listener = {
+            let (wake, stop, log) = (wake.clone(), &stop, &log);
+            scope.spawn(move || super::wake::listen(pipe, &wake, stop, log))
+        };
+        let pass = runs_pass(ws, now, exe, &wake, &woken);
+        // a byte into the pipe ends its reader, once it is stopping
+        stop.set();
+        let ended = super::wake::send(ws);
+        let _ = listener.join();
+        ended?;
+        pass
+    })
 }
 
 /// The time in a pass: when it began, and how long it has run since. What
@@ -499,7 +519,13 @@ impl Clock {
     }
 }
 
-fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
+fn runs_pass(
+    ws: &Workspace,
+    now: DateTime<Utc>,
+    exe: &Path,
+    wake: &Sender<()>,
+    woken: &Receiver<()>,
+) -> Result<Pass> {
     let mut j = Journal::open(ws)?;
     let log = Log::new(ws, &j.workspace()?.id);
     let flows = Flows::load(ws)?;
@@ -513,7 +539,7 @@ fn runs_pass(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     let clock = Clock::new(now);
     let mut pass = Pass::default();
     std::thread::scope(|scope| {
-        let mut w = Workers::new(scope, exe);
+        let mut w = Workers::new(scope, exe, wake.clone(), woken);
         let mut done = work(ws, flows, &mut j, &mut w, clock, &log, no_room, &mut pass);
         while !w.running.is_empty() {
             let saved = end_one(ws, &mut j, &mut w, clock, &mut pass, None);
@@ -556,24 +582,34 @@ struct Running {
 type Finished = (i64, Result<Outcome, Failure>);
 
 /// The pass's workers: each a thread in `scope`, sending its job's outcome
-/// back as it ends.
+/// back as it ends, then waking the pass on the channel every other wake
+/// uses, so the pass waits on that one alone.
 struct Workers<'s, 'e> {
     scope: &'s std::thread::Scope<'s, 'e>,
     exe: &'e Path,
     tx: Sender<Finished>,
     rx: Receiver<Finished>,
+    wake: Sender<()>,
+    woken: &'e Receiver<()>,
     /// By the job's `seq`.
     running: BTreeMap<i64, Running>,
 }
 
 impl<'s, 'e> Workers<'s, 'e> {
-    fn new(scope: &'s std::thread::Scope<'s, 'e>, exe: &'e Path) -> Self {
+    fn new(
+        scope: &'s std::thread::Scope<'s, 'e>,
+        exe: &'e Path,
+        wake: Sender<()>,
+        woken: &'e Receiver<()>,
+    ) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         Workers {
             scope,
             exe,
             tx,
             rx,
+            wake,
+            woken,
             running: BTreeMap::new(),
         }
     }
@@ -590,7 +626,7 @@ impl<'s, 'e> Workers<'s, 'e> {
     ) {
         let seq = r.seq;
         let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, exe, stop) = (self.tx.clone(), self.exe, cancel.clone());
+        let (tx, wake, exe, stop) = (self.tx.clone(), self.wake.clone(), self.exe, cancel.clone());
         let id = r.event.data["run"].as_str().unwrap_or("").to_string();
         let action = r.event.data["job"]["action"].as_str().unwrap_or("?");
         let (name, root) = (format!("#{action}"), root.to_path_buf());
@@ -613,6 +649,7 @@ impl<'s, 'e> Workers<'s, 'e> {
             }
             // the pass holds the receiver until every worker has sent
             let _ = tx.send((seq, outcome));
+            let _ = wake.send(());
         });
         self.running.insert(seq, Running { r, run, cancel });
     }
@@ -627,22 +664,34 @@ impl<'s, 'e> Workers<'s, 'e> {
         }
     }
 
-    /// Waits for the next worker to end, for `wait` at most (or until one
-    /// does): `None` when none ended meanwhile.
+    /// The next worker that ended; else waits until something wakes the
+    /// pass (a worker that ends, a message, the alarm), for `wait` at most.
+    /// `None` when no worker ended meanwhile: something else woke it, for
+    /// the pass to look at.
     fn next(
         &mut self,
         wait: Option<std::time::Duration>,
     ) -> Result<Option<(Running, Result<Outcome, Failure>)>> {
         use std::sync::mpsc::RecvTimeoutError;
-        let gone = || anyhow!("the workers are gone");
-        let (seq, outcome) = match wait {
-            None => self.rx.recv().map_err(|_| gone())?,
-            Some(d) => match self.rx.recv_timeout(d) {
-                Ok(ended) => ended,
-                Err(RecvTimeoutError::Timeout) => return Ok(None),
-                Err(RecvTimeoutError::Disconnected) => return Err(gone()),
-            },
+        let gone = || anyhow!("the daemon's wake channel is gone");
+        let ended = match self.rx.try_recv() {
+            Ok(ended) => ended,
+            Err(_) => {
+                match wait {
+                    None => self.woken.recv().map_err(|_| gone())?,
+                    Some(d) => match self.woken.recv_timeout(d) {
+                        Ok(()) => {}
+                        Err(RecvTimeoutError::Timeout) => return Ok(None),
+                        Err(RecvTimeoutError::Disconnected) => return Err(gone()),
+                    },
+                }
+                match self.rx.try_recv() {
+                    Ok(ended) => ended,
+                    Err(_) => return Ok(None),
+                }
+            }
         };
+        let (seq, outcome) = ended;
         let job = self
             .running
             .remove(&seq)
@@ -651,10 +700,18 @@ impl<'s, 'e> Workers<'s, 'e> {
     }
 }
 
-/// How long a pass waits for a worker to end before it looks for new
-/// events and due timers: a waiting step's data may end a race while the
-/// other steps still run.
-const LOOK: std::time::Duration = std::time::Duration::from_millis(200);
+/// How long a pass may wait for a worker to end or a wake: until the next
+/// timer is due, else for nothing but those. A message wakes it at once,
+/// so a waiting step's data may end a race while other steps still run.
+fn until_timer(j: &Journal, clock: Clock) -> Result<Option<std::time::Duration>> {
+    let Some(t) = j.next_timer()? else {
+        return Ok(None);
+    };
+    let at: DateTime<Utc> = t
+        .parse()
+        .map_err(|_| anyhow!("a timer's time is not a time: {t}"))?;
+    Ok(Some((at - clock.now()).to_std().unwrap_or_default()))
+}
 
 /// How long an event whose manager kept being killed waits before it is
 /// given again, while the pass's steps still run.
@@ -735,11 +792,15 @@ fn work(
             if w.running.is_empty() {
                 return Ok(());
             }
-            let wait = again.map_or(LOOK, |t| {
-                t.saturating_duration_since(std::time::Instant::now())
-                    .min(LOOK)
-            });
-            end_one(ws, j, w, clock, pass, Some(wait))?;
+            let timer = until_timer(j, clock)?;
+            let wait = match again {
+                Some(t) => {
+                    let left = t.saturating_duration_since(std::time::Instant::now());
+                    Some(timer.map_or(left, |d| d.min(left)))
+                }
+                None => timer,
+            };
+            end_one(ws, j, w, clock, pass, wait)?;
             continue;
         }
         let room = ws.limits.steps.saturating_sub(w.running.len());
@@ -785,12 +846,13 @@ fn work(
         if w.running.is_empty() {
             return Ok(());
         }
-        end_one(ws, j, w, clock, pass, Some(LOOK))?;
+        end_one(ws, j, w, clock, pass, until_timer(j, clock)?)?;
     }
 }
 
-/// Waits for the next worker to end (for `wait` at most, when given), and
-/// saves its job's result: a job lost runs again, up to `MAX_RUNS`; one
+/// Waits for the next worker to end (for `wait` at most, when given, and
+/// only until something else wakes the pass), and saves its job's result:
+/// a job lost runs again, up to `MAX_RUNS`; one
 /// whose step was stopped was saved so by the answer that stopped it, and
 /// what it did is not.
 fn end_one(

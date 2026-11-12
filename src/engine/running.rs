@@ -85,6 +85,9 @@ impl Running {
             &d.started,
         ))?;
         let (wake, woken) = std::sync::mpsc::channel();
+        // the wake pipe, open before the first pass: what another process
+        // saves once that pass has looked wakes it at once
+        let pipe = super::wake::open(&ws)?;
         let engine = Arc::new(Engine {
             health: Mutex::new(Health::starting(&daemon::stamp(chrono::Utc::now()))),
             wake,
@@ -116,6 +119,13 @@ impl Running {
             );
             threads.push(std::thread::spawn(move || {
                 run_copies(&ws, &exe, connectors, &engine, &log, &stop, api)
+            }));
+        }
+        {
+            // one thread reads the wake pipe
+            let (wake, log, stop) = (engine.wake.clone(), log.clone(), stop.clone());
+            threads.push(std::thread::spawn(move || {
+                super::wake::listen(pipe, &wake, &stop, &log)
             }));
         }
         {
@@ -157,6 +167,7 @@ impl Running {
                             &ws,
                             &exe,
                             &alarm,
+                            &engine.wake,
                             &woken,
                             &engine.health,
                             &stop,
@@ -185,9 +196,9 @@ impl Running {
                                 super::events::WORKSPACE_FAILED,
                                 json!({ "workspace": name, "why": why }),
                             );
-                            // its connectors and watcher end too
+                            // its connectors, watcher and wake pipe end too
                             stop.set();
-                            let _ = super::events::nudge(&ws, &daemon::stamp(chrono::Utc::now()));
+                            let _ = end_waits(&ws);
                             break;
                         }
                     }
@@ -225,11 +236,12 @@ impl Running {
 
     /// Stops its threads and waits for them: the loop ends after the pass
     /// under way, the connectors' processes are asked to end, the watcher
-    /// ends on the wake file it is touched; then the lock is free.
+    /// and the wake pipe's reader end on their files (`end_waits`); then
+    /// the lock is free.
     pub fn stop(self) {
         self.stop.set();
         let _ = self.engine.wake.send(());
-        if let Err(e) = super::events::nudge(&self.ws, &daemon::stamp(chrono::Utc::now())) {
+        if let Err(e) = end_waits(&self.ws) {
             self.log
                 .write("error", json!({ "why": format!("stopping: {e}") }));
         }
@@ -403,4 +415,12 @@ fn run_copies(
         s.set();
         let _ = t.join();
     }
+}
+
+/// Ends the waits of a workspace's threads that wait on files once it is
+/// stopping: a byte into the wake pipe ends its reader, the stop file ends
+/// the watcher's wait.
+fn end_waits(ws: &Workspace) -> std::io::Result<()> {
+    super::events::nudge(ws)?;
+    std::fs::write(ws.stop_file(), daemon::stamp(chrono::Utc::now()))
 }

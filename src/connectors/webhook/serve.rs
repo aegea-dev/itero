@@ -145,7 +145,7 @@ async fn receive(State(s): State<Arc<Server>>, req: Request) -> Response {
     let saved = tokio::task::spawn_blocking(move || {
         let now = crate::engine::daemon::stamp(chrono::Utc::now());
         crate::engine::events::webhook_received(&ws, data, &now)?;
-        if let Err(e) = crate::engine::events::nudge(&ws, &now) {
+        if let Err(e) = crate::engine::events::nudge(&ws) {
             // saved: the daemon takes it at its next wake or start
             eprintln!("itero webhook: saved, but could not wake the daemon: {e}");
         }

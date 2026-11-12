@@ -104,10 +104,10 @@ pub fn webhook_received(ws: &Workspace, data: Value, now: &str) -> anyhow::Resul
 }
 
 /// Tells the running daemon, if there is one, that a message waits in the
-/// journal: for the processes that are not the daemon (`itero ws emit`, a
-/// click). A daemon that is not running finds it when it starts.
-pub fn nudge(ws: &Workspace, now: &str) -> std::io::Result<()> {
-    std::fs::write(ws.wake_file(), now)
+/// journal, at once: for the processes that are not the daemon (`itero ws
+/// emit`, a click). A daemon that is not running finds it when it starts.
+pub fn nudge(ws: &Workspace) -> std::io::Result<()> {
+    super::wake::send(ws)
 }
 
 /// What asking a run to stop did.
@@ -145,9 +145,8 @@ pub fn stop_run(ws: &Workspace, run: &str, now: &str) -> anyhow::Result<StopAske
         Value::Object(Map::new()),
     ))?;
     let daemon = super::lock::held(ws).map_err(anyhow::Error::msg)?;
-    if daemon {
-        nudge(ws, now)?;
-    }
+    // whatever reads the wake pipe takes it now; nothing reading it, no harm
+    nudge(ws)?;
     Ok(StopAsked::Asked {
         name: r.name,
         daemon,

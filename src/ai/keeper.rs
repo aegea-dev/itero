@@ -234,5 +234,5 @@ pub fn publish(ws: &Workspace, kind: &str, data: Value) {
         eprintln!("itero: {kind} could not be saved: {e:#}");
         return;
     }
-    let _ = events::nudge(ws, &now);
+    let _ = events::nudge(ws);
 }
