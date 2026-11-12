@@ -68,8 +68,55 @@ fn a_chrome_left_running_on_the_profile_is_stopped_first() {
     let mut second = chrome::launch(&exe, Mode::Headless, &profile).unwrap();
     assert!(first.child.wait().is_ok(), "the first one ended");
     assert_ne!(first.port, second.port);
-    second.child.kill().unwrap();
-    second.child.wait().unwrap();
+    chrome::stop(&mut second.child);
+}
+
+/// The live processes in process group `group`: zombies (ended, waiting
+/// for a parent to reap them) left out.
+#[cfg(unix)]
+fn alive_in(group: u32) -> Vec<String> {
+    let o = std::process::Command::new("pgrep")
+        .args(["-g", &group.to_string()])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .filter(|pid| {
+            let o = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", pid])
+                .output()
+                .unwrap();
+            let stat = String::from_utf8_lossy(&o.stdout);
+            !stat.trim().is_empty() && !stat.trim().starts_with('Z')
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stopped_chrome_leaves_none_of_its_processes() {
+    let exe = chrome::find().expect("these tests need Chrome");
+    let d = tempfile::tempdir().unwrap();
+    let mut c = chrome::launch(&exe, Mode::Headless, &d.path().join("profil")).unwrap();
+    // its own process group, led by it: its children are in it too
+    let group = c.child.id();
+    let before = alive_in(group);
+    assert!(
+        before.len() > 1,
+        "Chrome and its children in a group of their own: {before:?}"
+    );
+    chrome::stop(&mut c.child);
+    // the group's processes are killed at once; a moment for the kernel
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !alive_in(group).is_empty() && std::time::Instant::now() < end {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(
+        alive_in(group),
+        Vec::<String>::new(),
+        "left: was {before:?}"
+    );
 }
 
 fn prefs(profile: &std::path::Path) -> serde_json::Value {
@@ -94,8 +141,7 @@ fn chrome_starts_with_no_translate_password_or_notification_prompts() {
     let profile = d.path().join("profil");
     let mut c = chrome::launch(&exe, Mode::Headless, &profile).unwrap();
     assert_quiet(&prefs(&profile));
-    c.child.kill().unwrap();
-    c.child.wait().unwrap();
+    chrome::stop(&mut c.child);
 }
 
 #[test]
@@ -167,4 +213,34 @@ fn the_sandbox_is_dropped_as_root_on_linux_or_when_told() {
         "{e}"
     );
     assert!(e.contains("on or off"), "{e}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_chrome_that_fails_to_start_says_what_it_printed() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    // a "Chrome" that says why and ends at once, as a broken one does
+    let fake = d.path().join("krom");
+    std::fs::write(&fake, "#!/bin/sh\necho 'sandbox açılamadı' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let Err(e) = std::panic::catch_unwind(|| test_chrome::start_with(&fake)) else {
+        panic!("a Chrome that ends at once started");
+    };
+    let said = e.downcast_ref::<String>().cloned().unwrap_or_default();
+    assert!(said.contains("ended as it started"), "{said}");
+    assert!(said.contains("sandbox açılamadı"), "{said}");
+}
+
+#[test]
+fn the_test_web_server_ends_with_its_test() {
+    let w = web::serve(vec![web::html("/", "<p>merhaba</p>")]);
+    let port = w.port;
+    assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
+    drop(w);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+        assert!(std::time::Instant::now() < end, "port {port} still taken");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }

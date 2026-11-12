@@ -157,6 +157,10 @@ pub fn launch_with(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr);
+    // a process group of its own, with every process it starts, so `stop`
+    // ends them all
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut c, 0);
     if mode == Mode::Headless {
         // nobody scrolls by hand there; where a scrollbar takes room
         // (Linux), a whole-page screenshot would lose its width
@@ -184,12 +188,36 @@ pub fn launch_with(
             return Err(format!("Chrome ended as it started ({status})"));
         }
         if Instant::now() > end {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop(&mut child);
             return Err(format!("Chrome gave no port in {} s", START.as_secs()));
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// How long a Chrome asked to end is given before it is killed.
+const END: Duration = Duration::from_secs(2);
+
+/// Stops a Chrome `launch` started, with every process it started: its
+/// process group (it leads one of its own) is asked to end, then killed
+/// after `END`; the Chrome itself is reaped.
+pub fn stop(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let group = child.id() as libc::pid_t;
+        // SAFETY: killpg only sends a signal, to the group the Chrome this
+        // itero started leads; its id stays taken while any of it lives
+        unsafe { libc::killpg(group, libc::SIGTERM) };
+        let end = Instant::now() + END;
+        while Instant::now() < end && !matches!(child.try_wait(), Ok(Some(_))) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        // the Chrome ended or not, its children too: none outlives it
+        // SAFETY: as above
+        unsafe { libc::killpg(group, libc::SIGKILL) };
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// A Chrome still running on `profile`, left by a daemon that ended

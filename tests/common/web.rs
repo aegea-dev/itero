@@ -47,6 +47,17 @@ pub struct Web {
     pub requests: Arc<Mutex<Vec<String>>>,
     /// Each request with a body: its path and query, and the body.
     pub bodies: Arc<Mutex<Vec<(String, String)>>>,
+    /// Set when the test is done with it: the server stops taking requests.
+    done: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// The server ends with its test: its thread stops and its port is let go.
+impl Drop for Web {
+    fn drop(&mut self) {
+        self.done.store(true, std::sync::atomic::Ordering::SeqCst);
+        // wakes its accept, which then sees it is done
+        let _ = std::net::TcpStream::connect(("127.0.0.1", self.port));
+    }
 }
 
 impl Web {
@@ -62,8 +73,13 @@ pub fn serve(pages: Vec<Page>) -> Web {
     let bodies = Arc::new(Mutex::new(Vec::new()));
     let seen = requests.clone();
     let posted = bodies.clone();
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = done.clone();
     std::thread::spawn(move || {
         for s in listener.incoming() {
+            if stop.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
             let Ok(mut s) = s else { continue };
             let pages = pages.clone();
             let seen = seen.clone();
@@ -126,6 +142,7 @@ pub fn serve(pages: Vec<Page>) -> Web {
         port,
         requests,
         bodies,
+        done,
     }
 }
 

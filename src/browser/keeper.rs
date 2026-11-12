@@ -309,7 +309,7 @@ impl Keeper {
                     Ok(None) => {
                         if c.idle_since.is_some_and(|t| t.elapsed() >= idle) {
                             let mut c = s.chromes.remove(&mode).expect("listed");
-                            stop_child(&mut c.child);
+                            chrome::stop(&mut c.child);
                             self.tell(
                                 &c.ws,
                                 events::BROWSER_STOPPED,
@@ -376,7 +376,7 @@ impl Keeper {
         s.runs.clear();
         s.watches.clear();
         for (_, mut c) in s.chromes.drain() {
-            stop_child(&mut c.child);
+            chrome::stop(&mut c.child);
         }
     }
 
@@ -427,24 +427,4 @@ fn run_ended(ws: &Workspace, id: &str) -> bool {
         // a journal that cannot be read now says nothing about the run
         Err(_) => false,
     }
-}
-
-/// Asks Chrome to end, so it closes its profile cleanly; after two
-/// seconds, ends it.
-fn stop_child(child: &mut Child) {
-    #[cfg(unix)]
-    // SAFETY: kill only sends a signal, to the Chrome this daemon started
-    // and has not reaped
-    unsafe {
-        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
-    }
-    let end = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < end {
-        if let Ok(Some(_)) = child.try_wait() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let _ = child.kill();
-    let _ = child.wait();
 }
