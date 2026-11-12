@@ -33,7 +33,7 @@ else
 		-v itero-cargo-registry:/usr/local/cargo/registry \
 		-e CARGO_TARGET_DIR=/src/target/linux-musl \
 		"rust:$toolchain" \
-		sh -c 'apt-get -qq update >/dev/null && apt-get -qq install -y musl-tools >/dev/null &&
+		sh -c 'apt-get -qq -o Acquire::Retries=3 update >/dev/null && apt-get -qq -o Acquire::Retries=3 install -y musl-tools >/dev/null &&
 			rustup target add "$1" >/dev/null && cargo build --release --target "$1" --bin itero' sh "$triple"
 	bin="$root/target/linux-musl/$triple/release/itero"
 fi

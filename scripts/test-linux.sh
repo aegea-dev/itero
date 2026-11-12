@@ -19,5 +19,5 @@ docker run --rm \
 	-v itero-cargo-registry:/usr/local/cargo/registry \
 	-e CARGO_TARGET_DIR=/src/target/linux \
 	"rust:$toolchain" \
-	sh -c 'apt-get -qq update >/dev/null && apt-get -qq install -y jq cmake libclang-dev chromium >/dev/null &&
+	sh -c 'apt-get -qq -o Acquire::Retries=3 update >/dev/null && apt-get -qq -o Acquire::Retries=3 install -y jq cmake libclang-dev chromium >/dev/null &&
 		cargo test --workspace --no-fail-fast "$@" && cargo clippy --workspace --all-targets -- -D warnings' sh "$@"
