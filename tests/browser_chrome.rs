@@ -310,3 +310,23 @@ fn the_test_web_server_ends_with_its_test() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_chrome_slow_to_start_on_a_cold_disk_is_waited_for() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    // a "Chrome" that gives its port after 21 s, as a first start on a cold
+    // disk did in CI (state D, no CPU time, progressing)
+    let fake = d.path().join("krom");
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\nfor a in \"$@\"; do case $a in --user-data-dir=*) p=${a#*=};; esac; done\n\
+         sleep 21\nprintf '9222\\n/devtools/browser/yavaş\\n' > \"$p/DevToolsActivePort\"\nsleep 30\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut c = chrome::launch(&fake, Mode::Headless, &d.path().join("profil")).unwrap();
+    assert_eq!(c.port, 9222);
+    chrome::stop(&mut c.child);
+}

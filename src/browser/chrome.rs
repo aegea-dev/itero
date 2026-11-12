@@ -91,8 +91,12 @@ pub struct Launched {
     pub port: u16,
 }
 
-/// How long Chrome is given to say its port.
-const START: Duration = Duration::from_secs(20);
+/// How long Chrome is given to say its port. A first start reads its
+/// files from the disk: on a cold, slow one (a CI runner's, a throttled
+/// cloud volume, an SD card) that took over 20 s with no CPU time, waiting
+/// on the disk and getting there. One stuck is still stopped, its
+/// processes named (Puppeteer gives 30 s, Playwright 180 s).
+const START: Duration = Duration::from_secs(60);
 
 /// Whether Chrome starts without its sandbox. `ITERO_BROWSER_SANDBOX=off`
 /// says so: a container's own user, whose Chrome cannot make the user
