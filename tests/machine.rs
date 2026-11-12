@@ -132,31 +132,11 @@ impl Machine {
         Daemon(child)
     }
 
-    /// A `daemon.json` of this machine's own saying `port`, for `--config`.
-    fn server_file(&self, port: u16) -> String {
-        let p = self.d.path().join(format!("sunucu-{port}.json"));
-        std::fs::write(&p, format!(r#"{{ "port": {port} }}"#)).unwrap();
-        p.display().to_string()
-    }
-
-    /// `itero daemon --all` on `port` (its `daemon.json`).
-    fn daemon_all_on(&self, port: u16) -> Daemon {
+    /// `itero daemon --all`, its stderr kept in a file.
+    fn daemon_all_said(&self, said: &Path) -> Daemon {
         let child = self
             .command(self.d.path())
-            .args(["daemon", "--config", &self.server_file(port)])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        Daemon(child)
-    }
-
-    /// `itero daemon --all` on `port`, its stderr kept in a file.
-    fn daemon_all_said(&self, port: u16, said: &Path) -> Daemon {
-        let child = self
-            .command(self.d.path())
-            .args(["daemon", "--config", &self.server_file(port)])
+            .args(["daemon"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(said).unwrap())
@@ -296,7 +276,10 @@ fn all_runs_each_listed_workspace_and_follows_the_list() {
     until("b's workflow again", || b.join("çıktı").is_file());
 }
 
-fn free_port() -> u16 {
+/// A port nothing listens on: for a port file that names a daemon gone.
+/// Never given to a server: one that binds a port a test picked and let
+/// go can lose it to another (a race); a server picks its own.
+fn unused_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -323,9 +306,8 @@ fn one_api_for_the_machine_each_workspace_under_its_name() {
     m.ok(&a, &["workspace", "add"]);
     m.ok(&b, &["workspace", "add"]);
     let (na, nb) = (m.journal_name(&a), m.journal_name(&b));
-    let port = free_port();
-    let _d = m.daemon_all_on(port);
-    assert_eq!(m.port(), port);
+    let _d = m.daemon_all();
+    let port = m.port();
     until("both running", || {
         let (_, v) = get(port, "/workspaces");
         v.as_array()
@@ -395,8 +377,8 @@ fn a_workspace_run_in_the_foreground_is_left_to_it() {
         .stderr(Stdio::null());
     let fg = Daemon(own.spawn().unwrap());
     until("a's own daemon", || a.join(".itero/port").is_file());
-    let port = free_port();
-    let _d = m.daemon_all_on(port);
+    let _d = m.daemon_all();
+    let port = m.port();
     let na = m.journal_name(&a);
     until("a stopped, b running", || {
         let (_, v) = get(port, "/workspaces");
@@ -457,10 +439,9 @@ fn a_stuck_workspace_is_told_and_the_others_run_on() {
     m.ok(&a, &["workspace", "add"]);
     m.ok(&b, &["workspace", "add"]);
     let na = m.journal_name(&a);
-    let port = free_port();
     let child = m
         .command(m.d.path())
-        .args(["daemon", "--config", &m.server_file(port)])
+        .args(["daemon"])
         .env("ITERO_STUCK_AFTER", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -468,6 +449,7 @@ fn a_stuck_workspace_is_told_and_the_others_run_on() {
         .spawn()
         .unwrap();
     let _d = Daemon(child);
+    let port = m.port();
     let state = |n: &str| {
         let (_, v) = get(port, "/workspaces");
         v.as_array()
@@ -501,8 +483,8 @@ fn info_in_a_listed_workspace_names_the_machines_daemon() {
     let a = m.busy_workspace("bir");
     m.ok(&a, &["workspace", "add"]);
     let na = m.journal_name(&a);
-    let port = free_port();
-    let _d = m.daemon_all_on(port);
+    let _d = m.daemon_all();
+    let port = m.port();
     until("a running", || {
         get(port, &format!("/ws/{na}/health")).0 == 200
     });
@@ -536,8 +518,8 @@ fn the_machines_api_passes_an_encoded_path_on_as_it_came() {
     std::fs::set_permissions(&gönder, std::fs::Permissions::from_mode(0o755)).unwrap();
     m.ok(&a, &["workspace", "add"]);
     let na = m.journal_name(&a);
-    let port = free_port();
-    let _d = m.daemon_all_on(port);
+    let _d = m.daemon_all();
+    let port = m.port();
     until("a running", || {
         get(port, &format!("/ws/{na}/health")).0 == 200
     });
@@ -570,8 +552,8 @@ fn one_itero_ai_for_every_workspace_of_the_daemon() {
     let (a, b) = (m.ai_workspace("bir"), m.ai_workspace("iki"));
     m.ok(&a, &["workspace", "add"]);
     m.ok(&b, &["workspace", "add"]);
-    let port = free_port();
-    let _d = m.daemon_all_on(port);
+    let _d = m.daemon_all();
+    let port = m.port();
     let na = m.journal_name(&a);
     until("both running", || {
         let (_, v) = get(port, "/workspaces");
@@ -658,7 +640,7 @@ fn the_daemon_scans_for_models_once_and_when_a_step_asks() {
             .filter(|l| l.contains("itero: models:"))
             .count()
     };
-    let _d = m.daemon_all_said(free_port(), &said);
+    let _d = m.daemon_all_said(&said);
     let told = || std::fs::read_to_string(&said).unwrap_or_default();
     assert!(
         within(ITERO_AI_STARTS, || scans() == 1),
@@ -792,9 +774,8 @@ fn emit_wait_waits_for_every_workspaces_runs() {
     m.ok(&a, &["ws", "add"]);
     m.ok(&b, &["ws", "add"]);
     let (na, nb) = (m.journal_name(&a), m.journal_name(&b));
-    let port = free_port();
-    let _d = m.daemon_all_on(port);
-    assert_eq!(m.port(), port);
+    let _d = m.daemon_all();
+    let port = m.port();
     until("both running", || {
         let (_, v) = get(port, "/workspaces");
         v.as_array()
@@ -814,9 +795,8 @@ fn the_machines_api_sends_an_event_to_every_workspace() {
     m.ok(&a, &["ws", "add"]);
     m.ok(&b, &["ws", "add"]);
     let (na, nb) = (m.journal_name(&a), m.journal_name(&b));
-    let port = free_port();
-    let _d = m.daemon_all_on(port);
-    assert_eq!(m.port(), port);
+    let _d = m.daemon_all();
+    let port = m.port();
     until("both running", || {
         let (_, v) = get(port, "/workspaces");
         v.as_array()
@@ -862,8 +842,8 @@ fn the_machines_api_sends_an_event_to_every_workspace() {
 #[test]
 fn the_machines_api_with_an_empty_list_sends_nothing() {
     let m = Machine::new();
-    let port = free_port();
-    let _d = m.daemon_all_on(port);
+    let _d = m.daemon_all();
+    let port = m.port();
     until("it answers", || get(port, "/health").0 == 200);
     let r = http()
         .post(format!("http://127.0.0.1:{port}/events"))
@@ -916,7 +896,7 @@ fn info_says_no_daemon_answers_from_any_folder() {
     );
     let state = m.d.path().join("durum/itero");
     std::fs::create_dir_all(&state).unwrap();
-    let port = free_port();
+    let port = unused_port();
     std::fs::write(state.join("port"), port.to_string()).unwrap();
     let out = m.ok(&elsewhere, &["info"]);
     assert!(
@@ -935,8 +915,8 @@ fn info_shows_the_machines_daemon_and_its_workspaces() {
     let a = m.busy_workspace("bir");
     m.ok(&a, &["ws", "add"]);
     let na = m.journal_name(&a);
-    let port = free_port();
-    let _d = m.daemon_all_on(port);
+    let _d = m.daemon_all();
+    let port = m.port();
     until("a running", || {
         get(port, &format!("/ws/{na}/health")).0 == 200
     });

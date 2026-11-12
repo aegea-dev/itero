@@ -23,14 +23,6 @@ fn until(what: &str, f: impl Fn() -> bool) {
     }
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 fn http() -> reqwest::blocking::Client {
     // a stream is read for as long as a test needs it
     itero::net::client(Duration::from_secs(600)).unwrap()
@@ -43,7 +35,6 @@ fn http() -> reqwest::blocking::Client {
 struct Ws {
     d: tempfile::TempDir,
     root: PathBuf,
-    port: u16,
 }
 
 impl Ws {
@@ -55,10 +46,10 @@ impl Ws {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
         let root = root.canonicalize().unwrap();
-        let port = free_port();
+        // no port: its daemon binds one the OS gives, and saves it
         std::fs::write(
             root.join("itero.config.json"),
-            json!({ "port": port, "workflow": { "keep": { "off": true }, "models": { "off": true } } })
+            json!({ "workflow": { "keep": { "off": true }, "models": { "off": true } } })
                 .to_string(),
         )
         .unwrap();
@@ -81,7 +72,7 @@ impl Ws {
                 root.join("açık").display()
             ),
         );
-        Ws { d, root, port }
+        Ws { d, root }
     }
 
     fn command(&self, dir: &Path) -> Command {
@@ -107,16 +98,25 @@ impl Ws {
             .unwrap();
         let d = Daemon(child);
         until("the daemon to answer", || {
-            http()
-                .get(self.url("/health"))
-                .send()
-                .is_ok_and(|r| r.status() == 200)
+            self.port().is_some()
+                && http()
+                    .get(self.url("/health"))
+                    .send()
+                    .is_ok_and(|r| r.status() == 200)
         });
         d
     }
 
+    /// The port the workspace's daemon took, as it saves it; none before.
+    fn port(&self) -> Option<u16> {
+        std::fs::read_to_string(self.root.join(".itero/port"))
+            .ok()
+            .and_then(|p| p.trim().parse().ok())
+    }
+
     fn url(&self, path: &str) -> String {
-        format!("http://127.0.0.1:{}{path}", self.port)
+        let port = self.port().expect("the daemon's port: it has started");
+        format!("http://127.0.0.1:{port}{path}")
     }
 
     /// Posts an event; its id.
@@ -392,14 +392,14 @@ fn the_stream_works_through_the_machine_api() {
         .workspace()
         .unwrap()
         .name;
-    let port = free_port();
     let _d = Daemon(
         w.command(w.d.path())
-            .args(["daemon", "--config", &server_file(&w, port)])
+            .args(["daemon"])
             .stderr(Stdio::null())
             .spawn()
             .unwrap(),
     );
+    let port = machine_port(&w);
     let base = format!("http://127.0.0.1:{port}/ws/{name}");
     until("the workspace to run", || {
         http()
@@ -522,14 +522,14 @@ fn the_log_stream_works_through_the_machine_api() {
         .workspace()
         .unwrap()
         .name;
-    let port = free_port();
     let _d = Daemon(
         w.command(w.d.path())
-            .args(["daemon", "--config", &server_file(&w, port)])
+            .args(["daemon"])
             .stderr(Stdio::null())
             .spawn()
             .unwrap(),
     );
+    let port = machine_port(&w);
     let base = format!("http://127.0.0.1:{port}/ws/{name}");
     until("the workspace to run", || {
         http()
@@ -548,9 +548,10 @@ fn the_log_stream_works_through_the_machine_api() {
     assert_eq!(messages(&l, 1), [id["id"].as_str().unwrap()]);
 }
 
-/// A `daemon.json` in the test's folder saying `port`, for `--config`.
-fn server_file(w: &Ws, port: u16) -> String {
-    let p = w.d.path().join(format!("sunucu-{port}.json"));
-    std::fs::write(&p, format!(r#"{{ "port": {port} }}"#)).unwrap();
-    p.display().to_string()
+/// The port the machine's daemon took, as it saves it, once it has.
+fn machine_port(w: &Ws) -> u16 {
+    let f = w.d.path().join("durum/itero/port");
+    let read = || std::fs::read_to_string(&f).ok()?.trim().parse::<u16>().ok();
+    until("the machine's port", || read().is_some());
+    read().expect("read just now")
 }

@@ -318,14 +318,6 @@ fn a_body_is_json_a_form_or_text() {
     ));
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 /// `itero webhook` in `d`, up. Its stdin stays open while this lives.
 struct Listener {
     child: Child,
@@ -669,18 +661,17 @@ impl Drop for Daemon {
 #[test]
 fn two_listeners_run_as_connectors_of_one_daemon() {
     let d = tempfile::tempdir().unwrap();
-    let (a, b) = (free_port(), free_port());
     file(d.path(), "itero.config.json", "{}");
     file(d.path(), ".env", &format!("KARGO={LONG}\n"));
     file(
         d.path(),
         "connectors/webhook/webhook.listen",
-        &format!("#!/bin/sh\nexec itero webhook --port {a} --hook /kargo:hmac:KARGO\n"),
+        "#!/bin/sh\nexec itero webhook --port 0 --hook /kargo:hmac:KARGO\n",
     );
     file(
         d.path(),
         "connectors/webhook/webhook.listen-ikinci",
-        &format!("#!/bin/sh\nexec itero webhook --port {b} --hook /ikinci:hmac:KARGO\n"),
+        "#!/bin/sh\nexec itero webhook --port 0 --hook /ikinci:hmac:KARGO\n",
     );
     file(
         d.path(),
@@ -693,9 +684,10 @@ fn two_listeners_run_as_connectors_of_one_daemon() {
         "actions/yaz",
         "#!/bin/sh\nprintf '%s\\n' \"$yol\" >> yazıldı.txt\n",
     );
-    // no API: a webhook wakes the daemon through a file, and an API on a
-    // port the OS gives could be given `a` or `b`, free again since
-    // free_port let them go; the request would then reach the daemon
+    // no API: a webhook wakes the daemon through a file. Each webhook
+    // binds a port the OS gives and says it on its stderr, which is the
+    // daemon's
+    let said = d.path().join("söylenen.txt");
     let daemon = Daemon(
         Command::new(env!("CARGO_BIN_EXE_itero"))
             .args(["ws", "daemon", "--no-serve"])
@@ -703,16 +695,29 @@ fn two_listeners_run_as_connectors_of_one_daemon() {
             .env("ITERO_NO_SECRET_STORE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(std::fs::File::create(&said).unwrap())
             .spawn()
             .unwrap(),
     );
-    for (port, path) in [(a, "/kargo"), (b, "/ikinci")] {
+    // the port a webhook serving `path` says it listens on
+    let port_of = |path: &str| {
         let end = Instant::now() + Duration::from_secs(20);
-        while TcpStream::connect(("127.0.0.1", port)).is_err() {
-            assert!(Instant::now() < end, "{path} never listened");
+        loop {
+            let text = std::fs::read_to_string(&said).unwrap_or_default();
+            let port = text.lines().find_map(|l| {
+                let rest = l.strip_prefix("itero webhook: listening on 127.0.0.1:")?;
+                let (port, paths) = rest.split_once(": ")?;
+                (paths == path).then(|| port.parse::<u16>().ok()).flatten()
+            });
+            if let Some(port) = port {
+                return port;
+            }
+            assert!(Instant::now() < end, "{path} never listened: {text}");
             std::thread::sleep(Duration::from_millis(50));
         }
+    };
+    let (a, b) = (port_of("/kargo"), port_of("/ikinci"));
+    for (port, path) in [(a, "/kargo"), (b, "/ikinci")] {
         let sign = signed(LONG, "{}");
         let raw = post(path, &[JSON_TYPE, ("X-Hub-Signature-256", &sign)], "{}");
         assert_eq!(send(port, &raw).0, 200);

@@ -860,17 +860,9 @@ fn emit_says_what_a_message_starts() {
     assert_eq!(j.events(Some("itero.app")).unwrap().len(), 3);
 }
 
-/// A daemon serving the workspace in `d`, once it answers on `port`.
-/// A port free now, so two runs of these tests at once do not meet.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
-fn serving(d: &Path, port: u16) -> stop::Daemon {
+/// A daemon serving the workspace in `d` on a port the OS gives it, once
+/// it answers there.
+fn serving(d: &Path) -> stop::Daemon {
     // held before the wait, so a daemon that never answers is stopped too
     let daemon = stop::Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
@@ -883,22 +875,24 @@ fn serving(d: &Path, port: u16) -> stop::Daemon {
             .unwrap(),
     );
     let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+    // the port it took, as it saves it, then an answer there
+    loop {
         assert!(std::time::Instant::now() < end, "the daemon never answered");
+        if let Some(port) = std::fs::read_to_string(d.join(".itero/port"))
+            .ok()
+            .and_then(|p| p.trim().parse::<u16>().ok())
+            && std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+        {
+            return daemon;
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    daemon
 }
 
 #[test]
 fn emit_wait_answers_with_the_runs_end() {
     let d = workspace();
-    let port = free_port();
-    file(
-        d.path(),
-        "itero.config.json",
-        &format!(r#"{{"port": {port}}}"#),
-    );
+    file(d.path(), "itero.config.json", "{}");
     file(
         d.path(),
         "workflows/selam.json",
@@ -945,7 +939,7 @@ fn emit_wait_answers_with_the_runs_end() {
         "{o:?}"
     );
 
-    let _daemon = serving(d.path(), port);
+    let _daemon = serving(d.path());
     let o = itero(
         d.path(),
         &["ws", "emit", "--wait", "kişi.geldi", r#"{"kim": "ayşe"}"#],

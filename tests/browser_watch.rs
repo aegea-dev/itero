@@ -16,25 +16,16 @@ fn until(what: &str, secs: u64, mut ok: impl FnMut() -> bool) {
     }
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
-/// A workspace on `port` whose connector `kind` runs `script`, started
-/// by a workflow `on` it with `args`.
-fn workspace(d: &Path, port: u16, kind: &str, script: &str, args: Value) -> std::path::PathBuf {
+/// A workspace whose connector `kind` runs `script`, started by a
+/// workflow `on` it with `args`; its daemon binds a port the OS gives.
+fn workspace(d: &Path, kind: &str, script: &str, args: Value) -> std::path::PathBuf {
     let steps = json!([{ "#notify": { "args": { "text": "$event.what" } } }]);
-    workspace_with(d, port, kind, script, args, steps)
+    workspace_with(d, kind, script, args, steps)
 }
 
 /// `workspace`, its workflow doing `steps`.
 fn workspace_with(
     d: &Path,
-    port: u16,
     kind: &str,
     script: &str,
     args: Value,
@@ -43,11 +34,7 @@ fn workspace_with(
     let root = d.join("çalışma");
     std::fs::create_dir_all(root.join("workflows")).unwrap();
     std::fs::create_dir_all(root.join("connectors")).unwrap();
-    std::fs::write(
-        root.join("itero.config.json"),
-        json!({ "port": port }).to_string(),
-    )
-    .unwrap();
+    std::fs::write(root.join("itero.config.json"), json!({}).to_string()).unwrap();
     let file = root.join("connectors").join(kind);
     std::fs::write(&file, script).unwrap();
     use std::os::unix::fs::PermissionsExt;
@@ -129,18 +116,18 @@ fn api_of(seen: &Path) -> String {
 #[test]
 fn a_connector_asks_the_daemon_for_a_window_and_gives_it_back() {
     let d = tempfile::tempdir().unwrap();
-    let port = free_port();
     let seen = d.path().join("api.txt");
     let root = workspace(
         d.path(),
-        port,
         "sayfa.changed",
         "#!/bin/sh\nprintf '%s' \"$ITERO_BROWSER_API\" > \"$OUT\"\nexec cat >/dev/null\n",
         json!({ "OUT": seen.display().to_string() }),
     );
     let mut daemon = daemon(&root, d.path());
     let api = api_of(&seen);
-    assert_eq!(api, format!("http://127.0.0.1:{port}/browser"));
+    // the daemon's own port, as it saved it once it served
+    let port = std::fs::read_to_string(root.join(".itero/port")).unwrap();
+    assert_eq!(api, format!("http://127.0.0.1:{}/browser", port.trim()));
 
     let (held, tab) = open(&api, json!({ "headless": true }));
     assert_eq!(tab["mode"], "headless", "{tab}");
@@ -184,7 +171,6 @@ fn a_killed_watchs_window_is_closed() {
     let seen = d.path().join("api.txt");
     let root = workspace(
         d.path(),
-        free_port(),
         "sayfa.changed",
         "#!/bin/sh\nprintf '%s' \"$ITERO_BROWSER_API\" > \"$OUT\"\nexec cat >/dev/null\n",
         json!({ "OUT": seen.display().to_string() }),
@@ -257,7 +243,6 @@ fn a_watched_pages_changes_are_a_connectors_events() {
     let w = web::serve(vec![web::html("/liste", LISTE)]);
     let root = workspace(
         d.path(),
-        free_port(),
         "sayfa.changed",
         "#!/bin/sh\nexec itero browser watch \"$URL\" --changed Liste --navigated --headless\n",
         json!({ "URL": w.url("/liste") }),
@@ -350,7 +335,6 @@ fn what_appears_and_the_json_a_page_loads_are_events_too() {
     ]);
     let root = workspace(
         d.path(),
-        free_port(),
         "haber.oldu",
         "#!/bin/sh\nexec itero browser watch \"$URL\" --appeared '{\"css\": \"#yeni\"}' --responses /api/haber --headless\n",
         json!({ "URL": w.url("/haber") }),
@@ -380,7 +364,6 @@ fn a_step_acts_on_the_watched_window() {
     let w = web::serve(vec![web::html("/liste", LISTE)]);
     let root = workspace_with(
         d.path(),
-        free_port(),
         "sayfa.changed",
         "#!/bin/sh\nexec itero browser watch \"$URL\" --changed Liste --headless\n",
         json!({ "URL": w.url("/liste") }),
@@ -486,7 +469,6 @@ document.getElementById('ziyaret').textContent = 'Ziyaret ' + n;</script>"#,
     )]);
     let root = workspace(
         d.path(),
-        free_port(),
         "sayac.changed",
         "#!/bin/sh\nexec itero browser watch \"$URL\" --changed '{\"css\": \"#ziyaret\"}' --navigated --reload 2 --headless\n",
         json!({ "URL": w.url("/sayaç") }),
