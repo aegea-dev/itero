@@ -220,11 +220,15 @@ pub fn run(
                 json!({ "connector": name, "why": why }),
                 &stamp(chrono::Utc::now()),
             );
-            if let Err(e) = Journal::open(ws).and_then(|j| j.publish(&own)) {
-                log.write(
+            match Journal::open(ws).and_then(|j| j.publish(&own)) {
+                // saved: a workflow on it starts at once
+                Ok(()) => {
+                    let _ = wake.send(());
+                }
+                Err(e) => log.write(
                     "error",
                     json!({ "connector": name, "why": format!("{e:#}") }),
-                );
+                ),
             }
             set(health, &name, |h| {
                 h.state = "gave up".into();
