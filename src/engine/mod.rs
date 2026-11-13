@@ -27,8 +27,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Kills this process at the named point when `ITERO_TEST_DIE_AT` names
-/// it: how the kill tests stop the daemon, a manager or a worker at one
-/// exact step. With `ITERO_TEST_DIE_ONCE` (a file's path), only the first
+/// it: how the kill tests stop the daemon or a worker at one exact step. With `ITERO_TEST_DIE_ONCE` (a file's path), only the first
 /// process to get there dies, making that file first; with
 /// `ITERO_TEST_DIE_WHILE` (a file's path), only while that file is there.
 /// Unset, it does nothing.

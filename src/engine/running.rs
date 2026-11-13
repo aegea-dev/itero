@@ -154,7 +154,10 @@ impl Running {
                 state.clone(),
                 me.name.clone(),
             );
-            threads.push(std::thread::spawn(move || {
+            // the manager runs on this thread (`daemon::ask`): the stack its
+            // own process had, for a deep workflow
+            let thread = std::thread::Builder::new().stack_size(MANAGER_STACK);
+            threads.push(thread.spawn(move || {
                 let beat = |busy: bool| {
                     let _ = beats.send(busy.then(Instant::now));
                 };
@@ -205,7 +208,7 @@ impl Running {
                 }
                 // the alarm's thread ends with it
                 drop(alarm);
-            }));
+            })?);
         }
         Ok(Running {
             ws,
@@ -416,6 +419,10 @@ fn run_copies(
         let _ = t.join();
     }
 }
+
+/// The loop thread's stack: 8 MiB, a process's main thread's on Linux and
+/// macOS, which the manager had when it ran as a process of its own.
+const MANAGER_STACK: usize = 8 << 20;
 
 /// Ends the waits of a workspace's threads that wait on files once it is
 /// stopping: a byte into the wake pipe ends its reader, the stop file ends

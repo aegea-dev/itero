@@ -16,7 +16,6 @@ CONSTANTS
     MaxCancels,      \* itero ws ev cancel
     MaxCrashes,      \* the daemon dies, its workers with it (within 500 ms)
     MaxKills,        \* a worker is killed: its job is lost
-    MaxManagerKills, \* a manager killed MAX_TRIES times: its event waits
     MaxRuns,         \* MAX_RUNS: how many times a job runs
     Limit,           \* limits.runs
     Bug              \* "none", or the code scripts/model.sh breaks
@@ -52,13 +51,12 @@ VARIABLES
     held,       \* the pass's memory: messages held for room under Limit,
     running,    \*   the jobs its workers run,
     cancel,     \*   those of them whose steps were stopped,
-    deferred,   \*   and whether an event waits because its manager was killed
     orphans,    \* workers of a daemon that died, until they see it
     left,       \* what is left of each bounded thing
     overLimit,  \* ghost: a message started runs with Limit under way
     twice       \* ghost: a run took a message it had taken
 
-vars == <<ev, runs, timers, up, taking, held, running, cancel, deferred,
+vars == <<ev, runs, timers, up, taking, held, running, cancel,
           orphans, left, overLimit, twice>>
 
 Ev(subj, type) ==
@@ -86,10 +84,10 @@ Init ==
     /\ timers = {}
     /\ up = TRUE
     /\ taking = 0
-    /\ held = {} /\ running = {} /\ cancel = {} /\ deferred = FALSE
+    /\ held = {} /\ running = {} /\ cancel = {}
     /\ orphans = {}
     /\ left = [emit |-> MaxEmits, stop |-> MaxStops, cancel |-> MaxCancels,
-               crash |-> MaxCrashes, kill |-> MaxKills, mkill |-> MaxManagerKills]
+               crash |-> MaxCrashes, kill |-> MaxKills]
     /\ overLimit = FALSE /\ twice = FALSE
 
 -----------------------------------------------------------------------------
@@ -100,7 +98,7 @@ Emit(k) ==
     /\ left.emit > 0
     /\ ev' = Append(ev, [Ev(APP, "outside") EXCEPT !.kind = k])
     /\ left' = [left EXCEPT !.emit = @ - 1]
-    /\ UNCHANGED <<runs, timers, up, taking, held, running, cancel, deferred,
+    /\ UNCHANGED <<runs, timers, up, taking, held, running, cancel,
                    orphans, overLimit, twice>>
 
 \* journal.rs cancel: a message no daemon has handled, and no run that
@@ -111,7 +109,7 @@ CancelEvent(j) ==
     /\ (Bug = "copied" \/ ~\E k \in DOMAIN ev : ev[k].type = "message" /\ ev[k].msg = j)
     /\ ev' = [ev EXCEPT ![j] = Mark(@, "cancelled")]
     /\ left' = [left EXCEPT !.cancel = @ - 1]
-    /\ UNCHANGED <<runs, timers, up, taking, held, running, cancel, deferred,
+    /\ UNCHANGED <<runs, timers, up, taking, held, running, cancel,
                    orphans, overLimit, twice>>
 
 \* events.rs stop_run: a run.stop event, while the run has not ended
@@ -120,7 +118,7 @@ StopRun(r) ==
     /\ runs[r].ended = ""
     /\ ev' = Append(ev, Ev(r, "run.stop"))
     /\ left' = [left EXCEPT !.stop = @ - 1]
-    /\ UNCHANGED <<runs, timers, up, taking, held, running, cancel, deferred,
+    /\ UNCHANGED <<runs, timers, up, taking, held, running, cancel,
                    orphans, overLimit, twice>>
 
 -----------------------------------------------------------------------------
@@ -146,14 +144,14 @@ Save(s, o) ==
 \* started; one counted MAX_RUNS times already is an error instead. A job
 \* an orphan still runs holds its lock (lock.rs take_job): it waits
 StartJob(s) ==
-    /\ up /\ taking = 0 /\ ~deferred /\ NoEvent
+    /\ up /\ taking = 0 /\ NoEvent
     /\ ev[s].subj = WORKER /\ ~ev[s].handled /\ s \notin running
     /\ (s \notin orphans \/ Bug = "nolock")
     /\ IF ev[s].tries >= MaxRuns /\ Bug /= "maxruns"
        THEN Save(s, "failed") /\ UNCHANGED running
        ELSE /\ ev' = [ev EXCEPT ![s].tries = @ + 1]
             /\ running' = running \cup {s}
-    /\ UNCHANGED <<runs, timers, up, taking, held, cancel, deferred, orphans,
+    /\ UNCHANGED <<runs, timers, up, taking, held, cancel, orphans,
                    left, overLimit, twice>>
 
 \* end_one: a worker ends; a stopped one's answer is dropped
@@ -162,7 +160,7 @@ EndWorker(s, o) ==
     /\ running' = running \ {s}
     /\ cancel' = cancel \ {s}
     /\ IF s \in cancel /\ Bug /= "cancel" THEN UNCHANGED ev ELSE Save(s, o)
-    /\ UNCHANGED <<runs, timers, up, taking, held, deferred, orphans, left,
+    /\ UNCHANGED <<runs, timers, up, taking, held, orphans, left,
                    overLimit, twice>>
 
 \* a worker killed: lost (lose_job), to run again, or after MAX_RUNS an error
@@ -173,7 +171,7 @@ KillWorker(s) ==
     /\ cancel' = cancel \ {s}
     /\ IF s \in cancel \/ ev[s].tries < MaxRuns THEN UNCHANGED ev
        ELSE Save(s, "failed")
-    /\ UNCHANGED <<runs, timers, up, taking, held, deferred, orphans,
+    /\ UNCHANGED <<runs, timers, up, taking, held, orphans,
                    overLimit, twice>>
 
 \* the daemon dies: its memory is gone; its workers see it within 500 ms
@@ -181,7 +179,7 @@ Crash ==
     /\ up /\ left.crash > 0
     /\ left' = [left EXCEPT !.crash = @ - 1]
     /\ up' = FALSE
-    /\ taking' = 0 /\ held' = {} /\ running' = {} /\ cancel' = {} /\ deferred' = FALSE
+    /\ taking' = 0 /\ held' = {} /\ running' = {} /\ cancel' = {}
     /\ orphans' = orphans \cup running
     /\ UNCHANGED <<ev, runs, timers, overLimit, twice>>
 
@@ -190,13 +188,13 @@ OrphanDies(s) ==
     /\ s \in orphans
     /\ orphans' = orphans \ {s}
     /\ UNCHANGED <<ev, runs, timers, up, taking, held, running, cancel,
-                   deferred, left, overLimit, twice>>
+                   left, overLimit, twice>>
 
 \* a daemon takes the lock and starts its pass from the journal
 Restart ==
     /\ ~up
     /\ up' = TRUE
-    /\ UNCHANGED <<ev, runs, timers, taking, held, running, cancel, deferred,
+    /\ UNCHANGED <<ev, runs, timers, taking, held, running, cancel,
                    orphans, left, overLimit, twice>>
 
 -----------------------------------------------------------------------------
@@ -266,7 +264,7 @@ Deliverable(j) == IF Bug = "order" THEN Open(j) ELSE First(j)
 Take(j) ==
     /\ up /\ taking = 0 /\ Deliverable(j) /\ ev[j].subj = APP
     /\ taking' = j
-    /\ UNCHANGED <<ev, runs, timers, up, held, running, cancel, deferred,
+    /\ UNCHANGED <<ev, runs, timers, up, held, running, cancel,
                    orphans, left, overLimit, twice>>
 
 Starts(e) ==
@@ -319,7 +317,7 @@ Route ==
                /\ overLimit' = (overLimit \/ full)
                /\ UNCHANGED held
     /\ taking' = 0
-    /\ UNCHANGED <<timers, up, running, cancel, deferred, orphans, left, twice>>
+    /\ UNCHANGED <<timers, up, running, cancel, orphans, left, twice>>
 
 \* deliver: a run's event to its manager, the answer saved in one handle
 Deliver(j) ==
@@ -380,17 +378,7 @@ Deliver(j) ==
           /\ held' = IF held /= {} /\ ActiveOf(newRuns) < Limit /\ Bug /= "held"
                      THEN {} ELSE held
           /\ twice' = (twice \/ (e.type = "message" /\ e.msg \in old.taken /\ a.jobs /= <<>>))
-    /\ deferred' = FALSE
     /\ UNCHANGED <<up, taking, running, orphans, left, overLimit>>
-
-\* ask_again: the manager killed MAX_TRIES times; the event is given again
-\* in a second, and no job starts meanwhile
-ManagerKilled(j) ==
-    /\ up /\ taking = 0 /\ Deliverable(j) /\ ev[j].subj > 0 /\ left.mkill > 0
-    /\ left' = [left EXCEPT !.mkill = @ - 1]
-    /\ deferred' = TRUE
-    /\ UNCHANGED <<ev, runs, timers, up, taking, held, running, cancel,
-                   orphans, overLimit, twice>>
 
 \* fire_timers: a due timer becomes its run's event, in one transaction
 \* daemon.rs fire_windows; journal.rs close_batch: a batch's time has come,
@@ -407,14 +395,14 @@ FireBatch(w) ==
                        ELSE ev[i]]
                     \o <<[Ev(Len(runs) + 1, "run.started") EXCEPT !.cause = first]>>
           /\ runs' = Append(runs, Run(w, 0, 0, 1, first, Len(ev) + 1, "batch"))
-    /\ UNCHANGED <<timers, up, taking, held, running, cancel, deferred, orphans,
+    /\ UNCHANGED <<timers, up, taking, held, running, cancel, orphans,
                    left, overLimit, twice>>
 
 FireTimer(r) ==
     /\ up /\ taking = 0 /\ r \in timers
     /\ timers' = timers \ {r}
     /\ ev' = Append(ev, Ev(r, "timer.fired"))
-    /\ UNCHANGED <<runs, up, taking, held, running, cancel, deferred, orphans,
+    /\ UNCHANGED <<runs, up, taking, held, running, cancel, orphans,
                    left, overLimit, twice>>
 
 -----------------------------------------------------------------------------
@@ -444,7 +432,6 @@ Next ==
     \/ Restart
     \/ \E k \in Kinds : Emit(k)
     \/ \E j \in DOMAIN ev : CancelEvent(j)
-    \/ \E j \in DOMAIN ev : ManagerKilled(j)
     \/ \E r \in DOMAIN runs : StopRun(r)
     \/ \E s \in DOMAIN ev : KillWorker(s)
     \/ Crash

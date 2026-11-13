@@ -580,52 +580,6 @@ fn a_list_whose_step_breaks_lets_the_others_run_to_their_end_then_breaks() {
 }
 
 #[test]
-fn a_pass_whose_manager_keeps_being_killed_still_stops_the_steps_that_lose() {
-    let ws = Ws::new();
-    ws.flow(
-        "yarış",
-        json!({"on": [{ "event": "yarış.başladı" }],
-               "steps": [{ "race": ["#hızlı", "#yavaş"] }]}),
-    );
-    ws.action("hızlı", "sleep 2; echo hızlı");
-    ws.action("yavaş", "sleep 30 &\necho $! > uyku.pid\nwait");
-    ws.emit("yarış.başladı", json!({}));
-    // every manager dies while this file is there
-    let die = ws.d.path().join("ölsün");
-    let mut daemon = std::process::Command::new(exe())
-        .args(["ws", "daemon", "--once", "--now", NOW])
-        .current_dir(ws.d.path())
-        .env("ITERO_TEST_DIE_AT", "manager")
-        .env("ITERO_TEST_DIE_WHILE", &die)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let pid = pid_in(&ws, "uyku.pid");
-    std::fs::write(&die, "").unwrap();
-    // the fast step's result waits: its manager keeps being killed
-    let deferred = soon(|| {
-        ws.log()
-            .iter()
-            .any(|l| l["why"].as_str().is_some_and(|w| w.contains("given again")))
-    });
-    std::fs::remove_file(&die).unwrap();
-    let ended = soon(|| daemon.try_wait().unwrap().is_some());
-    let gone = soon(|| !alive(pid));
-    if !ended {
-        let _ = daemon.kill();
-        let _ = daemon.wait();
-    }
-    end(pid);
-    assert!(deferred, "no manager was killed: {:?}", ws.log());
-    assert!(ended, "the pass waited for the slow step");
-    assert!(gone, "sleep {pid} still ran");
-    assert_eq!(ws.statuses(), vec!["done"]);
-    assert_eq!(ws.runs()[0].runtime.state["output"]["winner"], "hızlı");
-    saved_as_stopped(&ws, "yavaş");
-}
-
-#[test]
 fn what_a_pass_saves_has_the_time_it_was_saved() {
     let ws = Ws::new();
     ws.flow(
@@ -2048,5 +2002,41 @@ fn forget_removes_the_locks_of_jobs_done_and_keeps_those_that_may_run() {
     assert!(
         ws.d.path().join(".itero/jobs/3.lock").exists(),
         "its own job waited as it looked"
+    );
+}
+
+/// The manager is a function the pass calls, not a process it starts:
+/// what the pass starts, through a stand-in for itero that writes down how
+/// it was run, is the workers and nothing else.
+#[test]
+fn a_pass_asks_its_manager_without_starting_a_process() {
+    use std::os::unix::fs::PermissionsExt;
+    let ws = Ws::new();
+    ws.flow(
+        "iki",
+        json!({"on": [{ "event": "sipariş.verildi" }], "steps": ["#bir", "#iki"]}),
+    );
+    ws.action("bir", "echo bir");
+    ws.action("iki", "echo iki");
+    ws.emit("sipariş.verildi", json!({}));
+    let calls = ws.d.path().join("çağrılar.txt");
+    let stand_in = ws.d.path().join("itero-yerine");
+    std::fs::write(
+        &stand_in,
+        format!(
+            "#!/bin/sh\necho \"$1\" >> '{}'\nexec '{}' \"$@\"\n",
+            calls.display(),
+            exe().display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&stand_in, std::fs::Permissions::from_mode(0o755)).unwrap();
+    run_once(&ws.ws, NOW.parse().unwrap(), &stand_in).unwrap();
+    assert_eq!(ws.statuses(), vec!["done"]);
+    let started = std::fs::read_to_string(&calls).unwrap();
+    assert_eq!(
+        started.lines().collect::<Vec<_>>(),
+        ["worker", "worker"],
+        "{started}"
     );
 }

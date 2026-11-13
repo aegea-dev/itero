@@ -2,7 +2,7 @@
 
 `Engine.tla` is a TLA+ model of how the daemon works a workspace's
 journal: messages routed to workflows, a run's events given to its
-manager, jobs run by workers, `itero ws emit`, `ev cancel` and `wf stop`
+manager (a function the daemon calls), jobs run by workers, `itero ws emit`, `ev cancel` and `wf stop`
 from outside, and crashes at any moment. Each transaction on the journal
 is one action, so a daemon dying between any two writes is one more order
 to try.
@@ -38,7 +38,7 @@ its name, or, for an action over the journal's rows, its line in `Next`
 (each line there is one action). In a state, `ev` is the events table by
 seq and `runs` the runs table by id; a subject of `0` is `itero.app`
 (messages), `-1` is `itero.worker` (jobs), and any other is a run's id.
-`running`, `cancel`, `held` and `deferred` are the daemon's memory, lost
+`running`, `cancel` and `held` are the daemon's memory, lost
 when it dies; `orphans` are the workers of a daemon that died, until they
 see it.
 
@@ -49,8 +49,8 @@ happen; its `.cfg` lists its rules.
 
 | Scenario | Workflows | What may happen |
 |---|---|---|
-| `MCLost` | one action | a stop, a crash, 3 workers killed, a manager killed |
-| `MCStop` | an action and a group of two, started by one message | a stop, a cancel, a crash, a worker and a manager killed |
+| `MCLost` | one action | a stop, a crash, 3 workers killed |
+| `MCStop` | an action and a group of two, started by one message | a stop, a cancel, a crash, a worker killed |
 | `MCWait` | two steps that each wait for a message | 2 messages, a stop, a cancel |
 | `MCHeld` | a step that waits, started twice under a run limit of 1 | 2 messages, a cancel, a crash |
 | `MCChild` | a workflow whose step is a workflow of 2 rounds, and a built-in on `itero.run.done` | a stop |
@@ -113,7 +113,6 @@ running.
 | `Take`, `Route` | `daemon.rs` `work` (`next`) and `route`; `journal.rs` `route` (`keep`) |
 | `FireBatch` | `daemon.rs` `fire_windows`; `journal.rs` `close_batch` |
 | `Deliver` | `daemon.rs` `deliver`; `steps.rs` `decide` (`Decide`); `journal.rs` `handle` and `messages_since` |
-| `ManagerKilled` | `daemon.rs` `ask_again`, `Delivered::Deferred` |
 | `FireTimer` | `daemon.rs` `fire_timers`; `journal.rs` `fire_timer` |
 | `StartJob` | `daemon.rs` `work` (its jobs); `journal.rs` `start_job` |
 | `EndWorker` | `daemon.rs` `end_one`, `save_result` |
