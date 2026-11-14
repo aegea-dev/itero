@@ -34,8 +34,6 @@ pub struct Pass {
     pub lost: usize,
     /// Jobs stopped, running or not yet: their group ended without them.
     pub stopped: usize,
-    /// Events left for the next pass: their manager kept being killed.
-    pub deferred: usize,
     /// Jobs not started: a copy of each still runs, one a daemon that died
     /// left, until it sees its parent gone. The next pass is in a second.
     pub elsewhere: usize,
@@ -47,22 +45,9 @@ pub struct Pass {
 /// runs: the rest wait for the next.
 const MAX_EVENTS: usize = 10_000;
 
-/// How many times a manager killed before it answered is asked again,
-/// before the event waits a second.
-const MAX_TRIES: usize = 3;
-
 /// How many times a job runs, the first run and those after it was lost,
 /// before its step is an error.
 const MAX_RUNS: i64 = 3;
-
-/// What became of an event given to `deliver`.
-enum Delivered {
-    /// Answered (or given up on with an error) and saved; the jobs (by
-    /// `seq`) whose steps the answer stopped.
-    Handled(Vec<i64>),
-    /// Left unhandled: its manager kept being killed.
-    Deferred,
-}
 
 pub fn stamp(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Secs, true)
@@ -192,11 +177,8 @@ pub fn run_loop(
         report(&pass);
         let next = match &pass {
             Ok(p) if p.more => Ok(Some(now)),
-            // a lost manager is asked again, as before, a second on; so is a
-            // job a copy of which still runs
-            Ok(p) if p.deferred > 0 || p.elsewhere > 0 => {
-                Ok(Some(now + chrono::Duration::seconds(1)))
-            }
+            // a job a copy of which still runs is looked at again a second on
+            Ok(p) if p.elsewhere > 0 => Ok(Some(now + chrono::Duration::seconds(1))),
             Ok(_) => next_due(ws, Utc::now()),
             Err(_) => Ok(Some(now + AFTER_FAILURE)),
         };
@@ -471,7 +453,7 @@ fn defined(ws: &Workspace, name: &str) -> bool {
 }
 
 /// One pass over a workspace; `exe` is the itero binary, run as `itero
-/// manager` and `itero worker`. Ends by posting the callbacks due.
+/// worker`. Ends by posting the callbacks due.
 pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> {
     // woken by its workers, and by other processes through the wake pipe,
     // as the daemon's passes are
@@ -713,16 +695,11 @@ fn until_timer(j: &Journal, clock: Clock) -> Result<Option<std::time::Duration>>
     Ok(Some((at - clock.now()).to_std().unwrap_or_default()))
 }
 
-/// How long an event whose manager kept being killed waits before it is
-/// given again, while the pass's steps still run.
-const AGAIN: std::time::Duration = std::time::Duration::from_secs(1);
-
 /// Delivers events (and fires due timers) and starts jobs, saving each
-/// result as its worker ends, until nothing is left. Once a manager keeps
-/// being killed, or the pass reaches its cap of events, no job starts, and
-/// the pass ends as soon as none runs; until then it goes on delivering,
-/// so a group decided meanwhile still stops the steps that lost (the event
-/// whose manager was killed is given again every `AGAIN`).
+/// result as its worker ends, until nothing is left. Once the pass reaches
+/// its cap of events, no job starts, and the pass ends as soon as none
+/// runs; until then it goes on delivering, so a group decided meanwhile
+/// still stops the steps that lost.
 #[allow(clippy::too_many_arguments)]
 fn work(
     ws: &Workspace,
@@ -739,19 +716,12 @@ fn work(
     let mut held = vec![];
     // the jobs said this pass to run elsewhere still
     let mut told = std::collections::BTreeSet::new();
-    // when the event whose manager kept being killed is given again
-    let mut again: Option<std::time::Instant> = None;
     loop {
         fire_timers(j, clock)?;
         loop {
-            if again.is_some_and(|t| std::time::Instant::now() < t) {
-                break;
-            }
             let Some(r) = j.next(&held)? else {
-                again = None;
                 break;
             };
-            again = None;
             if r.event.subject == journal::subject("app") {
                 // read again: a long step keeps the pass going, and a
                 // message must meet the edits made before it came
@@ -763,19 +733,9 @@ fn work(
                 }
                 continue;
             }
-            match deliver(ws, j, &r, clock, w.exe, log)? {
-                // events are delivered in order: the rest waits with it
-                Delivered::Deferred => {
-                    pass.deferred = 1;
-                    again = Some(std::time::Instant::now() + AGAIN);
-                    continue;
-                }
-                Delivered::Handled(stopped) => {
-                    pass.deferred = 0;
-                    pass.stopped += stopped.len();
-                    w.stop(&stopped);
-                }
-            }
+            let stopped = deliver(ws, j, &r, clock, log)?;
+            pass.stopped += stopped.len();
+            w.stop(&stopped);
             pass.delivered += 1;
             if !held.is_empty() && j.active_count(&flows.internals())? < ws.limits.runs {
                 held.clear();
@@ -788,19 +748,11 @@ fn work(
             }
         }
         // stopped early: no job starts, and the pass ends once none runs
-        if pass.more || again.is_some() {
+        if pass.more {
             if w.running.is_empty() {
                 return Ok(());
             }
-            let timer = until_timer(j, clock)?;
-            let wait = match again {
-                Some(t) => {
-                    let left = t.saturating_duration_since(std::time::Instant::now());
-                    Some(timer.map_or(left, |d| d.min(left)))
-                }
-                None => timer,
-            };
-            end_one(ws, j, w, clock, pass, wait)?;
+            end_one(ws, j, w, clock, pass, until_timer(j, clock)?)?;
             continue;
         }
         let room = ws.limits.steps.saturating_sub(w.running.len());
@@ -1189,53 +1141,28 @@ fn lost_too_often(why: &str) -> String {
     format!("lost {MAX_RUNS} times: {why}")
 }
 
-/// Asks the manager, and again when it was killed before it answered: it
-/// is pure, so asking again gives the answer it would have given. Killed
-/// `MAX_TRIES` times in a row, it is lost; the event is not.
-fn ask_again(exe: &Path, input: &StepInput) -> Result<StepAnswer, Failure> {
-    let mut why = String::new();
-    for _ in 0..MAX_TRIES {
-        match ask(exe, input) {
-            Err(Failure::Lost(w)) => why = w,
-            other => return other,
-        }
+/// Asks the manager: a function of the input alone (`steps::decide`),
+/// called in this process. A panic in it is an error for this event, as
+/// any other answer it cannot give.
+fn ask(input: &StepInput) -> Result<StepAnswer, String> {
+    super::die_at("manager");
+    match std::panic::catch_unwind(|| steps::decide(input)) {
+        Ok(answer) => answer,
+        Err(panic) => Err(format!("the manager panicked: {}", panic_text(&panic))),
     }
-    Err(Failure::Lost(format!(
-        "the manager was killed {MAX_TRIES} times ({why})"
-    )))
 }
 
-/// Runs `itero manager` on one input.
-fn ask(exe: &Path, input: &StepInput) -> Result<StepAnswer, Failure> {
-    let mut c = Command::new(exe)
-        .arg("manager")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cannot start the manager: {e}"))?;
-    let text = serde_json::to_string(input).map_err(|e| e.to_string())?;
-    // a manager killed before it read its input closes the pipe: its exit
-    // below says so, not this write
-    let written = c.stdin.take().expect("piped").write_all(text.as_bytes());
-    let out = c.wait_with_output().map_err(|e| e.to_string())?;
-    if out.status.code().is_none() {
-        return Err(Failure::Lost(format!(
-            "the manager was killed ({})",
-            out.status
-        )));
-    }
-    written.map_err(|e| format!("cannot give the manager its input: {e}"))?;
-    if !out.status.success() {
-        return Err(Failure::Error(
-            String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        ));
-    }
-    Ok(serde_json::from_slice(&out.stdout).map_err(|e| format!("the manager's answer: {e}"))?)
+/// What a panic said, when it said it in text.
+fn panic_text(panic: &Box<dyn std::any::Any + Send>) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no message".into())
 }
 
 /// Marks an event handled with the reason it could not be delivered.
-fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Result<Delivered> {
+fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Result<Vec<i64>> {
     log.write("error", json!({ "why": why }));
     j.handle(Handled {
         seq,
@@ -1251,18 +1178,18 @@ fn give_up(log: &Log, j: &mut Journal, seq: i64, at: &str, why: String) -> Resul
         stopped_why: journal::JOB_STOPPED,
         let_through: vec![],
     })?;
-    Ok(Delivered::Handled(vec![]))
+    Ok(vec![])
 }
 
-/// Delivers one event to its run's manager and saves the answer.
+/// Delivers one event to its run's manager and saves the answer: the jobs
+/// (by `seq`) whose steps the answer stopped.
 fn deliver(
     ws: &Workspace,
     j: &mut Journal,
     r: &Recorded,
     clock: Clock,
-    exe: &Path,
     log: &Log,
-) -> Result<Delivered> {
+) -> Result<Vec<i64>> {
     let at = clock.stamp();
     let Some(id) = journal::run_of(&r.event.subject).map(str::to_string) else {
         return give_up(log, j, r.seq, &at, format!("no run in {}", r.event.subject));
@@ -1331,18 +1258,9 @@ fn deliver(
     // then the manager is asked again, passing it by. Deliveries are one at
     // a time, so what the windows say holds until the answer is saved.
     let answer = loop {
-        let answer = match ask_again(exe, &input) {
+        let answer = match ask(&input) {
             Ok(a) => a,
-            Err(Failure::Error(why)) => return give_up(log, j, r.seq, &at, why),
-            Err(Failure::Lost(why)) => {
-                log.write(
-                    "error",
-                    who.line(
-                        json!({ "why": format!("{why}; {} is given again in a second", r.event.kind) }),
-                    ),
-                );
-                return Ok(Delivered::Deferred);
-            }
+            Err(why) => return give_up(log, j, r.seq, &at, why),
         };
         let mut held = vec![];
         for job in &answer.jobs {
@@ -1507,7 +1425,7 @@ fn deliver(
     })?;
     tell(log, &who, r, &answer);
     super::die_at("answer");
-    Ok(Delivered::Handled(stopped))
+    Ok(stopped)
 }
 
 /// The jobs not yet handled, running or not, of run `id`'s actions at

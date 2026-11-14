@@ -71,7 +71,7 @@ impl Ws {
         itero::engine::events::emit(&self.ws, "sayfa.değişti", Some(data), now).unwrap();
         for _ in 0..50 {
             let p = run_once(&self.ws, now.parse().unwrap(), exe()).unwrap();
-            if !p.more && p.deferred == 0 && p.elsewhere == 0 {
+            if !p.more && p.elsewhere == 0 {
                 return;
             }
         }
@@ -502,7 +502,7 @@ fn a_step_that_runs_again_after_waiting_is_not_counted_again() {
     .unwrap();
     for _ in 0..50 {
         let p = run_once(&ws.ws, "2026-11-08T10:10:00Z".parse().unwrap(), exe()).unwrap();
-        if !p.more && p.deferred == 0 && p.elsewhere == 0 {
+        if !p.more && p.elsewhere == 0 {
             break;
         }
     }

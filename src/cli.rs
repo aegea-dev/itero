@@ -145,9 +145,6 @@ pub enum Cmd {
         #[command(subcommand)]
         cmd: ServiceCmd,
     },
-    /// The workflow manager: one decision, JSON in on stdin, JSON out on stdout
-    #[command(hide = true)]
-    Manager,
     /// A worker: one job, JSON in on stdin, its output as JSON on stdout
     #[command(hide = true)]
     Worker,
@@ -655,10 +652,10 @@ fn report(pass: &Result<crate::engine::daemon::Pass>, log: Option<&crate::engine
         return;
     }
     match pass {
-        Ok(p) if p.delivered + p.worked + p.lost + p.stopped + p.deferred + p.elsewhere > 0 => {
+        Ok(p) if p.delivered + p.worked + p.lost + p.stopped + p.elsewhere > 0 => {
             eprintln!(
-                "{} events, {} jobs, {} lost (run again), {} stopped, {} waiting, {} running elsewhere",
-                p.delivered, p.worked, p.lost, p.stopped, p.deferred, p.elsewhere
+                "{} events, {} jobs, {} lost (run again), {} stopped, {} running elsewhere",
+                p.delivered, p.worked, p.lost, p.stopped, p.elsewhere
             )
         }
         Ok(_) => {}
@@ -838,7 +835,6 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
         | Cmd::MovedConnector { .. } => return None,
         Cmd::Daemon { .. } => "daemon",
         Cmd::Watchdog { .. } => "watchdog",
-        Cmd::Manager => "manager",
         Cmd::Worker => "worker",
         Cmd::Service { .. } => "service",
         Cmd::Emit(_) => "emit",
@@ -992,7 +988,6 @@ fn dispatch(cli: Cli) -> Result<()> {
     if matches!(
         cli.cmd,
         Cmd::Daemon { .. }
-            | Cmd::Manager
             | Cmd::Worker
             | Cmd::Watchdog { .. }
             | Cmd::Workspace {
@@ -1421,15 +1416,6 @@ fn dispatch(cli: Cli) -> Result<()> {
                 },
                 log,
             })?;
-        }
-        Cmd::Manager => {
-            crate::engine::die_at("manager");
-            let mut text = String::new();
-            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
-            let input: crate::engine::steps::StepInput =
-                serde_json::from_str(&text).map_err(|e| anyhow!("the manager's input: {e}"))?;
-            let answer = crate::engine::steps::decide(&input).map_err(|e| anyhow!(e))?;
-            println!("{}", serde_json::to_string(&answer)?);
         }
         Cmd::NotificationClicked { data } => {
             let ws = workspace()?;
