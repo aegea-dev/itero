@@ -10,7 +10,8 @@
 #   from start to end, for a 1-step workflow. Sent counts the sender's own
 #   start: curl's, `itero ws emit`'s;
 # - throughput: BENCH_N events saved while no daemon runs, then a daemon
-#   started: runs a second, first start to last end, for 1 and 3 steps;
+#   started: runs a second, first start to last end, for 1 and 3 steps,
+#   and 1 step given a secret (`$$BENCH_TOKEN`);
 # - the webhook listener: BENCH_REQUESTS requests, 32 at once, refused
 #   (an unlisted path) and saved (a listed path no workflow takes).
 #
@@ -84,6 +85,11 @@ EOF
 cat >"$ws/workflows/three.json" <<'EOF'
 { "on": [{ "event": "bench.sent" }, { "$event.wf": "three" }], "steps": ["#a", "#b", "#c"] }
 EOF
+# a step given a secret: whether `$$BENCH_TOKEN` is defined is looked up
+cat >"$ws/workflows/secret.json" <<'EOF'
+{ "on": [{ "event": "bench.sent" }, { "$event.wf": "secret" }],
+  "steps": [{ "#a": { "args": { "token": "$$BENCH_TOKEN" } } }] }
+EOF
 cat >"$ws/workflows/hook.json" <<'EOF'
 { "on": [{ "event": "itero.webhook.received" }, { "$event.path": "/hook" }], "steps": ["#a"] }
 EOF
@@ -116,7 +122,7 @@ stop_daemon() {
 	daemon=
 }
 # the bench's runs ended so far (the daemon's own workflows run too)
-ended() { count '"event":"run.ended".*"workflow":"(one|three|hook)"'; }
+ended() { count '"event":"run.ended".*"workflow":"(one|three|secret|hook)"'; }
 # waits until `count` runs have ended in all, 10 minutes at most
 wait_ended() {
 	i=0
@@ -220,7 +226,7 @@ listener /saved saved >>"$ws/listener.jsonl"
 stop_daemon
 
 # --- throughput ---------------------------------------------------------------
-for wf in one three; do
+for wf in one three secret; do
 	seq 1 "$n" | sed "s/.*/{\"wf\":\"$wf\",\"tag\":\"load-$wf\"}/" |
 		tr "\n" "\0" | (cd "$ws" && xargs -0 -P 4 -I{} "$itero" ws emit bench.sent {} >/dev/null 2>>"$ws/emit.err") || {
 		cat "$ws/emit.err" >&2
@@ -246,7 +252,7 @@ runs >"$ws/runs.json"
 				sent_to_start_ms: (map(select(.sent != null) | (.started - .sent) * 1000000 | round / 1000) | '"$stats"'),
 				start_to_end_ms: (map(.end - .start) | '"$stats"')}' "$ws/runs.json"
 	done
-	for wf in one three; do
+	for wf in one three secret; do
 		jq -c --arg wf "$wf" '
 			map(select(.tag == "load-" + $wf))
 			| ((map(.end) | max) - (map(.start) | min)) as $span
