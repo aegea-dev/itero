@@ -204,10 +204,40 @@ struct Flows {
     values: BTreeMap<String, Value>,
     read: BTreeMap<String, Flow>,
     config: Map<String, Value>,
+    /// The workspace's own files as they were just before they were read.
+    seen: Vec<(PathBuf, Option<FileState>)>,
+}
+
+/// What tells a file's edit: its inode, size, and change and modification
+/// times to the nanosecond.
+type FileState = (u64, u64, i64, i64, i64, i64);
+
+/// The state of each of `files`, none for one not there.
+fn look(files: &[PathBuf]) -> Vec<(PathBuf, Option<FileState>)> {
+    use std::os::unix::fs::MetadataExt;
+    files
+        .iter()
+        .map(|f| {
+            let m = std::fs::metadata(f).ok();
+            let state = m.map(|m| {
+                (
+                    m.ino(),
+                    m.size(),
+                    m.mtime(),
+                    m.mtime_nsec(),
+                    m.ctime(),
+                    m.ctime_nsec(),
+                )
+            });
+            (f.clone(), state)
+        })
+        .collect()
 }
 
 impl Flows {
     fn load(ws: &Workspace) -> Result<Flows> {
+        // looked at first: an edit while they are read is seen next time
+        let seen = look(&ws.own_files()?);
         let values = ws.flow_values()?;
         let entries = ws.entries("workflow")?;
         let mut read = BTreeMap::new();
@@ -218,7 +248,19 @@ impl Flows {
             values,
             read,
             config: ws.manifest()?,
+            seen,
         })
+    }
+
+    /// These, if none of the workspace's own files changed since they were
+    /// read (a file or a folder of workflows, the manifest); else read
+    /// again. A look at each file, not a read of each.
+    fn fresh(self, ws: &Workspace) -> Result<Flows> {
+        let files: Vec<PathBuf> = self.seen.iter().map(|(f, _)| f.clone()).collect();
+        if look(&files) == self.seen {
+            return Ok(self);
+        }
+        Flows::load(ws)
     }
 
     /// Whether a workflow looks after the workspace (`meta.internal`).
@@ -711,25 +753,50 @@ fn work(
     no_room: bool,
     pass: &mut Pass,
 ) -> Result<()> {
-    // Messages that would start a run while `runs` are under way are held;
-    // they are taken again once a run has ended.
-    let mut held = vec![];
+    // Messages that would start a run while `runs` are under way are held,
+    // in order; once there is room again they are taken first, until it is
+    // full again, and the rest are not looked at again until there is room.
+    // Events are taken in order: `taken` is the last, and what is not
+    // handled up to it is held.
+    let mut held = std::collections::VecDeque::new();
+    let mut taken = 0;
     // the jobs said this pass to run elsewhere still
     let mut told = std::collections::BTreeSet::new();
     loop {
         fire_timers(j, clock)?;
         loop {
-            let Some(r) = j.next(&held)? else {
+            // room again: the held first, oldest first, until it is full
+            if !held.is_empty() && j.active_count(&flows.internals())? < ws.limits.runs {
+                flows = flows.fresh(ws)?;
+                while let Some(&seq) = held.front() {
+                    // handled meanwhile (cancelled by command): not held
+                    let Some(r) = j.unhandled(seq)? else {
+                        held.pop_front();
+                        continue;
+                    };
+                    if !route(ws, &flows, j, &r, clock.now(), log, no_room)? {
+                        break;
+                    }
+                    held.pop_front();
+                    pass.delivered += 1;
+                }
+            }
+            let Some(r) = j.next(taken)? else {
                 break;
             };
+            taken = r.seq;
             if r.event.subject == journal::subject("app") {
-                // read again: a long step keeps the pass going, and a
-                // message must meet the edits made before it came
-                flows = Flows::load(ws)?;
-                if route(ws, &flows, j, &r, clock.now(), log, no_room)? {
+                // a long step keeps the pass going, and a message must meet
+                // the edits made before it came: read again if one changed
+                flows = flows.fresh(ws)?;
+                // one that needs room waits behind those held before it;
+                // one that needs none (it reaches waiting runs, or starts
+                // only internal ones) goes on
+                let full = no_room || !held.is_empty();
+                if route(ws, &flows, j, &r, clock.now(), log, full)? {
                     pass.delivered += 1;
                 } else {
-                    held.push(r.seq);
+                    held.push_back(r.seq);
                 }
                 continue;
             }
@@ -737,9 +804,6 @@ fn work(
             pass.stopped += stopped.len();
             w.stop(&stopped);
             pass.delivered += 1;
-            if !held.is_empty() && j.active_count(&flows.internals())? < ws.limits.runs {
-                held.clear();
-            }
             if pass.delivered >= MAX_EVENTS {
                 pass.more = true;
                 if w.running.is_empty() {
@@ -756,12 +820,8 @@ fn work(
             continue;
         }
         let room = ws.limits.steps.saturating_sub(w.running.len());
-        let waiting: Vec<Recorded> = j
-            .jobs()?
-            .into_iter()
-            .filter(|r| !w.running.contains_key(&r.seq))
-            .take(room)
-            .collect();
+        let running: Vec<i64> = w.running.keys().copied().collect();
+        let waiting = j.jobs_to_start(&running, room)?;
         // each run of a job is counted before it starts, so one the daemon
         // stopped during counts too
         let mut saved = false;
@@ -1093,12 +1153,7 @@ fn route(
     // but for a click on a notification, which a #notify step waits for
     let reaches =
         !r.event.kind.starts_with(events::OWN) || r.event.kind == events::NOTIFICATION_CLICKED;
-    let waiting: Vec<String> = j
-        .active_runs()?
-        .into_iter()
-        .filter(|run| reaches && steps::is_waiting(&run.runtime))
-        .map(|run| run.id)
-        .collect();
+    let waiting = if reaches { j.waiting_runs()? } else { vec![] };
     let routed = j.route(r, &starts, &waiting, &stamp(now))?;
     let mut line = json!({ "message": r.event.id, "type": r.event.kind, "data": r.event.data });
     if routed.started.is_empty() && waiting.is_empty() {
@@ -1434,9 +1489,8 @@ fn stopped_jobs(j: &Journal, id: &str, paths: &[Vec<usize>]) -> Result<Vec<i64>>
     if paths.is_empty() {
         return Ok(vec![]);
     }
-    Ok(j.jobs()?
+    Ok(j.jobs_of(id)?
         .into_iter()
-        .filter(|r| r.event.data["run"].as_str() == Some(id))
         .filter(|r| {
             serde_json::from_value::<Vec<usize>>(r.event.data["job"]["path"].clone())
                 .is_ok_and(|p| paths.contains(&p))

@@ -200,6 +200,36 @@ fn an_order_waits_for_its_payment_then_ships() {
     assert_eq!(ws.read("sonuç.log"), "true  \n");
 }
 
+/// A run that waited in a journal made before runs kept whether they wait
+/// (schema 12) still gets its message once this itero opens the journal.
+#[test]
+fn a_run_waiting_in_a_journal_from_before_still_gets_its_message() {
+    let ws = Ws::new();
+    order(&ws);
+    ws.emit("order.placed", json!({"order": 43, "in_stock": true}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["waiting"]);
+    // the journal as schema 12 had it: no `waiting`, no counts of the runs
+    // under way, nor the indexes
+    let db = rusqlite::Connection::open(ws.ws.journal()).unwrap();
+    db.execute_batch(
+        "DROP INDEX runs_waiting; DROP INDEX runs_open; DROP INDEX events_queue;
+         DROP INDEX jobs_by_run;
+         DROP TRIGGER run_began; DROP TRIGGER run_ended; DROP TRIGGER run_again;
+         DROP TRIGGER run_gone; DROP TABLE under_way;
+         ALTER TABLE runs DROP COLUMN waiting;
+         UPDATE meta SET value = '12' WHERE key = 'schema';",
+    )
+    .unwrap();
+    drop(db);
+    ws.emit(
+        "payment.received",
+        json!({"payment_ref": "ödeme-1", "paid": true}),
+    );
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done", "done"]);
+}
+
 #[test]
 fn an_order_out_of_stock_ends_as_failed() {
     let ws = Ws::new();
