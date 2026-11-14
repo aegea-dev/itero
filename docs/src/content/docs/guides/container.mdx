@@ -17,8 +17,8 @@ every workspace on its list, their journals and folders on one volume.
 
 | Image | Has |
 |---|---|
-| `ghcr.io/aegea-dev/itero:0.42.0` (`:0.42`, `:latest`) | Debian, with curl, jq, python3, git, ImageMagick and Chromium: itero's examples run as they are |
-| `ghcr.io/aegea-dev/itero:0.42.0-alpine` (`:0.42-alpine`, `:alpine`) | Alpine, with curl and jq: small, for those who add their own (`FROM` it, then `apk add`) |
+| `ghcr.io/aegea-dev/itero:0.43.0` (`:0.43`, `:latest`) | Debian, with curl, jq, python3, git, ImageMagick and Chromium: itero's examples run as they are |
+| `ghcr.io/aegea-dev/itero:0.43.0-alpine` (`:0.43-alpine`, `:alpine`) | Alpine, with curl and jq: small, for those who add their own (`FROM` it, then `apk add`) |
 
 Both run `itero daemon` under tini as user 10001, for amd64 and arm64.
 `daemon.json` is `/etc/itero/daemon.json`, the state `/var/lib/itero/`.
@@ -79,9 +79,9 @@ token in a pod of its own on that volume, then scale it back.
 kubectl apply -f k3s.yaml
 kubectl -n itero scale statefulset itero --replicas=0
 kubectl -n itero run itero-token --rm -i --restart=Never \
-  --image=ghcr.io/aegea-dev/itero:0.42.0 \
+  --image=ghcr.io/aegea-dev/itero:0.43.0 \
   --overrides='{"spec":{"securityContext":{"runAsUser":10001,"runAsGroup":10001,"fsGroup":10001},
-    "containers":[{"name":"itero-token","image":"ghcr.io/aegea-dev/itero:0.42.0",
+    "containers":[{"name":"itero-token","image":"ghcr.io/aegea-dev/itero:0.43.0",
     "args":["token","create","laptop"],"stdin":true,
     "volumeMounts":[{"name":"state","mountPath":"/var/lib/itero"}]}],
     "volumes":[{"name":"state","persistentVolumeClaim":{"claimName":"state-itero-0"}}]}}'
