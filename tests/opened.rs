@@ -82,7 +82,9 @@ impl Machine {
             .name
     }
 
-    /// `itero daemon --all`, opened, once both its listeners answer: the
+    /// `itero daemon --all`, opened, once both its listeners answer and it
+    /// has started the listed workspaces (`/readyz`): it serves while it
+    /// starts them, and a workspace's route answers 404 until then. The
     /// opened port as it says it on stderr (no port picked and let go).
     fn opened(&self) -> Opened {
         let said = self.d.path().join("said.txt");
@@ -110,6 +112,7 @@ impl Machine {
                 .and_then(|p| p.trim().parse::<u16>().ok());
             if let (Some(opened), Some(local)) = (opened, local)
                 && status(local, "/health", None, None) == 200
+                && status(local, "/readyz", None, None) == 200
             {
                 return Opened {
                     _d: d,

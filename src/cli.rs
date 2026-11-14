@@ -1447,7 +1447,8 @@ fn dispatch(cli: Cli) -> Result<()> {
             };
             let last = std::sync::Mutex::new(None::<Instant>);
             let said = std::sync::Mutex::new((None::<String>, None::<String>));
-            let ended = std::sync::atomic::AtomicBool::new(false);
+            // set, and its waiter told, when the step has ended
+            let ended = (std::sync::Mutex::new(false), std::sync::Condvar::new());
             let printed = |now_said: Option<&str>| {
                 if let Some(s) = now_said {
                     said.lock().unwrap_or_else(|e| e.into_inner()).0 = Some(s.to_string());
@@ -1462,8 +1463,19 @@ fn dispatch(cli: Cli) -> Result<()> {
                 // the latest line goes on even when the action falls silent
                 s.spawn(|| {
                     let mut told = Instant::now() - Duration::from_secs(1);
-                    while !ended.load(std::sync::atomic::Ordering::Relaxed) {
-                        std::thread::sleep(Duration::from_millis(50));
+                    loop {
+                        // a look every 50 ms; the step's end ends it at once,
+                        // so the worker never waits for its next look
+                        {
+                            let done = ended.0.lock().unwrap_or_else(|e| e.into_inner());
+                            let (done, _) = ended
+                                .1
+                                .wait_timeout_while(done, Duration::from_millis(50), |d| !*d)
+                                .unwrap_or_else(|e| e.into_inner());
+                            if *done {
+                                return;
+                            }
+                        }
                         if told.elapsed() < Duration::from_millis(500) {
                             continue;
                         }
@@ -1477,7 +1489,8 @@ fn dispatch(cli: Cli) -> Result<()> {
                     }
                 });
                 let outcome = run_step_telling(&step, &printed);
-                ended.store(true, std::sync::atomic::Ordering::Relaxed);
+                *ended.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+                ended.1.notify_all();
                 outcome
             });
             match outcome {

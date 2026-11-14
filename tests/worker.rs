@@ -195,4 +195,40 @@ printf '{"n": %s, "since": "%s"}' "$n" "$ITERO_WAITING_SINCE""#,
         assert_eq!(done(out), "bitti");
         assert_eq!(*told.lock().unwrap(), ["ğ".repeat(200)]);
     }
+
+    /// `itero worker` ends as soon as its action has: nothing it runs
+    /// beside it waits on a clock (a thread that looked every 50 ms made
+    /// every step take 50 ms at least).
+    #[test]
+    fn the_worker_ends_as_soon_as_its_action_does() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+        let d = tempfile::tempdir().unwrap();
+        let f = action(
+            d.path(),
+            "hızlı",
+            "cat > /dev/null; echo '{\"tamam\": true}'",
+        );
+        let input = serde_json::to_string(&step(d.path(), f, &[], json!({"args": {}}))).unwrap();
+        let mut took: Vec<Duration> = (0..7)
+            .map(|_| {
+                let began = Instant::now();
+                let mut c = Command::new(env!("CARGO_BIN_EXE_itero"))
+                    .arg("worker")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                c.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+                let out = c.wait_with_output().unwrap();
+                assert!(out.status.success());
+                assert!(String::from_utf8_lossy(&out.stdout).contains("tamam"));
+                began.elapsed()
+            })
+            .collect();
+        took.sort();
+        // a worker and a shell start in a few ms; room for a busy machine
+        assert!(took[3] < Duration::from_millis(40), "{took:?}");
+    }
 }
