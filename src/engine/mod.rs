@@ -19,6 +19,7 @@ pub mod secrets;
 pub mod service;
 pub mod steps;
 pub mod stop;
+pub mod wake;
 pub mod watchdog;
 pub mod worker;
 

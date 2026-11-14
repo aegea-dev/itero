@@ -9,11 +9,12 @@ description: What happened, line by line; the IDs and names itero gives; itero w
 line:
 
 ```json
-{"time":"2026-10-21T13:43:24Z","workspace":"01a0f3…","daemon":"01a15f2c…","event":"run.started","workflow":"order","run":"01a15eb3…","run_name":"misty-lake","message":"01a15eb2…"}
-{"time":"2026-10-21T13:43:25Z","workspace":"01a0f3…","daemon":"01a15f2c…","event":"step.waiting","workflow":"order","run":"01a15eb3…","run_name":"misty-lake","step":"#check-payment","output":{"payment_ref":"pay-1"}}
+{"time":"2026-10-21T13:43:24.318204Z","workspace":"01a0f3…","daemon":"01a15f2c…","event":"run.started","workflow":"order","run":"01a15eb3…","run_name":"misty-lake","message":"01a15eb2…"}
+{"time":"2026-10-21T13:43:25.002917Z","workspace":"01a0f3…","daemon":"01a15f2c…","event":"step.waiting","workflow":"order","run":"01a15eb3…","run_name":"misty-lake","step":"#check-payment","output":{"payment_ref":"pay-1"}}
 ```
 
-Every line has `time`, `workspace`, `daemon` and `event`. A line about a
+Every line has `time` (UTC, to the microsecond), `workspace`, `daemon` and
+`event`. A line about a
 run has `workflow`, `run` and `run_name`, and `"internal": true` when its
 workflow is [internal](/guides/maintenance/).
 

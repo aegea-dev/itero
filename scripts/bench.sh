@@ -5,14 +5,18 @@
 #
 # - pick-up: an event at a time into an idle daemon, by each way in (a
 #   connector's line, the webhook, `itero ws emit`), from the event saved
-#   to its run started, and from start to end, for a 1-step workflow;
+#   to its run started (ms, from the ids), from it sent to its run started
+#   (to the microsecond: the time jq put in it, against the log's), and
+#   from start to end, for a 1-step workflow. Sent counts the sender's own
+#   start: curl's, `itero ws emit`'s;
 # - throughput: BENCH_N events saved while no daemon runs, then a daemon
 #   started: runs a second, first start to last end, for 1 and 3 steps;
 # - the webhook listener: BENCH_REQUESTS requests, 32 at once, refused
 #   (an unlisted path) and saved (a listed path no workflow takes).
 #
-# Times come from the ids in the log (UUIDv7: milliseconds), so they are
-# the engine's own, whatever the polling here costs. Each step is a `sh`
+# Times come from the log (its ids, UUIDv7, in milliseconds; its `time`,
+# in microseconds), so they are the engine's own, whatever the polling
+# here costs. Each step is a `sh`
 # action that reads its input and prints `{"ok":true}`.
 #
 # ITERO: the itero to measure (default: target/release/itero).
@@ -127,11 +131,16 @@ runs() {
 		def ms: .[0:8] + .[9:13] | ascii_downcase | explode
 			| map(if . >= 97 then . - 87 else . - 48 end)
 			| reduce .[] as $d (0; . * 16 + $d);
+		# a log time, in seconds; a fraction when it has one
+		def secs: capture("^(?<s>[^.Z]*)(?<f>\\.[0-9]+)?Z$")
+			| (.s + "Z" | fromdateiso8601) + ((.f // ".0") | "0" + . | tonumber);
 		(map(select(.event == "message" and (.type == "bench.sent" or .type == "itero.webhook.received")))
-			| map({key: .message, value: {tag: (.data.tag // .data.body.tag), saved: (.message | ms)}}) | from_entries) as $events
+			| map({key: .message, value: {tag: (.data.tag // .data.body.tag), sent: (.data.sent // .data.body.sent),
+				saved: (.message | ms)}}) | from_entries) as $events
 		| (map(select(.type == "itero.run.done")) | map({key: .data.run, value: (.message | ms)}) | from_entries) as $ends
-		| map(select(.event == "run.started" and $events[.message] != null))
-		| map($events[.message] + {workflow, start: (.run | ms), end: $ends[.run]})
+		# a run a schedule started has no message
+		| map(select(.event == "run.started" and .message != null and $events[.message] != null))
+		| map($events[.message] + {workflow, start: (.run | ms), started: (.time | secs), end: $ends[.run]})
 		| map(select(.end != null))' "$log"
 }
 # p50 and p95 of a list of numbers
@@ -160,10 +169,11 @@ emit() {
 }
 send() {
 	case $1 in
-	connector) printf '{"wf":"one","tag":"connector"}\n' >"$fifo" ;;
+	# jq puts the time it is sent in it: `now`, in seconds, to the microsecond
+	connector) jq -nc '{wf: "one", tag: "connector", sent: now}' >"$fifo" ;;
 	webhook) curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
-		-d '{"tag":"webhook"}' "$hook/hook" ;;
-	emit) emit '{"wf":"one","tag":"emit"}' ;;
+		-d "$(jq -nc '{tag: "webhook", sent: now}')" "$hook/hook" ;;
+	emit) emit "$(jq -nc '{wf: "one", tag: "emit", sent: now}')" ;;
 	esac
 }
 sleep 1
@@ -227,6 +237,7 @@ runs >"$ws/runs.json"
 			map(select(.tag == $way))
 			| {test: "pick-up", what: $way, runs: length,
 				saved_to_start_ms: (map(.start - .saved) | '"$stats"'),
+				sent_to_start_ms: (map(select(.sent != null) | (.started - .sent) * 1000000 | round / 1000) | '"$stats"'),
 				start_to_end_ms: (map(.end - .start) | '"$stats"')}' "$ws/runs.json"
 	done
 	for wf in one three; do
@@ -241,7 +252,7 @@ runs >"$ws/runs.json"
 	'{at: $at, version: $version, system: $system} + .' | tee -a "$out/results.jsonl" |
 	jq -r '
 		if .test == "pick-up" then
-			"pick-up     \(.what | . + "         " | .[0:10]) saved->start p50 \(.saved_to_start_ms.p50) ms p95 \(.saved_to_start_ms.p95) ms, start->end p50 \(.start_to_end_ms.p50) ms (\(.runs) runs)"
+			"pick-up     \(.what | . + "         " | .[0:10]) saved->start p50 \(.saved_to_start_ms.p50) ms p95 \(.saved_to_start_ms.p95) ms, sent->start p50 \(.sent_to_start_ms.p50) ms, start->end p50 \(.start_to_end_ms.p50) ms (\(.runs) runs)"
 		elif .test == "throughput" then
 			"throughput  \(.what | . + "         " | .[0:10]) \(.runs_per_second) runs/s (\(.runs) runs in \(.span_ms) ms)"
 		else

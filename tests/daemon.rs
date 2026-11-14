@@ -65,8 +65,10 @@ impl Ws {
         std::fs::write(f, m.to_string()).unwrap();
     }
 
+    /// As `itero ws emit` does: saved, then a running pass woken.
     fn emit(&self, kind: &str, data: Value) {
         itero::engine::events::emit(&self.ws, kind, Some(data), NOW).unwrap();
+        itero::engine::events::nudge(&self.ws).unwrap();
     }
 
     fn pass(&self, now: &str) -> Pass {

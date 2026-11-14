@@ -467,3 +467,34 @@ fn what_a_connector_runs_ends_with_its_daemon_too() {
     );
     connector_ends_with(d.path(), &root, &["ws", "daemon", "--no-serve"]);
 }
+
+#[test]
+fn giving_up_on_a_connector_wakes_the_daemon() {
+    let d = tempfile::tempdir().unwrap();
+    // prints nothing: the one wake is for giving up on it
+    let ws = ws_with_connector(d.path(), "#!/bin/sh\nexit 1\n");
+    let (kind, file) = ws.connector_files().unwrap().remove(0);
+    let (wake, woken) = std::sync::mpsc::channel();
+    let health = Mutex::new(Health::starting("2026-10-21T10:00:00Z"));
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_itero"));
+    supervise::run(
+        &ws,
+        exe,
+        &Copy::plain(&kind, file),
+        &quick(),
+        &wake,
+        &health,
+        &log(&ws),
+        &Default::default(),
+        None,
+    );
+    assert_eq!(
+        health.into_inner().unwrap().connectors["deneme.başladı"].state,
+        "gave up"
+    );
+    assert_eq!(
+        woken.try_iter().count(),
+        1,
+        "a workflow on itero.connector.gave-up waits otherwise"
+    );
+}

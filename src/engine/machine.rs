@@ -405,7 +405,7 @@ pub fn emit_all(
         };
         match super::events::emit_to(&j, kind, data.clone(), now) {
             Ok(id) => {
-                if let Err(err) = super::events::nudge(&ws, now) {
+                if let Err(err) = super::events::nudge(&ws) {
                     eprintln!("itero: {}: saved, but not woken: {err}", e.name);
                 }
                 To::Sent(Box::new(ws), id)
@@ -443,7 +443,7 @@ pub fn tell_all(kind: &str, data: Value) {
         };
         match j.publish(&super::events::own(kind, data.clone(), &now)) {
             Ok(()) => {
-                let _ = super::events::nudge(&ws, &now);
+                let _ = super::events::nudge(&ws);
             }
             Err(err) => eprintln!("itero: telling {} {kind}: {err:#}", e.name),
         }

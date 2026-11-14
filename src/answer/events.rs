@@ -56,8 +56,7 @@ pub fn cancel(ws: &Workspace, id: &str) -> Result<Cancelled, Fault> {
 /// Wakes the daemon of `ws` from another process: saved, it takes the
 /// event at its next start otherwise.
 pub fn nudge(ws: &Workspace) {
-    let now = crate::engine::daemon::stamp(chrono::Utc::now());
-    if let Err(err) = events::nudge(ws, &now) {
+    if let Err(err) = events::nudge(ws) {
         eprintln!(
             "itero: saved, but could not wake the daemon ({}: {err}); it takes the message at its next start or wake",
             ws.wake_file().display()

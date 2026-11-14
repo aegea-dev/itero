@@ -737,8 +737,8 @@ fn end_with_stdin(last: impl FnOnce() + Send + 'static) {
     });
 }
 
-fn nudge(ws: &crate::workspace::Workspace, now: &str) {
-    if let Err(e) = crate::engine::events::nudge(ws, now) {
+fn nudge(ws: &crate::workspace::Workspace) {
+    if let Err(e) = crate::engine::events::nudge(ws) {
         eprintln!(
             "itero: saved, but could not wake the daemon ({}: {e}); it takes the message at its next start or wake",
             ws.wake_file().display()
@@ -1437,7 +1437,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 serde_json::from_str(&data).map_err(|e| anyhow!("the click, as JSON: {e}"))?;
             let now = crate::engine::daemon::stamp(chrono::Utc::now());
             crate::engine::events::notification_clicked(&ws, v, &now)?;
-            nudge(&ws, &now);
+            nudge(&ws);
         }
         Cmd::Worker => {
             let mut text = String::new();

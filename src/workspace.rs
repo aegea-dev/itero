@@ -394,8 +394,15 @@ impl Workspace {
     /// The bytes `.itero/` takes: the journal, the logs, memory.
     /// The file another process touches once it has saved a message in
     /// the journal: the running daemon watches it, and wakes.
+    /// The pipe another process wakes the daemon through (`engine::wake`).
     pub fn wake_file(&self) -> PathBuf {
         self.root.join(".itero").join("wake")
+    }
+
+    /// Written when the workspace stops: the daemon's file watch watches it
+    /// to end its wait.
+    pub fn stop_file(&self) -> PathBuf {
+        self.root.join(".itero").join("stop")
     }
 
     pub fn used(&self) -> u64 {

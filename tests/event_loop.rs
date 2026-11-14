@@ -180,3 +180,102 @@ fn a_click_saved_by_another_process_wakes_it() {
             .filter(|s| s == "evet\n")
     });
 }
+
+/// The milliseconds of a UUIDv7: its first 48 bits.
+fn ms(id: &str) -> i64 {
+    i64::from_str_radix(&id.replace('-', "")[..12], 16).unwrap()
+}
+
+/// For each run of `workflow`, how long from its message saved to the run
+/// started, in ms, read from the ids in the log: the daemon's own clock,
+/// whatever the polling here costs.
+fn picked_up(dir: &Path, workflow: &str) -> Vec<i64> {
+    let log = std::fs::read_to_string(dir.join(".itero/itero.log")).unwrap();
+    let lines: Vec<Value> = log
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    lines
+        .iter()
+        .filter(|l| l["event"] == "run.started" && l["workflow"] == workflow)
+        .map(|l| ms(l["run"].as_str().unwrap()) - ms(l["message"].as_str().unwrap()))
+        .collect()
+}
+
+fn median(mut v: Vec<i64>) -> i64 {
+    v.sort_unstable();
+    v[v.len() / 2]
+}
+
+fn ended(dir: &Path, workflow: &str) -> usize {
+    let log = std::fs::read_to_string(dir.join(".itero/itero.log")).unwrap_or_default();
+    log.lines()
+        .filter(|l| l.contains(r#""event":"run.ended""#))
+        .filter(|l| l.contains(&format!(r#""workflow":"{workflow}""#)))
+        .count()
+}
+
+/// Sends `count` order.placed with `itero ws emit`, each after the run of
+/// the one before has ended, so each comes to a daemon with nothing to do
+/// for it.
+fn emit_one_at_a_time(dir: &Path, count: usize) {
+    for i in 0..count {
+        itero(
+            dir,
+            &["ws", "emit", "order.placed", &format!(r#"{{"sıra": {i}}}"#)],
+        );
+        until("the order's run", Duration::from_secs(15), || {
+            (ended(dir, "hızlı") > i).then_some(())
+        });
+    }
+}
+
+#[test]
+fn an_event_saved_by_another_process_is_picked_up_at_once() {
+    let d = tempfile::tempdir().unwrap();
+    write(d.path(), "itero.config.json", KEEP_OFF);
+    write(
+        d.path(),
+        "workflows/hızlı.json",
+        r##"{"on": [{ "event": "order.placed" }], "steps": ["#yaz"]}"##,
+    );
+    action(d.path(), "yaz", "cat > /dev/null; echo '{\"ok\": true}'");
+    let (_daemon, _port) = start(d.path());
+    emit_one_at_a_time(d.path(), 7);
+    let took = picked_up(d.path(), "hızlı");
+    // no waiting: what is left is the pass's own work, a few ms (the
+    // wake file's quiet time made it 500 ms); room for a busy machine
+    assert!(median(took.clone()) < 100, "saved to started, ms: {took:?}");
+}
+
+#[test]
+fn an_event_that_comes_while_a_step_runs_is_picked_up_at_once() {
+    let d = tempfile::tempdir().unwrap();
+    write(d.path(), "itero.config.json", KEEP_OFF);
+    write(
+        d.path(),
+        "workflows/yavaş.json",
+        r##"{"on": [{ "event": "slow.started" }], "steps": ["#uyu"]}"##,
+    );
+    write(
+        d.path(),
+        "workflows/hızlı.json",
+        r##"{"on": [{ "event": "order.placed" }], "steps": ["#yaz"]}"##,
+    );
+    action(d.path(), "uyu", "cat > /dev/null; sleep 60");
+    action(d.path(), "yaz", "cat > /dev/null; echo '{\"ok\": true}'");
+    let (_daemon, _port) = start(d.path());
+    itero(d.path(), &["ws", "emit", "slow.started", "{}"]);
+    until("the slow step", Duration::from_secs(15), || {
+        let log = std::fs::read_to_string(d.path().join(".itero/itero.log")).ok()?;
+        log.lines()
+            .any(|l| l.contains(r#""event":"step.started""#) && l.contains(r##""step":"#uyu""##))
+            .then_some(())
+    });
+    // the pass started for the slow step runs as long as it does: each
+    // order comes to it while it waits for that step
+    emit_one_at_a_time(d.path(), 9);
+    let took = picked_up(d.path(), "hızlı");
+    // a pass that looked every 200 ms took 100-200 ms; now it is woken
+    assert!(median(took.clone()) < 100, "saved to started, ms: {took:?}");
+}
