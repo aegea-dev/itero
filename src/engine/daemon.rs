@@ -204,9 +204,30 @@ struct Flows {
     values: BTreeMap<String, Value>,
     read: BTreeMap<String, Flow>,
     config: Map<String, Value>,
+    /// The manifest's workflow entries.
+    entries: Map<String, Value>,
     /// The workspace's own files as they were just before they were read.
     seen: Vec<(PathBuf, Option<FileState>)>,
+    /// Each pinned version a run delivered to was on, as `deliver` works it
+    /// out: read once while these flows are the workspace's.
+    pins: std::cell::RefCell<BTreeMap<String, std::rc::Rc<Result<Pinned, String>>>>,
+    /// Whether each `$$` name is defined, and when that was looked up.
+    defined: std::cell::RefCell<BTreeMap<String, (bool, std::time::Instant)>>,
 }
+
+/// A run's pinned version, as `deliver` needs it for each of the run's
+/// events: its workflows, its root's meta, and the `$$` names they use.
+struct Pinned {
+    root: String,
+    values: BTreeMap<String, Value>,
+    meta: flow::Meta,
+    names: Vec<String>,
+}
+
+/// How long whether a `$$` name is defined is taken as looked up: a secret
+/// set meanwhile is seen within it, and a run's events do not ask the
+/// secret store each.
+const DEFINED_FOR: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// What tells a file's edit: its inode, size, and change and modification
 /// times to the nanosecond.
@@ -248,8 +269,75 @@ impl Flows {
             values,
             read,
             config: ws.manifest()?,
+            entries,
             seen,
+            pins: Default::default(),
+            defined: Default::default(),
         })
+    }
+
+    /// Run version `pin` (its `root` and `values`, from the journal), read
+    /// with the manifest's entries; or why it cannot run: a workflow that
+    /// does not read, an action given args or repeats it may not have.
+    fn version(
+        &self,
+        ws: &Workspace,
+        pin: &str,
+        root: String,
+        values: BTreeMap<String, Value>,
+    ) -> std::rc::Rc<Result<Pinned, String>> {
+        if let Some(p) = self.pins.borrow().get(pin) {
+            return p.clone();
+        }
+        let read = || -> Result<Pinned, String> {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut meta = None;
+            let mut names = vec![];
+            for (n, v) in &values {
+                let f = ws
+                    .read_flow(n, v, &self.entries)
+                    .map_err(|e| format!("{e:#}"))?;
+                for u in f.uses() {
+                    if let Name::Action { name, .. } = u
+                        && seen.insert(name.clone())
+                    {
+                        ws.no_args(&name)
+                            .and_then(|()| ws.no_repeat(&name))
+                            .map_err(|e| format!("{e:#}"))?;
+                    }
+                }
+                names.extend(f.defined_names());
+                if *n == root {
+                    meta = Some(f.meta);
+                }
+            }
+            names.sort();
+            names.dedup();
+            Ok(Pinned {
+                meta: meta.ok_or_else(|| format!("no workflow {root} in its version"))?,
+                root,
+                values,
+                names,
+            })
+        };
+        let p = std::rc::Rc::new(read());
+        self.pins.borrow_mut().insert(pin.to_string(), p.clone());
+        p
+    }
+
+    /// Whether `$$name` is defined (a secret, `.env`, the secrets folder,
+    /// the environment), looked up at most once in `DEFINED_FOR`.
+    fn defined(&self, ws: &Workspace, name: &str) -> bool {
+        if let Some((yes, at)) = self.defined.borrow().get(name)
+            && at.elapsed() < DEFINED_FOR
+        {
+            return *yes;
+        }
+        let yes = defined(ws, name);
+        self.defined
+            .borrow_mut()
+            .insert(name.to_string(), (yes, std::time::Instant::now()));
+        yes
     }
 
     /// These, if none of the workspace's own files changed since they were
@@ -800,7 +888,9 @@ fn work(
                 }
                 continue;
             }
-            let stopped = deliver(ws, j, &r, clock, log)?;
+            // the run's version is read with the manifest as it is now
+            flows = flows.fresh(ws)?;
+            let stopped = deliver(ws, j, &r, clock, log, &flows)?;
             pass.stopped += stopped.len();
             w.stop(&stopped);
             pass.delivered += 1;
@@ -1244,6 +1334,7 @@ fn deliver(
     r: &Recorded,
     clock: Clock,
     log: &Log,
+    flows: &Flows,
 ) -> Result<Vec<i64>> {
     let at = clock.stamp();
     let Some(id) = journal::run_of(&r.event.subject).map(str::to_string) else {
@@ -1262,44 +1353,29 @@ fn deliver(
         );
     };
     // what the manager needs beyond the run: which of its workflows' $$
-    // names are defined, and whether its own is on
-    let mut seen = std::collections::BTreeSet::new();
-    let mut active = true;
-    let mut names = vec![];
-    let mut who = Who {
-        run: &run,
-        internal: false,
+    // names are defined, and whether its own is on; whether it is internal
+    // is its entry's (or a built-in's own meta). Worked out once a version.
+    let pinned = flows.version(ws, &run.pin, root, values);
+    let p = match pinned.as_ref() {
+        Ok(p) => p,
+        Err(why) => return give_up(log, j, r.seq, &at, why.clone()),
     };
-    // whether it is internal is its entry's (or a built-in's own meta)
-    let entries = ws.entries("workflow")?;
-    for (n, v) in &values {
-        let f = match ws.read_flow(n, v, &entries) {
-            Ok(f) => f,
-            Err(e) => return give_up(log, j, r.seq, &at, format!("{e:#}")),
-        };
-        if *n == root {
-            who.internal = f.meta.internal;
-            active = flow::active(&f.meta, clock.now());
-        }
-        for u in f.uses() {
-            if let Name::Action { name, .. } = u
-                && seen.insert(name.clone())
-                && let Err(e) = ws.no_args(&name).and_then(|()| ws.no_repeat(&name))
-            {
-                return give_up(log, j, r.seq, &at, format!("{e:#}"));
-            }
-        }
-        names.extend(f.defined_names());
-    }
-    names.sort();
-    names.dedup();
+    let who = Who {
+        run: &run,
+        internal: p.meta.internal,
+    };
     let mut input = StepInput {
         now: at.clone(),
-        workflow: root,
-        flows: values,
-        active,
-        config: ws.manifest().unwrap_or_default(),
-        defined: names.into_iter().filter(|n| defined(ws, n)).collect(),
+        workflow: p.root.clone(),
+        flows: p.values.clone(),
+        active: flow::active(&p.meta, clock.now()),
+        config: flows.config.clone(),
+        defined: p
+            .names
+            .iter()
+            .filter(|n| flows.defined(ws, n))
+            .cloned()
+            .collect(),
         child: run.parent.is_some(),
         held: vec![],
         runtime: run.runtime.clone(),

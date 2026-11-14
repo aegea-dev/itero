@@ -2070,3 +2070,36 @@ fn a_pass_asks_its_manager_without_starting_a_process() {
         "{started}"
     );
 }
+
+/// A pass looks up whether a `$$` name is defined at most once a second,
+/// not for each event: a secret set while a long step keeps the pass going
+/// is still seen by the next run's step within that second.
+#[test]
+fn a_secret_set_during_a_long_pass_is_seen_within_a_second() {
+    let ws = Ws::new();
+    ws.flow(
+        "uzun",
+        json!({"on": [{ "event": "uzun.başladı" }], "steps": ["#uyu"]}),
+    );
+    ws.flow(
+        "gizli",
+        json!({"on": [{ "event": "gizli.sor" }],
+               "steps": [{"#yaz": {"on": [{"has": "$$GİZLİ_ANAHTAR"}]}}]}),
+    );
+    ws.action("uyu", "sleep 30 &\necho $! > uyku.pid\nwait");
+    ws.action("yaz", "echo var >> yazılan.log");
+    ws.emit("uzun.başladı", json!({}));
+    let pass = pass_apart(&ws);
+    let pid = pid_in(&ws, "uyku.pid");
+    ws.emit("gizli.sor", json!({"sıra": 1}));
+    // not defined: the step is skipped, the run done
+    assert!(soon(|| ws.statuses().iter().filter(|s| **s == "done").count() == 1));
+    assert_eq!(ws.read("yazılan.log"), "");
+    std::fs::write(ws.d.path().join(".env"), "GİZLİ_ANAHTAR=çay\n").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    ws.emit("gizli.sor", json!({"sıra": 2}));
+    let seen = soon(|| ws.read("yazılan.log") == "var\n");
+    end(pid);
+    pass.join().unwrap();
+    assert!(seen, "the secret set during the pass was not seen");
+}
