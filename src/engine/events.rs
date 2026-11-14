@@ -189,11 +189,7 @@ pub fn fate(ws: &Workspace, kind: &str, data: &Map<String, Value>) -> anyhow::Re
         })
         .map(|(n, _)| n.clone())
         .collect::<Vec<_>>();
-    let waiting = Journal::open(ws)?
-        .active_runs()?
-        .iter()
-        .filter(|r| super::steps::is_waiting(&r.runtime))
-        .count();
+    let waiting = Journal::open(ws)?.waiting_runs()?.len();
     // a type a letter or three away is a typo
     let nearest = if starts.is_empty() {
         flows

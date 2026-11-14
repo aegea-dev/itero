@@ -46,6 +46,11 @@ for tool in curl jq; do
 done
 mkdir -p "$out"
 ws=$(mktemp -d "${TMPDIR:-/tmp}/itero-bench.XXXXXX")
+# the daemon puts its own folder first on its connectors' PATH, and the
+# webhook's connector runs `itero`: by that name, so it is this one
+mkdir "$ws/bin"
+ln -s "$(cd "$(dirname "$itero")" && pwd)/$(basename "$itero")" "$ws/bin/itero"
+itero="$ws/bin/itero"
 daemon=
 cleanup() {
 	if [ -n "$daemon" ]; then
@@ -58,7 +63,8 @@ trap cleanup EXIT INT TERM
 
 # --- the workspace ---------------------------------------------------------
 mkdir -p "$ws/actions" "$ws/workflows" "$ws/connectors/bench" "$ws/connectors/webhook"
-echo '{ "name": "bench", "description": "How fast events are taken and runs end" }' >"$ws/itero.config.json"
+# a log that is not rolled: the times are read from it
+echo '{ "name": "bench", "description": "How fast events are taken and runs end", "limits": { "log": "10GB", "space": "100GB" } }' >"$ws/itero.config.json"
 echo "BENCH_TOKEN=$token" >"$ws/.env"
 for a in a b c; do
 	printf '#!/bin/sh\ncat >/dev/null\necho '"'"'{"ok":true}'"'"'\n' >"$ws/actions/$a"

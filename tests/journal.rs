@@ -74,7 +74,7 @@ fn a_journal_from_itero_0_4_to_0_8_keeps_what_it_held() {
         assert!(!left.contains(&gone.to_string()), "{gone}: {left:?}");
     }
     // and the windows' tables, as a new journal has them
-    for made in ["seen", "kept", "batches"] {
+    for made in ["seen", "kept", "batches", "under_way"] {
         assert!(left.contains(&made.to_string()), "{made}: {left:?}");
     }
     // nor the columns callbacks used
@@ -125,6 +125,7 @@ fn a_new_journal_has_only_the_tables_itero_reads() {
             "schedules",
             "seen",
             "timers",
+            "under_way",
             "workflow_ids",
             "workflows"
         ]
@@ -208,7 +209,7 @@ fn a_message_starts_runs_and_reaches_waiting_runs_in_one_go() {
         json!({"order": 43}),
     ))
     .unwrap();
-    let m = j.next(&[]).unwrap().unwrap();
+    let m = j.next(0).unwrap().unwrap();
     let waiting = j
         .start_run(
             &start("sipariş", json!({"sipariş": {"steps": ["#a"]}})),
@@ -301,7 +302,7 @@ fn a_run_started_by_a_step_keeps_its_parent_and_the_step() {
         .start_run(&start("sipariş", flows.clone()), NOW, None)
         .unwrap();
     let rt = j.run(&parent).unwrap().unwrap().runtime;
-    let started = j.next(&[]).unwrap().unwrap();
+    let started = j.next(0).unwrap().unwrap();
     let pinned = serde_json::from_value(flows).unwrap();
     let input = json!({"gün": "salı"});
     j.handle(Handled {
@@ -465,7 +466,7 @@ fn an_event_not_yet_handled_is_cancelled_and_one_handled_is_not() {
     ));
     assert!(matches!(j.cancel("yok", NOW).unwrap(), Cancelled::Missing));
     // taken by a daemon after it was cancelled: it starts nothing
-    let r = j.next(&[]).unwrap().unwrap();
+    let r = j.next(0).unwrap().unwrap();
     assert_eq!(r.event.kind, "ödeme.geldi");
     assert!(matches!(
         j.cancel(&r.event.id, NOW).unwrap(),
@@ -485,7 +486,7 @@ fn an_event_not_yet_handled_is_cancelled_and_one_handled_is_not() {
         json!({}),
     ))
     .unwrap();
-    let r = j.next(&[]).unwrap().unwrap();
+    let r = j.next(0).unwrap().unwrap();
     let mut s = start("kayıt", json!({"kayıt": {"steps": ["#yaz"]}}));
     s.cause = Some(r.event.id.clone());
     let started = j.route(&r, &[s], &[], NOW).unwrap().started;
@@ -511,7 +512,7 @@ fn a_run_that_starts_waiting_misses_no_message_but_those_cancelled() {
         .unwrap();
     }
     // the first routed, the second cancelled, the third not yet taken
-    let r = j.next(&[]).unwrap().unwrap();
+    let r = j.next(0).unwrap().unwrap();
     j.route(&r, &[], &[], NOW).unwrap();
     let q = j.queued().unwrap();
     assert!(matches!(j.cancel(&q[0].id, NOW).unwrap(), Cancelled::Done));
@@ -621,4 +622,36 @@ fn processes_opening_a_new_journal_at_once_all_succeed() {
         "{} failed: {failures:#?}",
         failures.len()
     );
+}
+
+/// The runs under way are counted as they start and end, whatever ends
+/// them, and a run forgotten after it ended counts nothing: the count a
+/// pass asks for each message costs the same however many runs there are.
+#[test]
+fn the_runs_under_way_are_counted_as_they_start_and_end() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = ws(d.path());
+    let mut j = Journal::open(&ws).unwrap();
+    let flows = json!({"a": {"steps": ["#b"]}, "iç": {"steps": ["#b"]}});
+    let mut ids = vec![];
+    for _ in 0..3 {
+        ids.push(j.start_run(&start("a", flows.clone()), NOW, None).unwrap());
+    }
+    j.start_run(&start("iç", flows), NOW, None).unwrap();
+    assert_eq!(j.active_count(&[]).unwrap(), 4);
+    assert_eq!(j.active_count(&["iç".into()]).unwrap(), 3);
+    let db = rusqlite::Connection::open(ws.journal()).unwrap();
+    db.execute("UPDATE runs SET ended = ?2 WHERE id = ?1", [&ids[0], NOW])
+        .unwrap();
+    assert_eq!(j.active_count(&["iç".into()]).unwrap(), 2);
+    // ended again: counted once
+    db.execute("UPDATE runs SET ended = ?2 WHERE id = ?1", [&ids[0], NOW])
+        .unwrap();
+    assert_eq!(j.active_count(&["iç".into()]).unwrap(), 2);
+    j.prune("2026-10-30T00:00:00Z").unwrap();
+    assert_eq!(j.active_count(&["iç".into()]).unwrap(), 2);
+    let counted: i64 = db
+        .query_row("SELECT SUM(runs) FROM under_way", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(counted, 3, "kept as runs start and end, not counted");
 }

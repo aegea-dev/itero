@@ -21,7 +21,7 @@ const OLDEST: i64 = 7;
 /// The steps from each version to the next: `MIGRATIONS[0]` takes `OLDEST`
 /// to the one after, and so on. A step is only ever added, never changed:
 /// a journal on someone's machine was made by the steps as they were.
-const MIGRATIONS: [&str; 5] = [
+const MIGRATIONS: [&str; 6] = [
     // 8: the tables nothing reads any more
     "DROP TABLE IF EXISTS queued; DROP TABLE IF EXISTS paused;
      DROP TABLE IF EXISTS cursors; DROP TABLE IF EXISTS memory;",
@@ -35,7 +35,38 @@ const MIGRATIONS: [&str; 5] = [
     // 12: the events a batch or at_least keeps for a run, and the batches open
     "CREATE TABLE IF NOT EXISTS kept (key TEXT NOT NULL, seq INTEGER NOT NULL, at TEXT NOT NULL, PRIMARY KEY (key, seq));
      CREATE TABLE IF NOT EXISTS batches (key TEXT PRIMARY KEY, workflow TEXT NOT NULL, closes TEXT, per TEXT);",
+    // 13: whether a run waits (set for the runs under way once these run,
+    // `WAITING_FROM`), the runs under way counted by workflow as they start
+    // and end, and the indexes a pass asks by
+    "ALTER TABLE runs ADD COLUMN waiting INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS under_way (workflow TEXT PRIMARY KEY, runs INTEGER NOT NULL);
+CREATE TRIGGER IF NOT EXISTS run_began AFTER INSERT ON runs WHEN NEW.ended IS NULL BEGIN
+  INSERT INTO under_way (workflow, runs) VALUES (NEW.workflow, 1)
+    ON CONFLICT (workflow) DO UPDATE SET runs = runs + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS run_ended AFTER UPDATE OF ended ON runs
+  WHEN OLD.ended IS NULL AND NEW.ended IS NOT NULL BEGIN
+  UPDATE under_way SET runs = runs - 1 WHERE workflow = NEW.workflow;
+END;
+CREATE TRIGGER IF NOT EXISTS run_again AFTER UPDATE OF ended ON runs
+  WHEN OLD.ended IS NOT NULL AND NEW.ended IS NULL BEGIN
+  INSERT INTO under_way (workflow, runs) VALUES (NEW.workflow, 1)
+    ON CONFLICT (workflow) DO UPDATE SET runs = runs + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS run_gone AFTER DELETE ON runs WHEN OLD.ended IS NULL BEGIN
+  UPDATE under_way SET runs = runs - 1 WHERE workflow = OLD.workflow;
+END;
+INSERT INTO under_way (workflow, runs) SELECT workflow, COUNT(*) FROM runs WHERE ended IS NULL GROUP BY workflow;
+CREATE INDEX IF NOT EXISTS runs_open ON runs (workflow) WHERE ended IS NULL;
+CREATE INDEX IF NOT EXISTS runs_waiting ON runs (started, id) WHERE ended IS NULL AND waiting = 1;
+CREATE INDEX IF NOT EXISTS events_queue ON events (subject = 'itero.worker', seq) WHERE handled IS NULL;
+CREATE INDEX IF NOT EXISTS jobs_by_run ON events (json_extract(data, '$.run'))
+  WHERE handled IS NULL AND subject = 'itero.worker';",
 ];
+
+/// The schema from which `runs.waiting` is kept: a journal migrated from
+/// before has it worked out for its runs under way.
+const WAITING_FROM: i64 = 13;
 
 /// Why a job's run was lost when nothing else says: the daemon stopped
 /// while it ran.
@@ -107,8 +138,31 @@ CREATE TABLE IF NOT EXISTS runs (
   name TEXT,
   message TEXT,
   parent TEXT,
-  parent_path TEXT
+  parent_path TEXT,
+  waiting INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS under_way (workflow TEXT PRIMARY KEY, runs INTEGER NOT NULL);
+CREATE TRIGGER IF NOT EXISTS run_began AFTER INSERT ON runs WHEN NEW.ended IS NULL BEGIN
+  INSERT INTO under_way (workflow, runs) VALUES (NEW.workflow, 1)
+    ON CONFLICT (workflow) DO UPDATE SET runs = runs + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS run_ended AFTER UPDATE OF ended ON runs
+  WHEN OLD.ended IS NULL AND NEW.ended IS NOT NULL BEGIN
+  UPDATE under_way SET runs = runs - 1 WHERE workflow = NEW.workflow;
+END;
+CREATE TRIGGER IF NOT EXISTS run_again AFTER UPDATE OF ended ON runs
+  WHEN OLD.ended IS NOT NULL AND NEW.ended IS NULL BEGIN
+  INSERT INTO under_way (workflow, runs) VALUES (NEW.workflow, 1)
+    ON CONFLICT (workflow) DO UPDATE SET runs = runs + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS run_gone AFTER DELETE ON runs WHEN OLD.ended IS NULL BEGIN
+  UPDATE under_way SET runs = runs - 1 WHERE workflow = OLD.workflow;
+END;
+CREATE INDEX IF NOT EXISTS runs_open ON runs (workflow) WHERE ended IS NULL;
+CREATE INDEX IF NOT EXISTS runs_waiting ON runs (started, id) WHERE ended IS NULL AND waiting = 1;
+CREATE INDEX IF NOT EXISTS events_queue ON events (subject = 'itero.worker', seq) WHERE handled IS NULL;
+CREATE INDEX IF NOT EXISTS jobs_by_run ON events (json_extract(data, '$.run'))
+  WHERE handled IS NULL AND subject = 'itero.worker';
 CREATE TABLE IF NOT EXISTS workflows (pin TEXT PRIMARY KEY, definition TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS workflow_ids (name TEXT PRIMARY KEY, id TEXT NOT NULL, created TEXT NOT NULL, itero TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY AUTOINCREMENT, run TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL);
@@ -723,6 +777,9 @@ impl Journal {
                 for step in &MIGRATIONS[(v - OLDEST) as usize..] {
                     tx.execute_batch(step)?;
                 }
+                if v < WAITING_FROM {
+                    mark_waiting(&tx)?;
+                }
             }
         }
         tx.execute(
@@ -748,16 +805,55 @@ impl Journal {
         publish(&self.db, e)
     }
 
-    /// The oldest event not yet handled, apart from those for workers and
-    /// those `held` (messages waiting for room).
-    pub fn next(&self, held: &[i64]) -> Result<Option<Recorded>> {
-        let held: Vec<String> = held.iter().map(i64::to_string).collect();
+    /// The oldest event not yet handled after `after`, apart from those for
+    /// workers. Events are taken in order, so a pass asks after the last it
+    /// took: what it has not handled up to there it holds (messages waiting
+    /// for room), and takes again by `unhandled`.
+    pub fn next(&self, after: i64) -> Result<Option<Recorded>> {
         let sql = format!(
-            "SELECT {COLUMNS} FROM events WHERE handled IS NULL AND subject != 'itero.worker'
-             AND seq NOT IN ({}) ORDER BY seq LIMIT 1",
-            held.join(",")
+            "SELECT {COLUMNS} FROM events WHERE handled IS NULL AND (subject = 'itero.worker') = 0
+             AND seq > ?1 ORDER BY seq LIMIT 1"
         );
-        Ok(self.db.query_row(&sql, [], row).optional()?)
+        Ok(self
+            .db
+            .prepare_cached(&sql)?
+            .query_row([after], row)
+            .optional()?)
+    }
+
+    /// Event `seq`, while no daemon has handled it.
+    pub fn unhandled(&self, seq: i64) -> Result<Option<Recorded>> {
+        let sql = format!("SELECT {COLUMNS} FROM events WHERE seq = ?1 AND handled IS NULL");
+        Ok(self
+            .db
+            .prepare_cached(&sql)?
+            .query_row([seq], row)
+            .optional()?)
+    }
+
+    /// Up to `room` jobs not yet run and not among `running`, oldest first:
+    /// the ones a pass starts next.
+    pub fn jobs_to_start(&self, running: &[i64], room: usize) -> Result<Vec<Recorded>> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM events WHERE handled IS NULL AND (subject = 'itero.worker') = 1
+             AND seq NOT IN (SELECT value FROM json_each(?1)) ORDER BY seq LIMIT ?2"
+        );
+        let mut s = self.db.prepare_cached(&sql)?;
+        let out = s
+            .query_map(params![json(&running)?, room as i64], row)?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(out)
+    }
+
+    /// Run `id`'s jobs not yet handled, oldest first.
+    pub fn jobs_of(&self, id: &str) -> Result<Vec<Recorded>> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM events WHERE handled IS NULL AND subject = 'itero.worker'
+             AND json_extract(data, '$.run') = ?1 ORDER BY seq"
+        );
+        let mut s = self.db.prepare_cached(&sql)?;
+        let out = s.query_map([id], row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(out)
     }
 
     /// Jobs (events for a worker) not yet run, oldest first.
@@ -992,13 +1088,29 @@ impl Journal {
 
     /// How many runs are under way, those of the workflows in `apart` left
     /// out.
-    pub fn active_count(&self, apart: &[String]) -> Result<usize> {
-        let n: i64 = self.db.query_row(
-            "SELECT COUNT(*) FROM runs WHERE ended IS NULL
-             AND workflow NOT IN (SELECT value FROM json_each(?1))",
-            params![json(&apart)?],
-            |r| r.get(0),
+    /// The runs under way with a step waiting for data, oldest first: the
+    /// ones a message for the workspace reaches.
+    pub fn waiting_runs(&self) -> Result<Vec<String>> {
+        let mut s = self.db.prepare_cached(
+            "SELECT id FROM runs WHERE ended IS NULL AND waiting = 1 ORDER BY started, id",
         )?;
+        let out = s
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(out)
+    }
+
+    /// The runs under way, apart from those of the workflows `apart`: read
+    /// from the counts the journal keeps as runs start and end
+    /// (`under_way`), one row a workflow, not counted run by run.
+    pub fn active_count(&self, apart: &[String]) -> Result<usize> {
+        let n: i64 = self
+            .db
+            .prepare_cached(
+                "SELECT COALESCE(SUM(runs), 0) FROM under_way
+                 WHERE workflow NOT IN (SELECT value FROM json_each(?1))",
+            )?
+            .query_row(params![json(&apart)?], |r| r.get(0))?;
         Ok(n as usize)
     }
 
@@ -1499,8 +1611,15 @@ impl Journal {
         )?;
         if let Some((id, rt, ended)) = h.run {
             tx.execute(
-                "UPDATE runs SET runtime = ?2, ended = CASE WHEN ?3 THEN COALESCE(ended, ?4) ELSE NULL END WHERE id = ?1",
-                params![id, json(rt)?, ended, now],
+                "UPDATE runs SET runtime = ?2, waiting = ?5,
+                 ended = CASE WHEN ?3 THEN COALESCE(ended, ?4) ELSE NULL END WHERE id = ?1",
+                params![
+                    id,
+                    json(rt)?,
+                    ended,
+                    now,
+                    !ended && super::steps::is_waiting(rt)
+                ],
             )?;
             if let Some(timers) = h.timers {
                 tx.execute("DELETE FROM timers WHERE run = ?1", params![id])?;
@@ -1714,8 +1833,8 @@ struct NewRun<'a> {
 fn insert_run(db: &Connection, r: NewRun) -> Result<String> {
     let id = uuid::Uuid::now_v7().to_string();
     db.execute(
-        "INSERT INTO runs (id, name, workflow, pin, runtime, args, input, started, message, parent, parent_path)
-         VALUES (?1, ?2, ?3, ?4, ?5, '{}', ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO runs (id, name, workflow, pin, runtime, args, input, started, message, parent, parent_path, waiting)
+         VALUES (?1, ?2, ?3, ?4, ?5, '{}', ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             id,
             crate::names::random(),
@@ -1726,7 +1845,8 @@ fn insert_run(db: &Connection, r: NewRun) -> Result<String> {
             r.now,
             r.message,
             r.parent.map(|(id, _)| id),
-            r.parent.map(|(_, path)| json(&path)).transpose()?
+            r.parent.map(|(_, path)| json(&path)).transpose()?,
+            super::steps::is_waiting(r.rt)
         ],
     )?;
     let e = Envelope::new(
@@ -1763,5 +1883,23 @@ fn publish(db: &Connection, e: &Envelope) -> Result<()> {
         "INSERT OR IGNORE INTO events (id, time, type, source, subject, cause, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![e.id, e.time, e.kind, e.source, e.subject, e.cause, json(&e.data)?],
     )?;
+    Ok(())
+}
+
+/// Works out `runs.waiting` for the runs under way, once, for a journal
+/// from before it was kept.
+fn mark_waiting(db: &Connection) -> Result<()> {
+    let mut s = db.prepare("SELECT id, runtime FROM runs WHERE ended IS NULL")?;
+    let runs: Vec<(String, String)> = s
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (id, rt) in runs {
+        let rt: Runtime = serde_json::from_str(&rt)
+            .with_context(|| format!("run {id}'s place in the journal"))?;
+        db.execute(
+            "UPDATE runs SET waiting = ?2 WHERE id = ?1",
+            params![id, super::steps::is_waiting(&rt)],
+        )?;
+    }
     Ok(())
 }
