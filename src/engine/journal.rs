@@ -733,11 +733,15 @@ impl Journal {
     /// The journal as the daemon's pass writes it: `synchronous` NORMAL, so
     /// a commit is synced at the WAL's checkpoints, not each time. In WAL
     /// mode a commit is still safe from itero crashing; a power cut or the
-    /// system crashing can lose the last ones, and the journal stays whole.
-    /// The pass writes only what it can work out again from events already
-    /// saved, so that loss can only make a step run again, as a crash at
-    /// the wrong moment can. What comes from outside (the webhook, `ws
-    /// emit`, `POST /events`) is written with `open`, synced at each commit.
+    /// system crashing can lose the pass's commits since the last
+    /// checkpoint (one each 1000 pages of WAL) or the last commit another
+    /// writer synced, however many, and the journal stays whole. The pass
+    /// writes only what it can work out again from events already saved,
+    /// so that loss can only make steps run again, as a crash at the wrong
+    /// moment can: a job started again, a schedule's slot fired again with
+    /// the run it started gone. What comes from outside (the webhook, `ws
+    /// emit`, `POST /events`) is written with `open`, synced at each
+    /// commit: saved means saved.
     pub fn open_for_pass(ws: &Workspace) -> Result<Journal> {
         let j = Journal::open(ws)?;
         j.db.pragma_update(None, "synchronous", "NORMAL")?;
@@ -1327,7 +1331,8 @@ impl Journal {
     /// Starts a run, its `run.started` event carrying the message's data,
     /// in one transaction. With a schedule's key, that schedule's last slot
     /// becomes `now` in the same transaction, so a slot never starts two
-    /// runs, whatever became of the start.
+    /// runs, whatever became of the start (a power cut can take both back,
+    /// as `open_for_pass` says; then the slot fires again).
     pub fn start_run(&mut self, s: &Start, now: &str, schedule: Option<&str>) -> Result<String> {
         let tx = self
             .db

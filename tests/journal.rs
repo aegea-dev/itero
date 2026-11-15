@@ -658,7 +658,7 @@ fn the_runs_under_way_are_counted_as_they_start_and_end() {
 
 /// The daemon's pass writes with `synchronous` NORMAL: in WAL mode a commit
 /// is safe from itero crashing, and what the pass writes it can work out
-/// again from events already saved, so a power cut can only make a step run
+/// again from events already saved, so a power cut can only make steps run
 /// again. Every other writer (the webhook, `ws emit`, `POST /events`) keeps
 /// FULL: an event it said was saved stays saved through a power cut.
 #[test]
