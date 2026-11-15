@@ -73,7 +73,11 @@ fn a_webhook_starts_a_workflow_and_wakes_no_waiting_step() {
     let now = itero::engine::daemon::stamp(chrono::Utc::now());
     // a stranger's data, with the very field `bekle` waits on
     let data = json!({ "path": "/sipariş", "sipariş": 43, "headers": {}, "body": {} });
-    itero::engine::events::webhook_received(&ws, data.clone(), &now).unwrap();
+    let e = itero::engine::events::webhook_event(data.clone(), &now);
+    itero::engine::journal::Journal::open(&ws)
+        .unwrap()
+        .publish(&e)
+        .unwrap();
     pass(d.path());
     assert_eq!(
         std::fs::read_to_string(d.path().join("yazıldı.txt")).unwrap(),
@@ -850,4 +854,35 @@ fn another_address_is_the_user_s_and_is_warned_about() {
     let raw = post("/kargo", &[JSON_TYPE, ("X-Hub-Signature-256", &sign)], "{}");
     assert_eq!(send(l.port, &raw).0, 200);
     assert!(told.contains("not encrypted"), "{told}");
+}
+
+/// Requests that come together are saved together, in one synced commit,
+/// and each is answered once that commit is on disk: every one answered
+/// 200 is saved, once. Thirty: a hook takes 32 at once (`PLACES`).
+#[test]
+fn requests_that_come_together_are_each_saved_once() {
+    let d = tempfile::tempdir().unwrap();
+    let l = hooked(d.path());
+    let port = l.port;
+    let auth = format!("Bearer {LONG}");
+    let answers: Vec<u16> = std::thread::scope(|s| {
+        let sent: Vec<_> = (0..30)
+            .map(|i| {
+                let auth = auth.clone();
+                s.spawn(move || {
+                    let body = format!(r#"{{"sıra": {i}}}"#);
+                    let raw = post("/uygulama", &[JSON_TYPE, ("Authorization", &auth)], &body);
+                    send(port, &raw).0
+                })
+            })
+            .collect();
+        sent.into_iter().map(|t| t.join().unwrap()).collect()
+    });
+    assert!(answers.iter().all(|a| *a == 200), "{answers:?}");
+    let mut order: Vec<i64> = saved(d.path())
+        .iter()
+        .map(|(_, data)| data["body"]["sıra"].as_i64().unwrap())
+        .collect();
+    order.sort_unstable();
+    assert_eq!(order, (0..30).collect::<Vec<_>>());
 }
