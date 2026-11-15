@@ -73,7 +73,11 @@ fn a_webhook_starts_a_workflow_and_wakes_no_waiting_step() {
     let now = itero::engine::daemon::stamp(chrono::Utc::now());
     // a stranger's data, with the very field `bekle` waits on
     let data = json!({ "path": "/sipariş", "sipariş": 43, "headers": {}, "body": {} });
-    itero::engine::events::webhook_received(&ws, data.clone(), &now).unwrap();
+    let e = itero::engine::events::webhook_event(data.clone(), &now);
+    itero::engine::journal::Journal::open(&ws)
+        .unwrap()
+        .publish(&e)
+        .unwrap();
     pass(d.path());
     assert_eq!(
         std::fs::read_to_string(d.path().join("yazıldı.txt")).unwrap(),

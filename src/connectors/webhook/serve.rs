@@ -65,20 +65,16 @@ struct Server {
     saver: std::sync::mpsc::Sender<ToSave>,
 }
 
-/// Saves the requests' events: those that come while a commit is being
-/// synced wait, and go together in the next one, so a burst is one synced
-/// write, not one each. Each request is answered once its commit is on
-/// disk, as `synchronous` FULL makes it. The daemon is woken once a commit.
-fn save(ws: Arc<Workspace>, wanted: std::sync::mpsc::Receiver<ToSave>) {
+/// Saves the requests' events, a batch a commit: those that come while a
+/// commit is being synced wait, and go together in the next one, so a
+/// burst is one synced write, not one each. Each request is answered once
+/// its commit is on disk, as `synchronous` FULL makes it. The journal
+/// stays open: opening it for each commit halved what a Mac saves a
+/// second (measured). The daemon is woken once a commit. Ends once the
+/// listener is gone.
+fn save(ws: &Workspace, wanted: &std::sync::mpsc::Receiver<ToSave>) {
     let mut journal: Option<crate::engine::journal::Journal> = None;
-    while let Ok(first) = wanted.recv() {
-        let mut batch = vec![first];
-        while batch.len() < BATCH {
-            match wanted.try_recv() {
-                Ok(next) => batch.push(next),
-                Err(_) => break,
-            }
-        }
+    while let Some(batch) = gather(wanted) {
         let now = crate::engine::daemon::stamp(chrono::Utc::now());
         let (events, replies): (Vec<_>, Vec<_>) = batch
             .into_iter()
@@ -86,7 +82,7 @@ fn save(ws: Arc<Workspace>, wanted: std::sync::mpsc::Receiver<ToSave>) {
             .unzip();
         let saved = match journal.as_mut() {
             Some(j) => j.publish_all(&events),
-            None => crate::engine::journal::Journal::open(&ws).and_then(|mut j| {
+            None => crate::engine::journal::Journal::open(ws).and_then(|mut j| {
                 let saved = j.publish_all(&events);
                 journal = Some(j);
                 saved
@@ -94,7 +90,7 @@ fn save(ws: Arc<Workspace>, wanted: std::sync::mpsc::Receiver<ToSave>) {
         };
         let answer = match saved {
             Ok(()) => {
-                if let Err(e) = crate::engine::events::nudge(&ws) {
+                if let Err(e) = crate::engine::events::nudge(ws) {
                     // saved: the daemon takes it at its next wake or start
                     eprintln!("itero webhook: saved, but could not wake the daemon: {e}");
                 }
@@ -110,6 +106,19 @@ fn save(ws: Arc<Workspace>, wanted: std::sync::mpsc::Receiver<ToSave>) {
             let _ = reply.send(answer.clone());
         }
     }
+}
+
+/// The requests to save together: the next to come, and those waiting
+/// behind it, `BATCH` at most; none once the listener is gone.
+fn gather(wanted: &std::sync::mpsc::Receiver<ToSave>) -> Option<Vec<ToSave>> {
+    let mut batch = vec![wanted.recv().ok()?];
+    while batch.len() < BATCH {
+        match wanted.try_recv() {
+            Ok(next) => batch.push(next),
+            Err(_) => break,
+        }
+    }
+    Some(batch)
 }
 
 impl Server {
@@ -233,10 +242,14 @@ pub fn serve(
         .and_then(|s| s.parse().ok())
         .map_or(LIFE, Duration::from_secs);
     let (saver, wanted) = std::sync::mpsc::channel();
-    {
-        let ws = Arc::new(ws);
-        std::thread::spawn(move || save(ws, wanted));
-    }
+    std::thread::spawn(move || {
+        // while the listener runs, only a panic ends the saver: without it
+        // nothing is saved, so the listener ends, for the daemon to start
+        // it again, rather than refuse every request from now on
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| save(&ws, &wanted)));
+        eprintln!("itero webhook: the saver stopped: ending");
+        std::process::exit(1);
+    });
     let server = Server {
         saver,
         places: hooks
@@ -270,4 +283,31 @@ pub fn serve(
             });
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ask(to: &std::sync::mpsc::Sender<ToSave>, n: usize) {
+        for i in 0..n {
+            let (reply, _answer) = tokio::sync::oneshot::channel();
+            to.send((serde_json::json!({ "sıra": i }), reply)).unwrap();
+        }
+    }
+
+    /// The requests waiting when the saver looks go in one batch, `BATCH`
+    /// at most: the rest in the next; none once the listener is gone.
+    #[test]
+    fn the_requests_waiting_go_together_batch_at_most() {
+        let (to, wanted) = std::sync::mpsc::channel();
+        ask(&to, BATCH + 3);
+        let first = gather(&wanted).unwrap();
+        assert_eq!(first.len(), BATCH);
+        let next = gather(&wanted).unwrap();
+        assert_eq!(next.len(), 3);
+        assert_eq!(next[0].0["sıra"], BATCH);
+        drop(to);
+        assert!(gather(&wanted).is_none());
+    }
 }
