@@ -35,6 +35,12 @@ Each has parts of its own, listed under it.
   start from it.
 - Keeps each run's place (state, step, waiting), so a run survives a
   restart.
+- An event from outside (a webhook answered 200, `itero ws emit`, `POST
+  /events`) is on disk before it is answered, and stays through a power
+  cut. What the daemon writes as it works (a run's start, a step's start
+  and result) survives itero crashing; a power cut or the system crashing
+  can take back the last of it, and then those steps run again, as after
+  a crash at the wrong moment.
 - Pins each run to the workflow version it started with.
 - Holds timers and schedules.
 - Gives the workspace its name: two random words (`pale-otter`), unique

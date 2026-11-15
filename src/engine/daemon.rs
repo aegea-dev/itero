@@ -642,7 +642,7 @@ fn runs_pass(
     wake: &Sender<()>,
     woken: &Receiver<()>,
 ) -> Result<Pass> {
-    let mut j = Journal::open(ws)?;
+    let mut j = Journal::open_for_pass(ws)?;
     let log = Log::new(ws, &j.workspace()?.id);
     let flows = Flows::load(ws)?;
     j.see_workflows(flows.read.keys(), &stamp(now))?;
