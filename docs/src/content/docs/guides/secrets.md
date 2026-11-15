@@ -76,8 +76,9 @@ each set ([Connectors](/guides/connectors/#one-connector-many-sets-of-args)).
 
 `"$$NAME"` stands for a secret (a token, a password, an API key) or a
 value of yours that changes from one machine to another (a folder, an
-address). It is looked up only when an action or the connector starts,
-and the value never reaches the run's state, the journal, a log or a
+address). It is looked up only when an action or the connector starts
+(whether it is defined, for a step's `has`, at most once a second), and
+the value never reaches the run's state, the journal, a log or a
 command line; only the action whose args name it gets it. A `$$NAME` is a
 whole value only: inside a text (`"Bearer $$TOKEN"`) it is refused, as
 `itero ws check` says. It counts only where a step's args write it: an

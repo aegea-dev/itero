@@ -22,6 +22,15 @@ const PLACES: usize = 32;
 const LIFE: Duration = Duration::from_secs(30);
 /// How often one refusal is told.
 const TELL_EVERY: Duration = Duration::from_secs(60);
+/// The most requests saved in one commit.
+const BATCH: usize = 256;
+
+/// What a request asks the saver: its event's data, and where to tell it
+/// whether that is on disk.
+type ToSave = (
+    serde_json::Value,
+    tokio::sync::oneshot::Sender<Result<(), String>>,
+);
 
 struct Place {
     hook: Hook,
@@ -51,9 +60,65 @@ impl Told {
 }
 
 struct Server {
-    ws: Arc<Workspace>,
     places: Vec<Place>,
     told: Told,
+    saver: std::sync::mpsc::Sender<ToSave>,
+}
+
+/// Saves the requests' events, a batch a commit: those that come while a
+/// commit is being synced wait, and go together in the next one, so a
+/// burst is one synced write, not one each. Each request is answered once
+/// its commit is on disk, as `synchronous` FULL makes it. The journal
+/// stays open: opening it for each commit halved what a Mac saves a
+/// second (measured). The daemon is woken once a commit. Ends once the
+/// listener is gone.
+fn save(ws: &Workspace, wanted: &std::sync::mpsc::Receiver<ToSave>) {
+    let mut journal: Option<crate::engine::journal::Journal> = None;
+    while let Some(batch) = gather(wanted) {
+        let now = crate::engine::daemon::stamp(chrono::Utc::now());
+        let (events, replies): (Vec<_>, Vec<_>) = batch
+            .into_iter()
+            .map(|(data, reply)| (crate::engine::events::webhook_event(data, &now), reply))
+            .unzip();
+        let saved = match journal.as_mut() {
+            Some(j) => j.publish_all(&events),
+            None => crate::engine::journal::Journal::open(ws).and_then(|mut j| {
+                let saved = j.publish_all(&events);
+                journal = Some(j);
+                saved
+            }),
+        };
+        let answer = match saved {
+            Ok(()) => {
+                if let Err(e) = crate::engine::events::nudge(ws) {
+                    // saved: the daemon takes it at its next wake or start
+                    eprintln!("itero webhook: saved, but could not wake the daemon: {e}");
+                }
+                Ok(())
+            }
+            Err(e) => {
+                // opened again for the next: this one may be what failed
+                journal = None;
+                Err(format!("{e:#}"))
+            }
+        };
+        for reply in replies {
+            let _ = reply.send(answer.clone());
+        }
+    }
+}
+
+/// The requests to save together: the next to come, and those waiting
+/// behind it, `BATCH` at most; none once the listener is gone.
+fn gather(wanted: &std::sync::mpsc::Receiver<ToSave>) -> Option<Vec<ToSave>> {
+    let mut batch = vec![wanted.recv().ok()?];
+    while batch.len() < BATCH {
+        match wanted.try_recv() {
+            Ok(next) => batch.push(next),
+            Err(_) => break,
+        }
+    }
+    Some(batch)
 }
 
 impl Server {
@@ -140,26 +205,26 @@ async fn receive(State(s): State<Arc<Server>>, req: Request) -> Response {
             );
         }
     };
-    // the journal may wait on a busy SQLite: off the async threads
-    let ws = s.ws.clone();
-    let saved = tokio::task::spawn_blocking(move || {
-        let now = crate::engine::daemon::stamp(chrono::Utc::now());
-        crate::engine::events::webhook_received(&ws, data, &now)?;
-        if let Err(e) = crate::engine::events::nudge(&ws) {
-            // saved: the daemon takes it at its next wake or start
-            eprintln!("itero webhook: saved, but could not wake the daemon: {e}");
-        }
-        anyhow::Ok(())
-    })
-    .await;
-    match saved {
+    // saved by the saver's thread, with the others that come meanwhile
+    let (reply, saved) = tokio::sync::oneshot::channel();
+    if s.saver.send((data, reply)).is_err() {
+        eprintln!(
+            "itero webhook: {}: not saved: the saver has stopped",
+            hook.path
+        );
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    match saved.await {
         Ok(Ok(())) => StatusCode::OK.into_response(),
         Ok(Err(e)) => {
-            eprintln!("itero webhook: {}: not saved: {e:#}", hook.path);
+            eprintln!("itero webhook: {}: not saved: {e}", hook.path);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
-        Err(e) => {
-            eprintln!("itero webhook: {}: not saved: {e}", hook.path);
+        Err(_) => {
+            eprintln!(
+                "itero webhook: {}: not saved: the saver has stopped",
+                hook.path
+            );
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
@@ -176,8 +241,17 @@ pub fn serve(
         .ok()
         .and_then(|s| s.parse().ok())
         .map_or(LIFE, Duration::from_secs);
+    let (saver, wanted) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        // while the listener runs, only a panic ends the saver: without it
+        // nothing is saved, so the listener ends, for the daemon to start
+        // it again, rather than refuse every request from now on
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| save(&ws, &wanted)));
+        eprintln!("itero webhook: the saver stopped: ending");
+        std::process::exit(1);
+    });
     let server = Server {
-        ws: Arc::new(ws),
+        saver,
         places: hooks
             .into_iter()
             .map(|hook| Place {
@@ -209,4 +283,31 @@ pub fn serve(
             });
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ask(to: &std::sync::mpsc::Sender<ToSave>, n: usize) {
+        for i in 0..n {
+            let (reply, _answer) = tokio::sync::oneshot::channel();
+            to.send((serde_json::json!({ "sıra": i }), reply)).unwrap();
+        }
+    }
+
+    /// The requests waiting when the saver looks go in one batch, `BATCH`
+    /// at most: the rest in the next; none once the listener is gone.
+    #[test]
+    fn the_requests_waiting_go_together_batch_at_most() {
+        let (to, wanted) = std::sync::mpsc::channel();
+        ask(&to, BATCH + 3);
+        let first = gather(&wanted).unwrap();
+        assert_eq!(first.len(), BATCH);
+        let next = gather(&wanted).unwrap();
+        assert_eq!(next.len(), 3);
+        assert_eq!(next[0].0["sıra"], BATCH);
+        drop(to);
+        assert!(gather(&wanted).is_none());
+    }
 }
