@@ -805,6 +805,18 @@ impl Journal {
         publish(&self.db, e)
     }
 
+    /// `es` in one transaction: one commit, synced once, for them all.
+    pub fn publish_all(&mut self, es: &[Envelope]) -> Result<()> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for e in es {
+            publish(&tx, e)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// The oldest event not yet handled after `after`, apart from those for
     /// workers. Events are taken in order, so a pass asks after the last it
     /// took: what it has not handled up to there it holds (messages waiting

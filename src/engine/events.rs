@@ -97,10 +97,15 @@ pub fn notification_clicked(ws: &Workspace, data: Value, now: &str) -> anyhow::R
 
 /// Saves a webhook that passed its check. Returns the message's id.
 pub fn webhook_received(ws: &Workspace, data: Value, now: &str) -> anyhow::Result<String> {
-    let subject = journal::subject("app");
-    let e = Envelope::new("webhook", WEBHOOK_RECEIVED, &subject, now, None, data);
+    let e = webhook_event(data, now);
     Journal::open(ws)?.publish(&e)?;
     Ok(e.id)
+}
+
+/// A request the webhook took, as the event it saves.
+pub fn webhook_event(data: Value, now: &str) -> Envelope {
+    let subject = journal::subject("app");
+    Envelope::new("webhook", WEBHOOK_RECEIVED, &subject, now, None, data)
 }
 
 /// Tells the running daemon, if there is one, that a message waits in the
