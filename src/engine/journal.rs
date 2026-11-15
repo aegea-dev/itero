@@ -730,8 +730,28 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Recorded> {
 const COLUMNS: &str = "seq, id, time, type, source, subject, cause, data, handled, error, note";
 
 impl Journal {
+    /// The journal as the daemon's pass writes it: `synchronous` NORMAL, so
+    /// a commit is synced at the WAL's checkpoints, not each time. In WAL
+    /// mode a commit is still safe from itero crashing; a power cut or the
+    /// system crashing can lose the last ones, and the journal stays whole.
+    /// The pass writes only what it can work out again from events already
+    /// saved, so that loss can only make a step run again, as a crash at
+    /// the wrong moment can. What comes from outside (the webhook, `ws
+    /// emit`, `POST /events`) is written with `open`, synced at each commit.
+    pub fn open_for_pass(ws: &Workspace) -> Result<Journal> {
+        let j = Journal::open(ws)?;
+        j.db.pragma_update(None, "synchronous", "NORMAL")?;
+        Ok(j)
+    }
+
+    /// This connection's `synchronous`, as SQLite numbers it: 2 FULL, 1
+    /// NORMAL.
+    pub fn synchronous(&self) -> Result<i64> {
+        Ok(self.db.query_row("PRAGMA synchronous", [], |r| r.get(0))?)
+    }
+
     /// Opens (and creates) a workspace's journal; one from a newer itero is
-    /// refused.
+    /// refused. Each commit is synced (`synchronous` FULL).
     pub fn open(ws: &Workspace) -> Result<Journal> {
         let path = ws.journal();
         std::fs::create_dir_all(path.parent().expect("a folder"))?;
