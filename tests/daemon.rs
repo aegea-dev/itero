@@ -2073,7 +2073,8 @@ fn a_pass_asks_its_manager_without_starting_a_process() {
 
 /// A pass looks up whether a `$$` name is defined at most once a second,
 /// not for each event: a secret set while a long step keeps the pass going
-/// is still seen by the next run's step within that second.
+/// is not seen by a run's step within the second of the last look, and is
+/// seen by the one after it.
 #[test]
 fn a_secret_set_during_a_long_pass_is_seen_within_a_second() {
     let ws = Ws::new();
@@ -2091,13 +2092,22 @@ fn a_secret_set_during_a_long_pass_is_seen_within_a_second() {
     ws.emit("uzun.başladı", json!({}));
     let pass = pass_apart(&ws);
     let pid = pid_in(&ws, "uyku.pid");
+    let done = || ws.statuses().iter().filter(|s| **s == "done").count();
     ws.emit("gizli.sor", json!({"sıra": 1}));
     // not defined: the step is skipped, the run done
-    assert!(soon(|| ws.statuses().iter().filter(|s| **s == "done").count() == 1));
+    assert!(soon(|| done() == 1));
     assert_eq!(ws.read("yazılan.log"), "");
     std::fs::write(ws.d.path().join(".env"), "GİZLİ_ANAHTAR=çay\n").unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    // set within the second of the last look: not looked up again yet
     ws.emit("gizli.sor", json!({"sıra": 2}));
+    assert!(soon(|| done() == 2));
+    assert_eq!(
+        ws.read("yazılan.log"),
+        "",
+        "looked up again within the second"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    ws.emit("gizli.sor", json!({"sıra": 3}));
     let seen = soon(|| ws.read("yazılan.log") == "var\n");
     end(pid);
     pass.join().unwrap();

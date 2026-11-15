@@ -276,20 +276,21 @@ impl Flows {
         })
     }
 
-    /// Run version `pin` (its `root` and `values`, from the journal), read
-    /// with the manifest's entries; or why it cannot run: a workflow that
-    /// does not read, an action given args or repeats it may not have.
+    /// Run version `pin`: its root and workflows as `stored` reads them
+    /// from the journal, read with the manifest's entries, once while these
+    /// flows are the workspace's; or why it cannot run: not in the journal,
+    /// a workflow that does not read, an action given args or repeats it
+    /// may not have.
     fn version(
         &self,
         ws: &Workspace,
         pin: &str,
-        root: String,
-        values: BTreeMap<String, Value>,
-    ) -> std::rc::Rc<Result<Pinned, String>> {
+        stored: impl FnOnce() -> Result<Option<(String, BTreeMap<String, Value>)>>,
+    ) -> Result<std::rc::Rc<Result<Pinned, String>>> {
         if let Some(p) = self.pins.borrow().get(pin) {
-            return p.clone();
+            return Ok(p.clone());
         }
-        let read = || -> Result<Pinned, String> {
+        let read = |root: String, values: BTreeMap<String, Value>| -> Result<Pinned, String> {
             let mut seen = std::collections::BTreeSet::new();
             let mut meta = None;
             let mut names = vec![];
@@ -320,9 +321,12 @@ impl Flows {
                 names,
             })
         };
-        let p = std::rc::Rc::new(read());
+        let p = std::rc::Rc::new(match stored()? {
+            Some((root, values)) => read(root, values),
+            None => Err(format!("version {pin} is not in the journal")),
+        });
         self.pins.borrow_mut().insert(pin.to_string(), p.clone());
-        p
+        Ok(p)
     }
 
     /// Whether `$$name` is defined (a secret, `.env`, the secrets folder,
@@ -1343,19 +1347,11 @@ fn deliver(
     let Some(run) = j.run(&id)? else {
         return give_up(log, j, r.seq, &at, format!("no run {id}"));
     };
-    let Some((root, values)) = j.pinned(&run.pin)? else {
-        return give_up(
-            log,
-            j,
-            r.seq,
-            &at,
-            format!("version {} is not in the journal", run.pin),
-        );
-    };
     // what the manager needs beyond the run: which of its workflows' $$
     // names are defined, and whether its own is on; whether it is internal
-    // is its entry's (or a built-in's own meta). Worked out once a version.
-    let pinned = flows.version(ws, &run.pin, root, values);
+    // is its entry's (or a built-in's own meta). Read from the journal and
+    // worked out once a version.
+    let pinned = flows.version(ws, &run.pin, || j.pinned(&run.pin))?;
     let p = match pinned.as_ref() {
         Ok(p) => p,
         Err(why) => return give_up(log, j, r.seq, &at, why.clone()),
