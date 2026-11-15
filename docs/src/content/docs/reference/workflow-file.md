@@ -28,7 +28,7 @@ is an error.
 | `{"$event.order": 43}` | condition: the event's `order` is exactly `43` |
 | `{"$output.paid": true}` | condition: a field of the step before's result (in a step's `on`) |
 | `{"has": "$event.order"}` | condition: the event has an `order` |
-| `{"has": ["$event.order", "$$API"]}` | condition: all are there; `$$API` is defined (secret, `.env` or environment) |
+| `{"has": ["$event.order", "$$API"]}` | condition: all are there; `$$API` is defined (secret, `.env` or environment; the daemon looks that up at most once a second) |
 | `{"unique": "$event.id", "for": "1d"}` | window: a run starts for a value no run started with within `for` (for good without it) |
 | `{"changed": "$event.state"}` | window: a run starts when the value is not the last run's |
 | `{"at_most": "1h"}` | window: at most one run per period; the first event in it starts it |
