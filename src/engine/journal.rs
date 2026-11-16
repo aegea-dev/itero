@@ -870,13 +870,12 @@ impl Journal {
     /// Up to `room` jobs not yet run and not among `running`, oldest first:
     /// the ones a pass starts next.
     pub fn jobs_to_start(&self, running: &[i64], room: usize) -> Result<Vec<Recorded>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM events WHERE handled IS NULL AND (subject = 'itero.worker') = 1
-             AND seq NOT IN (SELECT value FROM json_each(?1)) ORDER BY seq LIMIT ?2"
-        );
-        let mut s = self.db.prepare_cached(&sql)?;
+        let mut s = self.db.prepare_cached(&jobs_to_start_sql())?;
+        // `room` read here, not given as a LIMIT: the index gives them in
+        // order, so reading stops at `room`
         let out = s
-            .query_map(params![json(&running)?, room as i64], row)?
+            .query_map(params![json(&running)?], row)?
+            .take(room)
             .collect::<rusqlite::Result<_>>()?;
         Ok(out)
     }
@@ -1939,4 +1938,35 @@ fn mark_waiting(db: &Connection) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+/// `jobs_to_start`'s query. No bound LIMIT: SQLite's planner reads a
+/// LIMIT's value, so a statement with one is prepared again each time it
+/// is bound, which here is at every turn of the pass.
+fn jobs_to_start_sql() -> String {
+    format!(
+        "SELECT {COLUMNS} FROM events WHERE handled IS NULL AND (subject = 'itero.worker') = 1
+         AND seq NOT IN (SELECT value FROM json_each(?1)) ORDER BY seq"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pass asks for the jobs to start at each turn: its statement is
+    /// prepared once, not again at each call (a bound `LIMIT` makes SQLite
+    /// prepare it again whenever it is bound).
+    #[test]
+    fn jobs_to_start_is_prepared_once() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
+        let ws = crate::workspace::find(d.path()).unwrap();
+        let j = Journal::open(&ws).unwrap();
+        for (running, room) in [(vec![], 8), (vec![1], 7), (vec![1, 2], 6)] {
+            j.jobs_to_start(&running, room).unwrap();
+        }
+        let s = j.db.prepare_cached(&jobs_to_start_sql()).unwrap();
+        assert_eq!(s.get_status(rusqlite::StatementStatus::RePrepare), 0);
+    }
 }
