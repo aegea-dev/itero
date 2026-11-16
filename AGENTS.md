@@ -84,6 +84,7 @@ when it touches the mail examples or connectors, `make test-docker`.
 ## Development Rules
 
 - Rust toolchain is pinned in rust-toolchain.toml.
+- A line on stderr is written with `say!` (`src/stderr.rs`), never `eprintln!`, which clippy refuses: a daemon shares its stderr with its connectors, and `eprintln!` writes a line in pieces that mix with theirs.
 - Prefer Makefile targets where they exist.
 - Verify with emitting event and running workflow before claiming work is complete.
 - Tests come first: write the failing unit/integration test, then implement the feature or fix (TDD).
