@@ -48,9 +48,11 @@ done
 mkdir -p "$out"
 ws=$(mktemp -d "${TMPDIR:-/tmp}/itero-bench.XXXXXX")
 # the daemon puts its own folder first on its connectors' PATH, and the
-# webhook's connector runs `itero`: by that name, so it is this one
+# webhook's connector runs `itero` by that name: a copy, a file of its
+# own, so it is this one (on Linux a link is resolved, and the connector
+# would run the itero it points at, or the image's)
 mkdir "$ws/bin"
-ln -s "$(cd "$(dirname "$itero")" && pwd)/$(basename "$itero")" "$ws/bin/itero"
+cp "$itero" "$ws/bin/itero"
 itero="$ws/bin/itero"
 daemon=
 cleanup() {
