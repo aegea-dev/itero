@@ -1430,10 +1430,13 @@ fn dispatch(cli: Cli) -> Result<()> {
             nudge(&ws);
         }
         Cmd::Worker => {
-            let mut text = String::new();
-            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+            // the step, and from the daemon the job's lock, held until the
+            // worker ends: its action's processes inherit it
+            let (text, _lock) =
+                crate::engine::handover::receive(std::os::fd::AsFd::as_fd(&std::io::stdin()))
+                    .map_err(|e| anyhow!("the worker's step: {e}"))?;
             let step: crate::engine::worker::StepRun =
-                serde_json::from_str(&text).map_err(|e| anyhow!("the worker's step: {e}"))?;
+                serde_json::from_slice(&text).map_err(|e| anyhow!("the worker's step: {e}"))?;
             use crate::engine::worker::{Failure, LOST_EXIT, run_step_telling};
             use std::io::Write;
             use std::time::{Duration, Instant};

@@ -116,7 +116,8 @@ fn job_path(root: &Path, seq: i64) -> std::path::PathBuf {
 /// Job `seq`'s lock, `.itero/jobs/<seq>.lock`; `None` while another holds
 /// it: a copy of the job still runs, as one a daemon that died left does
 /// until it sees its parent gone. The processes that run the job hold it:
-/// the worker inherits it, its action's processes too.
+/// the worker is given it over its stdin (handover.rs), its action's
+/// processes inherit it.
 pub fn take_job(root: &Path, seq: i64) -> Result<Option<File>, String> {
     match take_file(&job_path(root, seq), &format!("job {seq}")) {
         Ok(l) => Ok(Some(l.into_file())),

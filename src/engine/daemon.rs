@@ -15,7 +15,6 @@ use anyhow::{Result, anyhow};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1842,42 +1841,36 @@ fn spawn_worker(
     if cancel.load(Ordering::SeqCst) {
         return Err(Failure::Lost(journal::JOB_STOPPED.into()));
     }
+    // its stdin is a socket: the step and the job's lock come over it
+    // (handover.rs), so nothing runs between fork and exec, and starting
+    // it is a posix_spawn, not a fork of the daemon
+    let (ours, theirs) = std::os::unix::net::UnixStream::pair()
+        .map_err(|e| format!("cannot start a worker: {e}"))?;
     let mut c = Command::new(exe);
     c.arg("worker")
         .env("PATH", crate::connectors::supervise::path_with(exe))
-        .stdin(Stdio::piped())
+        .stdin(Stdio::from(std::os::fd::OwnedFd::from(theirs)))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut c, 0);
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd;
-        let fd = lock.as_raw_fd();
-        // SAFETY: between fork and exec only fcntl runs, which is
-        // async-signal-safe: it clears close-on-exec on the job's lock, so
-        // the worker, and its action's processes, hold it
-        unsafe {
-            std::os::unix::process::CommandExt::pre_exec(&mut c, move || {
-                if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-    }
     let mut child = c
         .spawn()
         .map_err(|e| format!("cannot start a worker: {e}"))?;
-    // the worker holds the job's lock now
-    drop(lock);
+    // `c` holds the worker's end of the socket until it goes
+    drop(c);
     let text = serde_json::to_string(step).map_err(|e| e.to_string())?;
-    child
-        .stdin
-        .take()
-        .expect("piped")
-        .write_all(text.as_bytes())
-        .map_err(|e| e.to_string())?;
+    let sent = super::handover::send(&ours, text.as_bytes(), std::os::fd::AsFd::as_fd(&lock));
+    // the worker holds the job's lock now, or has gone
+    drop(lock);
+    drop(ours);
+    if let Err(e) = sent {
+        // it could not be told its step: it ends at the socket's end
+        let _ = child.wait();
+        return Err(Failure::Error(format!(
+            "cannot give the worker its step: {e}"
+        )));
+    }
     let read = |r: Option<Box<dyn std::io::Read + Send>>| {
         std::thread::spawn(move || {
             let mut buf = vec![];

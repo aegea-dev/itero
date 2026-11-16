@@ -6,6 +6,8 @@ pub mod channels;
 pub mod daemon;
 pub mod events;
 pub mod follow;
+#[cfg(unix)]
+pub mod handover;
 pub mod http;
 pub mod journal;
 pub mod lock;
