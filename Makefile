@@ -210,6 +210,20 @@ bench-linux: image ## The same, on Linux: in the Alpine image built from this tr
 		-e ITERO=/usr/local/bin/itero -e BENCH_OUT=/out -e BENCH_N -e BENCH_K -e BENCH_REQUESTS \
 		--entrypoint sh itero:dev-alpine /scripts/bench.sh
 
+SOAK_ENV = -e SOAK_MODE -e SOAK_SECS -e SOAK_RATE -e SOAK_BURST -e SOAK_BURST_SECS -e SOAK_BACKLOG \
+	-e SOAK_DRAIN_MAX -e SOAK_EVERY -e SOAK_LIMITS -e SOAK_SLOW_N -e SOAK_SLOW_STEPS -e SOAK_KEEP
+
+.PHONY: soak
+soak: build ## The whole engine under load for an hour (SOAK_SECS), then a drain and a restart with a backlog (results in target/soak)
+	sh scripts/soak.sh
+
+.PHONY: soak-linux
+soak-linux: image ## The same, on Linux: in the Alpine image built from this tree (Docker)
+	mkdir -p target/soak
+	docker run --rm -v "$(CURDIR)/scripts:/scripts:ro" -v "$(CURDIR)/target/soak:/out" \
+		-e ITERO=/usr/local/bin/itero -e SOAK_OUT=/out $(SOAK_ENV) \
+		--entrypoint sh itero:dev-alpine /scripts/soak.sh
+
 .PHONY: test-linux
 test-linux: ## Run the tests and clippy on Linux, in Docker
 	sh scripts/test-linux.sh
