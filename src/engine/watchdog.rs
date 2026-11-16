@@ -5,7 +5,6 @@
 //! function of what the watchdog knows; `run` does the processes and HTTP.
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -328,14 +327,13 @@ pub fn run(o: &Options) -> Result<()> {
         None => None,
     };
     let say = |line: &str| {
-        let line = format!("{} watchdog: {line}\n", super::daemon::stamp(Utc::now()));
+        let stamp = super::daemon::stamp(Utc::now());
         match &log {
             // `Write` is implemented for `&File`: appends need no `mut` file
             Some(f) => {
-                let mut f: &std::fs::File = f;
-                let _ = f.write_all(line.as_bytes());
+                let _ = crate::stderr::line_to(f, format_args!("{stamp} watchdog: {line}"));
             }
-            None => eprint!("{line}"),
+            None => crate::say!("{stamp} watchdog: {line}"),
         }
     };
     let client = crate::net::client(Duration::from_secs(5))?;

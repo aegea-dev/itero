@@ -91,7 +91,7 @@ impl Machine {
                 .unwrap_or_else(PoisonError::into_inner)
                 .remove(&id);
             if let Some(r) = r {
-                eprintln!("itero: stopping {}", r.name);
+                crate::say!("itero: stopping {}", r.name);
                 let stopper = r.stopper();
                 r.stop();
                 self.stop.forget(&stopper);
@@ -109,14 +109,14 @@ impl Machine {
             }
             match self.start(e) {
                 Ok(r) => {
-                    eprintln!("itero: running {} ({})", e.name, e.folder.display());
+                    crate::say!("itero: running {} ({})", e.name, e.folder.display());
                     self.running
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
                         .insert(e.id.clone(), r);
                 }
                 Err(i) => {
-                    eprintln!("itero: {} is {}: {}", e.name, i.state, i.why);
+                    crate::say!("itero: {} is {}: {}", e.name, i.state, i.why);
                     idle.insert(e.id.clone(), (e.clone(), i));
                 }
             }
@@ -231,7 +231,7 @@ impl Machine {
     pub fn start_scans(&self) -> Result<()> {
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         let alarm = super::alarm::Alarm::start(tx.clone(), |e| {
-            eprintln!("itero: the alarm for scanning models stopped: {e}");
+            crate::say!("itero: the alarm for scanning models stopped: {e}");
         })?;
         std::thread::spawn(move || {
             while rx.recv().is_ok() {
@@ -240,14 +240,14 @@ impl Machine {
                 match crate::ai::find::scan_on(
                     crate::ai::machine_socket().with_extension("find.sock"),
                 ) {
-                    Ok(v) => eprintln!("itero: models: {v}"),
-                    Err(e) => eprintln!("itero: looking for models: {e}"),
+                    Ok(v) => crate::say!("itero: models: {v}"),
+                    Err(e) => crate::say!("itero: looking for models: {e}"),
                 }
                 let now = chrono::Utc::now();
                 let hour = chrono::Duration::hours(1);
                 let next = chrono::DurationRound::duration_trunc(now, hour).map(|h| h + hour);
                 if let Err(e) = alarm.set(next.ok()) {
-                    eprintln!("itero: setting the next scan for models: {e}");
+                    crate::say!("itero: setting the next scan for models: {e}");
                 }
             }
         });
@@ -308,7 +308,7 @@ impl Machine {
             if !other.is_empty()
                 && let Err(e) = self.sync()
             {
-                eprintln!("itero: reading the machine's list: {e:#}");
+                crate::say!("itero: reading the machine's list: {e:#}");
             }
         }
     }
@@ -406,7 +406,7 @@ pub fn emit_all(
         match super::events::emit_to(&j, kind, data.clone(), now) {
             Ok(id) => {
                 if let Err(err) = super::events::nudge(&ws) {
-                    eprintln!("itero: {}: saved, but not woken: {err}", e.name);
+                    crate::say!("itero: {}: saved, but not woken: {err}", e.name);
                 }
                 To::Sent(Box::new(ws), id)
             }
@@ -437,7 +437,7 @@ pub fn tell_all(kind: &str, data: Value) {
             // the list says so: nothing to tell
             Err(NotOpen::Missing(_)) => continue,
             Err(err) => {
-                eprintln!("itero: telling {} {kind}: {err}", e.name);
+                crate::say!("itero: telling {} {kind}: {err}", e.name);
                 continue;
             }
         };
@@ -445,7 +445,7 @@ pub fn tell_all(kind: &str, data: Value) {
             Ok(()) => {
                 let _ = super::events::nudge(&ws);
             }
-            Err(err) => eprintln!("itero: telling {} {kind}: {err:#}", e.name),
+            Err(err) => crate::say!("itero: telling {} {kind}: {err:#}", e.name),
         }
     }
 }

@@ -200,7 +200,7 @@ impl Drop for Window {
         let id = std::mem::take(&mut self.0);
         std::thread::spawn(move || {
             if let Err(e) = crate::browser::keeper::Keeper::global().close_watch(&id) {
-                eprintln!("itero: cannot close a watched window: {e}");
+                crate::say!("itero: cannot close a watched window: {e}");
             }
         });
     }
@@ -612,7 +612,7 @@ async fn serve_on(
         let tcp = match listener.accept().await {
             Ok((tcp, _)) => tcp,
             Err(e) => {
-                eprintln!("itero: accepting on {addr}: {e}");
+                crate::say!("itero: accepting on {addr}: {e}");
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 continue;
             }
@@ -744,7 +744,7 @@ async fn bearer(req: Request, next: Next) -> Response {
         *req.method(),
         axum::http::Method::GET | axum::http::Method::HEAD
     ) {
-        eprintln!("itero: {name}: {} {}", req.method(), req.uri().path());
+        crate::say!("itero: {name}: {} {}", req.method(), req.uri().path());
     }
     next.run(req).await
 }

@@ -65,7 +65,7 @@ impl Drop for TestChrome {
         if std::thread::panicking() {
             let text = std::fs::read_to_string(&self.said).unwrap_or_default();
             let how = before.map_or("still running".to_string(), |s| format!("had ended, {s}"));
-            eprintln!(
+            itero::say!(
                 "the test's Chrome ({how}) said on stderr:\n{}",
                 head_and_tail(&text)
             );

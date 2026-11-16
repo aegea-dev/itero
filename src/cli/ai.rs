@@ -284,7 +284,7 @@ pub fn add(name: &str, yes_given: bool) -> Result<()> {
     let files = crate::ai::download::fetch(&p, token.as_deref(), &into, &|done, total| {
         eprint!("\r[{} / {}]", size(done), size(total));
     })?;
-    eprintln!();
+    crate::say!("");
     crate::ai::find::scan(&here()?).map_err(|e| anyhow::anyhow!(e))?;
     let path = crate::ai::index_path()?;
     let mut ix = itero_ai_index::Index::read(&path)?;
@@ -376,7 +376,7 @@ pub fn defaults_set(values: &str) -> Result<()> {
     if let Some(m) = changes.get("model").and_then(Value::as_str) {
         let ix = itero_ai_index::Index::read(&crate::ai::index_path()?)?;
         if let Err(e) = itero_ai_index::resolve(&ix, m) {
-            eprintln!("warning: {e} (itero ai models list shows them)");
+            crate::say!("warning: {e} (itero ai models list shows them)");
         }
     }
     Ok(())

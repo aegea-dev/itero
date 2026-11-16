@@ -244,7 +244,7 @@ pub fn events(ws: &Workspace, asked: Asked, streams: Arc<Streams>) -> Result<Fol
     };
     start(streams, Kind::Events, move |tx| {
         if let Err(e) = look_at_events(&j, from, &asked, &tx) {
-            eprintln!("itero: following events stopped: {e:#}");
+            crate::say!("itero: following events stopped: {e:#}");
         }
     })
 }
@@ -320,7 +320,7 @@ pub fn log(ws: &Workspace, asked: Asked, streams: Arc<Streams>) -> Result<Follow
             },
         };
         if let Err(e) = l.run(&asked, &tx) {
-            eprintln!("itero: following the log stopped: {e:#}");
+            crate::say!("itero: following the log stopped: {e:#}");
         }
     })
 }

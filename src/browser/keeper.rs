@@ -274,7 +274,7 @@ impl Keeper {
         if let Some(c) = s.chromes.get_mut(&t.mode) {
             for tab in t.others.iter().chain([&t.tab]) {
                 if let Err(e) = cdp::close_tab(c.port, &tab.id) {
-                    eprintln!("itero: the browser tab of run {run}: {e}");
+                    crate::say!("itero: the browser tab of run {run}: {e}");
                 }
             }
             if !has_tabs {

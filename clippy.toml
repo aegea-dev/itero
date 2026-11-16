@@ -1,0 +1,5 @@
+# A daemon shares its stderr with its connectors, and eprintln! writes a
+# line in pieces that mix with theirs: itero::say! writes it whole.
+disallowed-macros = [
+    { path = "std::eprintln", reason = "it writes a line in pieces; use itero::say!, which writes it whole" },
+]

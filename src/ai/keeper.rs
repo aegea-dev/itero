@@ -231,7 +231,7 @@ pub fn publish(ws: &Workspace, kind: &str, data: Value) {
     let saved = crate::engine::journal::Journal::open(ws)
         .and_then(|j| j.publish(&events::own(kind, data, &now)));
     if let Err(e) = saved {
-        eprintln!("itero: {kind} could not be saved: {e:#}");
+        crate::say!("itero: {kind} could not be saved: {e:#}");
         return;
     }
     let _ = events::nudge(ws);

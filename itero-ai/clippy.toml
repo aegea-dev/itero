@@ -1,0 +1,3 @@
+# itero-ai is its own process with its own stderr, a pipe only its
+# parent reads, which llama.cpp also writes to: the rule against
+# eprintln! at the workspace root is not for it.

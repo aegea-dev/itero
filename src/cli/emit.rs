@@ -72,7 +72,7 @@ pub fn one(c: &crate::answer::Client, args: EmitArgs) -> Result<()> {
                 Waited::Done => return Ok(()),
                 Waited::Failed => std::process::exit(1),
                 Waited::TimedOut => {
-                    eprintln!("timed out: not every run it started has ended");
+                    crate::say!("timed out: not every run it started has ended");
                     std::process::exit(2);
                 }
             }
@@ -98,25 +98,25 @@ pub fn one(c: &crate::answer::Client, args: EmitArgs) -> Result<()> {
         println!("{id}");
         // what it will do, on stderr: stdout stays the id for scripts
         if !sent.starts.is_empty() {
-            eprintln!("starts: {}", sent.starts.join(", "));
+            crate::say!("starts: {}", sent.starts.join(", "));
         }
         if sent.waiting > 0 {
-            eprintln!("may reach {} waiting run(s)", sent.waiting);
+            crate::say!("may reach {} waiting run(s)", sent.waiting);
         }
         if sent.starts.is_empty() {
             match &sent.nearest {
-                Some(n) => eprintln!("nothing starts on {kind}: did you mean {n}?"),
-                None => eprintln!("nothing starts on {kind}"),
+                Some(n) => crate::say!("nothing starts on {kind}: did you mean {n}?"),
+                None => crate::say!("nothing starts on {kind}"),
             }
         }
         match (&machine, sent.daemon.running) {
             (_, true) => {}
             (Some(m), false) => {
                 for l in m.lines(m.name.as_deref().unwrap_or("this workspace")) {
-                    eprintln!("{l}");
+                    crate::say!("{l}");
                 }
             }
-            (None, false) => eprintln!(
+            (None, false) => crate::say!(
                 "no daemon is running: it waits for one (itero daemon, or itero ws daemon for this workspace alone)"
             ),
         }
@@ -191,8 +191,8 @@ fn said(sent: Vec<machine::Sent>, json_out: bool) -> Result<()> {
             let name = r["workspace"].as_str().unwrap_or_default();
             match (r["id"].as_str(), r["missing"].as_str()) {
                 (Some(id), _) => println!("{name} {id}"),
-                (None, Some(why)) => eprintln!("{name}: {why}"),
-                (None, None) => eprintln!("{name}: {}", super::out::text(&r["error"])),
+                (None, Some(why)) => crate::say!("{name}: {why}"),
+                (None, None) => crate::say!("{name}: {}", super::out::text(&r["error"])),
             }
         }
     })?;
@@ -223,7 +223,7 @@ fn wait_for_all(sent: Vec<machine::Sent>, timeout: Duration) -> Result<()> {
                 answer
             }
             To::Missing(why) => {
-                eprintln!("{}: {why}", s.name);
+                crate::say!("{}: {why}", s.name);
                 continue;
             }
             To::Failed(why) => json!({ "error": why }),
@@ -232,7 +232,7 @@ fn wait_for_all(sent: Vec<machine::Sent>, timeout: Duration) -> Result<()> {
     }
     println!("{}", serde_json::to_string_pretty(&answers)?);
     if code == 2 {
-        eprintln!("timed out: not every run it started has ended");
+        crate::say!("timed out: not every run it started has ended");
     }
     if code > 0 {
         std::process::exit(code);

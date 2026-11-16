@@ -18,7 +18,7 @@ const IMAP: u16 = 13143;
 fn server() -> Option<String> {
     let s = std::env::var("ITERO_GREENMAIL").ok();
     if s.is_none() {
-        eprintln!("ITERO_GREENMAIL is not set: skipped (make test-docker runs it)");
+        itero::say!("ITERO_GREENMAIL is not set: skipped (make test-docker runs it)");
     }
     s
 }

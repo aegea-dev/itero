@@ -10,7 +10,7 @@ pub fn create(name: &str, json: bool) -> Result<()> {
     let v = json!({ "name": name, "token": token });
     show(json, &v, |_| {
         println!("{token}");
-        eprintln!(
+        crate::say!(
             "{name}: shown this once, as this server keeps only its hash: itero context add, on the machine that will use it, takes it"
         );
     })
