@@ -480,6 +480,32 @@ fn a_step_stopped_before_it_started_never_runs() {
 }
 
 #[test]
+fn no_more_steps_run_at_once_than_the_limit() {
+    let ws = Ws::with(r#"{"limits": {"steps": 2}}"#);
+    ws.flow(
+        "kalabalık",
+        json!({"on": [{ "event": "sıra.geldi" }], "steps": ["#say"]}),
+    );
+    // each says how many run beside it, itself counted, while it runs
+    ws.action(
+        "say",
+        "mkdir -p koşan; touch koşan/$$; ls koşan | wc -l >> sayılar.txt; sleep 0.3; rm koşan/$$",
+    );
+    for i in 0..6 {
+        ws.emit("sıra.geldi", json!({ "sıra": i }));
+    }
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"; 6]);
+    let most = ws
+        .read("sayılar.txt")
+        .split_whitespace()
+        .map(|n| n.parse::<usize>().unwrap())
+        .max()
+        .unwrap();
+    assert!(most <= 2, "{most} at once: {}", ws.read("sayılar.txt"));
+}
+
+#[test]
 fn any_waits_for_the_slow_step_when_the_fast_one_breaks() {
     let ws = Ws::new();
     ws.flow(
