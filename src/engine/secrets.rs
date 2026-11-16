@@ -104,7 +104,7 @@ fn from_file(f: &std::path::Path) -> Option<String> {
         Err(e) => {
             static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
             if REPORTED.set(()).is_ok() {
-                eprintln!("itero: {}: {e}", f.display());
+                crate::say!("itero: {}: {e}", f.display());
             }
             None
         }
@@ -140,7 +140,7 @@ fn own_key(ws: &Workspace, name: &str) -> Option<String> {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(ws.root.clone());
             if first {
-                eprintln!(
+                crate::say!(
                     "itero: {}: its own secrets cannot be read: {e:#}",
                     ws.root.display()
                 );
@@ -162,7 +162,7 @@ fn from_store(name: &str) -> Option<String> {
         Err(e) => {
             static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
             if REPORTED.set(()).is_ok() {
-                eprintln!(
+                crate::say!(
                     "itero: the OS secret store cannot be read ({e}); values come from .env and the environment"
                 );
             }

@@ -187,7 +187,7 @@ fn differs(name: &str, theirs: &str) {
     static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let me = env!("CARGO_PKG_VERSION");
     if theirs != me && !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        eprintln!("{name} runs itero {theirs}, this itero is {me}");
+        crate::say!("{name} runs itero {theirs}, this itero is {me}");
     }
 }
 

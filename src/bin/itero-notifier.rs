@@ -25,7 +25,7 @@ const USAGE: &str = "usage: itero-notifier <title> <text> [--<name> <value>]..."
 
 #[cfg(target_os = "macos")]
 fn usage() -> ! {
-    eprintln!("{USAGE}");
+    itero::say!("{USAGE}");
     std::process::exit(2);
 }
 
@@ -37,7 +37,7 @@ fn main() {
         match mac::status() {
             Ok(s) => println!("{s}"),
             Err(e) => {
-                eprintln!("itero-notifier: {e}");
+                itero::say!("itero-notifier: {e}");
                 std::process::exit(1);
             }
         }
@@ -63,14 +63,14 @@ fn main() {
         }
     }
     if let Err(e) = shown {
-        eprintln!("itero-notifier: {e}");
+        itero::say!("itero-notifier: {e}");
         std::process::exit(1);
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    eprintln!("itero-notifier is for macOS; elsewhere notify@1 runs notify-send");
+    itero::say!("itero-notifier is for macOS; elsewhere notify@1 runs notify-send");
     std::process::exit(1);
 }
 
@@ -321,7 +321,7 @@ mod mac {
                     && let Some(u) = get("url").filter(|u| itero::engine::worker::openable(u))
                     && let Err(e) = std::process::Command::new("/usr/bin/open").arg(&u).status()
                 {
-                    eprintln!("itero-notifier: cannot open {u}: {e}");
+                    itero::say!("itero-notifier: cannot open {u}: {e}");
                 }
                 // an older itero's notification has no workspace: opened only
                 if let (Some(id), Some(workspace), Some(itero)) =
@@ -340,7 +340,9 @@ mod mac {
                         .current_dir(&workspace)
                         .status();
                     if !told.as_ref().is_ok_and(|s| s.success()) {
-                        eprintln!("itero-notifier: cannot tell {workspace} of the click: {told:?}");
+                        itero::say!(
+                            "itero-notifier: cannot tell {workspace} of the click: {told:?}"
+                        );
                     }
                 }
                 done.call(());

@@ -98,7 +98,7 @@ impl Log {
             .open(&self.path)
             .and_then(|mut f| f.write_all(text.as_bytes()));
         if let Err(e) = written {
-            eprintln!("itero: cannot write {}: {e}", self.path.display());
+            crate::say!("itero: cannot write {}: {e}", self.path.display());
         }
     }
 }

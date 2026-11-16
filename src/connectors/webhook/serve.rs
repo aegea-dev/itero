@@ -52,7 +52,7 @@ impl Told {
         let (last, count) = seen.entry((path.to_string(), why)).or_default();
         *count += 1;
         if last.is_none_or(|t| t.elapsed() >= TELL_EVERY) {
-            eprintln!("itero webhook: {path}: {why} ({count} since last told)");
+            crate::say!("itero webhook: {path}: {why} ({count} since last told)");
             *last = Some(Instant::now());
             *count = 0;
         }
@@ -92,7 +92,7 @@ fn save(ws: &Workspace, wanted: &std::sync::mpsc::Receiver<ToSave>) {
             Ok(()) => {
                 if let Err(e) = crate::engine::events::nudge(ws) {
                     // saved: the daemon takes it at its next wake or start
-                    eprintln!("itero webhook: saved, but could not wake the daemon: {e}");
+                    crate::say!("itero webhook: saved, but could not wake the daemon: {e}");
                 }
                 Ok(())
             }
@@ -208,7 +208,7 @@ async fn receive(State(s): State<Arc<Server>>, req: Request) -> Response {
     // saved by the saver's thread, with the others that come meanwhile
     let (reply, saved) = tokio::sync::oneshot::channel();
     if s.saver.send((data, reply)).is_err() {
-        eprintln!(
+        crate::say!(
             "itero webhook: {}: not saved: the saver has stopped",
             hook.path
         );
@@ -217,11 +217,11 @@ async fn receive(State(s): State<Arc<Server>>, req: Request) -> Response {
     match saved.await {
         Ok(Ok(())) => StatusCode::OK.into_response(),
         Ok(Err(e)) => {
-            eprintln!("itero webhook: {}: not saved: {e}", hook.path);
+            crate::say!("itero webhook: {}: not saved: {e}", hook.path);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
         Err(_) => {
-            eprintln!(
+            crate::say!(
                 "itero webhook: {}: not saved: the saver has stopped",
                 hook.path
             );
@@ -247,7 +247,7 @@ pub fn serve(
         // nothing is saved, so the listener ends, for the daemon to start
         // it again, rather than refuse every request from now on
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| save(&ws, &wanted)));
-        eprintln!("itero webhook: the saver stopped: ending");
+        crate::say!("itero webhook: the saver stopped: ending");
         std::process::exit(1);
     });
     let server = Server {
@@ -269,7 +269,7 @@ pub fn serve(
                 Ok((stream, _)) => stream,
                 // out of file descriptors, say: those open end within `life`
                 Err(e) => {
-                    eprintln!("itero webhook: cannot accept: {e}");
+                    crate::say!("itero webhook: cannot accept: {e}");
                     tokio::time::sleep(Duration::from_millis(200)).await;
                     continue;
                 }

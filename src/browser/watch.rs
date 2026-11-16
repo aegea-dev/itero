@@ -258,7 +258,7 @@ fn blocked(cdp: &mut Cdp, from: &str) -> Result<(), String> {
                 let forever = Instant::now() + Duration::from_secs(365 * 24 * 3600);
                 blockers::solved(cdp, &host, forever, &|said| {
                     if let Some(s) = said {
-                        eprintln!("itero: {s}");
+                        crate::say!("itero: {s}");
                     }
                 })?;
                 page::ready(cdp, Instant::now() + LOAD)?;

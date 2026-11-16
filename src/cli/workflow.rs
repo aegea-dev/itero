@@ -118,7 +118,7 @@ pub fn stop(c: &Client, run: &str, json: bool) -> Result<()> {
     show(json, &serde_json::to_value(&stopped)?, |_| {
         println!("stopping {}", stopped.stopping);
         if !stopped.daemon {
-            eprintln!("no daemon is running: the next to start stops it");
+            crate::say!("no daemon is running: the next to start stops it");
         }
     })
 }

@@ -90,7 +90,7 @@ fn notifier() -> Option<PathBuf> {
         _ => None,
     };
     if let Some(Err(why)) = &made {
-        eprintln!("itero: notifying from the shipped Itero.app: {why}");
+        crate::say!("itero: notifying from the shipped Itero.app: {why}");
     }
     choose(None, shipped, made)
 }

@@ -76,7 +76,7 @@ impl Running {
         // a $$NAME both a secret and a variable: said once, at the start
         for name in super::secrets::shadowed(&ws)? {
             let why = super::secrets::shadow_warning(&name);
-            eprintln!("itero: warning: {why}");
+            crate::say!("itero: warning: {why}");
             log.write("warning", json!({ "why": why }));
         }
         super::journal::Journal::open(&ws)?.publish(&super::events::own(
@@ -194,7 +194,7 @@ impl Running {
                         Some(_) => break,
                         None => {
                             *state.lock().unwrap_or_else(PoisonError::into_inner) = "failed";
-                            eprintln!("itero: {name} failed: {why}");
+                            crate::say!("itero: {name} failed: {why}");
                             super::machine::tell_all(
                                 super::events::WORKSPACE_FAILED,
                                 json!({ "workspace": name, "why": why }),
@@ -302,14 +302,14 @@ fn watch_passes(
                 if stuck {
                     stuck = false;
                     set("running");
-                    eprintln!("itero: {name} runs again");
+                    crate::say!("itero: {name} runs again");
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
                 stuck = true;
                 set("stuck");
                 let since = busy.map(|b| b.elapsed().as_secs()).unwrap_or_default();
-                eprintln!("itero: {name} is stuck: a pass running for {since}s");
+                crate::say!("itero: {name} is stuck: a pass running for {since}s");
                 let at = chrono::Utc::now() - chrono::Duration::seconds(since as i64);
                 super::machine::tell_all(
                     super::events::WORKSPACE_STUCK,

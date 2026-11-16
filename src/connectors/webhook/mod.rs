@@ -192,12 +192,12 @@ impl Webhook {
         // the port bound: with 0, the one the OS gave
         let at = listener.local_addr()?;
         if !host.is_loopback() {
-            eprintln!(
+            crate::say!(
                 "itero webhook: {at} takes requests from other machines, not encrypted: put a proxy with TLS in front"
             );
         }
         let paths: Vec<&str> = found.iter().map(|h| h.path.as_str()).collect();
-        eprintln!("itero webhook: listening on {at}: {}", paths.join(" "));
+        crate::say!("itero webhook: listening on {at}: {}", paths.join(" "));
         Ok(Webhook {
             ws,
             hooks: found,

@@ -635,7 +635,7 @@ pub fn run(args: Vec<String>) -> i32 {
     match dispatch(cli) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("error: {e:#}");
+            crate::say!("error: {e:#}");
             1
         }
     }
@@ -653,13 +653,17 @@ fn report(pass: &Result<crate::engine::daemon::Pass>, log: Option<&crate::engine
     }
     match pass {
         Ok(p) if p.delivered + p.worked + p.lost + p.stopped + p.elsewhere > 0 => {
-            eprintln!(
+            crate::say!(
                 "{} events, {} jobs, {} lost (run again), {} stopped, {} running elsewhere",
-                p.delivered, p.worked, p.lost, p.stopped, p.elsewhere
+                p.delivered,
+                p.worked,
+                p.lost,
+                p.stopped,
+                p.elsewhere
             )
         }
         Ok(_) => {}
-        Err(e) => eprintln!("error: {e:#}"),
+        Err(e) => crate::say!("error: {e:#}"),
     }
 }
 
@@ -736,7 +740,7 @@ fn end_with_stdin(last: impl FnOnce() + Send + 'static) {
 
 fn nudge(ws: &crate::workspace::Workspace) {
     if let Err(e) = crate::engine::events::nudge(ws) {
-        eprintln!(
+        crate::say!(
             "itero: saved, but could not wake the daemon ({}: {e}); it takes the message at its next start or wake",
             ws.wake_file().display()
         );
@@ -880,7 +884,7 @@ fn here_unlisted() {
         .map(|l| l.workspaces.iter().any(|e| e.folder == ws.root))
         .unwrap_or(false);
     if !listed {
-        eprintln!(
+        crate::say!(
             "itero: this folder's workspace is not on the machine's list, so this daemon does not run it: itero ws add puts it there (itero ws daemon runs it alone)"
         );
     }
@@ -945,7 +949,7 @@ fn run_one(
         move || crate::engine::stop::end(&[stopper], crate::engine::stop::GRACE),
         move || crate::engine::log::last(&[log], "daemon.stopped"),
     );
-    eprintln!(
+    crate::say!(
         "itero: running the workflows in {}, each as it comes due (Ctrl-C stops); log: .itero/itero.log",
         ws.root.display()
     );
@@ -960,7 +964,7 @@ fn run_one(
         }
         Some((listener, _)) => {
             let port = listener.local_addr()?.port();
-            eprintln!("itero: serving on http://127.0.0.1:{port}/");
+            crate::say!("itero: serving on http://127.0.0.1:{port}/");
             let api = format!("http://127.0.0.1:{port}/");
             let routes = http::router(
                 ws.clone(),
@@ -1069,7 +1073,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                     },
                 );
             }
-            eprintln!(
+            crate::say!(
                 "itero: running the workspaces on the machine's list ({}), each as it comes due (Ctrl-C stops)",
                 crate::machine::list_path()?.display()
             );
@@ -1081,13 +1085,13 @@ fn dispatch(cli: Cli) -> Result<()> {
                         let machine = machine.clone();
                         std::thread::spawn(move || {
                             if let Err(e) = machine.follow() {
-                                eprintln!("itero: following the machine's list stopped: {e:#}");
+                                crate::say!("itero: following the machine's list stopped: {e:#}");
                                 std::process::exit(1);
                             }
                         });
                     }
                     let port = listener.local_addr()?.port();
-                    eprintln!("itero: serving on http://127.0.0.1:{port}/");
+                    crate::say!("itero: serving on http://127.0.0.1:{port}/");
                     let mut served = vec![crate::engine::http::Served {
                         router: crate::engine::http::machine_router(machine.clone(), port),
                         listener,
@@ -1095,15 +1099,15 @@ fn dispatch(cli: Cli) -> Result<()> {
                     }];
                     if let Some(opened) = opened {
                         let at = opened.local_addr()?;
-                        eprintln!("itero: opened on {at}");
+                        crate::say!("itero: opened on {at}");
                         match &settings.tls {
                             Some(t) => {
-                                eprintln!("itero: HTTPS on {at}, with {}", t.cert.display());
+                                crate::say!("itero: HTTPS on {at}, with {}", t.cert.display());
                                 for w in crate::settings::tls_warnings(t) {
-                                    eprintln!("itero: warning: {w}");
+                                    crate::say!("itero: warning: {w}");
                                 }
                             }
-                            None => eprintln!(
+                            None => crate::say!(
                                 "itero: serving without TLS on {at}: tokens cross the network in clear unless a proxy in front adds TLS"
                             ),
                         }
@@ -1501,7 +1505,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
                 Err(Failure::Error(why)) => bail!(why),
                 Err(Failure::Lost(why)) => {
-                    eprintln!("error: {why}");
+                    crate::say!("error: {why}");
                     std::process::exit(LOST_EXIT);
                 }
             }

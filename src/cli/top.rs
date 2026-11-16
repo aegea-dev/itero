@@ -22,19 +22,19 @@ pub fn check(c: &Client, json: bool) -> Result<()> {
         } else {
             for (kind, list) in [("error", &v["errors"]), ("warning", &v["warnings"])] {
                 for p in list.as_array().into_iter().flatten() {
-                    eprintln!("{kind}: {} ({})", text(&p["message"]), text(&p["at"]));
+                    crate::say!("{kind}: {} ({})", text(&p["message"]), text(&p["at"]));
                 }
             }
-            eprintln!("{}", crate::problem::count_line(errors, warnings));
+            crate::say!("{}", crate::problem::count_line(errors, warnings));
         }
         std::process::exit(1);
     }
     show(json, &v, |v| {
         for n in v["notes"].as_array().into_iter().flatten() {
-            eprintln!("note: {}", text(n));
+            crate::say!("note: {}", text(n));
         }
         for w in v["warnings"].as_array().into_iter().flatten() {
-            eprintln!("warning: {} ({})", text(&w["message"]), text(&w["at"]));
+            crate::say!("warning: {} ({})", text(&w["message"]), text(&w["at"]));
         }
         let mut apart = false;
         for w in v["workflows"].as_array().into_iter().flatten() {

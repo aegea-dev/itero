@@ -57,7 +57,7 @@ pub fn cancel(ws: &Workspace, id: &str) -> Result<Cancelled, Fault> {
 /// event at its next start otherwise.
 pub fn nudge(ws: &Workspace) {
     if let Err(err) = events::nudge(ws) {
-        eprintln!(
+        crate::say!(
             "itero: saved, but could not wake the daemon ({}: {err}); it takes the message at its next start or wake",
             ws.wake_file().display()
         );
