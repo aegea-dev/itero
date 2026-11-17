@@ -1025,6 +1025,11 @@ fn end_one(
         return Ok(());
     };
     super::die_at("job-done");
+    // the log it renamed is opened anew for the next line (log.rs)
+    let job_of = &job.r.event.data["job"];
+    if job_of["action"] == worker::ROLL_LOG && job_of["version"].is_null() {
+        log.rolled();
+    }
     super::progress::clear(&ws.root, job.r.seq);
     if job.cancel.load(Ordering::SeqCst) {
         // stopped: saved so by the answer that stopped it, never to run again

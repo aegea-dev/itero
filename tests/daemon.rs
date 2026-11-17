@@ -1457,6 +1457,11 @@ fn past_its_size_the_log_is_rolled() {
     assert!(w.read(".itero/itero.log.1").contains("itero.log.full"));
     assert!(!w.d.path().join(".itero/itero.log.2").exists(), "logs = 1");
     assert!(w.read(".itero/itero.log").len() < 1024 * 4);
+    // what comes after the roll is in the new file, at once
+    w.emit("iş.geldi", json!({ "söz": "dönüşten sonra" }));
+    w.pass(NOW);
+    assert!(w.read(".itero/itero.log").contains("dönüşten sonra"));
+    assert!(!w.read(".itero/itero.log.1").contains("dönüşten sonra"));
 }
 
 #[test]
