@@ -82,14 +82,15 @@ ws=$(mktemp -d "${TMPDIR:-/tmp}/itero-soak.XXXXXX")
 mkdir "$ws/bin"
 cp "$itero" "$ws/bin/itero"
 itero="$ws/bin/itero"
-daemon='' driver='' sampler=''
+daemon='' driver='' sampler='' starts=0
 cleanup() {
 	for p in $driver $sampler; do kill "$p" 2>/dev/null || true; done
 	if [ -n "$daemon" ]; then
 		kill "$daemon" 2>/dev/null || true
 		wait "$daemon" 2>/dev/null || true
 	fi
-	[ -f "$ws/daemon.out" ] && cp "$ws/daemon.out" "$out/daemon.out"
+	# each start's own output, whole: daemon.1.out, daemon.2.out
+	for f in "$ws"/daemon.*.out; do [ -f "$f" ] && cp "$f" "$out/"; done
 	if [ -n "${SOAK_KEEP:-}" ]; then say "kept $ws"; else rm -rf "$ws"; fi
 }
 trap cleanup EXIT
@@ -126,33 +127,33 @@ export ITERO_NO_SECRET_STORE=1
 # starts it, and waits (60 s at most) for its API and, unless told not to,
 # its webhook
 start_daemon() { # [--no-serve]
-	: >"$ws/daemon.out.new"
-	(cd "$ws" && exec "$itero" ws daemon "$@") >"$ws/daemon.out.new" 2>&1 &
+	starts=$((starts + 1))
+	dout="$ws/daemon.$starts.out"
+	(cd "$ws" && exec "$itero" ws daemon "$@") >"$dout" 2>&1 &
 	daemon=$!
 	api='' hook=''
 	i=0
 	while :; do
 		if [ $# -eq 0 ] && [ -z "$api" ]; then
-			api=$(grep -o 'serving on http://127\.0\.0\.1:[0-9]*' "$ws/daemon.out.new" | head -1 | sed 's/.*serving on //') || :
+			api=$(grep -o 'serving on http://127\.0\.0\.1:[0-9]*' "$dout" | head -1 | sed 's/.*serving on //') || :
 		fi
 		if [ -z "$hook" ]; then
-			hook=$(grep -o 'listening on 127\.0\.0\.1:[0-9]*' "$ws/daemon.out.new" | head -1 | sed 's/.*listening on /http:\/\//') || :
+			hook=$(grep -o 'listening on 127\.0\.0\.1:[0-9]*' "$dout" | head -1 | sed 's/.*listening on /http:\/\//') || :
 		fi
 		{ [ $# -gt 0 ] || [ -n "$api" ]; } && [ -n "$hook" ] && break
 		i=$((i + 1))
 		[ "$i" -lt 600 ] || {
-			cat "$ws/daemon.out.new" >&2
+			cat "$dout" >&2
 			say "the daemon did not start in 60 s"
 			exit 1
 		}
 		kill -0 "$daemon" 2>/dev/null || {
-			cat "$ws/daemon.out.new" >&2
+			cat "$dout" >&2
 			say "the daemon ended as it started"
 			exit 1
 		}
 		sleep 0.1
 	done
-	cat "$ws/daemon.out.new" >>"$ws/daemon.out"
 }
 stop_daemon() {
 	kill "$daemon"
