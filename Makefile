@@ -217,12 +217,29 @@ SOAK_ENV = -e SOAK_MODE -e SOAK_SECS -e SOAK_RATE -e SOAK_BURST -e SOAK_BURST_SE
 soak: build ## The whole engine under load for an hour (SOAK_SECS), then a drain and a restart with a backlog (results in target/soak)
 	sh scripts/soak.sh
 
+SOAK_LINUX = docker run --rm --network none -v "$(CURDIR)/scripts:/scripts:ro" -v "$(CURDIR)/target/soak:/out" \
+	-e ITERO=/usr/local/bin/itero -e SOAK_OUT=/out $(SOAK_ENV) --entrypoint sh itero:dev-alpine /scripts/soak.sh
+
 .PHONY: soak-linux
 soak-linux: image ## The same, on Linux: in the Alpine image built from this tree (Docker)
 	mkdir -p target/soak
-	docker run --rm -v "$(CURDIR)/scripts:/scripts:ro" -v "$(CURDIR)/target/soak:/out" \
-		-e ITERO=/usr/local/bin/itero -e SOAK_OUT=/out $(SOAK_ENV) \
-		--entrypoint sh itero:dev-alpine /scripts/soak.sh
+	$(SOAK_LINUX)
+
+# Only the images need the internet, and they are built first, while
+# someone is there to see it; if they cannot be built, the Linux soaks are
+# skipped and the Mac ones still run. The soaks talk only to 127.0.0.1
+# (the Linux ones run with no network at all), so a connection lost during
+# the night changes nothing. Each soak runs even when one before it
+# failed; caffeinate keeps the Mac awake until the last one ends.
+.PHONY: soak-night
+soak-night: build ## All four in a row on a Mac, for a night: soak, slow, then both on Linux (about 2.5 hours)
+	mkdir -p target/soak
+	caffeinate -ims -w $$$$ & \
+	if sh scripts/image.sh; then linux=yes; else linux=; \
+		echo "soak-night: the images were not built: the Linux soaks are skipped" >&2; fi; \
+	sh scripts/soak.sh; \
+	SOAK_MODE=slow sh scripts/soak.sh; \
+	if [ -n "$$linux" ]; then $(SOAK_LINUX); SOAK_MODE=slow $(SOAK_LINUX); fi
 
 .PHONY: test-linux
 test-linux: ## Run the tests and clippy on Linux, in Docker
