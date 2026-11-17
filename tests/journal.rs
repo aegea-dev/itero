@@ -672,3 +672,95 @@ fn the_pass_syncs_at_checkpoints_and_every_other_writer_at_each_commit() {
         1
     );
 }
+
+/// #forget forgets in batches, each its own transaction: between two,
+/// another connection writes at once, so a large journal never keeps the
+/// webhook, `ws emit` or the pass waiting for the whole of it. What is
+/// left is what one transaction would leave.
+#[test]
+fn forgetting_goes_in_batches_with_writers_let_in_between() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = ws(d.path());
+    let j = Journal::open(&ws).unwrap();
+    let db = rusqlite::Connection::open(ws.journal()).unwrap();
+    let run = |id: &str, ended: &str| {
+        db.execute(
+            "INSERT INTO runs (id, workflow, pin, runtime, args, started, ended)
+             VALUES (?1, 'a', 'p', '{}', '{}', '2026-10-01T09:00:00Z', ?2)",
+            [id, ended],
+        )
+        .unwrap();
+        for k in 0..3 {
+            db.execute(
+                "INSERT INTO events (id, time, type, source, subject, data)
+                 VALUES (?1, '2026-10-01T09:00:00Z', 'run.step', 'itero', ?2, '{}')",
+                [format!("{id}-{k}"), format!("itero.run.{id}")],
+            )
+            .unwrap();
+        }
+    };
+    for i in 0..40 {
+        run(&format!("eski-{i}"), "2026-10-01T10:00:00Z");
+    }
+    run("yeni", "2026-10-20T10:00:00Z");
+    for i in 0..20 {
+        db.execute(
+            "INSERT INTO events (id, time, type, source, subject, data, handled)
+             VALUES (?1, '2026-10-01T08:00:00Z', 'a.b', 'outside', 'itero.app', '{}', '2026-10-01T08:00:01Z')",
+            [format!("mesaj-{i}")],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO events (id, time, type, source, subject, data, handled)
+             VALUES (?1, '2026-10-01T08:00:00Z', 'job', 'itero', 'itero.worker', '{}', '2026-10-01T08:00:02Z')",
+            [format!("iş-{i}")],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO jobs (seq, runs) VALUES (last_insert_rowid(), 1)",
+            [],
+        )
+        .unwrap();
+    }
+    let lets = std::cell::Cell::new(0);
+    let between = || {
+        // no waiting at all: a transaction held across this would refuse it
+        let other = rusqlite::Connection::open(ws.journal()).unwrap();
+        other.busy_timeout(std::time::Duration::ZERO).unwrap();
+        other
+            .execute_batch(&format!(
+                "BEGIN IMMEDIATE; INSERT OR REPLACE INTO meta (key, value) VALUES ('yoklama', '{}'); COMMIT;",
+                lets.get()
+            ))
+            .unwrap();
+        lets.set(lets.get() + 1);
+    };
+    j.prune_with("2026-10-14T00:00:00Z", 10, &between).unwrap();
+    // 163 events and 40 runs, 10 at a time
+    assert!(lets.get() >= 20, "{} batches", lets.get());
+    let ids: Vec<String> = db
+        .prepare("SELECT id FROM runs")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(ids, ["yeni"]);
+    let left: Vec<(String, String)> = db
+        .prepare("SELECT id, subject FROM events ORDER BY seq")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        left,
+        (0..3)
+            .map(|k| (format!("yeni-{k}"), "itero.run.yeni".to_string()))
+            .collect::<Vec<_>>()
+    );
+    let jobs: i64 = db
+        .query_row("SELECT COUNT(*) FROM jobs", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(jobs, 0);
+}

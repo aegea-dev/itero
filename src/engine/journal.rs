@@ -311,6 +311,10 @@ pub fn read_id(ws: &Workspace) -> Result<String> {
 /// How long a process waits for another's hold on the journal.
 const BUSY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// How many events, then runs, one transaction of `prune` forgets at most:
+/// small enough that a writer waiting for it waits milliseconds.
+const PRUNE_BATCH: i64 = 2000;
+
 /// Puts the journal in WAL mode. A new one is not in it yet, and two
 /// processes may make it at once: the switch takes an exclusive lock with
 /// one try, never waiting as `busy_timeout` does, so the wait is here. A
@@ -1735,44 +1739,110 @@ impl Journal {
         Ok(())
     }
 
-    /// Forgets what ended more than a day before `cutoff` says: runs that
-    /// ended before it, with their events and timers; jobs done before it;
-    /// and messages handled before it that no run under way may still
-    /// want (one newer than the oldest run under way's start is kept).
+    /// Forgets the runs that ended before `cutoff`, with their events and
+    /// timers, the jobs and messages handled before it (a message only
+    /// once no run under way may still want it, and not one a batch
+    /// keeps): in batches (`PRUNE_BATCH`), each its own transaction.
     pub fn prune(&self, cutoff: &str) -> Result<()> {
-        self.db.execute_batch("BEGIN IMMEDIATE")?;
+        self.prune_with(cutoff, PRUNE_BATCH, &|| {})
+    }
+
+    /// `prune` in batches of `batch` events, then of `batch` runs, each
+    /// its own transaction, `between` called after each: a large journal
+    /// never holds the write lock long, so the webhook, `ws emit` and the
+    /// pass write between two. After each it rests as long as the batch
+    /// took: a writer waiting on SQLite's busy handler tries again only
+    /// now and then, and finds the lock free half the time, not only in
+    /// the instant between two batches. The events go by `seq` range, so a batch
+    /// reads only its own; a run's row goes after its events. A crash
+    /// between two batches leaves part of what was to go, never anything
+    /// still wanted: the next `#forget` takes the rest.
+    pub fn prune_with(&self, cutoff: &str, batch: i64, between: &dyn Fn()) -> Result<()> {
+        // the runs to forget, kept for this connection alone: reading them
+        // takes no write lock on the journal
+        self.db.execute_batch(
+            "DROP TABLE IF EXISTS temp.gone; CREATE TEMP TABLE gone (id TEXT PRIMARY KEY);",
+        )?;
         let r = (|| -> Result<()> {
-            let ended = "SELECT id FROM runs WHERE ended IS NOT NULL AND ended < ?1";
             self.db.execute(
-                &format!("DELETE FROM timers WHERE run IN ({ended})"),
+                "INSERT INTO temp.gone SELECT id FROM runs WHERE ended IS NOT NULL AND ended < ?1",
                 params![cutoff],
             )?;
-            self.db.execute(
-                &format!(
-                    "DELETE FROM events WHERE subject IN (SELECT 'itero.run.' || id FROM ({ended}))"
-                ),
-                params![cutoff],
+            let (first, last): (i64, i64) = self.db.query_row(
+                "SELECT COALESCE(MIN(seq), 1), COALESCE(MAX(seq), 0) FROM events",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
-            self.db.execute(
-                "DELETE FROM runs WHERE ended IS NOT NULL AND ended < ?1",
-                params![cutoff],
-            )?;
-            self.db.execute(
-                "DELETE FROM jobs WHERE seq IN (SELECT seq FROM events WHERE subject = 'itero.worker' AND handled IS NOT NULL AND handled < ?1)",
-                params![cutoff],
-            )?;
-            self.db.execute(
-                "DELETE FROM events WHERE subject = 'itero.worker' AND handled IS NOT NULL AND handled < ?1",
-                params![cutoff],
-            )?;
-            self.db.execute(
-                "DELETE FROM events WHERE subject = 'itero.app' AND handled IS NOT NULL AND handled < ?1
-                   AND time < COALESCE((SELECT MIN(started) FROM runs WHERE ended IS NULL), '9999')
-                   AND seq NOT IN (SELECT seq FROM kept)",
-                params![cutoff],
-            )?;
+            let mut from = first;
+            while from <= last {
+                let to = from + batch - 1;
+                let took = std::time::Instant::now();
+                self.in_transaction(|db| {
+                    db.execute(
+                        "DELETE FROM events WHERE seq BETWEEN ?1 AND ?2
+                         AND substr(subject, 1, 10) = 'itero.run.'
+                         AND substr(subject, 11) IN (SELECT id FROM temp.gone)",
+                        params![from, to],
+                    )?;
+                    db.execute(
+                        "DELETE FROM jobs WHERE seq IN (SELECT seq FROM events WHERE seq BETWEEN ?1 AND ?2
+                         AND subject = 'itero.worker' AND handled IS NOT NULL AND handled < ?3)",
+                        params![from, to, cutoff],
+                    )?;
+                    db.execute(
+                        "DELETE FROM events WHERE seq BETWEEN ?1 AND ?2
+                         AND subject = 'itero.worker' AND handled IS NOT NULL AND handled < ?3",
+                        params![from, to, cutoff],
+                    )?;
+                    db.execute(
+                        "DELETE FROM events WHERE seq BETWEEN ?1 AND ?2
+                         AND subject = 'itero.app' AND handled IS NOT NULL AND handled < ?3
+                         AND time < COALESCE((SELECT MIN(started) FROM runs WHERE ended IS NULL), '9999')
+                         AND seq NOT IN (SELECT seq FROM kept)",
+                        params![from, to, cutoff],
+                    )?;
+                    Ok(())
+                })?;
+                between();
+                std::thread::sleep(took.elapsed());
+                from = to + 1;
+            }
+            let runs: i64 =
+                self.db
+                    .query_row("SELECT COALESCE(MAX(rowid), 0) FROM temp.gone", [], |r| {
+                        r.get(0)
+                    })?;
+            let mut from = 1;
+            while from <= runs {
+                let to = from + batch - 1;
+                let took = std::time::Instant::now();
+                self.in_transaction(|db| {
+                    let ids = "SELECT id FROM temp.gone WHERE rowid BETWEEN ?1 AND ?2";
+                    db.execute(
+                        &format!("DELETE FROM timers WHERE run IN ({ids})"),
+                        params![from, to],
+                    )?;
+                    db.execute(
+                        &format!("DELETE FROM runs WHERE id IN ({ids})"),
+                        params![from, to],
+                    )?;
+                    Ok(())
+                })?;
+                between();
+                std::thread::sleep(took.elapsed());
+                from = to + 1;
+            }
             Ok(())
         })();
+        self.db.execute_batch("DROP TABLE IF EXISTS temp.gone;")?;
+        r
+    }
+
+    /// `f` in one transaction that takes the write lock at its start:
+    /// committed when it ends well, else rolled back.
+    fn in_transaction(&self, f: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
+        self.db.execute_batch("BEGIN IMMEDIATE")?;
+        let r = f(&self.db);
         match r {
             Ok(()) => self.db.execute_batch("COMMIT")?,
             Err(_) => self.db.execute_batch("ROLLBACK")?,
