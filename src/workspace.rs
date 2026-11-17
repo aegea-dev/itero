@@ -108,7 +108,7 @@ impl RawLimits {
         Ok(Limits {
             workflows: count("workflows", self.workflows, 100)?,
             runs: count("runs", self.runs, 1000)?,
-            steps: count("steps", self.steps, 8)?,
+            steps: count("steps", self.steps, 64)?,
             space: size("space", self.space, 1 << 30)?,
             keep: duration("keep", self.keep, DAY)?,
             log: size("log", self.log, 10 << 20)?,

@@ -204,7 +204,7 @@ fn meta_is_free_and_limits_have_defaults() {
     let ws = simple(d.path());
     assert!(ws.meta.is_empty());
     let l = &ws.limits;
-    assert_eq!((l.workflows, l.runs, l.steps, l.logs), (100, 1000, 8, 3));
+    assert_eq!((l.workflows, l.runs, l.steps, l.logs), (100, 1000, 64, 3));
     assert_eq!((l.space, l.log), (1 << 30, 10 << 20));
     assert_eq!(l.keep, std::time::Duration::from_secs(86_400));
     assert_eq!(l.quiet, std::time::Duration::from_secs(600));
