@@ -203,3 +203,27 @@ fn the_lock_files_of_jobs_done_are_forgotten_and_every_failure_said() {
     );
     assert_eq!(left(), ["4.lock", "6.lock", "7.lock", "notlar.txt"]);
 }
+
+/// A job that ends while #forget sweeps: the pass removes its file as it
+/// ends, between #forget's look at the folder and its removal. Gone is
+/// what #forget wanted: no failure.
+#[test]
+fn a_lock_file_gone_while_forget_sweeps_is_no_failure() {
+    use itero::engine::lock::{forget_jobs, remove_job, take_job};
+    let d = tempfile::tempdir().unwrap();
+    for seq in [3, 4] {
+        drop(take_job(d.path(), seq).unwrap().unwrap());
+    }
+    // as #forget asks whether job 3 is done, the pass ends it
+    forget_jobs(d.path(), &|seq| {
+        remove_job(d.path(), seq).unwrap();
+        Ok(true)
+    })
+    .unwrap();
+    assert_eq!(
+        std::fs::read_dir(d.path().join(".itero/jobs"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
