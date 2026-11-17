@@ -103,7 +103,10 @@ itero carries three internal workflows and runs them as if they were in
 - past `space`, the daemon sends `itero.space.full` and logs an `error`
   (it measures `.itero/` at most once a second);
   `keep` forgets what it can, and until there is room no new run starts
-  but internal ones;
+  but internal ones. The log and its rolled copies count too, up to
+  `log` times `logs + 1`, and forgetting does not make them smaller:
+  limits that let them take all of `space` keep it full, and
+  `itero ws check` and the daemon's start warn of them;
 - past `log`, the daemon sends `itero.log.full` once, and again after the
   log is rolled and fills up;
 - a step quiet past `quiet`, or running past `most`, is stopped and runs

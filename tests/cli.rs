@@ -1695,3 +1695,34 @@ fn emit_refuses_a_file_it_cannot_use_and_sends_nothing() {
     }
     assert!(events_waiting(d.path()).is_empty());
 }
+
+/// The log and its rolled copies may take `log × (logs + 1)` of `.itero/`;
+/// limits that let them reach `space` keep it full for good, and check
+/// says so. Limits that leave room say nothing.
+#[test]
+fn limits_that_let_the_log_fill_space_are_warned() {
+    let d = workspace();
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"limits": {"log": "10MB", "space": "40MB"}}"#,
+    );
+    let o = itero(d.path(), &["ws", "check"]);
+    assert!(o.status.success(), "{}", err(&o));
+    assert!(err(&o).contains("/limits)\n"), "{}", err(&o));
+    assert!(
+        err(&o).contains(
+            "warning: the log and its 3 rolled copies may take 40MB, as much as space (40MB): .itero/ would stay full, and only internal runs would start ("
+        ),
+        "{}",
+        err(&o)
+    );
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"limits": {"log": "10MB", "logs": 2, "space": "40MB"}}"#,
+    );
+    let o = itero(d.path(), &["ws", "check"]);
+    assert!(o.status.success(), "{}", err(&o));
+    assert!(!err(&o).contains("rolled copies"), "{}", err(&o));
+}

@@ -83,9 +83,10 @@ errors in it.
 
 A warning does not fail the check. It says what is likely a mix-up: a
 secret that is also an environment variable, an `#ai` key written out that
-looks like a token (write it as a `$$NAME`), or an arg `#notify` does not
+looks like a token (write it as a `$$NAME`), an arg `#notify` does not
 read (it takes `title`, `text`, `subtitle`, `sound`, `url`, `buttons`,
-`wait` and `data`):
+`wait` and `data`), or [`limits`](/reference/itero-config/#limits) that
+let the log and its rolled copies take all of `space`:
 
 ```
 warning: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Price (home/workflows/price/steps/#notify)

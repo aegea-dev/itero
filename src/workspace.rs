@@ -119,6 +119,39 @@ impl RawLimits {
     }
 }
 
+impl Limits {
+    /// What is allowed but cannot work: `ws check` and the daemon's start
+    /// say it. The log and its rolled copies count in `.itero/`, and
+    /// `#forget` cannot make them smaller: at `space`, it stays full.
+    pub fn warnings(&self) -> Vec<String> {
+        let log = self.log.saturating_mul(self.logs as u64 + 1);
+        let than = match log.cmp(&self.space) {
+            std::cmp::Ordering::Less => return vec![],
+            std::cmp::Ordering::Equal => "as much as",
+            std::cmp::Ordering::Greater => "more than",
+        };
+        let copies = match self.logs {
+            1 => "1 rolled copy".to_string(),
+            n => format!("{n} rolled copies"),
+        };
+        vec![format!(
+            "the log and its {copies} may take {}, {than} space ({}): .itero/ would stay full, and only internal runs would start",
+            size_text(log),
+            size_text(self.space)
+        )]
+    }
+}
+
+/// A size as `limits` writes it: in the largest unit it is whole in.
+fn size_text(bytes: u64) -> String {
+    for (shift, unit) in [(30, "GB"), (20, "MB"), (10, "KB")] {
+        if bytes.is_multiple_of(1 << shift) {
+            return format!("{}{unit}", bytes >> shift);
+        }
+    }
+    format!("{bytes} bytes")
+}
+
 /// `"30m"`: a duration of at least a second; `default` is in seconds.
 fn duration(name: &str, v: Option<String>, default: u64) -> Result<std::time::Duration> {
     let Some(t) = v else {

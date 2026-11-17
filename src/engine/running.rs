@@ -75,9 +75,11 @@ impl Running {
                 "open_files": super::files::limit().ok(),
             }),
         );
-        // a $$NAME both a secret and a variable: said once, at the start
-        for name in super::secrets::shadowed(&ws)? {
-            let why = super::secrets::shadow_warning(&name);
+        // a $$NAME both a secret and a variable, limits that cannot
+        // work: said once, at the start
+        let shadowed = super::secrets::shadowed(&ws)?;
+        let shadowed = shadowed.iter().map(|n| super::secrets::shadow_warning(n));
+        for why in shadowed.chain(ws.limits.warnings()) {
             crate::say!("itero: warning: {why}");
             log.write("warning", json!({ "why": why }));
         }
