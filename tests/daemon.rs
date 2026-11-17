@@ -505,6 +505,96 @@ fn no_more_steps_run_at_once_than_the_limit() {
     assert!(most <= 2, "{most} at once: {}", ws.read("sayılar.txt"));
 }
 
+/// `itero ws daemon --once` in `ws`, with at most `files` open (soft
+/// limit), and the hard limit `files` too when `hard`: then it cannot
+/// raise it.
+fn once_with_files(ws: &Ws, files: u32, hard: bool) -> std::process::Output {
+    let limit = match hard {
+        true => format!("ulimit -S -n {files} && ulimit -H -n {files}"),
+        false => format!("ulimit -S -n {files}"),
+    };
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "{limit} && exec \"$0\" ws daemon --once --now {NOW}"
+        ))
+        .arg(exe())
+        .current_dir(ws.d.path())
+        .env("ITERO_NO_SECRET_STORE", "1")
+        .output()
+        .unwrap()
+}
+
+/// As many steps run at once as the daemon's open files allow (here, with
+/// 48 it cannot raise, one): the others wait for one to end, none fails,
+/// and the pass says so once.
+#[test]
+fn steps_wait_for_their_share_of_the_open_files() {
+    let ws = Ws::with(r#"{"limits": {"steps": 100}}"#);
+    ws.flow(
+        "kalabalık",
+        json!({"on": [{ "event": "sıra.geldi" }], "steps": ["#say"]}),
+    );
+    // each says how many run beside it, itself counted
+    ws.action(
+        "say",
+        "mkdir -p koşan; touch koşan/$$; ls koşan | wc -l >> sayılar.txt; sleep 0.05; rm koşan/$$",
+    );
+    for i in 0..30 {
+        ws.emit("sıra.geldi", json!({ "sıra": i }));
+    }
+    let o = once_with_files(&ws, 48, true);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{err}\n{:#?}", ws.log());
+    let failed: Vec<_> = ws
+        .runs()
+        .into_iter()
+        .filter(|r| steps::status(&r.runtime) != "done")
+        .map(|r| r.runtime.state.clone())
+        .collect();
+    assert!(failed.is_empty(), "{failed:#?}");
+    assert_eq!(ws.runs().len(), 30);
+    let most = ws
+        .read("sayılar.txt")
+        .split_whitespace()
+        .map(|n| n.parse::<usize>().unwrap())
+        .max()
+        .unwrap();
+    assert_eq!(most, 1, "{}", ws.read("sayılar.txt"));
+    let told: Vec<_> = ws
+        .log()
+        .into_iter()
+        .filter(|l| l["event"] == "warning" && l["why"].as_str().unwrap().contains("open files"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:#?}");
+}
+
+/// The daemon raises its soft limit on open files to its hard limit, so
+/// the system's default does not cap how many steps run at once: here 60
+/// run side by side, each waiting until all are there.
+#[test]
+fn a_daemon_raises_its_limit_on_open_files() {
+    let ws = Ws::with(r#"{"limits": {"steps": 100}}"#);
+    ws.flow(
+        "kalabalık",
+        json!({"on": [{ "event": "sıra.geldi" }], "steps": ["#hep"]}),
+    );
+    ws.action(
+        "hep",
+        "mkdir -p koşan; touch koşan/$$; i=0
+         while [ $(ls koşan | wc -l) -lt 60 ]; do
+           i=$((i + 1)); [ $i -gt 600 ] && { echo hepsi gelmedi >&2; exit 1; }; sleep 0.05
+         done; echo hep",
+    );
+    for i in 0..60 {
+        ws.emit("sıra.geldi", json!({ "sıra": i }));
+    }
+    let o = once_with_files(&ws, 48, false);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{err}\n{:#?}", ws.log());
+    assert_eq!(ws.statuses(), vec!["done"; 60], "{err}");
+}
+
 #[test]
 fn any_waits_for_the_slow_step_when_the_fast_one_breaks() {
     let ws = Ws::new();

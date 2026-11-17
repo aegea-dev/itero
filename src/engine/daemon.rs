@@ -36,6 +36,10 @@ pub struct Pass {
     /// Jobs not started: a copy of each still runs, one a daemon that died
     /// left, until it sees its parent gone. The next pass is in a second.
     pub elsewhere: usize,
+    /// Jobs not started: as many steps ran as the daemon's open files
+    /// allow, or it had none left for their workers. Each starts once a
+    /// worker ends, or at the next pass, in a second.
+    pub no_files: usize,
     /// It stopped at its cap of events with more waiting.
     pub more: bool,
 }
@@ -178,7 +182,8 @@ pub fn run_loop(
         let next = match &pass {
             Ok(p) if p.more => Ok(Some(now)),
             // a job a copy of which still runs is looked at again a second on
-            Ok(p) if p.elsewhere > 0 => Ok(Some(now + chrono::Duration::seconds(1))),
+            // as is one with no open files for it
+            Ok(p) if p.elsewhere + p.no_files > 0 => Ok(Some(now + chrono::Duration::seconds(1))),
             Ok(_) => next_due(ws, Utc::now()),
             Err(_) => Ok(Some(now + AFTER_FAILURE)),
         };
@@ -739,7 +744,7 @@ impl<'s, 'e> Workers<'s, 'e> {
         r: Recorded,
         run: i64,
         step: Result<StepRun, String>,
-        lock: std::fs::File,
+        (share, lock, pipes): (super::files::Share, std::fs::File, Pipes),
     ) {
         let seq = r.seq;
         let cancel = Arc::new(AtomicBool::new(false));
@@ -755,7 +760,7 @@ impl<'s, 'e> Workers<'s, 'e> {
         });
         self.scope.spawn(move || {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match &step {
-                Ok(step) => spawn_worker(exe, step, said, &stop, lock),
+                Ok(step) => spawn_worker(exe, step, said, &stop, lock, pipes),
                 Err(why) => Err(Failure::Error(why.clone())),
             }))
             .unwrap_or_else(|_| Err(Failure::Error("the worker's runner panicked".into())));
@@ -764,6 +769,8 @@ impl<'s, 'e> Workers<'s, 'e> {
             if matches!(outcome, Err(Failure::Lost(_))) {
                 super::lock::wait_for_job(&job_root, seq, READERS);
             }
+            // its open files are closed: another may start
+            drop(share);
             // the pass holds the receiver until every worker has sent
             let _ = tx.send((seq, outcome));
             let _ = wake.send(());
@@ -855,6 +862,8 @@ fn work(
     let mut taken = 0;
     // the jobs said this pass to run elsewhere still
     let mut told = std::collections::BTreeSet::new();
+    // no open files left for a job was said this pass
+    let mut short = false;
     loop {
         fire_timers(j, clock)?;
         loop {
@@ -921,18 +930,34 @@ fn work(
         // stopped during counts too
         let mut saved = false;
         for r in waiting {
+            // as many steps run, in all of this daemon's workspaces, as its
+            // open files allow (files.rs): the rest wait for one to end
+            let share = match super::files::worker_share() {
+                Ok(share) => share,
+                Err(why) => {
+                    no_files(log, pass, &mut short, r.seq, &why);
+                    break;
+                }
+            };
             // a copy of it still runs, left by a daemon that died: not now
             // and not counted; the next pass looks again in a second
-            let Some(lock) = super::lock::take_job(&ws.root, r.seq).map_err(anyhow::Error::msg)?
-            else {
-                if told.insert(r.seq) {
-                    pass.elsewhere += 1;
-                    log.write(
-                        "warning",
-                        json!({ "why": format!("job {} not started: a copy of it still runs", r.seq) }),
-                    );
+            let lock = match super::lock::take_job(&ws.root, r.seq) {
+                Ok(Some(lock)) => lock,
+                Ok(None) => {
+                    if told.insert(r.seq) {
+                        pass.elsewhere += 1;
+                        log.write(
+                            "warning",
+                            json!({ "why": format!("job {} not started: a copy of it still runs", r.seq) }),
+                        );
+                    }
+                    continue;
                 }
-                continue;
+                Err(e) if e.out_of_files => {
+                    no_files(log, pass, &mut short, r.seq, &e.why);
+                    break;
+                }
+                Err(e) => return Err(e.into()),
             };
             let (runs, lost) = j.job_runs(r.seq)?;
             if runs >= MAX_RUNS {
@@ -942,12 +967,23 @@ fn work(
                 remove_lock(ws, r.seq, log);
                 pass.worked += 1;
                 saved = true;
-            } else {
-                j.start_job(r.seq)?;
-                super::die_at("job-started");
-                let step = step_run(ws, j, &r.event.data, &clock.stamp());
-                w.start(&ws.root, r, runs + 1, step, lock);
+                continue;
             }
+            // what its worker needs of the daemon's open files is taken
+            // before its run is counted: a job with none left waits, not
+            // counted, until a worker ends and gives its files back
+            let pipes = match Pipes::new() {
+                Ok(p) => p,
+                Err(e) if super::files::out_of(&e) => {
+                    no_files(log, pass, &mut short, r.seq, &e.to_string());
+                    break;
+                }
+                Err(e) => return Err(anyhow!("cannot make a worker's pipes: {e}")),
+            };
+            j.start_job(r.seq)?;
+            super::die_at("job-started");
+            let step = step_run(ws, j, &r.event.data, &clock.stamp());
+            w.start(&ws.root, r, runs + 1, step, (share, lock, pipes));
         }
         if saved {
             continue;
@@ -956,6 +992,18 @@ fn work(
             return Ok(());
         }
         end_one(ws, j, w, clock, pass, log, until_timer(j, clock)?)?;
+    }
+}
+
+/// Job `seq` not started: no open files left for it, or as many steps run
+/// as the open files allow. Counted, and said once a pass (`short`), in the
+/// log and on stderr.
+fn no_files(log: &Log, pass: &mut Pass, short: &mut bool, seq: i64, why: &str) {
+    pass.no_files += 1;
+    if !std::mem::replace(short, true) {
+        let why = format!("job {seq} waits for open files ({why}); jobs start again as steps end");
+        crate::say!("itero: warning: {why}");
+        log.write("warning", json!({ "why": why }));
     }
 }
 
@@ -1882,6 +1930,29 @@ const READERS: std::time::Duration = std::time::Duration::from_secs(2);
 /// How often a running worker looks whether its step was stopped.
 const CANCEL_CHECK: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// A worker's stdin, a socket its step and lock come over (handover.rs),
+/// and the pipes of its stdout and stderr: made by the pass before the
+/// job's run is counted, so a daemon out of open files has the job wait
+/// instead of failing it.
+struct Pipes {
+    ours: std::os::unix::net::UnixStream,
+    theirs: std::os::unix::net::UnixStream,
+    out: (std::io::PipeReader, std::io::PipeWriter),
+    err: (std::io::PipeReader, std::io::PipeWriter),
+}
+
+impl Pipes {
+    fn new() -> std::io::Result<Pipes> {
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair()?;
+        Ok(Pipes {
+            ours,
+            theirs,
+            out: std::io::pipe()?,
+            err: std::io::pipe()?,
+        })
+    }
+}
+
 /// Runs `itero worker` on a step in its own process group, with the
 /// daemon's own folder first on its PATH. Quiet past its `quiet`, or
 /// running past its `most`, the group is killed and the job is lost: it
@@ -1893,6 +1964,7 @@ fn spawn_worker(
     said: Arc<dyn Fn(&str) + Send + Sync>,
     cancel: &AtomicBool,
     lock: std::fs::File,
+    pipes: Pipes,
 ) -> Result<Outcome, Failure> {
     if cancel.load(Ordering::SeqCst) {
         return Err(Failure::Lost(journal::JOB_STOPPED.into()));
@@ -1900,20 +1972,24 @@ fn spawn_worker(
     // its stdin is a socket: the step and the job's lock come over it
     // (handover.rs), so nothing runs between fork and exec, and starting
     // it is a posix_spawn, not a fork of the daemon
-    let (ours, theirs) = std::os::unix::net::UnixStream::pair()
-        .map_err(|e| format!("cannot start a worker: {e}"))?;
+    let Pipes {
+        ours,
+        theirs,
+        out: (stdout, out_end),
+        err: (stderr, err_end),
+    } = pipes;
     let mut c = Command::new(exe);
     c.arg("worker")
         .env("PATH", crate::connectors::supervise::path_with(exe))
         .stdin(Stdio::from(std::os::fd::OwnedFd::from(theirs)))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdout(Stdio::from(out_end))
+        .stderr(Stdio::from(err_end));
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut c, 0);
     let mut child = c
         .spawn()
         .map_err(|e| format!("cannot start a worker: {e}"))?;
-    // `c` holds the worker's end of the socket until it goes
+    // `c` holds the worker's ends of the socket and pipes until it goes
     drop(c);
     let text = serde_json::to_string(step).map_err(|e| e.to_string())?;
     let sent = super::handover::send(&ours, text.as_bytes(), std::os::fd::AsFd::as_fd(&lock));
@@ -1943,7 +2019,7 @@ fn spawn_worker(
     let heard = Arc::new(Mutex::new(started));
     let out = {
         let heard = heard.clone();
-        let stdout = child.stdout.take();
+        let stdout = Some(stdout);
         std::thread::spawn(move || {
             let partial = Mutex::new(Vec::new());
             let buf = worker::read_telling(stdout, &|piece| {
@@ -1966,12 +2042,7 @@ fn spawn_worker(
                 .to_vec()
         })
     };
-    let err = read(
-        child
-            .stderr
-            .take()
-            .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
-    );
+    let err = read(Some(Box::new(stderr) as Box<dyn std::io::Read + Send>));
     // when the group is killed, the readers end as its pipes close; they
     // are waited for a little only, in case something outside the group
     // holds them
@@ -2138,7 +2209,8 @@ mod tests {
             })
         };
         let lock = super::super::lock::take_job(d.path(), 1).unwrap().unwrap();
-        let outcome = spawn_worker(&exe, &step, said, &cancel, lock);
+        let pipes = Pipes::new().unwrap();
+        let outcome = spawn_worker(&exe, &step, said, &cancel, lock, pipes);
         assert!(
             matches!(&outcome, Err(Failure::Lost(w)) if w == journal::JOB_STOPPED),
             "{outcome:?}"

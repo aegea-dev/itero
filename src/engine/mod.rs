@@ -5,6 +5,7 @@ pub mod alarm;
 pub mod channels;
 pub mod daemon;
 pub mod events;
+pub mod files;
 pub mod follow;
 #[cfg(unix)]
 pub mod handover;

@@ -108,3 +108,10 @@ itero carries three internal workflows and runs them as if they were in
   log is rolled and fills up;
 - a step quiet past `quiet`, or running past `most`, is stopped and runs
   again, up to 3 times; then its run ends in error.
+- past `steps` running at once, a step waits for one to end. So it does
+  past what the daemon's open files allow, all its workspaces together:
+  it raises its limit on open files to the most the system lets it have
+  as it starts, keeps a quarter of them (64 at least) for the rest, and
+  counts 7 for each running step. Under macOS's default of 256, which a
+  daemon raises, that would be 27. The log says it once a pass, as a
+  `warning`.

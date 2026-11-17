@@ -652,14 +652,15 @@ fn report(pass: &Result<crate::engine::daemon::Pass>, log: Option<&crate::engine
         return;
     }
     match pass {
-        Ok(p) if p.delivered + p.worked + p.lost + p.stopped + p.elsewhere > 0 => {
+        Ok(p) if p.delivered + p.worked + p.lost + p.stopped + p.elsewhere + p.no_files > 0 => {
             crate::say!(
-                "{} events, {} jobs, {} lost (run again), {} stopped, {} running elsewhere",
+                "{} events, {} jobs, {} lost (run again), {} stopped, {} running elsewhere, {} waiting for open files",
                 p.delivered,
                 p.worked,
                 p.lost,
                 p.stopped,
-                p.elsewhere
+                p.elsewhere,
+                p.no_files
             )
         }
         Ok(_) => {}
@@ -1000,6 +1001,20 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
     ) {
         ignore_sigpipe();
+    }
+    if matches!(
+        cli.cmd,
+        Cmd::Daemon { .. }
+            | Cmd::Workspace {
+                cmd: WorkspaceCmd::Daemon { .. },
+                ..
+            }
+    ) {
+        // each running step holds a few open files: the system's default
+        // (256 on macOS) would cap how many run at once
+        if let Err(e) = crate::engine::files::raise_limit() {
+            crate::say!("itero: warning: cannot raise the limit on open files: {e}");
+        }
     }
     match cli.cmd {
         Cmd::Daemon { all: true, .. } => bail!(

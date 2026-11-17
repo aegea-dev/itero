@@ -32,30 +32,39 @@ pub enum Refused {
 /// written in it; the lock ends when the result drops.
 pub fn take_file(path: &Path, who: &str) -> Result<DaemonLock, Refused> {
     let at = |e: std::io::Error| Refused::Failed(format!("{}: {e}", path.display()));
+    match lock_file(path, who) {
+        Ok(Ok(file)) => Ok(DaemonLock { file }),
+        Ok(Err(holder)) => Err(Refused::Held(holder)),
+        Err(e) => Err(at(e)),
+    }
+}
+
+/// The file `path` locked, with `who` written in it; else what its holder
+/// wrote in it.
+fn lock_file(path: &Path, who: &str) -> std::io::Result<Result<File, String>> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(at)?;
+        std::fs::create_dir_all(dir)?;
     }
     let mut file = File::options()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(path)
-        .map_err(at)?;
+        .open(path)?;
     // SAFETY: flock on a descriptor this function owns
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         let e = std::io::Error::last_os_error();
         if e.raw_os_error() != Some(libc::EWOULDBLOCK) {
-            return Err(at(e));
+            return Err(e);
         }
         let mut holder = String::new();
         let _ = file.read_to_string(&mut holder);
-        return Err(Refused::Held(holder.trim().to_string()));
+        return Ok(Err(holder.trim().to_string()));
     }
-    file.set_len(0).map_err(at)?;
-    file.rewind().map_err(at)?;
-    file.write_all(who.as_bytes()).map_err(at)?;
-    Ok(DaemonLock { file })
+    file.set_len(0)?;
+    file.rewind()?;
+    file.write_all(who.as_bytes())?;
+    Ok(Ok(file))
 }
 
 fn path(ws: &Workspace) -> std::path::PathBuf {
@@ -118,13 +127,33 @@ fn job_path(root: &Path, seq: i64) -> std::path::PathBuf {
 /// until it sees its parent gone. The processes that run the job hold it:
 /// the worker is given it over its stdin (handover.rs), its action's
 /// processes inherit it.
-pub fn take_job(root: &Path, seq: i64) -> Result<Option<File>, String> {
-    match take_file(&job_path(root, seq), &format!("job {seq}")) {
-        Ok(l) => Ok(Some(l.into_file())),
-        Err(Refused::Held(_)) => Ok(None),
-        Err(Refused::Failed(why)) => Err(why),
+pub fn take_job(root: &Path, seq: i64) -> Result<Option<File>, JobLockFailed> {
+    let path = job_path(root, seq);
+    match lock_file(&path, &format!("job {seq}")) {
+        Ok(Ok(file)) => Ok(Some(file)),
+        Ok(Err(_)) => Ok(None),
+        Err(e) => Err(JobLockFailed {
+            out_of_files: super::files::out_of(&e),
+            why: format!("{}: {e}", path.display()),
+        }),
     }
 }
+
+/// Why a job's lock could not be taken.
+#[derive(Debug)]
+pub struct JobLockFailed {
+    pub why: String,
+    /// The daemon has no open files left: the job can wait for some.
+    pub out_of_files: bool,
+}
+
+impl std::fmt::Display for JobLockFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&self.why)
+    }
+}
+
+impl std::error::Error for JobLockFailed {}
 
 /// Waits, for `wait` at most, until nothing holds job `seq`'s lock. One held
 /// past that is a copy still running: the next pass looks again.
