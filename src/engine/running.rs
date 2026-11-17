@@ -71,6 +71,8 @@ impl Running {
                 "pid": d.pid,
                 "host": d.host,
                 "itero": d.itero,
+                // how many it may have: each running step holds a few
+                "open_files": super::files::limit().ok(),
             }),
         );
         // a $$NAME both a secret and a variable: said once, at the start
