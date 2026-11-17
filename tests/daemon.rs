@@ -2038,6 +2038,29 @@ fn a_running_jobs_processes_hold_its_lock_until_they_end() {
     );
 }
 
+/// A job done never runs again: its lock file goes with it, so
+/// `.itero/jobs` holds the jobs that may still run, not every job run.
+#[test]
+fn a_job_done_leaves_no_lock_file() {
+    let ws = Ws::new();
+    ws.flow(
+        "iki",
+        json!({"on": [{ "event": "sipariş.verildi" }], "steps": ["#bir", "#kırık"]}),
+    );
+    ws.action("bir", "echo bir");
+    ws.action("kırık", "echo bozuldu >&2; exit 1");
+    for i in 0..3 {
+        ws.emit("sipariş.verildi", json!({ "sıra": i }));
+    }
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["error"; 3]);
+    let left: Vec<_> = std::fs::read_dir(ws.d.path().join(".itero/jobs"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
 #[test]
 fn forget_removes_the_locks_of_jobs_done_and_keeps_those_that_may_run() {
     let ws = Ws::new();
@@ -2055,10 +2078,10 @@ fn forget_removes_the_locks_of_jobs_done_and_keeps_those_that_may_run() {
     ws.pass(NOW);
     assert_eq!(ws.statuses(), vec!["done"]);
     assert!(!ws.d.path().join(".itero/jobs/99.lock").exists());
-    assert!(
-        ws.d.path().join(".itero/jobs/3.lock").exists(),
-        "its own job waited as it looked"
-    );
+    // its own job, running as it looked, was kept by it, and went once
+    // the job was done (a_job_done_leaves_no_lock_file); which may run is
+    // forget_jobs' own test (tests/lock.rs)
+    assert!(!ws.d.path().join(".itero/jobs/3.lock").exists());
 }
 
 /// The manager is a function the pass calls, not a process it starts:

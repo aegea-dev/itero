@@ -100,7 +100,8 @@ itero carries three internal workflows and runs them as if they were in
 - past `runs` under way, an event that would start a run waits its turn;
 - past `workflows`, `itero ws check` and each of the daemon's passes stop
   with an error naming the limit;
-- past `space`, the daemon sends `itero.space.full` and logs an `error`;
+- past `space`, the daemon sends `itero.space.full` and logs an `error`
+  (it measures `.itero/` at most once a second);
   `keep` forgets what it can, and until there is room no new run starts
   but internal ones;
 - past `log`, the daemon sends `itero.log.full` once, and again after the
