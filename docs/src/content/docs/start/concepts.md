@@ -69,7 +69,7 @@ itero daemon  (for each workspace it runs)
 └─ every pass:
      1. events     → start new runs, wake waiting runs
      2. runs       → decide each run's next steps
-     3. steps      → run each step's action, side by side (up to 8 at a time),
+     3. steps      → run each step's action, side by side (up to 64 at a time),
                      each as its own process
      4. results    → saved as each step ends, and decided on at once,
                      while other steps still run and new events come in

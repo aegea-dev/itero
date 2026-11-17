@@ -69,7 +69,7 @@ anything.
 |---|---|---|
 | `workflows` | workflows, the internal ones apart; more is an error | `100` |
 | `runs` | runs under way at once, the internal ones apart; past it, events wait their turn | `1000` |
-| `steps` | steps running at once, no more than the daemon's open files allow | `8` |
+| `steps` | steps running at once, no more than the daemon's open files allow | `64` |
 | `space` | what `.itero/` may take (`KB`, `MB`, `GB`) | `"1GB"` |
 | `keep` | how long ended runs and their events are kept | `"1d"` |
 | `log` | the log's size before it is rolled | `"10MB"` |

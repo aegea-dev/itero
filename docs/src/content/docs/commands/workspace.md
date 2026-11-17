@@ -165,7 +165,7 @@ workspace
   limits
     workflows 100
     runs 1000
-    steps 8
+    steps 64
     space 1073741824
     keep 1day
     log 10485760
