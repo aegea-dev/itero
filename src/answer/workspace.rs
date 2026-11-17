@@ -205,6 +205,12 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
         .iter()
         .map(|n| Problem::new("", crate::engine::secrets::shadow_warning(n)))
         .collect();
+    warnings.extend(
+        ws.limits
+            .warnings()
+            .into_iter()
+            .map(|w| Problem::new("limits", w)),
+    );
     // an arg a built-in does not read: likely a mix-up, not an error (it
     // still joins the state)
     let built_ins: [(&str, &[&str]); 3] = [

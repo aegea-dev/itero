@@ -174,3 +174,32 @@ fn a_connector_no_entry_gives_args_runs_once_with_none() {
         "no listener"
     );
 }
+
+/// Limits that let the log fill `space` are said once as the daemon starts,
+/// in the log, as `ws check` says them.
+#[test]
+fn limits_that_let_the_log_fill_space_are_said_at_the_start() {
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path();
+    std::fs::write(
+        root.join("itero.config.json"),
+        r#"{"limits": {"log": "1GB"}, "workflow": {"keep": {"off": true}, "models": {"off": true}}}"#,
+    )
+    .unwrap();
+    let ws = itero::workspace::find(root).unwrap();
+    let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
+    let held = lock::take(&ws, "deneme").unwrap();
+    let r = Running::start(ws.clone(), exe, held, |_, _| {}, false, None, None).unwrap();
+    r.stop();
+    let log = std::fs::read_to_string(root.join(".itero/itero.log")).unwrap();
+    let said: Vec<_> = log
+        .lines()
+        .filter(|l| l.contains(r#""event":"warning""#) && l.contains("rolled copies"))
+        .collect();
+    assert_eq!(said.len(), 1, "{log}");
+    assert!(
+        said[0].contains("may take 4GB, more than space (1GB)"),
+        "{}",
+        said[0]
+    );
+}
