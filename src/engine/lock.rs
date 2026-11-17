@@ -177,11 +177,12 @@ pub fn forget_jobs(root: &Path, done: &dyn Fn(i64) -> Result<bool, String>) -> R
             continue;
         };
         match done(seq) {
-            Ok(true) => {
-                if let Err(err) = std::fs::remove_file(e.path()) {
-                    failed.push(format!("{}: {err}", e.path().display()));
-                }
-            }
+            Ok(true) => match std::fs::remove_file(e.path()) {
+                // the pass removed it as its job ended, after the look
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => failed.push(format!("{}: {err}", e.path().display())),
+                Ok(()) => {}
+            },
             Ok(false) => {}
             Err(why) => failed.push(why),
         }
