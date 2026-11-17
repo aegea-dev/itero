@@ -160,11 +160,12 @@ pub fn run_loop(
     report: impl Fn(&Result<Pass>),
 ) {
     let lock = || health.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut space = Space::default();
     loop {
         let now = Utc::now();
         lock().busy_since = Some(stamp(now));
         beat(true);
-        let pass = runs_pass(ws, now, exe, wake, woken);
+        let pass = runs_pass(ws, now, exe, wake, woken, &mut space);
         beat(false);
         {
             let mut h = lock();
@@ -599,7 +600,7 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
             let (wake, stop, log) = (wake.clone(), &stop, &log);
             scope.spawn(move || super::wake::listen(pipe, &wake, stop, log))
         };
-        let pass = runs_pass(ws, now, exe, &wake, &woken);
+        let pass = runs_pass(ws, now, exe, &wake, &woken, &mut Space::default());
         // a byte into the pipe ends its reader, once it is stopping
         stop.set();
         let ended = super::wake::send(ws);
@@ -640,12 +641,13 @@ fn runs_pass(
     exe: &Path,
     wake: &Sender<()>,
     woken: &Receiver<()>,
+    space: &mut Space,
 ) -> Result<Pass> {
     let mut j = Journal::open_for_pass(ws)?;
     let log = Log::new(ws, &j.workspace()?.id);
     let flows = Flows::load(ws)?;
     j.see_workflows(flows.read.keys(), &stamp(now))?;
-    let no_room = watch_limits(ws, &j, now, &log)?;
+    let no_room = watch_limits(ws, &j, now, &log, space)?;
     fire_schedules(ws, &flows, &mut j, now, &log)?;
     fire_windows(&flows, &mut j, now, &log)?;
     // runs' events first; then the waiting jobs, whose results are the
@@ -657,7 +659,7 @@ fn runs_pass(
         let mut w = Workers::new(scope, exe, wake.clone(), woken);
         let mut done = work(ws, flows, &mut j, &mut w, clock, &log, no_room, &mut pass);
         while !w.running.is_empty() {
-            let saved = end_one(ws, &mut j, &mut w, clock, &mut pass, None);
+            let saved = end_one(ws, &mut j, &mut w, clock, &mut pass, &log, None);
             if done.is_ok() {
                 done = saved;
             }
@@ -909,7 +911,7 @@ fn work(
             if w.running.is_empty() {
                 return Ok(());
             }
-            end_one(ws, j, w, clock, pass, until_timer(j, clock)?)?;
+            end_one(ws, j, w, clock, pass, log, until_timer(j, clock)?)?;
             continue;
         }
         let room = ws.limits.steps.saturating_sub(w.running.len());
@@ -936,6 +938,8 @@ fn work(
             if runs >= MAX_RUNS {
                 let why = lost.unwrap_or_default();
                 save_result(j, &r, Err(lost_too_often(&why)), clock)?;
+                drop(lock);
+                remove_lock(ws, r.seq, log);
                 pass.worked += 1;
                 saved = true;
             } else {
@@ -951,7 +955,7 @@ fn work(
         if w.running.is_empty() {
             return Ok(());
         }
-        end_one(ws, j, w, clock, pass, until_timer(j, clock)?)?;
+        end_one(ws, j, w, clock, pass, log, until_timer(j, clock)?)?;
     }
 }
 
@@ -966,6 +970,7 @@ fn end_one(
     w: &mut Workers,
     clock: Clock,
     pass: &mut Pass,
+    log: &Log,
     wait: Option<std::time::Duration>,
 ) -> Result<()> {
     let Some((job, outcome)) = w.next(wait)? else {
@@ -974,33 +979,84 @@ fn end_one(
     super::die_at("job-done");
     super::progress::clear(&ws.root, job.r.seq);
     if job.cancel.load(Ordering::SeqCst) {
+        // stopped: saved so by the answer that stopped it, never to run again
+        remove_lock(ws, job.r.seq, log);
         return Ok(());
     }
-    match outcome {
+    let again = match outcome {
         Err(Failure::Lost(why)) if job.run < MAX_RUNS => {
             j.lose_job(job.r.seq, &why)?;
             pass.lost += 1;
+            true
         }
         Err(Failure::Lost(why)) => {
             save_result(j, &job.r, Err(lost_too_often(&why)), clock)?;
             pass.worked += 1;
+            false
         }
         other => {
             save_result(j, &job.r, other.map_err(|f| f.to_string()), clock)?;
             pass.worked += 1;
+            false
         }
-    }
+    };
     super::die_at("result");
+    // a job lost runs again, and keeps its file: a copy may still hold it
+    if !again {
+        remove_lock(ws, job.r.seq, log);
+    }
     Ok(())
+}
+
+/// Removes a done job's lock file; one that cannot be is said in the log,
+/// and `#forget` tries again.
+fn remove_lock(ws: &Workspace, seq: i64, log: &Log) {
+    if let Err(why) = super::lock::remove_job(&ws.root, seq) {
+        log.write(
+            "warning",
+            json!({ "why": format!("job {seq}'s lock file: {why}") }),
+        );
+    }
+}
+
+/// `.itero/`'s size, walked again at most once a second: a walk costs one
+/// look at each file, and a pass may come many times a second.
+#[derive(Default)]
+struct Space {
+    /// When it was last walked, and what it held.
+    last: Option<(std::time::Instant, u64)>,
+}
+
+impl Space {
+    /// How often `.itero/` is walked again.
+    const EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
+    /// `.itero/`'s size: walked, unless it was walked less than a second ago.
+    fn used(&mut self, ws: &Workspace) -> u64 {
+        if let Some((at, used)) = self.last
+            && at.elapsed() < Self::EVERY
+        {
+            return used;
+        }
+        let used = ws.used();
+        self.last = Some((std::time::Instant::now(), used));
+        used
+    }
 }
 
 /// Sends `itero.space.full` when `.itero/` grows past its `space`, and
 /// `itero.log.full` when the log grows past its `log` limit: each once,
 /// until there is room again or the log is rolled. Returns whether
 /// `.itero/` is past its space: then no new run starts but internal ones.
-fn watch_limits(ws: &Workspace, j: &Journal, now: DateTime<Utc>, log: &Log) -> Result<bool> {
+fn watch_limits(
+    ws: &Workspace,
+    j: &Journal,
+    now: DateTime<Utc>,
+    log: &Log,
+    measured: &mut Space,
+) -> Result<bool> {
     let at = stamp(now);
-    let (used, space) = (ws.used(), ws.limits.space);
+    let (used, space) = (measured.used(ws), ws.limits.space);
     let no_room = used > space;
     if no_room && !j.flag(journal::SPACE_FULL)? {
         j.publish(&events::own(
@@ -2024,6 +2080,23 @@ fn save_result(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// `.itero/` is walked again only once a second has passed since the
+    /// last walk: a pass in between reads what was found.
+    #[test]
+    fn space_is_walked_again_only_after_a_second() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("itero.config.json"), "{}").unwrap();
+        let ws = crate::workspace::find(d.path()).unwrap();
+        std::fs::create_dir_all(d.path().join(".itero")).unwrap();
+        let mut space = Space::default();
+        let first = space.used(&ws);
+        std::fs::write(d.path().join(".itero/büyük"), vec![0u8; 1000]).unwrap();
+        assert_eq!(space.used(&ws), first, "walked again within a second");
+        // as if the last walk was a second ago
+        space.last = space.last.map(|(at, used)| (at - Space::EVERY, used));
+        assert_eq!(space.used(&ws), first + 1000);
+    }
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::AtomicBool;
 

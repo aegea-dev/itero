@@ -135,6 +135,19 @@ pub fn wait_for_job(root: &Path, seq: i64, wait: std::time::Duration) {
     }
 }
 
+/// Removes job `seq`'s lock file, once the job is done: it never starts
+/// again, so no daemon looks for it, even while something it left holds it.
+/// The pass calls it as each job ends; `forget_jobs` sweeps what a
+/// crash left between the two.
+pub fn remove_job(root: &Path, seq: i64) -> Result<(), String> {
+    let p = job_path(root, seq);
+    match std::fs::remove_file(&p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("{}: {e}", p.display())),
+    }
+}
+
 /// Removes the lock files of the jobs that `done` says can never start
 /// again; one that may stays, since a daemon would lock a new file of its
 /// name while a copy holds the old one. Says every file it could not remove
