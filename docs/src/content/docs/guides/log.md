@@ -60,7 +60,10 @@ curl -sN http://127.0.0.1:8787/log/stream | jq 'select(.event == "step.failed")'
 
 Past its `log` limit (10 MB) the log is rolled: `itero.log` becomes
 `itero.log.1`, and so on, keeping `logs` of them (3). See
-[The daemon's own workflows](/guides/maintenance/).
+[The daemon's own workflows](/guides/maintenance/). Renamed by something
+else, such as logrotate, it is found within a second: the daemon then
+writes a new `itero.log`, and its lines until then are in the renamed
+file.
 
 ## IDs and names
 
