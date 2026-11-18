@@ -108,6 +108,7 @@ fn an_action_gets_its_steps_args_and_a_waited_event() {
         secrets: vec![],
         waiting_since: None,
         event,
+        warm: false,
     };
     let (env, input) = itero::engine::daemon::bind(&ws, &job(None)).unwrap();
     assert_eq!(env["host"], "imap.örnek.test");
@@ -265,6 +266,7 @@ fn bind_gives_the_secret_only_to_the_args_written_as_one() {
         secrets: vec!["yazılı".into()],
         waiting_since: None,
         event: None,
+        warm: false,
     };
     let (_, input) = itero::engine::daemon::bind(&ws, &job).unwrap();
     assert_eq!(input["args"]["yazılı"], "değer");

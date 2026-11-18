@@ -931,6 +931,7 @@ fn a_run_written_before_output_is_read_and_goes_on() {
             secrets: vec![],
             waiting_since: None,
             event: None,
+            warm: false,
         },
         "exit 1",
     );
@@ -1518,6 +1519,7 @@ fn a_group_is_read_from_a_run_written_before_groups_said_how_to_wait() {
         secrets: vec![],
         waiting_since: None,
         event: None,
+        warm: false,
     };
     let a = r.done(&seker, json!({"tatlı": 1}));
     assert!(goes_on(&a));
@@ -1879,4 +1881,30 @@ fn a_cron_round_waiting_and_a_repeated_workflow_stop_too() {
     let a = r.send("run.stop", json!({}));
     assert_eq!(r.rt.ended, Some(Ended::Stopped));
     assert!(a.next_round.is_none());
+}
+
+#[test]
+fn a_warm_step_s_job_says_so_and_an_ordinary_job_is_as_before() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [
+            {"#ılık": {"args": {"şeftali": 1}, "warm": true}},
+            "#üzüm",
+            {"all": [{"#çay": {"warm": true}}, "#kahve"]}
+        ]}),
+    )]);
+    let a = r.start(json!({}));
+    assert!(a.jobs[0].warm);
+    let a = r.done(&a.jobs[0], json!(""));
+    assert!(!a.jobs[0].warm);
+    // an ordinary job's JSON has no warm: the journal's jobs are unchanged
+    assert!(
+        serde_json::to_value(&a.jobs[0])
+            .unwrap()
+            .get("warm")
+            .is_none()
+    );
+    let a = r.done(&a.jobs[0], json!(""));
+    let side: Vec<(String, bool)> = a.jobs.iter().map(|j| (j.action.clone(), j.warm)).collect();
+    assert_eq!(side, vec![("çay".into(), true), ("kahve".into(), false)]);
 }

@@ -1857,6 +1857,17 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         }
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
+    // a warm step runs a Python action's file; said before anything runs
+    if job.warm {
+        if !file.is_absolute() {
+            return Err(format!(
+                "warm: only Python actions can be warm: #{} is built in",
+                job.action
+            ));
+        }
+        let first = worker::first_line(&file).unwrap_or_default();
+        super::warm::python(&first)?;
+    }
     let (quiet, most) = ws.step_limits(&job.action).map_err(|e| format!("{e:#}"))?;
     let (mut env, input) = bind(ws, &job)?;
     // the built-in #ai talks to the itero-ai the daemon keeps, unless a
