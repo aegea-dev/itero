@@ -34,6 +34,8 @@ workflow is [internal](/guides/maintenance/).
 | `run.ended` | `status` (`done`, `failed`, `error`, `stopped`), `why` |
 | `run.skipped` | a schedule came due and the workflow's `on` did not hold |
 | `connector.started`, `connector.ended`, `connector.gave-up` | `connector`, `why` |
+| `warm.started` | `action`, `copy`: a [warm](/guides/actions/#warm-actions) copy of the action started (its process id) |
+| `warm.ended` | `action`, `copy`, `why`, such as `idle`, `changed` (its file), `exited 3`, `killed`, `a thread still runs`, `a process still runs` |
 | `paths.watched` | `paths`: every path watched now |
 | `files.changed` | `files`: the workspace's own files that changed (a workflow, `itero.config.json`), each with its `path` and `kind` (`created`, `changed`, `removed`, `renamed`, `rescan`): the daemon reads them again |
 | `reply.sent`, `reply.failed` | `url`, `run`, and for `reply.failed` `why`: a callback taken, or to be tried again |

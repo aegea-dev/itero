@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""$slug and $at (an ISO time) as a post's path: {"path": "2026/11/18/slug"}.
+
+Plain Python, no packages: a step that runs warm in examples/languages's
+post workflow, beside slugify and parse-date.
+"""
+import json
+import os
+from datetime import datetime
+
+at = datetime.fromisoformat(os.environ["at"])
+print(json.dumps({"path": f"{at:%Y/%m/%d}/{os.environ['slug']}"}))

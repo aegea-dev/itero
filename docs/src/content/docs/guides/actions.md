@@ -250,6 +250,67 @@ the action does. A value goes into the container as `-e name` (it takes
 the value from the action's environment, never from the command line) or
 on stdin.
 
+## Warm actions
+
+A Python action starts its interpreter and imports its libraries at every
+step, and for a fast action that start is most of the step. A step with
+`"warm": true` runs its action in a copy itero keeps loaded: the
+interpreter starts once, the imports load once, and each step runs the
+file again in it.
+
+```json
+"steps": [
+  { "#slugify": { "args": { "title": "$event.title" }, "warm": true } }
+]
+```
+
+The action's file stays as it is: it gets its args, prints its result and
+exits with its code, as any action does. itero runs it again for each step
+with that step's args, as a fresh process would, so its result, its exit
+code, an exception and its progress are what they would be.
+
+Measured on a Mac (10 CPUs), a workflow of steps of one small Python
+action:
+
+| steps | one run, fresh | one run, warm | runs a second, fresh | runs a second, warm |
+|---|---|---|---|---|
+| 1 | 28 ms | 8 ms | 225 | 615 |
+| 3 | 91 ms | 26 ms | 85 | 261 |
+| 10 | 291 ms | 84 ms | 25 | 80 |
+
+Which actions can be warm: Python ones, by their first line:
+`#!/usr/bin/env python3` (or `python`, `python3.12`, a path), a
+[uv script](#python-with-uv) (`#!/usr/bin/env -S uv run --script`), and a
+Python project's file naming its project:
+
+```python
+#!/usr/bin/env -S uv run --project actions/py/links-app python
+```
+
+For a uv script or project, itero runs `uv sync` first and uses its
+environment. On any other action, or a built-in one, `warm` is an error,
+from [`itero ws check`](/commands/check/) and when the step runs.
+
+What starts fresh at each step: its environment, its folder (the
+workspace), its arguments, its stdin and the file's own variables. What
+stays: the libraries it imported, and whatever they keep. An action that
+keeps something in a library between calls, or leaves work for its exit
+(`atexit`), should not be warm. A process it starts gets an empty stdin.
+
+itero runs as many copies of a warm action as its steps need at once, one
+per CPU at most and never more than [`limits.steps`](/reference/itero-config/#limits),
+started only when needed. Each copy holds its interpreter and libraries in
+memory. A copy is replaced when the action's file changes, when a step
+leaves a thread or a process running in it, or when it ends; one with no
+step for 10 minutes stops. Steps of the same action without `warm` run as
+before, each in a fresh process. The log says when a copy starts and ends
+(`warm.started`, `warm.ended`).
+
+`examples/languages` has two: `post`, three Python steps all warm
+(`slugify`, `parse-date`, `post-path`), and `order-flow`, four languages
+in a row: Bun checks an order, Python prices it warm, Node writes a
+receipt line and a shell script keeps it.
+
 ## When something it needs is missing
 
 itero finds what an action needs from the action itself, with no list to

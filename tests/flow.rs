@@ -338,6 +338,7 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
             label: "order-process".into(),
             repeat: None,
             window: None,
+            warm: false,
         }
     );
     let Step::One { name, .. } = &f.steps[2] else {
@@ -449,7 +450,7 @@ fn mistakes_are_named() {
         // a step's values go under args
         (
             r##"{ "steps": [{ "#a": { "carrier": "PTT Kargo" } }] }"##,
-            "\"carrier\" is not one of args, on, undo, repeat, unique, changed, at_most:",
+            "\"carrier\" is not one of args, on, undo, repeat, unique, changed, at_most, warm:",
         ),
         (
             r##"{ "steps": [{ "#a": { "args": 3 } }] }"##,
@@ -1318,4 +1319,36 @@ fn an_underscore_in_a_path_also_finds_a_dash() {
         Some(&json!("push"))
     );
     assert_eq!(flow::lookup(&state, "event.düz_yok"), None);
+}
+
+#[test]
+fn a_step_may_say_warm_and_nothing_but_true_or_false() {
+    let f = flow::parse(
+        r##"{ "steps": [
+              { "#ılık": { "args": { "şeftali": 1 }, "warm": true } },
+              { "#üzüm": { "warm": false } },
+              "#ağaç",
+              { "all": [{ "#çay": { "warm": true } }, "#kahve"] }
+            ] }"##,
+    )
+    .unwrap();
+    let warm = |i: usize| match &f.steps[i] {
+        Step::One { warm, .. } => *warm,
+        other => panic!("{other:?}"),
+    };
+    assert!(warm(0));
+    assert!(!warm(1));
+    assert!(!warm(2));
+    let Step::Side(g) = &f.steps[3] else { panic!() };
+    assert!(g.members[0].warm);
+    assert!(!g.members[1].warm);
+    // every wrong value told in one read
+    let e = err(
+        r##"{ "steps": [{ "#a": { "warm": "evet" } }, { "#b": { "warm": 1 } }, { "kahve": { "warm": true } }] }"##,
+    );
+    assert_eq!(e.matches("warm is true or false").count(), 2, "{e}");
+    assert!(
+        e.contains("warm: only Python actions can be warm: kahve is a workflow"),
+        "{e}"
+    );
 }

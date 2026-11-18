@@ -312,6 +312,9 @@ pub enum Step {
         /// `"at_most": "1h"` and the like on the step: whether it runs, by
         /// the runs of the workflow it let through before.
         window: Option<Window>,
+        /// `"warm": true`: its action runs in a copy kept loaded between
+        /// steps (engine/warm).
+        warm: bool,
     },
     /// Actions and workflows that run side by side; the next step waits as
     /// the group says.
@@ -339,6 +342,8 @@ pub struct Member {
     /// `#name` for an action's step, the name for a workflow's, as
     /// [`Name::label`]; with `as`, that name the same way: `#mirror-1`.
     pub label: String,
+    /// `"warm": true`, as a step's.
+    pub warm: bool,
 }
 
 impl Member {
@@ -349,6 +354,7 @@ impl Member {
             name,
             args: Value::Object(Map::new()),
             on: None,
+            warm: false,
         }
     }
 }
@@ -1303,10 +1309,10 @@ pub fn step_labels(items: &[Value]) -> Vec<String> {
 }
 
 /// Every step and undo of a workflow as written, with its address
-/// (`steps/#ai/2`, `steps/all/#b`, `steps/#ship/undo`), what it runs and
-/// its args: each step that can be read, even when others in the file
-/// cannot, so each is checked on its own.
-pub fn addressed(v: &Value) -> Vec<(String, Name, Value)> {
+/// (`steps/#ai/2`, `steps/all/#b`, `steps/#ship/undo`), what it runs, its
+/// args and whether it is warm: each step that can be read, even when
+/// others in the file cannot, so each is checked on its own.
+pub fn addressed(v: &Value) -> Vec<(String, Name, Value, bool)> {
     let mut out = vec![];
     for key in ["steps", "success", "failure", "error"] {
         let Some(items) = v.get(key).and_then(Value::as_array) else {
@@ -1328,14 +1334,16 @@ pub fn addressed(v: &Value) -> Vec<(String, Name, Value)> {
             if let Some(ms) = members {
                 for (m, l) in ms.iter().zip(step_labels(ms)) {
                     let read = match m {
-                        Value::String(s) => name(s).ok().map(|n| (n, Value::Object(Map::new()))),
+                        Value::String(s) => {
+                            name(s).ok().map(|n| (n, Value::Object(Map::new()), false))
+                        }
                         Value::Object(o) if !is_group(o) => {
-                            written(o).ok().map(|w| (w.name, w.args))
+                            written(o).ok().map(|w| (w.name, w.args, w.warm))
                         }
                         _ => None,
                     };
-                    if let Some((n, args)) = read.filter(|_| !l.is_empty()) {
-                        out.push((format!("{at}/{l}"), n, args));
+                    if let Some((n, args, warm)) = read.filter(|_| !l.is_empty()) {
+                        out.push((format!("{at}/{l}"), n, args, warm));
                     }
                 }
             } else if let Ok(Step::One {
@@ -1343,12 +1351,13 @@ pub fn addressed(v: &Value) -> Vec<(String, Name, Value)> {
                 args,
                 undo,
                 undo_args,
+                warm,
                 ..
             }) = step(item)
             {
-                out.push((at.clone(), name, args));
+                out.push((at.clone(), name, args, warm));
                 if let Some(u) = undo {
-                    out.push((format!("{at}/undo"), u, undo_args));
+                    out.push((format!("{at}/undo"), u, undo_args, false));
                 }
             }
         }
@@ -1404,6 +1413,7 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
                 undo_args: Value::Object(Map::new()),
                 repeat: None,
                 window: None,
+                warm: false,
             })
         }
         Value::Array(items) => Ok(Step::Side(Group {
@@ -1423,6 +1433,7 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
                 undo_args: w.undo_args,
                 repeat: w.repeat,
                 window: w.window,
+                warm: w.warm,
             })
         }
         _ => Err(one(format!(
@@ -1577,6 +1588,7 @@ struct Written {
     undo_args: Value,
     repeat: Option<Repeat>,
     window: Option<Window>,
+    warm: bool,
 }
 
 fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
@@ -1691,6 +1703,23 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             Some,
         ),
     };
+    let warm = match fields.remove("warm") {
+        None | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => match &step_name {
+            Some(Name::Workflow(w)) => {
+                ps.push(Problem::new(
+                    "",
+                    format!("warm: only Python actions can be warm: {w} is a workflow"),
+                ));
+                false
+            }
+            _ => true,
+        },
+        Some(_) => {
+            ps.push(Problem::new("", "warm is true or false"));
+            false
+        }
+    };
     if fields.remove("strict").is_some() {
         ps.push(Problem::new(
             "",
@@ -1737,7 +1766,7 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
         ps.push(Problem::new(
             "",
             format!(
-                "\"{other}\" is not one of args, on, undo, repeat, unique, changed, at_most: a step's values go under args"
+                "\"{other}\" is not one of args, on, undo, repeat, unique, changed, at_most, warm: a step's values go under args"
             ),
         ));
     }
@@ -1763,6 +1792,7 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             undo_args,
             repeat: rounds,
             window,
+            warm,
         }),
         _ => Err(ps),
     }
@@ -1801,6 +1831,7 @@ fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, Vec<Problem>
                     args: w.args,
                     on: w.on.map(Box::new),
                     label,
+                    warm: w.warm,
                 })
             }),
             Value::Object(_) => Err(one(format!(

@@ -23,6 +23,7 @@ pub mod service;
 pub mod steps;
 pub mod stop;
 pub mod wake;
+pub mod warm;
 pub mod watchdog;
 pub mod worker;
 

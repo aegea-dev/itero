@@ -1,0 +1,4 @@
+#!/bin/sh
+# $line appended to orders.log in the workspace; prints the file's path.
+printf '%s\n' "$line" >> orders.log
+printf '{"file": "%s"}\n' "$PWD/orders.log"

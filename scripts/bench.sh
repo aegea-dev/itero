@@ -11,7 +11,9 @@
 #   start: curl's, `itero ws emit`'s;
 # - throughput: BENCH_N events saved while no daemon runs, then a daemon
 #   started: runs a second, first start to last end, for 1 and 3 steps,
-#   and 1 step given a secret (`$$BENCH_TOKEN`);
+#   1 step given a secret (`$$BENCH_TOKEN`), and 1 and 3 steps of a
+#   Python action run fresh (py1, py3) and warm (warm1, warm3), where
+#   python3 is found;
 # - the webhook listener: BENCH_REQUESTS requests, 32 at once, refused
 #   (an unlisted path) and saved (a listed path no workflow takes).
 #
@@ -92,6 +94,22 @@ cat >"$ws/workflows/secret.json" <<'EOF'
 { "on": [{ "event": "bench.sent" }, { "$event.wf": "secret" }],
   "steps": [{ "#a": { "args": { "token": "$$BENCH_TOKEN" } } }] }
 EOF
+# a Python action, run fresh at each step or kept loaded (warm), where
+# there is a python3 (the Alpine image has none)
+if command -v python3 >/dev/null 2>&1; then
+	python='py1 py3 warm1 warm3'
+else
+	python=''
+	echo "bench.sh: no python3 here: the Python workflows are not measured" >&2
+fi
+printf '#!/usr/bin/env python3\nimport json, sys\njson.load(sys.stdin)\nprint(json.dumps({"ok": True}))\n' >"$ws/actions/py"
+chmod +x "$ws/actions/py"
+for k in 1 3; do
+	steps=$(i=0; s=''; while [ $i -lt $k ]; do s="$s${s:+, }\"#py\""; i=$((i + 1)); done; echo "$s")
+	warm=$(i=0; s=''; while [ $i -lt $k ]; do s="$s${s:+, }{ \"#py\": { \"warm\": true } }"; i=$((i + 1)); done; echo "$s")
+	echo "{ \"on\": [{ \"event\": \"bench.sent\" }, { \"\$event.wf\": \"py$k\" }], \"steps\": [$steps] }" >"$ws/workflows/py$k.json"
+	echo "{ \"on\": [{ \"event\": \"bench.sent\" }, { \"\$event.wf\": \"warm$k\" }], \"steps\": [$warm] }" >"$ws/workflows/warm$k.json"
+done
 cat >"$ws/workflows/hook.json" <<'EOF'
 { "on": [{ "event": "itero.webhook.received" }, { "$event.path": "/hook" }], "steps": ["#a"] }
 EOF
@@ -124,7 +142,7 @@ stop_daemon() {
 	daemon=
 }
 # the bench's runs ended so far (the daemon's own workflows run too)
-ended() { count '"event":"run.ended".*"workflow":"(one|three|secret|hook)"'; }
+ended() { count '"event":"run.ended".*"workflow":"(one|three|secret|hook|py1|py3|warm1|warm3)"'; }
 # waits until `count` runs have ended in all, 10 minutes at most
 wait_ended() {
 	i=0
@@ -228,7 +246,7 @@ listener /saved saved >>"$ws/listener.jsonl"
 stop_daemon
 
 # --- throughput ---------------------------------------------------------------
-for wf in one three secret; do
+for wf in one three secret $python; do
 	seq 1 "$n" | sed "s/.*/{\"wf\":\"$wf\",\"tag\":\"load-$wf\"}/" |
 		tr "\n" "\0" | (cd "$ws" && xargs -0 -P 4 -I{} "$itero" ws emit bench.sent {} >/dev/null 2>>"$ws/emit.err") || {
 		cat "$ws/emit.err" >&2
@@ -254,7 +272,7 @@ runs >"$ws/runs.json"
 				sent_to_start_ms: (map(select(.sent != null) | (.started - .sent) * 1000000 | round / 1000) | '"$stats"'),
 				start_to_end_ms: (map(.end - .start) | '"$stats"')}' "$ws/runs.json"
 	done
-	for wf in one three secret; do
+	for wf in one three secret $python; do
 		jq -c --arg wf "$wf" '
 			map(select(.tag == "load-" + $wf))
 			| ((map(.end) | max) - (map(.start) | min)) as $span

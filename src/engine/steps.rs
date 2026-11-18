@@ -190,6 +190,9 @@ pub enum At {
         /// The message taken for it, its `$event` when it runs again.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         event: Option<Value>,
+        /// Its step says `"warm": true`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        warm: bool,
     },
     /// A list run side by side, and how the next step waits for it.
     Side {
@@ -347,6 +350,9 @@ pub struct StepJob {
     /// lets it through (and remembers it) or holds the step back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate: Option<super::journal::Gated>,
+    /// Its step says `"warm": true`: the daemon runs it in a warm copy.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub warm: bool,
 }
 
 /// A workflow used as a step, to start as a run of its own.
@@ -713,6 +719,7 @@ impl Machine<'_> {
                         undo_args: Value::Object(Map::new()),
                         repeat: None,
                         window: None,
+                        warm: false,
                     })
                 })
                 .collect::<Result<_, String>>()?,
@@ -786,6 +793,7 @@ impl Machine<'_> {
                 on,
                 label,
                 window,
+                warm,
                 ..
             } => {
                 if let Some(on) = on
@@ -809,7 +817,7 @@ impl Machine<'_> {
                         return Ok(None);
                     }
                 };
-                let at = self.start_name(name, &data, flow::written_secrets(args), path)?;
+                let at = self.start_name(name, &data, flow::written_secrets(args), *warm, path)?;
                 if let Some(w) = window {
                     let now = self
                         .i
@@ -837,6 +845,7 @@ impl Machine<'_> {
                                 &m.name,
                                 &data,
                                 flow::written_secrets(&m.args),
+                                m.warm,
                                 path,
                             )?,
                             Err(why) => {
@@ -1124,6 +1133,7 @@ impl Machine<'_> {
         name: &Name,
         data: &Map<String, Value>,
         secrets: Vec<String>,
+        warm: bool,
         path: &[usize],
     ) -> Result<Option<At>, String> {
         match name {
@@ -1138,6 +1148,7 @@ impl Machine<'_> {
                     waiting_since: None,
                     output: None,
                     event: None,
+                    warm,
                 };
                 self.jobs.extend(job(&mut leaf, path));
                 Ok(Some(leaf))
@@ -2002,6 +2013,7 @@ fn job(leaf: &mut At, path: &[usize]) -> Option<StepJob> {
         waiting,
         waiting_since,
         event,
+        warm,
         ..
     } = leaf
     else {
@@ -2018,6 +2030,7 @@ fn job(leaf: &mut At, path: &[usize]) -> Option<StepJob> {
         waiting_since: waiting_since.clone(),
         event: event.clone(),
         gate: None,
+        warm: *warm,
     })
 }
 

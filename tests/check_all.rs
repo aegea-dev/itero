@@ -202,3 +202,66 @@ fn ws_check_says_every_problem_of_every_browser_step() {
     }
     assert!(err.contains("not bekle"), "{err}");
 }
+
+#[test]
+fn ws_check_shows_warm_steps_and_says_each_that_cannot_be() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{ "name": "ılık", "description": "warm" }"#,
+    );
+    for (name, text) in [
+        ("şeftali", "#!/usr/bin/env python3\nprint('ılık')\n"),
+        ("üzüm", "#!/bin/sh\necho üzüm\n"),
+        ("ağaç", "#!/usr/bin/env node\nconsole.log('ağaç')\n"),
+    ] {
+        file(d.path(), &format!("actions/{name}"), text);
+        let f = d.path().join("actions").join(name);
+        std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    file(
+        d.path(),
+        "workflows/sepet.json",
+        r##"{ "on": [{ "event": "sepet.doldu" }], "steps": [
+            { "#şeftali": { "warm": true } },
+            { "#üzüm": { "warm": true } },
+            { "#ağaç": { "warm": true } },
+            { "#notify": { "args": { "title": "çay" }, "warm": true } }
+        ] }"##,
+    );
+    let out = ws_check(d.path(), false);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "{text}");
+    for says in [
+        "error: warm: only Python actions can be warm: its first line runs sh (",
+        "error: warm: only Python actions can be warm: its first line runs node (",
+        "error: warm: only Python actions can be warm: #notify is built in (",
+        "3 errors",
+    ] {
+        assert!(text.contains(says), "{says}: {text}");
+    }
+    assert!(text.contains("workflows/sepet/steps/#üzüm"), "{text}");
+    // the one that can: shown warm in the listing
+    let out = ws_check(d.path(), true);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let uses = &v["workflows"][0]["uses"];
+    let seftali = uses
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["action"] == "şeftali")
+        .unwrap();
+    assert!(
+        seftali["notes"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("warm")),
+        "{v:#}"
+    );
+}

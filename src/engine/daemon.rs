@@ -8,6 +8,7 @@ use super::events;
 use super::journal::{self, Child, Envelope, Handled, Journal, NextRound, Recorded, Start};
 use super::log::Log;
 use super::steps::{self, StepAnswer, StepInput, StepJob};
+use super::warm::pool::Pool;
 use super::worker::{self, Failure, LOST_EXIT, Outcome, StepRun};
 use crate::flow::{self, Flow, Name};
 use crate::workspace::Workspace;
@@ -165,11 +166,13 @@ pub fn run_loop(
 ) {
     let lock = || health.lock().unwrap_or_else(PoisonError::into_inner);
     let mut space = Space::default();
+    // the warm copies, kept from pass to pass; they end with the loop
+    let pool = Mutex::new(Pool::new(super::warm::most_copies(ws.limits.steps)));
     loop {
         let now = Utc::now();
         lock().busy_since = Some(stamp(now));
         beat(true);
-        let pass = runs_pass(ws, now, exe, wake, woken, &mut space);
+        let pass = runs_pass(ws, now, exe, wake, woken, &mut space, &pool);
         beat(false);
         {
             let mut h = lock();
@@ -191,6 +194,20 @@ pub fn run_loop(
             report(&Err(e.context("cannot tell when the next pass is due")));
             Some(Utc::now() + AFTER_FAILURE)
         });
+        // a pass stops the idle copies: one is due when the first is
+        let idle = super::warm::idle();
+        let next = match pool
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .next_idle(idle)
+        {
+            Some(due) => {
+                let after = due.saturating_duration_since(std::time::Instant::now());
+                let at = Utc::now() + chrono::Duration::from_std(after).unwrap_or_default();
+                Some(next.map_or(at, |n| n.min(at)))
+            }
+            None => next,
+        };
         if let Err(e) = alarm.set(next) {
             report(&Err(anyhow!("cannot set the alarm for the next pass: {e}")));
         }
@@ -605,7 +622,8 @@ pub fn run_once(ws: &Workspace, now: DateTime<Utc>, exe: &Path) -> Result<Pass> 
             let (wake, stop, log) = (wake.clone(), &stop, &log);
             scope.spawn(move || super::wake::listen(pipe, &wake, stop, log))
         };
-        let pass = runs_pass(ws, now, exe, &wake, &woken, &mut Space::default());
+        let pool = Mutex::new(Pool::new(super::warm::most_copies(ws.limits.steps)));
+        let pass = runs_pass(ws, now, exe, &wake, &woken, &mut Space::default(), &pool);
         // a byte into the pipe ends its reader, once it is stopping
         stop.set();
         let ended = super::wake::send(ws);
@@ -647,9 +665,11 @@ fn runs_pass(
     wake: &Sender<()>,
     woken: &Receiver<()>,
     space: &mut Space,
+    pool: &Mutex<Pool>,
 ) -> Result<Pass> {
     let mut j = Journal::open_for_pass(ws)?;
     let log = Log::new(ws, &j.workspace()?.id);
+    stop_idle(pool, &log);
     let flows = Flows::load(ws)?;
     j.see_workflows(flows.read.keys(), &stamp(now))?;
     let no_room = watch_limits(ws, &j, now, &log, space)?;
@@ -661,7 +681,7 @@ fn runs_pass(
     let clock = Clock::new(now);
     let mut pass = Pass::default();
     std::thread::scope(|scope| {
-        let mut w = Workers::new(scope, exe, wake.clone(), woken);
+        let mut w = Workers::new(scope, exe, wake.clone(), woken, pool, log.clone());
         let mut done = work(ws, flows, &mut j, &mut w, clock, &log, no_room, &mut pass);
         while !w.running.is_empty() {
             let saved = end_one(ws, &mut j, &mut w, clock, &mut pass, &log, None);
@@ -703,6 +723,27 @@ struct Running {
 /// What a worker's thread sends back: its job, and how it ended.
 type Finished = (i64, Result<Outcome, Failure>);
 
+/// A warm copy's name in the daemon.
+type WarmCopy = super::warm::pool::Copy;
+
+/// What the pass took for a warm step before its job starts: an idle copy,
+/// or room for a new one (the file's identity, and the file).
+enum Got {
+    Idle(WarmCopy),
+    New(super::warm::Identity, PathBuf),
+}
+
+/// The copy a warm step runs in: an idle one, or one to start, with the
+/// open files taken for it and the file's identity.
+enum Warm {
+    Idle(WarmCopy),
+    New {
+        share: super::files::Share,
+        pipes: Pipes,
+        id: super::warm::Identity,
+    },
+}
+
 /// The pass's workers: each a thread in `scope`, sending its job's outcome
 /// back as it ends, then waking the pass on the channel every other wake
 /// uses, so the pass waits on that one alone.
@@ -715,6 +756,9 @@ struct Workers<'s, 'e> {
     woken: &'e Receiver<()>,
     /// By the job's `seq`.
     running: BTreeMap<i64, Running>,
+    /// The warm copies, kept between passes.
+    pool: &'e Mutex<Pool>,
+    log: Log,
 }
 
 impl<'s, 'e> Workers<'s, 'e> {
@@ -723,6 +767,8 @@ impl<'s, 'e> Workers<'s, 'e> {
         exe: &'e Path,
         wake: Sender<()>,
         woken: &'e Receiver<()>,
+        pool: &'e Mutex<Pool>,
+        log: Log,
     ) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         Workers {
@@ -733,7 +779,94 @@ impl<'s, 'e> Workers<'s, 'e> {
             wake,
             woken,
             running: BTreeMap::new(),
+            pool,
+            log,
         }
+    }
+
+    /// Runs a warm step in a copy of its action: `copy`, an idle one, or a
+    /// new one started on the job's thread with the open files taken for
+    /// it. It gets the job's lock, which the copy's worker then holds.
+    fn start_warm(
+        &mut self,
+        root: &Path,
+        r: Recorded,
+        run: i64,
+        step: StepRun,
+        lock: std::fs::File,
+        copy: Warm,
+    ) {
+        let seq = r.seq;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, wake, exe, stop, pool, log) = (
+            self.tx.clone(),
+            self.wake.clone(),
+            self.exe,
+            cancel.clone(),
+            self.pool,
+            self.log.clone(),
+        );
+        let id = r.event.data["run"].as_str().unwrap_or("").to_string();
+        let action = r.event.data["job"]["action"].as_str().unwrap_or("?");
+        let (name, root) = (format!("#{action}"), root.to_path_buf());
+        let job_root = root.clone();
+        let said = {
+            let name = name.clone();
+            Arc::new(move |text: &str| {
+                let at = stamp(Utc::now());
+                let _ = super::progress::write(&root, seq, &id, &name, text, &at);
+            })
+        };
+        self.scope.spawn(move || {
+            let lock_pool = || pool.lock().unwrap_or_else(PoisonError::into_inner);
+            let ended = |copy: WarmCopy, why: &str| {
+                log.write(
+                    "warm.ended",
+                    json!({ "action": name, "copy": copy.pid(), "why": why }),
+                );
+                drop(copy);
+            };
+            let copy = match copy {
+                Warm::Idle(c) => Ok(c),
+                Warm::New { share, pipes, id } => {
+                    match super::warm::pool::start(exe, &step.file, id, share, pipes) {
+                        Ok(c) => {
+                            log.write("warm.started", json!({ "action": name, "copy": c.pid() }));
+                            Ok(c)
+                        }
+                        Err(e) => {
+                            lock_pool().done_with(&step.file);
+                            Err(format!("cannot start a warm copy: {e}"))
+                        }
+                    }
+                }
+            };
+            let outcome = match copy {
+                Err(why) => Err(Failure::Error(why)),
+                Ok(mut copy) => {
+                    let e = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        super::warm::pool::request(&mut copy, &step, said, &stop, lock)
+                    }))
+                    .unwrap_or_else(|_| super::warm::pool::Ended {
+                        outcome: Err(Failure::Error("the warm copy's runner panicked".into())),
+                        keep: false,
+                        why: Some("panicked".into()),
+                    });
+                    if let Some(c) = lock_pool().give_back(copy, e.keep) {
+                        ended(c, e.why.as_deref().unwrap_or("ended"));
+                    }
+                    e.outcome
+                }
+            };
+            // a job lost was killed, and has not ended until its lock is
+            // free (its copy and all it left are gone: pool::request)
+            if matches!(outcome, Err(Failure::Lost(_))) {
+                super::lock::wait_for_job(&job_root, seq, READERS);
+            }
+            let _ = tx.send((seq, outcome));
+            let _ = wake.send(());
+        });
+        self.running.insert(seq, Running { r, run, cancel });
     }
 
     /// Runs a job in a worker of its own.
@@ -837,6 +970,28 @@ fn until_timer(j: &Journal, clock: Clock) -> Result<Option<std::time::Duration>>
     Ok(Some((at - clock.now()).to_std().unwrap_or_default()))
 }
 
+/// Ends the warm copies idle past their time, each said in the log.
+fn stop_idle(pool: &Mutex<Pool>, log: &Log) {
+    let idle = pool
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .stop_idle(std::time::Instant::now(), super::warm::idle());
+    for copy in idle {
+        log.write(
+            "warm.ended",
+            json!({ "action": warm_action(&copy.file), "copy": copy.pid(), "why": "idle" }),
+        );
+    }
+}
+
+/// A warm copy's action, as the log names it: `#` and its file's name.
+fn warm_action(file: &Path) -> String {
+    format!(
+        "#{}",
+        file.file_name().unwrap_or_default().to_string_lossy()
+    )
+}
+
 /// Delivers events (and fires due timers) and starts jobs, saving each
 /// result as its worker ends, until nothing is left. Once the pass reaches
 /// its cap of events, no job starts, and the pass ends as soon as none
@@ -864,6 +1019,9 @@ fn work(
     let mut told = std::collections::BTreeSet::new();
     // no open files left for a job was said this pass
     let mut short = false;
+    // warm jobs whose copies are all busy: left out when jobs are taken,
+    // so they hold no slot, until a job ends and a copy may be free
+    let mut full = std::collections::BTreeSet::new();
     loop {
         fire_timers(j, clock)?;
         loop {
@@ -920,23 +1078,77 @@ fn work(
             if w.running.is_empty() {
                 return Ok(());
             }
+            full.clear();
             end_one(ws, j, w, clock, pass, log, until_timer(j, clock)?)?;
             continue;
         }
         let room = ws.limits.steps.saturating_sub(w.running.len());
-        let running: Vec<i64> = w.running.keys().copied().collect();
+        let running: Vec<i64> = w.running.keys().chain(&full).copied().collect();
         let waiting = j.jobs_to_start(&running, room)?;
+        let mut left_out = false;
         // each run of a job is counted before it starts, so one the daemon
         // stopped during counts too
         let mut saved = false;
         for r in waiting {
+            // a warm step takes an idle copy of its action's file, or room
+            // for a new one; with all its copies busy it waits, taking no
+            // slot. Its step is made first, for its file.
+            let early = (r.event.data["job"]["warm"].as_bool() == Some(true))
+                .then(|| step_run(ws, j, &r.event.data, &clock.stamp()));
+            let mut got = None;
+            if let Some(Ok(s)) = &early
+                && let Ok(id) = super::warm::identity(&s.file)
+            {
+                let (take, old) = w
+                    .pool
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take(&s.file, id);
+                for c in old {
+                    log.write(
+                        "warm.ended",
+                        json!({ "action": warm_action(&c.file), "copy": c.pid(), "why": "changed" }),
+                    );
+                }
+                got = match take {
+                    super::warm::pool::Take::Full => {
+                        full.insert(r.seq);
+                        left_out = true;
+                        continue;
+                    }
+                    super::warm::pool::Take::Idle(c) => Some(Got::Idle(c)),
+                    super::warm::pool::Take::New => Some(Got::New(id, s.file.clone())),
+                };
+            }
+            // what was taken goes back when the job does not start now
+            let undo = |got: Option<Got>| match got {
+                Some(Got::Idle(c)) => {
+                    w.pool
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .give_back(c, true);
+                }
+                Some(Got::New(_, file)) => {
+                    w.pool
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .done_with(&file);
+                }
+                None => {}
+            };
             // as many steps run, in all of this daemon's workspaces, as its
-            // open files allow (files.rs): the rest wait for one to end
-            let share = match super::files::worker_share() {
-                Ok(share) => share,
-                Err(why) => {
-                    no_files(log, pass, &mut short, r.seq, &why);
-                    break;
+            // open files allow (files.rs): the rest wait for one to end. An
+            // idle copy holds its own.
+            let share = if matches!(got, Some(Got::Idle(_))) {
+                None
+            } else {
+                match super::files::worker_share() {
+                    Ok(share) => Some(share),
+                    Err(why) => {
+                        undo(got);
+                        no_files(log, pass, &mut short, r.seq, &why);
+                        break;
+                    }
                 }
             };
             // a copy of it still runs, left by a daemon that died: not now
@@ -944,6 +1156,7 @@ fn work(
             let lock = match super::lock::take_job(&ws.root, r.seq) {
                 Ok(Some(lock)) => lock,
                 Ok(None) => {
+                    undo(got);
                     if told.insert(r.seq) {
                         pass.elsewhere += 1;
                         log.write(
@@ -954,13 +1167,18 @@ fn work(
                     continue;
                 }
                 Err(e) if e.out_of_files => {
+                    undo(got);
                     no_files(log, pass, &mut short, r.seq, &e.why);
                     break;
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    undo(got);
+                    return Err(e.into());
+                }
             };
             let (runs, lost) = j.job_runs(r.seq)?;
             if runs >= MAX_RUNS {
+                undo(got);
                 let why = lost.unwrap_or_default();
                 save_result(j, &r, Err(lost_too_often(&why)), clock)?;
                 drop(lock);
@@ -972,25 +1190,57 @@ fn work(
             // what its worker needs of the daemon's open files is taken
             // before its run is counted: a job with none left waits, not
             // counted, until a worker ends and gives its files back
+            if let Some(Got::Idle(copy)) = got {
+                j.start_job(r.seq)?;
+                super::die_at("job-started");
+                let Some(Ok(step)) = early else {
+                    unreachable!("an idle copy is taken for a step made")
+                };
+                w.start_warm(&ws.root, r, runs + 1, step, lock, Warm::Idle(copy));
+                continue;
+            }
+            let share = share.expect("taken for all but an idle copy");
             let pipes = match Pipes::new() {
                 Ok(p) => p,
                 Err(e) if super::files::out_of(&e) => {
+                    undo(got);
                     no_files(log, pass, &mut short, r.seq, &e.to_string());
                     break;
                 }
-                Err(e) => return Err(anyhow!("cannot make a worker's pipes: {e}")),
+                Err(e) => {
+                    undo(got);
+                    return Err(anyhow!("cannot make a worker's pipes: {e}"));
+                }
             };
             j.start_job(r.seq)?;
             super::die_at("job-started");
-            let step = step_run(ws, j, &r.event.data, &clock.stamp());
-            w.start(&ws.root, r, runs + 1, step, (share, lock, pipes));
+            match (got, early) {
+                (Some(Got::New(id, _)), Some(Ok(step))) => {
+                    w.start_warm(
+                        &ws.root,
+                        r,
+                        runs + 1,
+                        step,
+                        lock,
+                        Warm::New { share, pipes, id },
+                    );
+                }
+                (_, early) => {
+                    let step =
+                        early.unwrap_or_else(|| step_run(ws, j, &r.event.data, &clock.stamp()));
+                    w.start(&ws.root, r, runs + 1, step, (share, lock, pipes));
+                }
+            }
         }
-        if saved {
+        // a job left out took a place among those taken: the next ones are
+        // taken while there is room
+        if saved || (left_out && w.running.len() < ws.limits.steps) {
             continue;
         }
         if w.running.is_empty() {
             return Ok(());
         }
+        full.clear();
         end_one(ws, j, w, clock, pass, log, until_timer(j, clock)?)?;
     }
 }
@@ -1857,6 +2107,17 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         }
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
+    // a warm step runs a Python action's file; said before anything runs
+    if job.warm {
+        if !file.is_absolute() {
+            return Err(format!(
+                "warm: only Python actions can be warm: #{} is built in",
+                job.action
+            ));
+        }
+        let first = worker::first_line(&file).unwrap_or_default();
+        super::warm::python(&first)?;
+    }
     let (quiet, most) = ws.step_limits(&job.action).map_err(|e| format!("{e:#}"))?;
     let (mut env, input) = bind(ws, &job)?;
     // the built-in #ai talks to the itero-ai the daemon keeps, unless a
@@ -1916,7 +2177,7 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
 }
 
 /// Kills a worker's whole process group, then reaps the worker.
-fn stop(child: &mut std::process::Child) {
+pub(crate) fn stop(child: &mut std::process::Child) {
     #[cfg(unix)]
     // SAFETY: killpg only sends a signal to the worker's own process group,
     // which it leads (process_group(0) in `spawn_worker`). A worker already
@@ -1930,20 +2191,20 @@ fn stop(child: &mut std::process::Child) {
 
 /// How long a worker that was killed is given to tell what it said before,
 /// and its processes to be gone.
-const READERS: std::time::Duration = std::time::Duration::from_secs(2);
+pub(crate) const READERS: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// How often a running worker looks whether its step was stopped.
-const CANCEL_CHECK: std::time::Duration = std::time::Duration::from_millis(100);
+pub(crate) const CANCEL_CHECK: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// A worker's stdin, a socket its step and lock come over (handover.rs),
 /// and the pipes of its stdout and stderr: made by the pass before the
 /// job's run is counted, so a daemon out of open files has the job wait
 /// instead of failing it.
-struct Pipes {
-    ours: std::os::unix::net::UnixStream,
-    theirs: std::os::unix::net::UnixStream,
-    out: (std::io::PipeReader, std::io::PipeWriter),
-    err: (std::io::PipeReader, std::io::PipeWriter),
+pub(crate) struct Pipes {
+    pub(crate) ours: std::os::unix::net::UnixStream,
+    pub(crate) theirs: std::os::unix::net::UnixStream,
+    pub(crate) out: (std::io::PipeReader, std::io::PipeWriter),
+    pub(crate) err: (std::io::PipeReader, std::io::PipeWriter),
 }
 
 impl Pipes {
@@ -1955,6 +2216,32 @@ impl Pipes {
             out: std::io::pipe()?,
             err: std::io::pipe()?,
         })
+    }
+}
+
+/// Whether a step must be stopped: stopped (`cancel`), past `most` since
+/// `started`, or quiet past `quiet` since it was last `heard`; the why if
+/// so, else how long until the next look (`CANCEL_CHECK` at most).
+pub(crate) fn overdue(
+    started: std::time::Instant,
+    heard: &Mutex<std::time::Instant>,
+    quiet: std::time::Duration,
+    most: std::time::Duration,
+    cancel: &AtomicBool,
+) -> Result<std::time::Duration, String> {
+    let silent = heard
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .elapsed();
+    let ran = started.elapsed();
+    if cancel.load(Ordering::SeqCst) {
+        Err(journal::JOB_STOPPED.to_string())
+    } else if ran >= most {
+        Err(format!("ran for {}", humantime::format_duration(most)))
+    } else if silent >= quiet {
+        Err(format!("quiet for {}", humantime::format_duration(quiet)))
+    } else {
+        Ok((quiet - silent).min(most - ran).min(CANCEL_CHECK))
     }
 }
 
@@ -2054,21 +2341,8 @@ fn spawn_worker(
     let quiet = std::time::Duration::from_secs(step.quiet);
     let most = std::time::Duration::from_secs(step.most);
     let status = loop {
-        let silent = heard
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .elapsed();
-        let ran = started.elapsed();
-        let why = if cancel.load(Ordering::SeqCst) {
-            Some(journal::JOB_STOPPED.to_string())
-        } else if ran >= most {
-            Some(format!("ran for {}", humantime::format_duration(most)))
-        } else if silent >= quiet {
-            Some(format!("quiet for {}", humantime::format_duration(quiet)))
-        } else {
-            None
-        };
-        if let Some(why) = why {
+        let next = overdue(started, &heard, quiet, most, cancel);
+        if let Err(why) = next {
             // still running, not yet reaped: its group's id is still its own
             stop(&mut child);
             // what it said before is told now, not after its progress is
@@ -2079,7 +2353,7 @@ fn spawn_worker(
             }
             return Err(Failure::Lost(why));
         }
-        let next = (quiet - silent).min(most - ran).min(CANCEL_CHECK);
+        let next = next.unwrap_or_default();
         if let Some(status) = child.wait_timeout(next).map_err(|e| e.to_string())? {
             break status;
         }

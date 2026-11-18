@@ -1,0 +1,10 @@
+{
+  "on": [{ "event": "post.drafted" }, { "has": ["$event.title", "$event.when"] }],
+  "steps": [
+    { "#slugify": { "args": { "title": "$event.title" }, "warm": true } },
+    { "#parse-date": { "args": { "text": "$event.when" }, "warm": true } },
+    { "#post-path": {
+        "args": { "slug": "$steps.slugify.slug", "at": "$steps.parse-date.at" },
+        "warm": true } }
+  ]
+}

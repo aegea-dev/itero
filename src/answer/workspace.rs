@@ -224,16 +224,47 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
     // #ai's own messages name it: the address says the step
     let ai = |m: String| m.strip_prefix("#ai: ").map(String::from).unwrap_or(m);
     // every step that can be read, in every file, whatever else is wrong
+    // the actions each workflow runs warm, shown so in its listing
+    let mut warm_uses = std::collections::BTreeSet::new();
     for (name, v) in &read.written {
-        for (at, step, args) in crate::flow::addressed(v) {
+        for (at, step, args, warm) in crate::flow::addressed(v) {
             let (step, args) = (&step, &args);
             let at = format!("workflows/{name}/{at}");
             match step {
                 Name::Action { name: a, version } => {
                     let built_in =
                         crate::engine::worker::BUILT_IN.contains(&a.as_str()) && version.is_none();
-                    if !built_in && let Err(e) = ws.action_file(a, version.as_deref()) {
-                        errors.push(Problem::new(at.clone(), format!("{e:#}")));
+                    let file = if built_in {
+                        None
+                    } else {
+                        match ws.action_file(a, version.as_deref()) {
+                            Ok(f) => Some(f),
+                            Err(e) => {
+                                errors.push(Problem::new(at.clone(), format!("{e:#}")));
+                                None
+                            }
+                        }
+                    };
+                    // a warm step runs a Python action's file
+                    if warm {
+                        let why = match &file {
+                            _ if built_in => Some(format!(
+                                "warm: only Python actions can be warm: #{a} is built in"
+                            )),
+                            Some(f) => {
+                                let first =
+                                    crate::engine::worker::first_line(f).unwrap_or_default();
+                                crate::engine::warm::python(&first).err()
+                            }
+                            None => None,
+                        };
+                        match why {
+                            Some(why) => errors.push(Problem::new(at.clone(), why)),
+                            None if file.is_some() => {
+                                warm_uses.insert((name.clone(), a.clone()));
+                            }
+                            None => {}
+                        }
                     }
                     for (action, taken) in built_ins {
                         if a != action || !built_in {
@@ -289,7 +320,10 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
                 Name::Action { name: a, version } => match ws.action_file(&a, version.as_deref()) {
                     Ok(file) => {
                         let first = crate::engine::worker::first_line(&file).unwrap_or_default();
-                        let notes = crate::needs::notes(&file, &first, Some(&path));
+                        let mut notes = crate::needs::notes(&file, &first, Some(&path));
+                        if warm_uses.contains(&(name.clone(), a.clone())) {
+                            notes.push("warm".into());
+                        }
                         uses.push(Use::File {
                             action: a,
                             file: file.display().to_string(),

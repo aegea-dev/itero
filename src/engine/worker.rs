@@ -865,24 +865,10 @@ pub fn run_step_telling(
     let _ = writeln!(stdin, "{}", Value::Object(r.input.clone()));
     drop(stdin);
     let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
-    // a line on stderr may come in two pieces: the start of one is kept
-    let partial = std::sync::Mutex::new(Vec::new());
+    let on_stderr = stderr_telling(told);
     let (stdout, stderr) = std::thread::scope(|s| {
         let out = s.spawn(|| read_telling(stdout, &|_| told(None)));
-        let err = s.spawn(|| {
-            read_telling(stderr, &|piece| {
-                let mut line = partial.lock().unwrap_or_else(|e| e.into_inner());
-                line.extend_from_slice(piece);
-                match last_line(&line) {
-                    Some(said) => {
-                        told(Some(&said));
-                        let end = line.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-                        line.drain(..end);
-                    }
-                    None => told(None),
-                }
-            })
-        });
+        let err = s.spawn(|| read_telling(stderr, &on_stderr));
         let join = |h: std::thread::ScopedJoinHandle<std::io::Result<Vec<u8>>>| {
             h.join()
                 .unwrap_or_else(|_| Err(std::io::Error::other("its reader panicked")))
@@ -891,13 +877,47 @@ pub fn run_step_telling(
         Ok::<_, String>((join(out)?, join(err)?))
     })?;
     let status = child.wait().map_err(|e| e.to_string())?;
-    let Some(exit) = status.code() else {
-        return Err(Failure::Lost(format!("killed ({status})")));
-    };
-    match exit {
-        0 => Ok(Outcome::Done(answer(&stdout))),
-        NOT_YET => Ok(Outcome::NotYet(answer(&stdout))),
-        _ => Err(Failure::Error(exit_why(exit, &stderr))),
+    outcome_of(
+        status.code(),
+        &format!("killed ({status})"),
+        &stdout,
+        &stderr,
+    )
+}
+
+/// How a step went, from its process's exit code (`None`: killed by a
+/// signal, `killed` saying how) and what it printed: the one reading of an
+/// action's end, for a fresh process and a warm copy alike.
+pub fn outcome_of(
+    code: Option<i32>,
+    killed: &str,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<Outcome, Failure> {
+    match code {
+        None => Err(Failure::Lost(killed.to_string())),
+        Some(0) => Ok(Outcome::Done(answer(stdout))),
+        Some(NOT_YET) => Ok(Outcome::NotYet(answer(stdout))),
+        Some(exit) => Err(Failure::Error(exit_why(exit, stderr))),
+    }
+}
+
+/// What reading an action's stderr calls with each piece: `told` gets the
+/// last whole line when a piece ends one (its progress), else `None`. A
+/// line may come in two pieces: the start of one is kept.
+pub fn stderr_telling<'a>(told: &'a (dyn Fn(Option<&str>) + Sync)) -> impl Fn(&[u8]) + Sync + 'a {
+    let partial = std::sync::Mutex::new(Vec::new());
+    move |piece: &[u8]| {
+        let mut line = partial.lock().unwrap_or_else(|e| e.into_inner());
+        line.extend_from_slice(piece);
+        match last_line(&line) {
+            Some(said) => {
+                told(Some(&said));
+                let end = line.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+                line.drain(..end);
+            }
+            None => told(None),
+        }
     }
 }
 

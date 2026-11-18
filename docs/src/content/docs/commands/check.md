@@ -41,6 +41,16 @@ Under an action, it notes what the action needs and the `PATH` lacks:
 a command it runs (a hint: the script may guard it). Neither fails the
 check. See [Actions](/guides/actions/#when-something-it-needs-is-missing).
 
+A step with `"warm": true` shows `warm` under its action. Only a Python
+action can be warm; on any other, the check fails at that step:
+
+```
+error: warm: only Python actions can be warm: its first line runs sh (home/workflows/sepet/steps/#üzüm)
+error: warm: only Python actions can be warm: #notify is built in (home/workflows/sepet/steps/#notify)
+```
+
+See [Warm actions](/guides/actions/#warm-actions).
+
 Under `#ai`, a line for each of its steps says where it sends: `local:
 <model>` for itero-ai, `local: <url>` for a server on this machine
 (`localhost`, `127.0.0.1`, `[::1]`), `remote: <url>` for any other host,

@@ -2257,3 +2257,229 @@ fn a_secret_set_during_a_long_pass_is_seen_within_a_second() {
     pass.join().unwrap();
     assert!(seen, "the secret set during the pass was not seen");
 }
+
+// --- warm steps end as fresh ones do -------------------------------------
+
+impl Ws {
+    /// An action in any language: `first` is its first line.
+    fn script(&self, name: &str, first: &str, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let rel = format!("actions/{name}");
+        self.write(&rel, &format!("{first}\n{body}\n"));
+        let f = self.d.path().join(rel);
+        std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fn py(&self, name: &str, body: &str) {
+        self.script(name, "#!/usr/bin/env python3", body);
+    }
+
+    /// What must be the same whatever ran the steps: each step's result
+    /// and each run's end, by workflow, without ids and times (sorted, as
+    /// steps side by side end in any order), and the files the actions
+    /// wrote.
+    fn story(&self, files: &[&str]) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .log()
+            .iter()
+            .filter_map(|l| {
+                let (w, s) = (&l["workflow"], &l["step"]);
+                match l["event"].as_str()? {
+                    "step.done" | "step.waiting" => {
+                        Some(format!("{w} {s} {} {}", l["event"], l["output"]))
+                    }
+                    "step.failed" => Some(format!("{w} {s} failed {}", l["why"])),
+                    "run.ended" => Some(format!("{w} ended {} {}", l["status"], l["why"])),
+                    _ => None,
+                }
+            })
+            .collect();
+        out.extend(files.iter().map(|f| format!("{f}: {}", self.read(f))));
+        // each workspace is in a folder of its own
+        let root = self.d.path().display().to_string();
+        let mut out: Vec<String> = out.into_iter().map(|l| l.replace(&root, "<ws>")).collect();
+        out.sort();
+        out
+    }
+}
+
+/// A step of `action`, warm or not.
+fn step(action: &str, warm: bool, rest: Value) -> Value {
+    let mut fields = rest.as_object().cloned().unwrap_or_default();
+    if warm {
+        fields.insert("warm".into(), json!(true));
+    }
+    json!({ format!("#{action}"): fields })
+}
+
+/// Runs `scenario` in two workspaces, its Python steps plain in one and
+/// warm in the other, and compares what each saved.
+fn same_warm_and_plain(files: &[&str], scenario: impl Fn(&Ws, bool)) {
+    let (plain, warm) = (Ws::new(), Ws::new());
+    scenario(&plain, false);
+    scenario(&warm, true);
+    assert_eq!(plain.story(files), warm.story(files));
+}
+
+/// The order of the design, its actions in Python, its steps warm or not.
+fn order_py(ws: &Ws, warm: bool) {
+    let log = step(
+        "log-result",
+        warm,
+        json!({"args": {"success": "$output.success", "failed_step": "$output.failed_step", "why": "$output.why"}}),
+    );
+    ws.flow(
+        "order",
+        json!({
+            "on": [{ "event": "order.placed" }],
+            "steps": [
+                [
+                    step("check-payment", warm, json!({"args": {"order": "$event.order"}})),
+                    step("check-stock", warm, json!({"args": {"in_stock": "$event.in_stock"}}))
+                ],
+                {"order-process": {"args": "$output"}},
+                step("send-mail", warm, json!({"args": {
+                    "order": "$event.order",
+                    "tracking": "$steps.order-process.output.tracking",
+                    "success": "$steps.order-process.output.success"
+                }}))
+            ],
+            "success": [log.clone()],
+            "failure": [log.clone()],
+            "error": [log]
+        }),
+    );
+    ws.flow(
+        "order-process",
+        json!({
+            "on": [{ "has": ["$event.paid", "$event.stock"] }],
+            "steps": [
+                step("ship", warm, json!({"on": [{"$event.paid": true, "$event.stock": true}]})),
+                step("remind-stock", warm, json!({"on": [{"$event.paid": true, "$event.stock": false}]}))
+            ]
+        }),
+    );
+    ws.py(
+        "check-payment",
+        "import json, os, sys\nev = os.environ.get('event', '')\nif '\"paid\": true' in ev or '\"paid\":true' in ev:\n    print(json.dumps({'paid': True})); sys.exit(0)\nprint(json.dumps({'payment_ref': 'ödeme-1'}))\nsys.exit(75)",
+    );
+    ws.py(
+        "check-stock",
+        "import json, os\nprint(json.dumps({'stock': json.loads(os.environ['in_stock'])}))",
+    );
+    ws.py("ship", "print('{\"tracking\": \"TR123\"}')");
+    ws.py("remind-stock", "print('{\"success\": false}')");
+    ws.py(
+        "send-mail",
+        "import json, os\nwith open('gönderilen.log', 'a') as f:\n    f.write(f\"sipariş {os.environ['order']}: {os.environ.get('tracking', 'kargo yok')}\\n\")\nprint(json.dumps({'success': json.loads(os.environ.get('success', 'true'))}))",
+    );
+    ws.py(
+        "log-result",
+        "import os\nwith open('sonuç.log', 'a') as f:\n    f.write(f\"{os.environ.get('success', 'true')} {os.environ.get('failed_step', '')} {os.environ.get('why', '')}\\n\")",
+    );
+}
+
+#[test]
+fn an_order_waits_for_its_payment_then_ships_warm_or_plain() {
+    same_warm_and_plain(&["gönderilen.log", "sonuç.log"], |ws, warm| {
+        order_py(ws, warm);
+        ws.emit("order.placed", json!({"order": 43, "in_stock": true}));
+        ws.pass(NOW);
+        ws.emit(
+            "payment.received",
+            json!({"payment_ref": "ödeme-1", "paid": true}),
+        );
+        ws.pass(NOW);
+        assert_eq!(ws.statuses(), vec!["done", "done"], "warm {warm}");
+    });
+}
+
+#[test]
+fn an_order_out_of_stock_ends_as_failed_warm_or_plain() {
+    same_warm_and_plain(&["gönderilen.log", "sonuç.log"], |ws, warm| {
+        order_py(ws, warm);
+        ws.emit("order.placed", json!({"order": 44, "in_stock": false}));
+        ws.emit(
+            "payment.received",
+            json!({"payment_ref": "ödeme-1", "paid": true}),
+        );
+        ws.pass(NOW);
+        assert_eq!(ws.statuses(), vec!["failed", "failed"], "warm {warm}");
+    });
+}
+
+#[test]
+fn an_exception_runs_the_error_list_warm_or_plain() {
+    same_warm_and_plain(&["sonuç.log"], |ws, warm| {
+        order_py(ws, warm);
+        ws.py("check-stock", "raise RuntimeError('depo kapalı')");
+        ws.emit("order.placed", json!({"order": 45, "in_stock": true}));
+        ws.pass(NOW);
+        assert_eq!(ws.statuses(), vec!["error"], "warm {warm}");
+    });
+}
+
+/// Python, then Node, then sh, each with an undo; `bozuk` names the step
+/// that fails, or none.
+fn mixed(ws: &Ws, warm: bool) {
+    ws.flow(
+        "karışık",
+        json!({
+            "on": [{ "event": "iş.geldi" }],
+            "steps": [
+                step("ayıkla", warm, json!({"args": {"bozuk": "$event.bozuk"}, "undo": "#geri-ayıkla"})),
+                {"#biçimle": {"args": {"bozuk": "$event.bozuk", "metin": "$output.metin"}, "undo": "#geri-biçimle"}},
+                {"#gönder": {"args": {"bozuk": "$event.bozuk", "metin": "$output"}}}
+            ]
+        }),
+    );
+    ws.py(
+        "ayıkla",
+        "import json, os\nif os.environ['bozuk'] == '1':\n    {'a': 1}['ğ']\nprint(json.dumps({'metin': 'ılık şeftali'}))",
+    );
+    ws.script(
+        "biçimle",
+        "#!/usr/bin/env node",
+        "if (process.env.bozuk === '2') { console.error('biçim yok'); process.exit(2) }\nconsole.log(process.env.metin.toUpperCase())",
+    );
+    ws.script(
+        "gönder",
+        "#!/bin/sh",
+        "[ \"$bozuk\" = 3 ] && { echo 'kapalı' >&2; exit 3; }\necho \"$metin\" >> giden.log",
+    );
+    ws.script("geri-ayıkla", "#!/bin/sh", "echo ayıkla >> geri.log");
+    ws.script("geri-biçimle", "#!/bin/sh", "echo biçimle >> geri.log");
+}
+
+#[test]
+fn a_python_node_sh_workflow_ends_the_same_with_a_failure_at_each_step() {
+    for bozuk in [0, 1, 2, 3] {
+        same_warm_and_plain(&["giden.log", "geri.log"], |ws, warm| {
+            mixed(ws, warm);
+            ws.emit("iş.geldi", json!({ "bozuk": bozuk }));
+            ws.pass(NOW);
+            let want = if bozuk == 0 { "done" } else { "error" };
+            assert_eq!(ws.statuses(), vec![want], "bozuk {bozuk}, warm {warm}");
+        });
+    }
+}
+
+#[test]
+fn a_python_step_killed_midway_runs_again_and_ends_the_same() {
+    same_warm_and_plain(&["giden.log", "kez"], |ws, warm| {
+        std::fs::write(
+            ws.d.path().join("itero.config.json"),
+            r#"{ "limits": { "quiet": "1s" } }"#,
+        )
+        .unwrap();
+        mixed(ws, warm);
+        // its first try prints nothing and sleeps: killed past quiet
+        ws.py(
+            "ayıkla",
+            "import json, pathlib, time\np = pathlib.Path('kez')\nn = int(p.read_text()) if p.exists() else 0\np.write_text(str(n + 1))\nif n == 0:\n    time.sleep(30)\nprint(json.dumps({'metin': 'güzel üzüm'}))",
+        );
+        ws.emit("iş.geldi", json!({ "bozuk": 0 }));
+        ws.pass(NOW);
+        assert_eq!(ws.statuses(), vec!["done"], "warm {warm}");
+    });
+}
