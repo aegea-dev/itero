@@ -43,7 +43,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: itero
-          image: ghcr.io/aegea-dev/itero:0.46.0
+          image: ghcr.io/aegea-dev/itero:0.47.0
           ports:
             - name: api
               containerPort: 8443
