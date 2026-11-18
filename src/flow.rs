@@ -1309,10 +1309,10 @@ pub fn step_labels(items: &[Value]) -> Vec<String> {
 }
 
 /// Every step and undo of a workflow as written, with its address
-/// (`steps/#ai/2`, `steps/all/#b`, `steps/#ship/undo`), what it runs and
-/// its args: each step that can be read, even when others in the file
-/// cannot, so each is checked on its own.
-pub fn addressed(v: &Value) -> Vec<(String, Name, Value)> {
+/// (`steps/#ai/2`, `steps/all/#b`, `steps/#ship/undo`), what it runs, its
+/// args and whether it is warm: each step that can be read, even when
+/// others in the file cannot, so each is checked on its own.
+pub fn addressed(v: &Value) -> Vec<(String, Name, Value, bool)> {
     let mut out = vec![];
     for key in ["steps", "success", "failure", "error"] {
         let Some(items) = v.get(key).and_then(Value::as_array) else {
@@ -1334,14 +1334,16 @@ pub fn addressed(v: &Value) -> Vec<(String, Name, Value)> {
             if let Some(ms) = members {
                 for (m, l) in ms.iter().zip(step_labels(ms)) {
                     let read = match m {
-                        Value::String(s) => name(s).ok().map(|n| (n, Value::Object(Map::new()))),
+                        Value::String(s) => {
+                            name(s).ok().map(|n| (n, Value::Object(Map::new()), false))
+                        }
                         Value::Object(o) if !is_group(o) => {
-                            written(o).ok().map(|w| (w.name, w.args))
+                            written(o).ok().map(|w| (w.name, w.args, w.warm))
                         }
                         _ => None,
                     };
-                    if let Some((n, args)) = read.filter(|_| !l.is_empty()) {
-                        out.push((format!("{at}/{l}"), n, args));
+                    if let Some((n, args, warm)) = read.filter(|_| !l.is_empty()) {
+                        out.push((format!("{at}/{l}"), n, args, warm));
                     }
                 }
             } else if let Ok(Step::One {
@@ -1349,12 +1351,13 @@ pub fn addressed(v: &Value) -> Vec<(String, Name, Value)> {
                 args,
                 undo,
                 undo_args,
+                warm,
                 ..
             }) = step(item)
             {
-                out.push((at.clone(), name, args));
+                out.push((at.clone(), name, args, warm));
                 if let Some(u) = undo {
-                    out.push((format!("{at}/undo"), u, undo_args));
+                    out.push((format!("{at}/undo"), u, undo_args, false));
                 }
             }
         }
