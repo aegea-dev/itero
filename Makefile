@@ -234,16 +234,19 @@ soak-linux: image ## The same, on Linux: in the Alpine image built from this tre
 # skipped and the Mac ones still run. The soaks talk only to 127.0.0.1
 # (the Linux ones run with no network at all), so a connection lost during
 # the night changes nothing. Each soak runs even when one before it
-# failed; caffeinate keeps the Mac awake until the last one ends.
+# failed, and the bench (1, 3 and 5 steps, mixed languages) runs last,
+# after every soak, whatever they did; caffeinate keeps the Mac awake
+# until it ends.
 .PHONY: soak-night
-soak-night: build ## All four in a row on a Mac, for a night: soak, slow, then both on Linux (about 2.5 hours)
+soak-night: build ## All four in a row on a Mac, for a night: soak, slow, both on Linux, then the bench (about 2.75 hours)
 	mkdir -p target/soak
 	caffeinate -ims -w $$$$ & \
 	if sh scripts/image.sh && $(SOAK_IMAGE); then linux=yes; else linux=; \
 		echo "soak-night: the images were not built: the Linux soaks are skipped" >&2; fi; \
 	sh scripts/soak.sh; \
 	SOAK_MODE=slow sh scripts/soak.sh; \
-	if [ -n "$$linux" ]; then $(SOAK_LINUX); SOAK_MODE=slow $(SOAK_LINUX); fi
+	if [ -n "$$linux" ]; then $(SOAK_LINUX); SOAK_MODE=slow $(SOAK_LINUX); fi; \
+	sh scripts/bench.sh
 
 .PHONY: test-linux
 test-linux: ## Run the tests and clippy on Linux, in Docker
