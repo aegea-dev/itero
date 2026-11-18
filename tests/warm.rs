@@ -209,3 +209,96 @@ fn output_that_looks_like_a_mark_is_kept_whole() {
         )))
     );
 }
+
+/// A warm worker on a socket: what it prints, line by line.
+struct Worker {
+    child: std::process::Child,
+    sock: Option<std::os::unix::net::UnixStream>,
+    lines: std::io::Lines<std::io::BufReader<std::process::ChildStdout>>,
+}
+
+impl Worker {
+    fn start() -> Worker {
+        use std::os::unix::process::CommandExt;
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+            .args(["worker", "--warm"])
+            .stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(theirs)))
+            .stdout(std::process::Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let out = child.stdout.take().unwrap();
+        use std::io::BufRead;
+        Worker {
+            child,
+            sock: Some(ours),
+            lines: std::io::BufReader::new(out).lines(),
+        }
+    }
+
+    /// Sends `step` with a lock of its own; its `done` line.
+    fn step(&mut self, step: &StepRun) -> Value {
+        let lock = tempfile::tempfile().unwrap();
+        itero::engine::handover::send_framed(
+            self.sock.as_ref().unwrap(),
+            serde_json::to_string(step).unwrap().as_bytes(),
+            std::os::fd::AsFd::as_fd(&lock),
+        )
+        .unwrap();
+        let done = self
+            .lines
+            .by_ref()
+            .map(Result::unwrap)
+            .find(|l| l.starts_with("done "))
+            .expect("no done line");
+        serde_json::from_str(&done[5..]).unwrap()
+    }
+}
+
+#[test]
+fn a_warm_worker_takes_steps_until_its_socket_closes() {
+    let d = tempfile::tempdir().unwrap();
+    let mut w = Worker::start();
+    let v = w.step(&py_step(d.path(), ACTION, json!({"what": "ok"})));
+    assert_eq!(v["answer"], json!({"outcome": {"done": {"ok": "ok"}}}), "{v}");
+    assert_eq!(v["keep"], json!(true));
+    let v = w.step(&py_step(d.path(), ACTION, json!({"what": "raise"})));
+    assert!(v["answer"]["error"].as_str().unwrap().contains("KeyError: 'ğ'"), "{v}");
+    assert_eq!(v["keep"], json!(true));
+    w.sock = None;
+    assert!(w.child.wait().unwrap().success());
+}
+
+#[test]
+fn a_process_left_by_a_step_ends_the_copy_with_it() {
+    let d = tempfile::tempdir().unwrap();
+    let body = "import subprocess\np = subprocess.Popen(['sleep', '30'])\nopen('kalan', 'w').write(str(p.pid))\nprint('ılık')";
+    let mut w = Worker::start();
+    let v = w.step(&py_step(d.path(), body, json!({})));
+    assert_eq!(v["answer"], json!({"outcome": {"done": "ılık"}}), "{v}");
+    assert_eq!(v["keep"], json!(false));
+    assert_eq!(v["why"], json!("a process still runs"));
+    let _ = w.child.wait();
+    let left: i32 = std::fs::read_to_string(d.path().join("kalan")).unwrap().parse().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    // SAFETY: kill with signal 0 only asks whether the process is there
+    let alive = unsafe { libc::kill(left, 0) } == 0;
+    assert!(!alive, "sleep {left} was left running");
+}
+
+#[test]
+fn a_warm_worker_whose_action_cannot_be_warm_says_why_and_ends() {
+    let d = tempfile::tempdir().unwrap();
+    let mut step = py_step(d.path(), "print('çay')", json!({}));
+    std::fs::write(&step.file, "#!/bin/sh\necho çay\n").unwrap();
+    step.env.clear();
+    let mut w = Worker::start();
+    let v = w.step(&step);
+    assert_eq!(
+        v["answer"],
+        json!({"error": "warm: only Python actions can be warm: its first line runs sh"})
+    );
+    assert_eq!(v["keep"], json!(false));
+    assert!(w.child.wait().unwrap().success());
+}

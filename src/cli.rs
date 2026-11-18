@@ -147,7 +147,11 @@ pub enum Cmd {
     },
     /// A worker: one job, JSON in on stdin, its output as JSON on stdout
     #[command(hide = true)]
-    Worker,
+    Worker {
+        /// A warm copy's worker: step after step, until its socket closes
+        #[arg(long)]
+        warm: bool,
+    },
     /// A click on a notification itero showed, as Itero.app tells it
     #[command(hide = true)]
     NotificationClicked {
@@ -840,7 +844,7 @@ fn here_only(cmd: &Cmd) -> Option<&'static str> {
         | Cmd::MovedConnector { .. } => return None,
         Cmd::Daemon { .. } => "daemon",
         Cmd::Watchdog { .. } => "watchdog",
-        Cmd::Worker => "worker",
+        Cmd::Worker { .. } => "worker",
         Cmd::Service { .. } => "service",
         Cmd::Emit(_) => "emit",
         Cmd::Ai { .. } => "ai",
@@ -993,7 +997,7 @@ fn dispatch(cli: Cli) -> Result<()> {
     if matches!(
         cli.cmd,
         Cmd::Daemon { .. }
-            | Cmd::Worker
+            | Cmd::Worker { .. }
             | Cmd::Watchdog { .. }
             | Cmd::Workspace {
                 cmd: WorkspaceCmd::Daemon { .. },
@@ -1444,7 +1448,8 @@ fn dispatch(cli: Cli) -> Result<()> {
             crate::engine::events::notification_clicked(&ws, v, &now)?;
             nudge(&ws);
         }
-        Cmd::Worker => {
+        Cmd::Worker { warm: true } => warm_worker()?,
+        Cmd::Worker { warm: false } => {
             // the step, and from the daemon the job's lock, held until the
             // worker ends: its action's processes inherit it
             let (text, _lock) =
@@ -1453,68 +1458,10 @@ fn dispatch(cli: Cli) -> Result<()> {
             let step: crate::engine::worker::StepRun =
                 serde_json::from_slice(&text).map_err(|e| anyhow!("the worker's step: {e}"))?;
             use crate::engine::worker::{Failure, LOST_EXIT, run_step_telling};
-            use std::io::Write;
-            use std::time::{Duration, Instant};
             #[cfg(unix)]
             crate::engine::worker::stop_with_parent();
             crate::engine::die_at("worker");
-            // while the action prints, a blank line on stdout now and then
-            // tells the daemon it is working, and `said <JSON text>` what it
-            // said last on stderr, at most twice a second; the answer after
-            // them is read all the same. A daemon gone stops this worker
-            // anyway, so a line it cannot take is no error.
-            let line = |text: &[u8]| {
-                let mut out = std::io::stdout().lock();
-                let _ = out.write_all(text).and_then(|()| out.flush());
-            };
-            let last = std::sync::Mutex::new(None::<Instant>);
-            let said = std::sync::Mutex::new((None::<String>, None::<String>));
-            // set, and its waiter told, when the step has ended
-            let ended = (std::sync::Mutex::new(false), std::sync::Condvar::new());
-            let printed = |now_said: Option<&str>| {
-                if let Some(s) = now_said {
-                    said.lock().unwrap_or_else(|e| e.into_inner()).0 = Some(s.to_string());
-                }
-                let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
-                if last.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
-                    *last = Some(Instant::now());
-                    line(b"\n");
-                }
-            };
-            let outcome = std::thread::scope(|s| {
-                // the latest line goes on even when the action falls silent
-                s.spawn(|| {
-                    let mut told = Instant::now() - Duration::from_secs(1);
-                    loop {
-                        // a look every 50 ms; the step's end ends it at once,
-                        // so the worker never waits for its next look
-                        {
-                            let done = ended.0.lock().unwrap_or_else(|e| e.into_inner());
-                            let (done, _) = ended
-                                .1
-                                .wait_timeout_while(done, Duration::from_millis(50), |d| !*d)
-                                .unwrap_or_else(|e| e.into_inner());
-                            if *done {
-                                return;
-                            }
-                        }
-                        if told.elapsed() < Duration::from_millis(500) {
-                            continue;
-                        }
-                        let mut said = said.lock().unwrap_or_else(|e| e.into_inner());
-                        if said.0.is_some() && said.0 != said.1 {
-                            said.1 = said.0.clone();
-                            told = Instant::now();
-                            let text = serde_json::to_string(&said.1).unwrap_or_default();
-                            line(format!("said {text}\n").as_bytes());
-                        }
-                    }
-                });
-                let outcome = run_step_telling(&step, &printed);
-                *ended.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
-                ended.1.notify_all();
-                outcome
-            });
+            let outcome = with_progress(|printed| run_step_telling(&step, printed));
             match outcome {
                 Ok(outcome) => {
                     // the step's effect is done; its answer is not yet given
@@ -1530,4 +1477,142 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Runs `f` while telling the daemon the step is working: a blank line on
+/// stdout now and then while the action prints, and `said <JSON text>`
+/// what it said last on stderr, at most twice a second. `f` is given what
+/// the action's reading calls each time it prints.
+fn with_progress<T>(f: impl FnOnce(&(dyn Fn(Option<&str>) + Sync)) -> T) -> T {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    // while the action prints, a blank line on stdout now and then
+    // tells the daemon it is working, and `said <JSON text>` what it
+    // said last on stderr, at most twice a second; the answer after
+    // them is read all the same. A daemon gone stops this worker
+    // anyway, so a line it cannot take is no error.
+    let line = |text: &[u8]| {
+        let mut out = std::io::stdout().lock();
+        let _ = out.write_all(text).and_then(|()| out.flush());
+    };
+    let last = std::sync::Mutex::new(None::<Instant>);
+    let said = std::sync::Mutex::new((None::<String>, None::<String>));
+    // set, and its waiter told, when the step has ended
+    let ended = (std::sync::Mutex::new(false), std::sync::Condvar::new());
+    let printed = |now_said: Option<&str>| {
+        if let Some(s) = now_said {
+            said.lock().unwrap_or_else(|e| e.into_inner()).0 = Some(s.to_string());
+        }
+        let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
+            *last = Some(Instant::now());
+            line(b"\n");
+        }
+    };
+    std::thread::scope(|s| {
+        // the latest line goes on even when the action falls silent
+        s.spawn(|| {
+            let mut told = Instant::now() - Duration::from_secs(1);
+            loop {
+                // a look every 50 ms; the step's end ends it at once,
+                // so the worker never waits for its next look
+                {
+                    let done = ended.0.lock().unwrap_or_else(|e| e.into_inner());
+                    let (done, _) = ended
+                        .1
+                        .wait_timeout_while(done, Duration::from_millis(50), |d| !*d)
+                        .unwrap_or_else(|e| e.into_inner());
+                    if *done {
+                        return;
+                    }
+                }
+                if told.elapsed() < Duration::from_millis(500) {
+                    continue;
+                }
+                let mut said = said.lock().unwrap_or_else(|e| e.into_inner());
+                if said.0.is_some() && said.0 != said.1 {
+                    said.1 = said.0.clone();
+                    told = Instant::now();
+                    let text = serde_json::to_string(&said.1).unwrap_or_default();
+                    line(format!("said {text}\n").as_bytes());
+                }
+            }
+        });
+        let outcome = f(&printed);
+        *ended.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        ended.1.notify_all();
+        outcome
+    })
+}
+
+/// A warm copy's worker: takes step after step on its stdin (the daemon's
+/// socket, `handover::send_framed`), each with its job's lock, runs it in
+/// the action's runner, kept between steps, and prints `done <JSON>` after
+/// each: its answer, and whether the copy may take another. It ends when
+/// the daemon closes the socket, or after a step that leaves the copy unfit.
+fn warm_worker() -> Result<()> {
+    use crate::engine::warm::{
+        WarmAnswer,
+        runner::{End, Runner},
+    };
+    use crate::engine::worker::{Failure, StepRun};
+    #[cfg(unix)]
+    crate::engine::worker::stop_with_parent();
+    let mut runner: Option<Runner> = None;
+    loop {
+        let Some((text, lock)) =
+            crate::engine::handover::receive_framed(std::os::fd::AsFd::as_fd(&std::io::stdin()))
+                .map_err(|e| anyhow!("the worker's step: {e}"))?
+        else {
+            // the daemon let the copy go
+            return Ok(());
+        };
+        let step: StepRun =
+            serde_json::from_slice(&text).map_err(|e| anyhow!("the worker's step: {e}"))?;
+        crate::engine::die_at("warm-worker");
+        if runner.is_none() {
+            match Runner::start(&step) {
+                Ok(r) => runner = Some(r),
+                Err(why) => {
+                    let end = End {
+                        outcome: Err(Failure::Error(why.clone())),
+                        keep: false,
+                        why_not: Some(why),
+                    };
+                    done(&end);
+                    return Ok(());
+                }
+            }
+        }
+        let r = runner.as_mut().expect("started above");
+        let mut end = with_progress(|printed| r.request(&step, printed));
+        if end.keep && crate::engine::warm::others_in_group(&[std::process::id(), r.pid()]) {
+            end.keep = false;
+            end.why_not = Some("a process still runs".into());
+        }
+        done(&end);
+        drop(lock);
+        if !end.keep {
+            // the runner, and anything it left, go with this worker's group
+            #[cfg(unix)]
+            unsafe {
+                // SAFETY: signals only this worker's own group, which it
+                // leads (the daemon starts it so)
+                if libc::getpgrp() == libc::getpid() {
+                    libc::killpg(libc::getpgrp(), libc::SIGKILL);
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    fn done(end: &End) {
+        let answer = match &end.outcome {
+            Ok(o) => WarmAnswer::Outcome(o.clone()),
+            Err(Failure::Error(w)) => WarmAnswer::Error(w.clone()),
+            Err(Failure::Lost(w)) => WarmAnswer::Lost(w.clone()),
+        };
+        let line = serde_json::json!({ "answer": answer, "keep": end.keep, "why": end.why_not });
+        println!("done {line}");
+    }
 }

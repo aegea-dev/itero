@@ -15,7 +15,64 @@ use std::os::unix::net::UnixStream;
 /// reads to the end. The descriptor goes with the first bytes, so `text`
 /// is not empty.
 pub fn send(to: &UnixStream, text: &[u8], lock: BorrowedFd) -> io::Result<()> {
-    if text.is_empty() {
+    let sent = send_with(to, text, lock)?;
+    (&*to).write_all(&text[sent..])?;
+    to.shutdown(std::net::Shutdown::Write)
+}
+
+/// Sends one of many steps on `to`, with its lock: its length (4 bytes,
+/// big-endian), then `text`; what is sent is not ended, so a warm copy's
+/// worker takes step after step on one socket.
+pub fn send_framed(to: &UnixStream, text: &[u8], lock: BorrowedFd) -> io::Result<()> {
+    let len = u32::try_from(text.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a step over 4 GB"))?;
+    let mut all = len.to_be_bytes().to_vec();
+    all.extend_from_slice(text);
+    let sent = send_with(to, &all, lock)?;
+    (&*to).write_all(&all[sent..])
+}
+
+/// What came on `from` to its end, and the file descriptor that came with
+/// it, if one did. `from` may be a pipe (a worker started by hand): then
+/// no descriptor comes. The descriptor is kept open across exec, so the
+/// processes the worker starts hold it too.
+pub fn receive(from: BorrowedFd) -> io::Result<(Vec<u8>, Option<OwnedFd>)> {
+    let mut buf = vec![0u8; 65536];
+    let (got, lock) = receive_with(from, &mut buf)?;
+    match got {
+        Some(n) => buf.truncate(n),
+        None => buf.clear(),
+    }
+    // the rest, to its end; `from` stays open, it is only borrowed
+    // SAFETY: the File is never dropped, so it never closes `from`
+    let mut rest =
+        std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(from.as_raw_fd()) });
+    rest.read_to_end(&mut buf)?;
+    Ok((buf, lock))
+}
+
+/// The next step sent with `send_framed`, and its lock; `None` once `from`
+/// has ended (the daemon let the copy go).
+pub fn receive_framed(from: BorrowedFd) -> io::Result<Option<(Vec<u8>, Option<OwnedFd>)>> {
+    let mut len = [0u8; 4];
+    let (got, lock) = receive_with(from, &mut len)?;
+    let got = got.unwrap_or(0);
+    if got == 0 {
+        return Ok(None);
+    }
+    // SAFETY: the File is never dropped, so it never closes `from`
+    let mut rest =
+        std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(from.as_raw_fd()) });
+    rest.read_exact(&mut len[got..])?;
+    let mut text = vec![0u8; u32::from_be_bytes(len) as usize];
+    rest.read_exact(&mut text)?;
+    Ok(Some((text, lock)))
+}
+
+/// Sends the first of `bytes` with `lock` beside them (`SCM_RIGHTS`);
+/// returns how many went.
+fn send_with(to: &UnixStream, bytes: &[u8], lock: BorrowedFd) -> io::Result<usize> {
+    if bytes.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "nothing to send the lock with",
@@ -27,8 +84,8 @@ pub fn send(to: &UnixStream, text: &[u8], lock: BorrowedFd) -> io::Result<()> {
     // u64s: a control message is aligned as its header
     let mut control = vec![0u64; space.div_ceil(8)];
     let mut iov = libc::iovec {
-        iov_base: text.as_ptr() as *mut libc::c_void,
-        iov_len: text.len(),
+        iov_base: bytes.as_ptr() as *mut libc::c_void,
+        iov_len: bytes.len(),
     };
     // SAFETY: an all-zero msghdr is a valid empty one
     let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
@@ -45,26 +102,22 @@ pub fn send(to: &UnixStream, text: &[u8], lock: BorrowedFd) -> io::Result<()> {
         (*c).cmsg_len = len as _;
         std::ptr::write_unaligned(libc::CMSG_DATA(c).cast::<RawFd>(), lock.as_raw_fd());
     }
-    let sent = loop {
-        // SAFETY: `msg` points at `iov`, `text` and `control`, alive here
+    loop {
+        // SAFETY: `msg` points at `iov`, `bytes` and `control`, alive here
         let n = unsafe { libc::sendmsg(to.as_raw_fd(), &msg, 0) };
         if n >= 0 {
-            break n as usize;
+            return Ok(n as usize);
         }
         let e = io::Error::last_os_error();
         if e.kind() != io::ErrorKind::Interrupted {
             return Err(e);
         }
-    };
-    (&*to).write_all(&text[sent..])?;
-    to.shutdown(std::net::Shutdown::Write)
+    }
 }
 
-/// What came on `from` to its end, and the file descriptor that came with
-/// it, if one did. `from` may be a pipe (a worker started by hand): then
-/// no descriptor comes. The descriptor is kept open across exec, so the
-/// processes the worker starts hold it too.
-pub fn receive(from: BorrowedFd) -> io::Result<(Vec<u8>, Option<OwnedFd>)> {
+/// Reads into `buf` once, with the descriptor that came beside it; `None`
+/// for how many when `from` is a pipe (nothing read, nothing came with it).
+fn receive_with(from: BorrowedFd, buf: &mut [u8]) -> io::Result<(Option<usize>, Option<OwnedFd>)> {
     let size = std::mem::size_of::<RawFd>();
     // SAFETY: CMSG_SPACE and CMSG_LEN only compute sizes
     let (space, empty) = unsafe {
@@ -74,7 +127,6 @@ pub fn receive(from: BorrowedFd) -> io::Result<(Vec<u8>, Option<OwnedFd>)> {
         )
     };
     let mut control = vec![0u64; space.div_ceil(8)];
-    let mut buf = vec![0u8; 65536];
     let mut iov = libc::iovec {
         iov_base: buf.as_mut_ptr().cast(),
         iov_len: buf.len(),
@@ -89,51 +141,40 @@ pub fn receive(from: BorrowedFd) -> io::Result<(Vec<u8>, Option<OwnedFd>)> {
         // SAFETY: `msg` points at `iov`, `buf` and `control`, alive here
         let n = unsafe { libc::recvmsg(from.as_raw_fd(), &mut msg, 0) };
         if n >= 0 {
-            break Some(n as usize);
+            break n as usize;
         }
         let e = io::Error::last_os_error();
         match e.raw_os_error() {
             Some(libc::EINTR) => {}
             // a pipe: nothing came with it, and nothing was read
-            Some(libc::ENOTSOCK) => break None,
+            Some(libc::ENOTSOCK) => return Ok((None, None)),
             _ => return Err(e),
         }
     };
     let mut lock = None;
-    if let Some(n) = got {
-        buf.truncate(n);
-        // SAFETY: the kernel wrote `msg_controllen` bytes of whole control
-        // messages into `control`; CMSG_FIRSTHDR and CMSG_NXTHDR walk them
-        // and return null past the last. Each descriptor in an SCM_RIGHTS
-        // message is new in this process and owned by no one else.
-        unsafe {
-            let mut c = libc::CMSG_FIRSTHDR(&msg);
-            while !c.is_null() {
-                if (*c).cmsg_level == libc::SOL_SOCKET && (*c).cmsg_type == libc::SCM_RIGHTS {
-                    let count = ((*c).cmsg_len as usize - empty) / size;
-                    for i in 0..count {
-                        let fd =
-                            std::ptr::read_unaligned(libc::CMSG_DATA(c).cast::<RawFd>().add(i));
-                        // one is sent; any other is closed as it drops
-                        let fd = OwnedFd::from_raw_fd(fd);
-                        lock.get_or_insert(fd);
-                    }
+    // SAFETY: the kernel wrote `msg_controllen` bytes of whole control
+    // messages into `control`; CMSG_FIRSTHDR and CMSG_NXTHDR walk them and
+    // return null past the last. Each descriptor in an SCM_RIGHTS message is
+    // new in this process and owned by no one else.
+    unsafe {
+        let mut c = libc::CMSG_FIRSTHDR(&msg);
+        while !c.is_null() {
+            if (*c).cmsg_level == libc::SOL_SOCKET && (*c).cmsg_type == libc::SCM_RIGHTS {
+                let count = ((*c).cmsg_len as usize - empty) / size;
+                for i in 0..count {
+                    let fd = std::ptr::read_unaligned(libc::CMSG_DATA(c).cast::<RawFd>().add(i));
+                    // one is sent; any other is closed as it drops
+                    let fd = OwnedFd::from_raw_fd(fd);
+                    lock.get_or_insert(fd);
                 }
-                c = libc::CMSG_NXTHDR(&msg, c);
             }
+            c = libc::CMSG_NXTHDR(&msg, c);
         }
-        if msg.msg_flags & libc::MSG_CTRUNC != 0 {
-            return Err(io::Error::other("the job's lock did not come whole"));
-        }
-    } else {
-        buf.clear();
     }
-    // the rest, to its end; `from` stays open, it is only borrowed
-    // SAFETY: the File is never dropped, so it never closes `from`
-    let mut rest =
-        std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(from.as_raw_fd()) });
-    rest.read_to_end(&mut buf)?;
-    Ok((buf, lock))
+    if msg.msg_flags & libc::MSG_CTRUNC != 0 {
+        return Err(io::Error::other("the job's lock did not come whole"));
+    }
+    Ok((Some(got), lock))
 }
 
 #[cfg(test)]
@@ -168,6 +209,39 @@ mod tests {
         // hold the lock too
         let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) };
         assert_eq!(flags & libc::FD_CLOEXEC, 0, "the lock would close on exec");
+    }
+
+    #[test]
+    fn steps_and_their_locks_come_one_by_one_on_one_socket() {
+        let d = tempfile::tempdir().unwrap();
+        let locks: Vec<_> = ["ılık.lock", "şeftali.lock"]
+            .iter()
+            .map(|n| std::fs::File::create(d.path().join(n)).unwrap())
+            .collect();
+        let (a, b) = UnixStream::pair().unwrap();
+        // the second over what a socket holds at once: sent while it is read
+        let texts = vec![
+            "{\"adım\":\"çay\"}".to_string(),
+            format!("{{\"adım\":\"{}\"}}", "üzüm ".repeat(50_000)),
+        ];
+        let (sent, fds): (Vec<String>, Vec<std::fs::File>) = (
+            texts.clone(),
+            locks.iter().map(|l| l.try_clone().unwrap()).collect(),
+        );
+        let sender = std::thread::spawn(move || {
+            for (t, fd) in sent.iter().zip(&fds) {
+                send_framed(&a, t.as_bytes(), fd.as_fd())?;
+            }
+            Ok::<_, io::Error>(())
+        });
+        for (text, lock) in texts.iter().zip(&locks) {
+            let (got, fd) = receive_framed(b.as_fd()).unwrap().expect("a step");
+            assert_eq!(&String::from_utf8(got).unwrap(), text);
+            assert_eq!(ino(fd.expect("no lock came").as_fd()), ino(lock.as_fd()));
+        }
+        sender.join().unwrap().unwrap();
+        // the daemon let the copy go
+        assert!(receive_framed(b.as_fd()).unwrap().is_none());
     }
 
     #[test]

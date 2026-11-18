@@ -138,3 +138,68 @@ pub fn most_copies(steps: usize) -> usize {
     let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
     cpus.min(steps).max(1)
 }
+
+/// How a warm request went, as a warm copy's worker prints it after `done `
+/// with `keep` (whether the copy may take another) and `why` (when not).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarmAnswer {
+    Outcome(super::worker::Outcome),
+    Error(String),
+    Lost(String),
+}
+
+/// Whether a process other than `these` is in this process's group: what
+/// a request left running, which the next request would find.
+pub fn others_in_group(these: &[u32]) -> bool {
+    // SAFETY: getpgrp only reads this process's group id
+    let group = unsafe { libc::getpgrp() };
+    members(group).iter().any(|pid| !these.contains(pid))
+}
+
+/// The processes in `group`, read from /proc.
+#[cfg(target_os = "linux")]
+fn members(group: libc::pid_t) -> Vec<u32> {
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return vec![];
+    };
+    dir.filter_map(Result::ok)
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| {
+            // the fields after the command (in parentheses, which may hold
+            // spaces): state, ppid, pgrp
+            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|s| {
+                    let rest = &s[s.rfind(')')? + 2..];
+                    rest.split(' ').nth(2)?.parse::<libc::pid_t>().ok()
+                })
+                == Some(group)
+        })
+        .collect()
+}
+
+/// `PROC_PGRP_ONLY` from <libproc.h>: libc has `proc_listpids`, not this.
+#[cfg(target_os = "macos")]
+const PROC_PGRP_ONLY: u32 = 2;
+
+/// The processes in `group`, from the kernel.
+#[cfg(target_os = "macos")]
+fn members(group: libc::pid_t) -> Vec<u32> {
+    let mut pids = vec![0 as libc::pid_t; 256];
+    // SAFETY: proc_listpids writes at most `buffersize` bytes into `pids`
+    let bytes = unsafe {
+        libc::proc_listpids(
+            PROC_PGRP_ONLY,
+            group as u32,
+            pids.as_mut_ptr().cast(),
+            (pids.len() * std::mem::size_of::<libc::pid_t>()) as libc::c_int,
+        )
+    };
+    let n = (bytes.max(0) as usize) / std::mem::size_of::<libc::pid_t>();
+    pids.truncate(n);
+    pids.into_iter()
+        .filter(|&p| p > 0)
+        .map(|p| p as u32)
+        .collect()
+}
