@@ -217,11 +217,15 @@ SOAK_ENV = -e SOAK_MODE -e SOAK_SECS -e SOAK_RATE -e SOAK_BURST -e SOAK_BURST_SE
 soak: build ## The whole engine under load for an hour (SOAK_SECS), then a drain and a restart with a backlog (results in target/soak)
 	sh scripts/soak.sh
 
+# The Alpine image with python3 added (FROM it, then apk add, as its
+# Dockerfile says), for the soak's warm step; the image itself stays small
+SOAK_IMAGE = printf 'FROM itero:dev-alpine\nRUN apk add --no-cache python3\n' | docker build -q -t itero:soak - >/dev/null
 SOAK_LINUX = docker run --rm --network none -v "$(CURDIR)/scripts:/scripts:ro" -v "$(CURDIR)/target/soak:/out" \
-	-e ITERO=/usr/local/bin/itero -e SOAK_OUT=/out $(SOAK_ENV) --entrypoint sh itero:dev-alpine /scripts/soak.sh
+	-e ITERO=/usr/local/bin/itero -e SOAK_OUT=/out $(SOAK_ENV) --entrypoint sh itero:soak /scripts/soak.sh
 
 .PHONY: soak-linux
-soak-linux: image ## The same, on Linux: in the Alpine image built from this tree (Docker)
+soak-linux: image ## The same, on Linux: in the Alpine image built from this tree, with python3 (Docker)
+	$(SOAK_IMAGE)
 	mkdir -p target/soak
 	$(SOAK_LINUX)
 
@@ -235,7 +239,7 @@ soak-linux: image ## The same, on Linux: in the Alpine image built from this tre
 soak-night: build ## All four in a row on a Mac, for a night: soak, slow, then both on Linux (about 2.5 hours)
 	mkdir -p target/soak
 	caffeinate -ims -w $$$$ & \
-	if sh scripts/image.sh; then linux=yes; else linux=; \
+	if sh scripts/image.sh && $(SOAK_IMAGE); then linux=yes; else linux=; \
 		echo "soak-night: the images were not built: the Linux soaks are skipped" >&2; fi; \
 	sh scripts/soak.sh; \
 	SOAK_MODE=slow sh scripts/soak.sh; \
