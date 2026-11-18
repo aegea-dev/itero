@@ -66,9 +66,9 @@ goes (`creating the cluster...` on stderr) runs as long as it needs, up to
 `most` (a day). Past either, or when the daemon stops while it runs, it
 runs again, up to 3 times; then it is an error, `quiet for 10m` or
 `ran for 1d`. It never runs again while a copy of it still runs: one a
-daemon that stopped left behind is waited for. An action that thinks long before it prints, or runs for
-days, gets its own in its entry in `itero.config.json`:
-`"action": {"train-model": {"limits": {"quiet": "1h", "most": "3d"}}}`.
+daemon that stopped left behind is waited for. A step whose action thinks long before it prints, or runs
+for days, gets its own on the step, in its workflow:
+`{ "#train-model": { "limits": { "quiet": "1h", "most": "3d" } } }`.
 
 Its last line on stderr is also its progress: `itero ws wf runs` shows it
 beside a running run, and the run's story on the step, so a step of hours
