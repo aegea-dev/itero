@@ -252,8 +252,8 @@ on stdin.
 
 ## Warm actions
 
-A Python action starts its interpreter and imports its libraries at every
-step, and for a fast action that start is most of the step. A step with
+A Python or Node action starts its interpreter and loads its libraries at
+every step, and for a fast action that start is most of the step. A step with
 `"warm": true` runs its action in a copy itero keeps loaded: the
 interpreter starts once, the imports load once, and each step runs the
 file again in it.
@@ -278,7 +278,11 @@ action:
 | 3 | 91 ms | 26 ms | 85 | 261 |
 | 10 | 291 ms | 84 ms | 25 | 80 |
 
-Which actions can be warm: Python ones, by their first line:
+A Node action, a step of the same kind, measured the same way: 195 runs a
+second fresh, 946 warm; 3 steps 73 and 435.
+
+Which actions can be warm, by their first line: Node ones
+(`#!/usr/bin/env node`, Node 18 or later), and Python ones:
 `#!/usr/bin/env python3` (or `python`, `python3.12`, a path), a
 [uv script](#python-with-uv) (`#!/usr/bin/env -S uv run --script`), and a
 Python project's file naming its project:
@@ -295,7 +299,17 @@ What starts fresh at each step: its environment, its folder (the
 workspace), its arguments, its stdin and the file's own variables. What
 stays: the libraries it imported, and whatever they keep. An action that
 keeps something in a library between calls, or leaves work for its exit
-(`atexit`), should not be warm. A process it starts gets an empty stdin.
+(`atexit`, `process.on("exit")`), should not be warm. A process it starts
+gets an empty stdin.
+
+A Node action's step ends when what it started has ended (its timers, its
+requests), as `node` would exit then. Its stdin comes as `process.stdin`
+and as reads of fd 0 (`fs.readFileSync(0)`, `fs.readSync(0, ...)`); a raw
+stream opened on fd 0 reads nothing. A CommonJS file and an ES module both
+work; what either loads stays loaded. An uncaught error ends the step with
+exit 1, printed as `node` prints it; the end of it, which the run keeps as
+the step's why, lacks the frames of node's own loader that a fresh `node`
+shows below the action's.
 
 itero runs as many copies of a warm action as its steps need at once, one
 per CPU at most and never more than [`limits.steps`](/reference/itero-config/#limits),
@@ -309,7 +323,7 @@ before, each in a fresh process. The log says when a copy starts and ends
 `examples/languages` has two: `post`, three Python steps all warm
 (`slugify`, `parse-date`, `post-path`), and `order-flow`, four languages
 in a row: Bun checks an order, Python prices it warm, Node writes a
-receipt line and a shell script keeps it.
+receipt line warm and a shell script keeps it.
 
 ## When something it needs is missing
 

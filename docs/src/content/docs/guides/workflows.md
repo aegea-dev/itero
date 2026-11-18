@@ -272,8 +272,8 @@ Steps run in order. A step is:
   workflow, never a step. `args` are the values its action gets
   ([below](#args-what-a-step-gives-its-action)), `undo` names what takes
   it back ([Undo](#undo-taking-steps-back)), `repeat` runs it in rounds
-  ([Repeat](#repeat-rounds)), `"warm": true` keeps its Python action
-  loaded between steps ([Warm actions](/guides/actions/#warm-actions)),
+  ([Repeat](#repeat-rounds)), `"warm": true` keeps its Python or Node
+  action loaded between steps ([Warm actions](/guides/actions/#warm-actions)),
   `limits` gives it its own `quiet` and `most`
   ([How long a step may take](/guides/actions/#what-it-says)). It has no
   other keys.

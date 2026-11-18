@@ -33,8 +33,8 @@ says how it went: 0 done, 75 not yet, anything else an error. See
 
 ### warm
 
-A step with `"warm": true`: its Python action runs in a copy itero keeps
-loaded between steps, so its interpreter and imports start once. Each step
+A step with `"warm": true`: its Python or Node action runs in a copy itero
+keeps loaded between steps, so its interpreter and imports start once. Each step
 ends as a fresh process would. See [Warm actions](/guides/actions/#warm-actions).
 
 ### subfolder
