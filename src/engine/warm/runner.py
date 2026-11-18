@@ -39,8 +39,13 @@ for line in requests:
         else:
             print(e.code, file=sys.stderr)
             code = 1
-    except BaseException:
-        traceback.print_exc()
+    except BaseException as e:
+        # as python3 prints it: from the action's own frames on, without
+        # this runner's and runpy's (none for a syntax error)
+        tb = e.__traceback__
+        while tb is not None and tb.tb_frame.f_code.co_filename != action:
+            tb = tb.tb_next
+        traceback.print_exception(type(e), e, tb)
         code = 1
     sys.stdout.flush()
     sys.stderr.flush()
