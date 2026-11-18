@@ -223,7 +223,9 @@ impl Worker {
         let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
         let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
             .args(["worker", "--warm"])
-            .stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(theirs)))
+            .stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(
+                theirs,
+            )))
             .stdout(std::process::Stdio::piped())
             .process_group(0)
             .spawn()
@@ -261,10 +263,20 @@ fn a_warm_worker_takes_steps_until_its_socket_closes() {
     let d = tempfile::tempdir().unwrap();
     let mut w = Worker::start();
     let v = w.step(&py_step(d.path(), ACTION, json!({"what": "ok"})));
-    assert_eq!(v["answer"], json!({"outcome": {"done": {"ok": "ok"}}}), "{v}");
+    assert_eq!(
+        v["answer"],
+        json!({"outcome": {"done": {"ok": "ok"}}}),
+        "{v}"
+    );
     assert_eq!(v["keep"], json!(true));
     let v = w.step(&py_step(d.path(), ACTION, json!({"what": "raise"})));
-    assert!(v["answer"]["error"].as_str().unwrap().contains("KeyError: 'ğ'"), "{v}");
+    assert!(
+        v["answer"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("KeyError: 'ğ'"),
+        "{v}"
+    );
     assert_eq!(v["keep"], json!(true));
     w.sock = None;
     assert!(w.child.wait().unwrap().success());
@@ -280,7 +292,10 @@ fn a_process_left_by_a_step_ends_the_copy_with_it() {
     assert_eq!(v["keep"], json!(false));
     assert_eq!(v["why"], json!("a process still runs"));
     let _ = w.child.wait();
-    let left: i32 = std::fs::read_to_string(d.path().join("kalan")).unwrap().parse().unwrap();
+    let left: i32 = std::fs::read_to_string(d.path().join("kalan"))
+        .unwrap()
+        .parse()
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(200));
     // SAFETY: kill with signal 0 only asks whether the process is there
     let alive = unsafe { libc::kill(left, 0) } == 0;
