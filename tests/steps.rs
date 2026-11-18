@@ -932,6 +932,8 @@ fn a_run_written_before_output_is_read_and_goes_on() {
             waiting_since: None,
             event: None,
             warm: false,
+            quiet: None,
+            most: None,
         },
         "exit 1",
     );
@@ -1520,6 +1522,8 @@ fn a_group_is_read_from_a_run_written_before_groups_said_how_to_wait() {
         waiting_since: None,
         event: None,
         warm: false,
+        quiet: None,
+        most: None,
     };
     let a = r.done(&seker, json!({"tatlı": 1}));
     assert!(goes_on(&a));
@@ -1907,4 +1911,17 @@ fn a_warm_step_s_job_says_so_and_an_ordinary_job_is_as_before() {
     let a = r.done(&a.jobs[0], json!(""));
     let side: Vec<(String, bool)> = a.jobs.iter().map(|j| (j.action.clone(), j.warm)).collect();
     assert_eq!(side, vec![("çay".into(), true), ("kahve".into(), false)]);
+}
+
+#[test]
+fn a_step_s_own_limits_reach_its_job_and_an_ordinary_job_is_as_before() {
+    let mut r = Run::new(&[(
+        "a",
+        json!({"steps": [{"#eğit": {"limits": {"quiet": "1h"}}}, "#üzüm"]}),
+    )]);
+    let a = r.start(json!({}));
+    assert_eq!((a.jobs[0].quiet, a.jobs[0].most), (Some(3600), None));
+    let a = r.done(&a.jobs[0], json!(""));
+    let v = serde_json::to_value(&a.jobs[0]).unwrap();
+    assert!(v.get("quiet").is_none() && v.get("most").is_none(), "{v}");
 }

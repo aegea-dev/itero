@@ -153,7 +153,7 @@ fn size_text(bytes: u64) -> String {
 }
 
 /// `"30m"`: a duration of at least a second; `default` is in seconds.
-fn duration(name: &str, v: Option<String>, default: u64) -> Result<std::time::Duration> {
+pub(crate) fn duration(name: &str, v: Option<String>, default: u64) -> Result<std::time::Duration> {
     let Some(t) = v else {
         return Ok(std::time::Duration::from_secs(default));
     };
@@ -812,46 +812,16 @@ impl Workspace {
         Ok(())
     }
 
-    /// How long a step of the action may print nothing, and run at most:
-    /// `action.<name>.limits` in the manifest, `quiet` and `most`, else the
-    /// workspace's.
-    pub fn step_limits(&self, action: &str) -> Result<(std::time::Duration, std::time::Duration)> {
-        let (quiet, most) = (self.limits.quiet.as_secs(), self.limits.most.as_secs());
-        let wrong = |e: anyhow::Error| {
-            anyhow!(
-                "{}: action.{action}.{e:#}",
+    /// An action's entry holds no limits: a step gives its own, in its
+    /// workflow, `{ "#x": { "limits": { "quiet": "1h" } } }`.
+    pub fn no_action_limits(&self, action: &str) -> Result<()> {
+        if self.entry_key("action", action, "limits")?.is_some() {
+            bail!(
+                r##"{}: action.{action}.limits are gone: write them on the steps that run it: {{ "#{action}": {{ "limits": {{ "quiet": "1h" }} }} }}"##,
                 self.root.join(MANIFEST).display()
-            )
-        };
-        let limits = match self.entries("action")?.remove(action) {
-            Some(Value::Object(mut e)) => e.remove("limits"),
-            _ => None,
-        };
-        let mut limits = match limits {
-            None | Some(Value::Null) => return Ok((self.limits.quiet, self.limits.most)),
-            Some(Value::Object(m)) => m,
-            Some(_) => bail!(
-                "{}: action.{action}.limits are an object: {{\"quiet\": \"1h\", \"most\": \"2d\"}}",
-                self.root.join(MANIFEST).display()
-            ),
-        };
-        let mut text = |key: &str| match limits.remove(key) {
-            None => Ok(None),
-            Some(Value::String(t)) => Ok(Some(t)),
-            Some(v) => Err(anyhow!(
-                "limits: {key}: a duration is like 30m, 2h or 1d, not {v}"
-            )),
-        };
-        let (q, m) = (text("quiet").map_err(wrong)?, text("most").map_err(wrong)?);
-        if let Some(other) = limits.keys().next() {
-            return Err(wrong(anyhow!(
-                "limits: {other}: an action's limits are quiet and most"
-            )));
+            );
         }
-        Ok((
-            duration("quiet", q, quiet).map_err(wrong)?,
-            duration("most", m, most).map_err(wrong)?,
-        ))
+        Ok(())
     }
 
     /// A connector's entry holds no args: they are written in the `on`

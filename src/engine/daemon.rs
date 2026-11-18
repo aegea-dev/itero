@@ -2118,7 +2118,15 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         let first = worker::first_line(&file).unwrap_or_default();
         super::warm::python(&first)?;
     }
-    let (quiet, most) = ws.step_limits(&job.action).map_err(|e| format!("{e:#}"))?;
+    // a step's own quiet and most, else the workspace's
+    ws.no_action_limits(&job.action)
+        .map_err(|e| format!("{e:#}"))?;
+    let quiet = job
+        .quiet
+        .map_or(ws.limits.quiet, std::time::Duration::from_secs);
+    let most = job
+        .most
+        .map_or(ws.limits.most, std::time::Duration::from_secs);
     let (mut env, input) = bind(ws, &job)?;
     // the built-in #ai talks to the itero-ai the daemon keeps, unless a
     // url names another server

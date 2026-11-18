@@ -339,6 +339,7 @@ fn steps_are_actions_workflows_side_by_side_lists_and_steps_with_data() {
             repeat: None,
             window: None,
             warm: false,
+            limits: Default::default(),
         }
     );
     let Step::One { name, .. } = &f.steps[2] else {
@@ -450,7 +451,7 @@ fn mistakes_are_named() {
         // a step's values go under args
         (
             r##"{ "steps": [{ "#a": { "carrier": "PTT Kargo" } }] }"##,
-            "\"carrier\" is not one of args, on, undo, repeat, unique, changed, at_most, warm:",
+            "\"carrier\" is not one of args, on, undo, repeat, unique, changed, at_most, warm, limits:",
         ),
         (
             r##"{ "steps": [{ "#a": { "args": 3 } }] }"##,
@@ -1351,4 +1352,45 @@ fn a_step_may_say_warm_and_nothing_but_true_or_false() {
         e.contains("warm: only Python actions can be warm: kahve is a workflow"),
         "{e}"
     );
+}
+
+#[test]
+fn a_step_may_give_its_own_limits_and_every_wrong_one_is_told() {
+    let f = flow::parse(
+        r##"{ "steps": [
+              { "#eğit": { "limits": { "quiet": "1h", "most": "3d" } } },
+              { "#ılık": { "limits": { "quiet": "30m" } } },
+              "#üzüm",
+              { "all": [{ "#çay": { "limits": { "most": "2h" } } }, "#kahve"] }
+            ] }"##,
+    )
+    .unwrap();
+    let limits = |i: usize| match &f.steps[i] {
+        Step::One { limits, .. } => limits.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        (limits(0).quiet, limits(0).most),
+        (Some(3600), Some(3 * 86_400))
+    );
+    assert_eq!((limits(1).quiet, limits(1).most), (Some(1800), None));
+    assert!(limits(2).is_none());
+    let Step::Side(g) = &f.steps[3] else { panic!() };
+    assert_eq!(g.members[0].limits.most, Some(7200));
+    let e = err(r##"{ "steps": [
+              { "#a": { "limits": { "quiet": "uzun" } } },
+              { "#b": { "limits": { "most": "0s" } } },
+              { "#c": { "limits": { "renk": 1 } } },
+              { "#d": { "limits": 3 } },
+              { "kahve": { "limits": { "quiet": "1h" } } }
+            ] }"##);
+    for says in [
+        r#"limits: quiet: a duration is like 30m, 2h or 1d, not "uzun""#,
+        "limits: most is at least 1s",
+        "limits: renk: a step's limits are quiet and most",
+        r#"limits is an object: { "quiet": "1h", "most": "2d" }"#,
+        "limits: a workflow used as a step has the limits of its own steps",
+    ] {
+        assert!(e.contains(says), "{says}: {e}");
+    }
 }

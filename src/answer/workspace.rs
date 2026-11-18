@@ -140,7 +140,7 @@ fn check_manifest(ws: &Workspace, workflows: &[String]) -> anyhow::Result<Vec<Pr
         if let Err(why) = ws.no_repeat(&name) {
             wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
         }
-        if let Err(why) = ws.step_limits(&name) {
+        if let Err(why) = ws.no_action_limits(&name) {
             wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
         }
     }

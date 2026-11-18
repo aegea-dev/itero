@@ -27,7 +27,7 @@ What belongs to the machine running it, not the workspace, is in
     "keep": { "off": true }
   },
   "action": {
-    "imap-check": { "description": "New mail on the server", "limits": { "quiet": "1h" } }
+    "imap-check": { "description": "New mail on the server" }
   },
   "connector": {
     "mail.received": { "description": "New mail in the local mailbox" }
@@ -78,7 +78,7 @@ anything.
 | `most` | how long a step may run, printing or not | `"1d"` |
 
 What happens at each: [The daemon's own workflows](/guides/maintenance/#limits).
-An action's entry may set its own `quiet` and `most` (below).
+A step may set its own `quiet` and `most`, in its workflow ([a step's keys](/reference/workflow-file/)).
 
 ## `workflow`, `action`, `connector`
 
@@ -96,7 +96,9 @@ An entry may not set `name`, `id`, `version`, `created` or `path`.
 | In an `action` entry | Is |
 |---|---|
 | `description`, `tags`, your own keys | what it is |
-| `limits` | `quiet` and `most` for this action's steps, like `{"quiet": "1h", "most": "2d"}`; unless given, the workspace's [`limits`](#limits) |
+
+A step's own `quiet` and `most` are on the step, in its workflow
+([a step's keys](/reference/workflow-file/)); an action's entry has none.
 
 | In a `connector` entry | Is |
 |---|---|

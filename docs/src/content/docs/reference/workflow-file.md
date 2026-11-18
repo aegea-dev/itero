@@ -65,6 +65,7 @@ is in its entry in
 | `repeat` | it runs in rounds, each with the one before's `$output`, `$steps` and `$count`: `true`, a number, `"$output.count"`, `"<= 2026-12-31"`, `"> 2026-12-31"` or a cron line ([Repeat](/guides/workflows/#repeat-rounds)); not side by side |
 | `unique` (with `for`), `changed`, `at_most`, and `per` | a window: the step runs only when it lets it through, by the runs of the workflow it let through before; otherwise it is skipped and the run goes on ([A window on a step](/guides/workflows/#a-window-on-a-step)); an action's step, not side by side, not with `repeat` |
 | `warm` | `true`: its action, a Python one, runs in a copy itero keeps loaded between steps, each step running the file again with its own args ([Warm actions](/guides/actions/#warm-actions)); an action's step |
+| `limits` | `{ "quiet": "1h", "most": "3d" }`: how long it may print nothing, and how long it may run; what it does not give is the workspace's [`limits`](/reference/itero-config/#limits); an action's step |
 
 | A value | Is |
 |---|---|
@@ -96,7 +97,7 @@ what to write. `output` and `event` are no arg's names; `strict` is gone
 | `fail` | when it breaks instead: `"any"`, `"all"`, `"never"`, a step's name, or a list of names |
 
 An object has one of the five keys, with two or more steps, each a name
-or an object with `args`, `on` and `warm` (not `undo`), each known by its name
+or an object with `args`, `on`, `warm` and `limits` (not `undo`), each known by its name
 (with its number when the name is in the file more than once,
 `#ask-mirror/2`), and its result kept as `$steps.<name>`. `$output.failed` and `$output.why` name the steps that broke and why,
 whenever one did (always with `settled` and `"fail": "never"`). The steps

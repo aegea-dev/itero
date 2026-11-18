@@ -273,8 +273,10 @@ Steps run in order. A step is:
   ([below](#args-what-a-step-gives-its-action)), `undo` names what takes
   it back ([Undo](#undo-taking-steps-back)), `repeat` runs it in rounds
   ([Repeat](#repeat-rounds)), `"warm": true` keeps its Python action
-  loaded between steps ([Warm actions](/guides/actions/#warm-actions)).
-  It has no other keys.
+  loaded between steps ([Warm actions](/guides/actions/#warm-actions)),
+  `limits` gives it its own `quiet` and `most`
+  ([How long a step may take](/guides/actions/#what-it-says)). It has no
+  other keys.
 
 So branches are steps with conditions. `order-process` picks one of four,
 by the args its caller gave it, its `$event`:
