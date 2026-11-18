@@ -50,6 +50,7 @@ Private/local context may exist outside this repository, but it must not be quot
 - Lint gate, any warning fails: make lint-check
 - Tests and clippy on Linux, in Docker: make test-linux
 - How fast events are taken and runs end (pick-up, runs a second, the webhook listener), results added to target/bench/results.jsonl: make bench; on Linux in the Alpine image: make bench-linux
+- The whole engine under load for a long time (a webhook, a connector, child runs, a schedule, slow steps, #forget and #roll-log), then a drain and a restart with a backlog, results in target/soak/<time>/: make soak; on Linux: make soak-linux; all four in a row for a night, on a Mac: make soak-night. SOAK_MODE=slow measures slow steps against limits.steps instead; every setting is in scripts/soak.sh
 - Tests that need Docker (container actions; IMAP, POP3 and Gmail against GreenMail): make test-docker
 - Container images for this machine (itero:dev, itero:dev-alpine): make image
 - Both images run with the Compose example, end to end (needs Docker): make test-image
