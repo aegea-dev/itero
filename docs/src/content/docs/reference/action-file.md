@@ -25,7 +25,9 @@ extension, in any language its first line names.
 
 A step may print nothing for 10 minutes and run for a day at most
 (`quiet` and `most` in [`limits`](/reference/itero-config/#limits)); a
-lost or stopped step runs again, up to 3 times. Built in, unless the workspace has an action of the name:
+lost or stopped step runs again, up to 3 times. A step with `"warm": true` runs a
+Python action's file again in a copy kept loaded, with the same result
+and exit code ([Warm actions](/guides/actions/#warm-actions)). Built in, unless the workspace has an action of the name:
 `#notify` (shows its args `text` and `title`), `#ai` (asks a model), `#forget`,
 `#roll-log` and `#find-models`. See
 [Actions](/guides/actions/).

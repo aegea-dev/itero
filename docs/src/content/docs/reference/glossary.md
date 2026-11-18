@@ -31,6 +31,12 @@ as environment variables, prints its result (`$output`), and its exit code
 says how it went: 0 done, 75 not yet, anything else an error. See
 [Actions](/guides/actions/).
 
+### warm
+
+A step with `"warm": true`: its Python action runs in a copy itero keeps
+loaded between steps, so its interpreter and imports start once. Each step
+ends as a fresh process would. See [Warm actions](/guides/actions/#warm-actions).
+
 ### subfolder
 
 A folder in `workflows/`, `actions/` or `connectors/` that groups files; it
