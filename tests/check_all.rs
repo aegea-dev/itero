@@ -265,3 +265,34 @@ fn ws_check_shows_warm_steps_and_says_each_that_cannot_be() {
         "{v:#}"
     );
 }
+
+#[test]
+fn ws_check_says_an_actions_entry_limits_are_gone_beside_another_problem() {
+    let d = tempfile::tempdir().unwrap();
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{ "action": { "depo": { "limits": { "quiet": "1h" } } } }"#,
+    );
+    file(d.path(), "actions/depo", "#!/bin/sh\necho depo\n");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let f = d.path().join("actions/depo");
+        std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    file(
+        d.path(),
+        "workflows/sepet.json",
+        r##"{ "on": [{ "event": "sepet.doldu" }], "steps": ["#depo", "#yok"] }"##,
+    );
+    let out = ws_check(d.path(), false);
+    let text =
+        String::from_utf8_lossy(&out.stderr).to_string() + &String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "{text}");
+    assert!(
+        text.contains("itero.config.json: limits are gone: write them on the steps that run it:"),
+        "{text}"
+    );
+    assert!(text.contains("no action yok"), "{text}");
+    assert!(text.contains("2 errors"), "{text}");
+}

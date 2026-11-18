@@ -313,7 +313,7 @@ fn check_names_a_wrong_limit_of_an_action_once() {
     file(
         d.path(),
         "itero.config.json",
-        r#"{"action": {"depo": {"limits": {"runs": 2}}}}"#,
+        r#"{"action": {"depo": {"limits": {"quiet": "1h"}}}}"#,
     );
     file(
         d.path(),
@@ -325,8 +325,9 @@ fn check_names_a_wrong_limit_of_an_action_once() {
     assert!(!o.status.success());
     let e = err(&o);
     assert!(
-        e.contains("itero.config.json: limits: runs: an action's limits are quiet and most (")
-            && e.contains("/actions/depo)"),
+        e.contains(
+            r##"itero.config.json: limits are gone: write them on the steps that run it: { "#depo": { "limits": { "quiet": "1h" } } } ("##
+        ) && e.contains("/actions/depo)"),
         "{e}"
     );
     assert_eq!(e.matches("itero.config.json").count(), 1, "{e}");

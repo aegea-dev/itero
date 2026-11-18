@@ -228,47 +228,23 @@ fn meta_is_free_and_limits_have_defaults() {
 }
 
 #[test]
-fn an_action_may_have_its_own_quiet_and_most() {
+fn an_actions_entry_limits_are_gone_and_say_where_to_write_them() {
     let d = tempfile::tempdir().unwrap();
     write(
         d.path(),
         "itero.config.json",
-        r#"{ "limits": { "quiet": "30m" },
-             "action": { "uzun-iş": { "limits": { "quiet": "2h", "most": "2d" } }, "kısa": {} } }"#,
+        r#"{ "action": { "uzun-iş": { "limits": { "quiet": "2h" } }, "kısa": {} } }"#,
     );
     let ws = workspace::find(d.path()).unwrap();
-    let h = |n: u64| std::time::Duration::from_secs(n * 3600);
-    assert_eq!(ws.step_limits("uzun-iş").unwrap(), (h(2), h(48)));
-    assert_eq!(
-        ws.step_limits("kısa").unwrap(),
-        (h(0) + std::time::Duration::from_secs(1800), h(24))
-    );
-    assert_eq!(
-        ws.step_limits("hiç").unwrap(),
-        ws.step_limits("kısa").unwrap()
-    );
-}
-
-#[test]
-fn an_actions_limits_take_only_quiet_and_most() {
-    let d = tempfile::tempdir().unwrap();
-    for (entry, says) in [
-        (r#"{"limits": {"runs": 2}}"#, "action.uzun-iş.limits: runs"),
-        (
-            r#"{"limits": {"quiet": "yavaş"}}"#,
-            "action.uzun-iş.limits: quiet",
+    let e = format!("{:#}", ws.no_action_limits("uzun-iş").unwrap_err());
+    assert!(
+        e.ends_with(
+            r##"action.uzun-iş.limits are gone: write them on the steps that run it: { "#uzun-iş": { "limits": { "quiet": "1h" } } }"##
         ),
-        (r#"{"limits": "1h"}"#, "action.uzun-iş.limits are an object"),
-    ] {
-        write(
-            d.path(),
-            "itero.config.json",
-            &format!(r#"{{ "action": {{ "uzun-iş": {entry} }} }}"#),
-        );
-        let ws = workspace::find(d.path()).unwrap();
-        let e = format!("{:#}", ws.step_limits("uzun-iş").unwrap_err());
-        assert!(e.contains(says), "{e}");
-    }
+        "{e}"
+    );
+    ws.no_action_limits("kısa").unwrap();
+    ws.no_action_limits("hiç").unwrap();
 }
 
 #[test]

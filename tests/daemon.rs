@@ -773,13 +773,12 @@ fn a_step_quiet_past_its_limit_is_stopped_and_run_again() {
 }
 
 #[test]
-fn an_actions_own_quiet_overrides_the_workspaces() {
-    let ws = Ws::with(
-        r#"{"limits": {"quiet": "1s"}, "action": {"düşünen": {"limits": {"quiet": "10s"}}}}"#,
-    );
+fn a_steps_own_quiet_overrides_the_workspaces() {
+    let ws = Ws::with(r#"{"limits": {"quiet": "1s"}}"#);
     ws.flow(
         "yavaş",
-        json!({"on": [{ "event": "order.placed" }], "steps": ["#düşünen", "#sessiz"]}),
+        json!({"on": [{ "event": "order.placed" }],
+               "steps": [{"#düşünen": {"limits": {"quiet": "10s"}}}, "#sessiz"]}),
     );
     ws.action("düşünen", "sleep 2; echo düşündü");
     ws.action("sessiz", "sleep 30");
@@ -793,6 +792,20 @@ fn an_actions_own_quiet_overrides_the_workspaces() {
         Some("lost 3 times: quiet for 1s")
     );
     assert_eq!(run.runtime.failed_step.as_deref(), Some("#sessiz"));
+}
+
+#[test]
+fn a_warm_steps_own_quiet_overrides_the_workspaces() {
+    let ws = Ws::with(r#"{"limits": {"quiet": "1s"}}"#);
+    ws.flow(
+        "yavaş",
+        json!({"on": [{ "event": "order.placed" }],
+               "steps": [{"#düşünen": {"limits": {"quiet": "10s"}, "warm": true}}]}),
+    );
+    ws.py("düşünen", "import time\ntime.sleep(2)\nprint('düşündü')");
+    ws.emit("order.placed", json!({"order": 1}));
+    ws.pass(NOW);
+    assert_eq!(ws.statuses(), vec!["done"]);
 }
 
 #[test]
