@@ -245,7 +245,7 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
                             }
                         }
                     };
-                    // a warm step runs a Python action's file
+                    // a warm step runs a Python or Node action's file
                     if warm {
                         let why = match &file {
                             _ if built_in => Some(format!(

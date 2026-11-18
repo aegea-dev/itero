@@ -2432,8 +2432,8 @@ fn an_exception_runs_the_error_list_warm_or_plain() {
     });
 }
 
-/// Python, then Node, then sh, each with an undo; `bozuk` names the step
-/// that fails, or none.
+/// Python, then Node (both warm in the warm run), then sh, each with an
+/// undo; `bozuk` names the step that fails, or none.
 fn mixed(ws: &Ws, warm: bool) {
     ws.flow(
         "karışık",
@@ -2441,7 +2441,7 @@ fn mixed(ws: &Ws, warm: bool) {
             "on": [{ "event": "iş.geldi" }],
             "steps": [
                 step("ayıkla", warm, json!({"args": {"bozuk": "$event.bozuk"}, "undo": "#geri-ayıkla"})),
-                {"#biçimle": {"args": {"bozuk": "$event.bozuk", "metin": "$output.metin"}, "undo": "#geri-biçimle"}},
+                step("biçimle", warm, json!({"args": {"bozuk": "$event.bozuk", "metin": "$output.metin"}, "undo": "#geri-biçimle"})),
                 {"#gönder": {"args": {"bozuk": "$event.bozuk", "metin": "$output"}}}
             ]
         }),

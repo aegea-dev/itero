@@ -13,7 +13,8 @@
 #   started: runs a second, first start to last end, for 1 and 3 steps,
 #   1 step given a secret (`$$BENCH_TOKEN`), and 1 and 3 steps of a
 #   Python action run fresh (py1, py3) and warm (warm1, warm3), where
-#   python3 is found;
+#   python3 is found, and of a Node action (node1, node3, nodewarm1,
+#   nodewarm3), where node is found;
 # - the webhook listener: BENCH_REQUESTS requests, 32 at once, refused
 #   (an unlisted path) and saved (a listed path no workflow takes).
 #
@@ -97,9 +98,9 @@ EOF
 # a Python action, run fresh at each step or kept loaded (warm), where
 # there is a python3 (the Alpine image has none)
 if command -v python3 >/dev/null 2>&1; then
-	python='py1 py3 warm1 warm3'
+	languages='py1 py3 warm1 warm3'
 else
-	python=''
+	languages=''
 	echo "bench.sh: no python3 here: the Python workflows are not measured" >&2
 fi
 printf '#!/usr/bin/env python3\nimport json, sys\njson.load(sys.stdin)\nprint(json.dumps({"ok": True}))\n' >"$ws/actions/py"
@@ -110,6 +111,20 @@ for k in 1 3; do
 	echo "{ \"on\": [{ \"event\": \"bench.sent\" }, { \"\$event.wf\": \"py$k\" }], \"steps\": [$steps] }" >"$ws/workflows/py$k.json"
 	echo "{ \"on\": [{ \"event\": \"bench.sent\" }, { \"\$event.wf\": \"warm$k\" }], \"steps\": [$warm] }" >"$ws/workflows/warm$k.json"
 done
+# the same with a Node action, where there is a node
+if command -v node >/dev/null 2>&1; then
+	languages="$languages node1 node3 nodewarm1 nodewarm3"
+	printf '#!/usr/bin/env node\nJSON.parse(require("fs").readFileSync(0, "utf8"));\nconsole.log(JSON.stringify({ ok: true }));\n' >"$ws/actions/nd"
+	chmod +x "$ws/actions/nd"
+	for k in 1 3; do
+		steps=$(i=0; s=''; while [ $i -lt $k ]; do s="$s${s:+, }\"#nd\""; i=$((i + 1)); done; echo "$s")
+		warm=$(i=0; s=''; while [ $i -lt $k ]; do s="$s${s:+, }{ \"#nd\": { \"warm\": true } }"; i=$((i + 1)); done; echo "$s")
+		echo "{ \"on\": [{ \"event\": \"bench.sent\" }, { \"\$event.wf\": \"node$k\" }], \"steps\": [$steps] }" >"$ws/workflows/node$k.json"
+		echo "{ \"on\": [{ \"event\": \"bench.sent\" }, { \"\$event.wf\": \"nodewarm$k\" }], \"steps\": [$warm] }" >"$ws/workflows/nodewarm$k.json"
+	done
+else
+	echo "bench.sh: no node here: the Node workflows are not measured" >&2
+fi
 cat >"$ws/workflows/hook.json" <<'EOF'
 { "on": [{ "event": "itero.webhook.received" }, { "$event.path": "/hook" }], "steps": ["#a"] }
 EOF
@@ -142,7 +157,7 @@ stop_daemon() {
 	daemon=
 }
 # the bench's runs ended so far (the daemon's own workflows run too)
-ended() { count '"event":"run.ended".*"workflow":"(one|three|secret|hook|py1|py3|warm1|warm3)"'; }
+ended() { count '"event":"run.ended".*"workflow":"(one|three|secret|hook|py1|py3|warm1|warm3|node1|node3|nodewarm1|nodewarm3)"'; }
 # waits until `count` runs have ended in all, 10 minutes at most
 wait_ended() {
 	i=0
@@ -246,7 +261,7 @@ listener /saved saved >>"$ws/listener.jsonl"
 stop_daemon
 
 # --- throughput ---------------------------------------------------------------
-for wf in one three secret $python; do
+for wf in one three secret $languages; do
 	seq 1 "$n" | sed "s/.*/{\"wf\":\"$wf\",\"tag\":\"load-$wf\"}/" |
 		tr "\n" "\0" | (cd "$ws" && xargs -0 -P 4 -I{} "$itero" ws emit bench.sent {} >/dev/null 2>>"$ws/emit.err") || {
 		cat "$ws/emit.err" >&2
@@ -272,7 +287,7 @@ runs >"$ws/runs.json"
 				sent_to_start_ms: (map(select(.sent != null) | (.started - .sent) * 1000000 | round / 1000) | '"$stats"'),
 				start_to_end_ms: (map(.end - .start) | '"$stats"')}' "$ws/runs.json"
 	done
-	for wf in one three secret $python; do
+	for wf in one three secret $languages; do
 		jq -c --arg wf "$wf" '
 			map(select(.tag == "load-" + $wf))
 			| ((map(.end) | max) - (map(.start) | min)) as $span

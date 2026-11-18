@@ -2107,7 +2107,7 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         }
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
-    // a warm step runs a Python action's file; said before anything runs
+    // a warm step runs a Python or Node action's file; said before anything runs
     if job.warm {
         if !file.is_absolute() {
             return Err(format!(
