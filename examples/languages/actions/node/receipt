@@ -1,0 +1,6 @@
+#!/usr/bin/env node
+// $order and $total as one line of a receipt: Node with no packages, a
+// single file (node/links shows a Node project instead).
+const order = process.env.order;
+const total = Number(process.env.total).toFixed(2);
+console.log(JSON.stringify({ line: `Sipariş ${order}: ${total} TL` }));

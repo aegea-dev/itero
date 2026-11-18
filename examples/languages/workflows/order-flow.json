@@ -1,0 +1,9 @@
+{
+  "on": [{ "event": "order.paid" }],
+  "steps": [
+    { "#check-order": { "args": { "order": "$event" } } },
+    { "#price": { "args": { "order": "$event" }, "warm": true } },
+    { "#receipt": { "args": { "order": "$event.order", "total": "$output.total" } } },
+    { "#log-order": { "args": { "line": "$output.line" } } }
+  ]
+}

@@ -306,6 +306,11 @@ step for 10 minutes stops. Steps of the same action without `warm` run as
 before, each in a fresh process. The log says when a copy starts and ends
 (`warm.started`, `warm.ended`).
 
+`examples/languages` has two: `post`, three Python steps all warm
+(`slugify`, `parse-date`, `post-path`), and `order-flow`, four languages
+in a row: Bun checks an order, Python prices it warm, Node writes a
+receipt line and a shell script keeps it.
+
 ## When something it needs is missing
 
 itero finds what an action needs from the action itself, with no list to
