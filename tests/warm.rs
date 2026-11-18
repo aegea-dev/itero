@@ -1,6 +1,6 @@
 //! Warm actions: which Python, a file's identity, the runner.
 #![cfg(unix)]
-use itero::engine::warm::{self, Python};
+use itero::engine::warm::{self, Runtime};
 use std::path::Path;
 
 fn file(dir: &Path, name: &str, text: &str) -> std::path::PathBuf {
@@ -10,31 +10,33 @@ fn file(dir: &Path, name: &str, text: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn which_python_comes_from_the_first_line() {
-    assert_eq!(
-        warm::python("#!/usr/bin/env python3").unwrap(),
-        Python::Plain("python3".into())
-    );
-    assert_eq!(
-        warm::python("#!/usr/bin/python3.12").unwrap(),
-        Python::Plain("/usr/bin/python3.12".into())
-    );
-    assert_eq!(
-        warm::python("#!/usr/bin/env -S uv run --script").unwrap(),
-        Python::UvScript
-    );
-    assert_eq!(
-        warm::python("#!/usr/bin/env -S uv run --project actions/py/güzel python").unwrap(),
-        Python::UvProject("actions/py/güzel".into())
-    );
+fn which_runtime_comes_from_the_first_line() {
+    for (first, want) in [
+        ("#!/usr/bin/env python3", Runtime::Python("python3".into())),
+        (
+            "#!/usr/bin/python3.12",
+            Runtime::Python("/usr/bin/python3.12".into()),
+        ),
+        ("#!/usr/bin/env -S uv run --script", Runtime::UvScript),
+        (
+            "#!/usr/bin/env -S uv run --project actions/py/güzel python",
+            Runtime::UvProject("actions/py/güzel".into()),
+        ),
+        ("#!/usr/bin/env node", Runtime::Node("node".into())),
+        (
+            "#!/usr/local/bin/node",
+            Runtime::Node("/usr/local/bin/node".into()),
+        ),
+    ] {
+        assert_eq!(warm::runtime(first).unwrap(), want, "{first}");
+    }
     for (first, runs) in [
         ("#!/bin/sh", "sh"),
-        ("#!/usr/bin/env node", "node"),
         ("#!/usr/bin/env -S bun --install=force", "bun"),
     ] {
         assert_eq!(
-            warm::python(first).unwrap_err(),
-            format!("warm: only Python actions can be warm: its first line runs {runs}")
+            warm::runtime(first).unwrap_err(),
+            format!("warm: only Python and Node actions can be warm: its first line runs {runs}")
         );
     }
 }
@@ -312,7 +314,7 @@ fn a_warm_worker_whose_action_cannot_be_warm_says_why_and_ends() {
     let v = w.step(&step);
     assert_eq!(
         v["answer"],
-        json!({"error": "warm: only Python actions can be warm: its first line runs sh"})
+        json!({"error": "warm: only Python and Node actions can be warm: its first line runs sh"})
     );
     assert_eq!(v["keep"], json!(false));
     assert!(w.child.wait().unwrap().success());
@@ -419,4 +421,105 @@ fn a_uv_sync_that_fails_is_an_error_with_uvs_why() {
         why.len() > "warm: uv sync: ".len(),
         "uv's own why is missing: {why}"
     );
+}
+
+/// A step of the Node action `body`, at `dir`, as `py_step` makes one.
+fn node_step(dir: &Path, body: &str, args: Value) -> StepRun {
+    let mut s = py_step(dir, body, args);
+    let text = std::fs::read_to_string(&s.file).unwrap();
+    std::fs::write(
+        &s.file,
+        text.replacen("#!/usr/bin/env python3", "#!/usr/bin/env node", 1),
+    )
+    .unwrap();
+    s.workflow = "düğüm".into();
+    s
+}
+
+fn node_version() -> String {
+    let out = std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .expect("needs node");
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+const NODE_ACTION: &str = r#"
+const a = JSON.parse(require("fs").readFileSync(0, "utf8")).args;
+const w = a.what;
+if (w === "notyet") { console.log(JSON.stringify({ payment_ref: "ödeme-1" })); process.exit(75); }
+if (w === "code2") { console.error("disk dolu"); process.exitCode = 2; }
+if (w === "throw") { (function deep() { throw new Error("ağaç kırıldı"); })(); }
+if (w === "timer") { setTimeout(() => console.log(JSON.stringify({ ok: "geç" })), 50); }
+if (w === "where") {
+  console.log(JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(1), env: process.env.what, left: process.env.ILIK }));
+  process.env.ILIK = "şeftali"; process.chdir("/");
+}
+if (!["notyet", "code2", "throw", "timer", "where"].includes(w)) console.log(JSON.stringify({ ok: w }));
+"#;
+
+#[test]
+fn a_warm_node_step_ends_as_a_fresh_node_would() {
+    let d = tempfile::tempdir().unwrap();
+    let mut r = Runner::start(&node_step(d.path(), NODE_ACTION, json!({"what": "çay"}))).unwrap();
+    let ask = |r: &mut Runner, what: &str| {
+        r.request(
+            &node_step(d.path(), NODE_ACTION, json!({ "what": what })),
+            &|_| (),
+        )
+    };
+    assert_eq!(
+        ask(&mut r, "çay").outcome,
+        Ok(Outcome::Done(json!({"ok": "çay"})))
+    );
+    assert_eq!(
+        ask(&mut r, "notyet").outcome,
+        Ok(Outcome::NotYet(json!({"payment_ref": "ödeme-1"})))
+    );
+    let e = ask(&mut r, "code2");
+    assert!(
+        matches!(&e.outcome, Err(Failure::Error(w)) if w.contains("disk dolu")),
+        "{:?}",
+        e.outcome
+    );
+    assert_eq!(
+        ask(&mut r, "timer").outcome,
+        Ok(Outcome::Done(json!({"ok": "geç"})))
+    );
+    let e = ask(&mut r, "throw");
+    let Err(Failure::Error(w)) = &e.outcome else {
+        panic!("{:?}", e.outcome)
+    };
+    assert!(
+        w.contains("Error: ağaç kırıldı")
+            && w.contains("at deep (")
+            && w.ends_with(&format!("Node.js {}", node_version())),
+        "{w}"
+    );
+    assert!(e.keep, "an uncaught error ends the step, not the copy");
+    for _ in 0..2 {
+        let e = ask(&mut r, "where");
+        let Ok(Outcome::Done(v)) = e.outcome else {
+            panic!("{:?}", e.outcome)
+        };
+        assert_eq!(v["cwd"], json!(d.path().canonicalize().unwrap()));
+        assert_eq!(v["argv"], json!([d.path().join("eylem")]));
+        assert_eq!(v["env"], json!("where"));
+        assert_eq!(
+            v["left"],
+            Value::Null,
+            "the last step's environment is gone"
+        );
+    }
+}
+
+#[test]
+fn a_warm_es_module_that_awaits_at_its_top_runs_again_each_step() {
+    let d = tempfile::tempdir().unwrap();
+    let body = "import { setTimeout as wait } from \"node:timers/promises\";\nlet s = \"\";\nfor await (const c of process.stdin) s += c;\nawait wait(5);\nconsole.log(JSON.stringify({ ok: JSON.parse(s).args.what }));";
+    let mut r = Runner::start(&node_step(d.path(), body, json!({"what": "ılık"}))).unwrap();
+    for what in ["ılık", "şeftali"] {
+        let e = r.request(&node_step(d.path(), body, json!({ "what": what })), &|_| ());
+        assert_eq!(e.outcome, Ok(Outcome::Done(json!({ "ok": what }))));
+    }
 }

@@ -249,12 +249,12 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
                     if warm {
                         let why = match &file {
                             _ if built_in => Some(format!(
-                                "warm: only Python actions can be warm: #{a} is built in"
+                                "warm: only Python and Node actions can be warm: #{a} is built in"
                             )),
                             Some(f) => {
                                 let first =
                                     crate::engine::worker::first_line(f).unwrap_or_default();
-                                crate::engine::warm::python(&first).err()
+                                crate::engine::warm::runtime(&first).err()
                             }
                             None => None,
                         };

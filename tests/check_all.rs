@@ -216,6 +216,7 @@ fn ws_check_shows_warm_steps_and_says_each_that_cannot_be() {
         ("şeftali", "#!/usr/bin/env python3\nprint('ılık')\n"),
         ("üzüm", "#!/bin/sh\necho üzüm\n"),
         ("ağaç", "#!/usr/bin/env node\nconsole.log('ağaç')\n"),
+        ("çam", "#!/usr/bin/env bun\nconsole.log('çam')\n"),
     ] {
         file(d.path(), &format!("actions/{name}"), text);
         let f = d.path().join("actions").join(name);
@@ -228,6 +229,7 @@ fn ws_check_shows_warm_steps_and_says_each_that_cannot_be() {
             { "#şeftali": { "warm": true } },
             { "#üzüm": { "warm": true } },
             { "#ağaç": { "warm": true } },
+            { "#çam": { "warm": true } },
             { "#notify": { "args": { "title": "çay" }, "warm": true } }
         ] }"##,
     );
@@ -239,9 +241,9 @@ fn ws_check_shows_warm_steps_and_says_each_that_cannot_be() {
     );
     assert!(!out.status.success(), "{text}");
     for says in [
-        "error: warm: only Python actions can be warm: its first line runs sh (",
-        "error: warm: only Python actions can be warm: its first line runs node (",
-        "error: warm: only Python actions can be warm: #notify is built in (",
+        "error: warm: only Python and Node actions can be warm: its first line runs sh (",
+        "error: warm: only Python and Node actions can be warm: its first line runs bun (",
+        "error: warm: only Python and Node actions can be warm: #notify is built in (",
         "3 errors",
     ] {
         assert!(text.contains(says), "{says}: {text}");
@@ -259,6 +261,20 @@ fn ws_check_shows_warm_steps_and_says_each_that_cannot_be() {
         .unwrap();
     assert!(
         seftali["notes"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("warm")),
+        "{v:#}"
+    );
+    // Node can be warm now: shown so, not an error
+    let agac = uses
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["action"] == "ağaç")
+        .unwrap();
+    assert!(
+        agac["notes"]
             .as_array()
             .unwrap()
             .contains(&serde_json::json!("warm")),

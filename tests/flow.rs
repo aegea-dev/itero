@@ -1349,7 +1349,7 @@ fn a_step_may_say_warm_and_nothing_but_true_or_false() {
     );
     assert_eq!(e.matches("warm is true or false").count(), 2, "{e}");
     assert!(
-        e.contains("warm: only Python actions can be warm: kahve is a workflow"),
+        e.contains("warm: only Python and Node actions can be warm: kahve is a workflow"),
         "{e}"
     );
 }
