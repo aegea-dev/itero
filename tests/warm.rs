@@ -317,3 +317,104 @@ fn a_warm_worker_whose_action_cannot_be_warm_says_why_and_ends() {
     assert_eq!(v["keep"], json!(false));
     assert!(w.child.wait().unwrap().success());
 }
+
+/// A uv script's step at `dir`: python-slugify, the arg `title` read from
+/// the environment.
+fn uv_step(dir: &Path, title: &str, deps: &str) -> StepRun {
+    let body = format!(
+        "# /// script\n# requires-python = \">=3.10\"\n# dependencies = [{deps}]\n# ///\nimport json, os, sys\nfrom slugify import slugify\nprint(json.dumps({{\"slug\": slugify(os.environ[\"title\"]), \"python\": sys.executable}}))"
+    );
+    let mut s = py_step(dir, &body, json!({ "title": title }));
+    let text = std::fs::read_to_string(&s.file).unwrap();
+    std::fs::write(
+        &s.file,
+        text.replacen(
+            "#!/usr/bin/env python3",
+            "#!/usr/bin/env -S uv run --script",
+            1,
+        ),
+    )
+    .unwrap();
+    s.workflow = "kısa-ad".into();
+    s
+}
+
+#[test]
+fn a_uv_script_runs_warm_in_its_own_environment() {
+    let d = tempfile::tempdir().unwrap();
+    let deps = "\"python-slugify>=8\"";
+    let mut r = Runner::start(&uv_step(d.path(), "ılık şeftali", deps)).unwrap();
+    for (title, slug) in [
+        ("ılık şeftali", "ilik-seftali"),
+        ("güzel üzüm", "guzel-uzum"),
+    ] {
+        let e = r.request(&uv_step(d.path(), title, deps), &|_| ());
+        let Ok(Outcome::Done(v)) = e.outcome else {
+            panic!("{:?}", e.outcome)
+        };
+        assert_eq!(v["slug"], json!(slug));
+        let python = v["python"].as_str().unwrap();
+        assert!(
+            python.contains("environments"),
+            "not uv's environment: {python}"
+        );
+    }
+}
+
+#[test]
+fn a_python_project_runs_warm_in_its_venv() {
+    let d = tempfile::tempdir().unwrap();
+    file(
+        d.path(),
+        "pyproject.toml.tmp",
+        "[project]\nname = \"cicek\"\nversion = \"0.1.0\"\nrequires-python = \">=3.10\"\ndependencies = [\"python-slugify>=8\"]\n",
+    );
+    let app = d.path().join("actions/py/çiçek-app");
+    std::fs::create_dir_all(&app).unwrap();
+    std::fs::rename(
+        d.path().join("pyproject.toml.tmp"),
+        app.join("pyproject.toml"),
+    )
+    .unwrap();
+    let mut s = py_step(
+        d.path(),
+        "import json, os, sys\nfrom slugify import slugify\nprint(json.dumps({\"slug\": slugify(os.environ[\"title\"]), \"python\": sys.executable}))",
+        json!({ "title": "çok iyi" }),
+    );
+    let text = std::fs::read_to_string(&s.file).unwrap();
+    std::fs::write(
+        &s.file,
+        text.replacen(
+            "#!/usr/bin/env python3",
+            "#!/usr/bin/env -S uv run --project actions/py/çiçek-app python",
+            1,
+        ),
+    )
+    .unwrap();
+    s.workflow = "proje".into();
+    let mut r = Runner::start(&s).unwrap();
+    let e = r.request(&s, &|_| ());
+    let Ok(Outcome::Done(v)) = e.outcome else {
+        panic!("{:?}", e.outcome)
+    };
+    assert_eq!(v["slug"], json!("cok-iyi"));
+    assert_eq!(
+        Path::new(v["python"].as_str().unwrap()),
+        app.join(".venv/bin/python"),
+        "not the project's environment"
+    );
+}
+
+#[test]
+fn a_uv_sync_that_fails_is_an_error_with_uvs_why() {
+    let d = tempfile::tempdir().unwrap();
+    let s = uv_step(d.path(), "ağaç", "\"itero-yok-boyle-bir-paket-ğüş==0.0.1\"");
+    let Err(why) = Runner::start(&s) else {
+        panic!("it started")
+    };
+    assert!(why.starts_with("warm: uv sync: "), "{why}");
+    assert!(
+        why.len() > "warm: uv sync: ".len(),
+        "uv's own why is missing: {why}"
+    );
+}
