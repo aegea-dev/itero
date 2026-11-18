@@ -398,9 +398,11 @@ fn a_python_project_runs_warm_in_its_venv() {
         panic!("{:?}", e.outcome)
     };
     assert_eq!(v["slug"], json!("cok-iyi"));
+    // on macOS /var is /private/var: both resolved
+    let parent = |p: &Path| p.parent().unwrap().canonicalize().unwrap();
     assert_eq!(
-        Path::new(v["python"].as_str().unwrap()),
-        app.join(".venv/bin/python"),
+        parent(Path::new(v["python"].as_str().unwrap())),
+        app.join(".venv/bin").canonicalize().unwrap(),
         "not the project's environment"
     );
 }
