@@ -1767,7 +1767,7 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             Some(Name::Workflow(w)) => {
                 ps.push(Problem::new(
                     "",
-                    format!("warm: only Python actions can be warm: {w} is a workflow"),
+                    format!("warm: only Python and Node actions can be warm: {w} is a workflow"),
                 ));
                 false
             }

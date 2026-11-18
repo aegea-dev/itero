@@ -13,11 +13,12 @@ bringing its own packages with its own tools; itero installs nothing.
   node/receipt                         Node, a single file, no packages
   sh/log-order                         a shell script
 
-Two workflows of several steps, run warm where they are Python (a step's
-"warm": true keeps its action loaded between steps):
+Two workflows of several steps, run warm where they are Python or Node (a
+step's "warm": true keeps its action loaded between steps):
   post        three Python steps, all warm: slugify, parse-date, post-path
   order-flow  four languages: Bun checks the order, Python prices it
-              (warm), Node writes a receipt line, sh adds it to orders.log
+              (warm), Node writes a receipt line (warm), sh adds it to
+              orders.log
 
 Run `itero ws daemon` in this folder, then from another terminal:
   itero ws emit --wait title.received '{"title": "Çok Güzel Bir Başlık"}'

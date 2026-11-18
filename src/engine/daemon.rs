@@ -2107,16 +2107,16 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         }
         Err(e) => return Err(format!("#{}: {e:#}", job.action)),
     };
-    // a warm step runs a Python action's file; said before anything runs
+    // a warm step runs a Python or Node action's file; said before anything runs
     if job.warm {
         if !file.is_absolute() {
             return Err(format!(
-                "warm: only Python actions can be warm: #{} is built in",
+                "warm: only Python and Node actions can be warm: #{} is built in",
                 job.action
             ));
         }
         let first = worker::first_line(&file).unwrap_or_default();
-        super::warm::python(&first)?;
+        super::warm::runtime(&first)?;
     }
     // a step's own quiet and most, else the workspace's
     ws.no_action_limits(&job.action)

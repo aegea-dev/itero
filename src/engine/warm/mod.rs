@@ -1,25 +1,27 @@
-//! Warm actions: a step with `"warm": true` runs its Python action in a
-//! copy kept loaded between steps (runner.rs, pool.rs). Here: which Python
-//! runs it, what tells a changed file, how long and how many copies.
+//! Warm actions: a step with `"warm": true` runs its Python or Node action
+//! in a copy kept loaded between steps (runner.rs, pool.rs). Here: what runs
+//! it, what tells a changed file, how long and how many copies.
 pub mod pool;
 pub mod runner;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// The Python a warm action runs in, from its first line.
+/// What a warm action runs in, from its first line.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Python {
+pub enum Runtime {
     /// `python3`, `python`, `python3.N`: found on the PATH, or a path.
-    Plain(String),
+    Python(String),
     /// `uv run --script`: the script's own environment.
     UvScript,
     /// `uv run --project <folder> python`: the project's environment.
     UvProject(PathBuf),
+    /// `node`: found on the PATH, or a path; Node 18 or later.
+    Node(String),
 }
 
-/// Which Python `first_line` runs, or why the action cannot be warm.
-pub fn python(first_line: &str) -> Result<Python, String> {
+/// What `first_line` runs, or why the action cannot be warm.
+pub fn runtime(first_line: &str) -> Result<Runtime, String> {
     let runs = crate::needs::interpreter(first_line).unwrap_or_default();
     let name = Path::new(&runs)
         .file_name()
@@ -31,18 +33,21 @@ pub fn python(first_line: &str) -> Result<Python, String> {
             .strip_prefix("python3.")
             .is_some_and(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()));
     if is_python {
-        return Ok(Python::Plain(runs));
+        return Ok(Runtime::Python(runs));
+    }
+    if name == "node" {
+        return Ok(Runtime::Node(runs));
     }
     if name == "uv" {
         let words: Vec<&str> = first_line.split_whitespace().collect();
         if words.contains(&"--script") {
-            return Ok(Python::UvScript);
+            return Ok(Runtime::UvScript);
         }
         if let Some(i) = words.iter().position(|w| *w == "--project")
             && let Some(folder) = words.get(i + 1)
             && words.get(i + 2) == Some(&"python")
         {
-            return Ok(Python::UvProject(PathBuf::from(folder)));
+            return Ok(Runtime::UvProject(PathBuf::from(folder)));
         }
     }
     let runs = if runs.is_empty() {
@@ -51,13 +56,13 @@ pub fn python(first_line: &str) -> Result<Python, String> {
         name.to_string()
     };
     Err(format!(
-        "warm: only Python actions can be warm: its first line runs {runs}"
+        "warm: only Python and Node actions can be warm: its first line runs {runs}"
     ))
 }
 
 /// The interpreter a copy starts: for uv, after `uv sync`, since without it
 /// uv answers another Python (its find falls back silently).
-pub fn interpreter(p: &Python, file: &Path, root: &Path) -> Result<PathBuf, String> {
+pub fn interpreter(p: &Runtime, file: &Path, root: &Path) -> Result<PathBuf, String> {
     let uv = |args: &[&std::ffi::OsStr]| -> Result<String, String> {
         let out = std::process::Command::new("uv")
             .args(args)
@@ -76,8 +81,8 @@ pub fn interpreter(p: &Python, file: &Path, root: &Path) -> Result<PathBuf, Stri
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     };
     match p {
-        Python::Plain(name) => Ok(PathBuf::from(name)),
-        Python::UvScript => {
+        Runtime::Python(name) | Runtime::Node(name) => Ok(PathBuf::from(name)),
+        Runtime::UvScript => {
             uv(&[
                 "sync".as_ref(),
                 "--script".as_ref(),
@@ -91,7 +96,7 @@ pub fn interpreter(p: &Python, file: &Path, root: &Path) -> Result<PathBuf, Stri
                 file.as_os_str(),
             ])?))
         }
-        Python::UvProject(folder) => {
+        Runtime::UvProject(folder) => {
             uv(&[
                 "sync".as_ref(),
                 "--project".as_ref(),

@@ -348,7 +348,7 @@ fn a_warm_step_of_a_non_python_action_fails_with_why() {
         failed[0]["why"]
             .as_str()
             .unwrap()
-            .contains("warm: only Python actions can be warm: its first line runs sh"),
+            .contains("warm: only Python and Node actions can be warm: its first line runs sh"),
         "{failed:#?}"
     );
 }

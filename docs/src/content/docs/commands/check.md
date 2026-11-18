@@ -42,11 +42,11 @@ a command it runs (a hint: the script may guard it). Neither fails the
 check. See [Actions](/guides/actions/#when-something-it-needs-is-missing).
 
 A step with `"warm": true` shows `warm` under its action. Only a Python
-action can be warm; on any other, the check fails at that step:
+or Node action can be warm; on any other, the check fails at that step:
 
 ```
-error: warm: only Python actions can be warm: its first line runs sh (home/workflows/sepet/steps/#üzüm)
-error: warm: only Python actions can be warm: #notify is built in (home/workflows/sepet/steps/#notify)
+error: warm: only Python and Node actions can be warm: its first line runs sh (home/workflows/sepet/steps/#üzüm)
+error: warm: only Python and Node actions can be warm: #notify is built in (home/workflows/sepet/steps/#notify)
 ```
 
 See [Warm actions](/guides/actions/#warm-actions).

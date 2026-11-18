@@ -1,4 +1,5 @@
-//! A warm copy's worker side: itero's Python runner (runner.py), started
+//! A warm copy's worker side: itero's runner (runner.py for Python,
+//! runner.mjs for Node), started
 //! once in the action's Python, and one request at a time given to it. A
 //! request ends as a fresh process's run would (`worker::outcome_of`).
 use super::super::worker::{self, Failure, Outcome, StepRun};
@@ -7,6 +8,7 @@ use std::os::unix::net::UnixStream;
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 
 const RUNNER: &str = include_str!("runner.py");
+const NODE_RUNNER: &str = include_str!("runner.mjs");
 
 /// The runner of one action's file, kept between requests.
 pub struct Runner {
@@ -30,13 +32,15 @@ impl Runner {
     /// worker's environment: a request brings the step's own.
     pub fn start(step: &StepRun) -> Result<Runner, String> {
         let first = worker::first_line(&step.file).unwrap_or_default();
-        let python = super::python(&first)?;
-        let program = super::interpreter(&python, &step.file, &step.root)?;
+        let runtime = super::runtime(&first)?;
+        let program = super::interpreter(&runtime, &step.file, &step.root)?;
         let (ours, theirs) = UnixStream::pair().map_err(|e| format!("warm: {e}"))?;
         let mut c = Command::new(&program);
-        c.arg("-c")
-            .arg(RUNNER)
-            .arg(&step.file)
+        match runtime {
+            super::Runtime::Node(_) => c.args(["--input-type=module", "--eval", NODE_RUNNER]),
+            _ => c.args(["-c", RUNNER]),
+        };
+        c.arg(&step.file)
             .current_dir(&step.root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
