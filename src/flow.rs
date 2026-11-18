@@ -315,6 +315,8 @@ pub enum Step {
         /// `"warm": true`: its action runs in a copy kept loaded between
         /// steps (engine/warm).
         warm: bool,
+        /// `limits`: its own quiet and most, else the workspace's.
+        limits: StepLimits,
     },
     /// Actions and workflows that run side by side; the next step waits as
     /// the group says.
@@ -344,6 +346,8 @@ pub struct Member {
     pub label: String,
     /// `"warm": true`, as a step's.
     pub warm: bool,
+    /// `limits`, as a step's.
+    pub limits: StepLimits,
 }
 
 impl Member {
@@ -355,8 +359,59 @@ impl Member {
             args: Value::Object(Map::new()),
             on: None,
             warm: false,
+            limits: StepLimits::default(),
         }
     }
+}
+
+/// A step's own `quiet` and `most`, in seconds: what it is not given is
+/// the workspace's.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct StepLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiet: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub most: Option<u64>,
+}
+
+impl StepLimits {
+    pub fn is_none(&self) -> bool {
+        self.quiet.is_none() && self.most.is_none()
+    }
+}
+
+/// A step's `limits`, read: every problem in it told.
+fn step_limits(v: &Value, ps: &mut Vec<Problem>) -> StepLimits {
+    let Value::Object(m) = v else {
+        ps.push(Problem::new(
+            "",
+            r#"limits is an object: { "quiet": "1h", "most": "2d" }"#,
+        ));
+        return StepLimits::default();
+    };
+    let mut out = StepLimits::default();
+    for (k, v) in m {
+        let slot = match k.as_str() {
+            "quiet" => &mut out.quiet,
+            "most" => &mut out.most,
+            other => {
+                ps.push(Problem::new(
+                    "",
+                    format!("limits: {other}: a step's limits are quiet and most"),
+                ));
+                continue;
+            }
+        };
+        let text = match v {
+            Value::String(t) => t.clone(),
+            other => other.to_string(),
+        };
+        match crate::workspace::duration(k, Some(text), 0) {
+            Ok(d) => *slot = Some(d.as_secs()),
+            Err(e) => ps.push(Problem::new("", format!("{e:#}"))),
+        }
+    }
+    out
 }
 
 /// When the group ends: the key of its object.
@@ -1414,6 +1469,7 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
                 repeat: None,
                 window: None,
                 warm: false,
+                limits: StepLimits::default(),
             })
         }
         Value::Array(items) => Ok(Step::Side(Group {
@@ -1434,6 +1490,7 @@ fn step(v: &Value) -> Result<Step, Vec<Problem>> {
                 repeat: w.repeat,
                 window: w.window,
                 warm: w.warm,
+                limits: w.limits,
             })
         }
         _ => Err(one(format!(
@@ -1589,6 +1646,7 @@ struct Written {
     repeat: Option<Repeat>,
     window: Option<Window>,
     warm: bool,
+    limits: StepLimits,
 }
 
 fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
@@ -1720,6 +1778,17 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             false
         }
     };
+    let limits = match fields.remove("limits") {
+        None => StepLimits::default(),
+        Some(_) if matches!(step_name, Some(Name::Workflow(_))) => {
+            ps.push(Problem::new(
+                "",
+                "limits: a workflow used as a step has the limits of its own steps",
+            ));
+            StepLimits::default()
+        }
+        Some(v) => step_limits(&v, &mut ps),
+    };
     if fields.remove("strict").is_some() {
         ps.push(Problem::new(
             "",
@@ -1766,7 +1835,7 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
         ps.push(Problem::new(
             "",
             format!(
-                "\"{other}\" is not one of args, on, undo, repeat, unique, changed, at_most, warm: a step's values go under args"
+                "\"{other}\" is not one of args, on, undo, repeat, unique, changed, at_most, warm, limits: a step's values go under args"
             ),
         ));
     }
@@ -1793,6 +1862,7 @@ fn written(m: &Map<String, Value>) -> Result<Written, Vec<Problem>> {
             repeat: rounds,
             window,
             warm,
+            limits,
         }),
         _ => Err(ps),
     }
@@ -1832,6 +1902,7 @@ fn side_members(items: &[Value], what: &str) -> Result<Vec<Member>, Vec<Problem>
                     on: w.on.map(Box::new),
                     label,
                     warm: w.warm,
+                    limits: w.limits,
                 })
             }),
             Value::Object(_) => Err(one(format!(

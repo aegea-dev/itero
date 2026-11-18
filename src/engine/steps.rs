@@ -143,6 +143,10 @@ pub struct Round {
 /// A node of a run's position.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "a run's saved position, read from and written to its runtime's JSON: an action's fields kept inline cost a few bytes per node, not a box per action"
+)]
 pub enum At {
     /// A workflow, at one of its steps.
     Flow {
@@ -193,6 +197,9 @@ pub enum At {
         /// Its step says `"warm": true`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         warm: bool,
+        /// Its step's own quiet and most.
+        #[serde(default, skip_serializing_if = "flow::StepLimits::is_none")]
+        limits: flow::StepLimits,
     },
     /// A list run side by side, and how the next step waits for it.
     Side {
@@ -353,6 +360,11 @@ pub struct StepJob {
     /// Its step says `"warm": true`: the daemon runs it in a warm copy.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub warm: bool,
+    /// Its step's own `quiet` and `most`, in seconds; else the workspace's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiet: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub most: Option<u64>,
 }
 
 /// A workflow used as a step, to start as a run of its own.
@@ -720,6 +732,7 @@ impl Machine<'_> {
                         repeat: None,
                         window: None,
                         warm: false,
+                        limits: flow::StepLimits::default(),
                     })
                 })
                 .collect::<Result<_, String>>()?,
@@ -794,6 +807,7 @@ impl Machine<'_> {
                 label,
                 window,
                 warm,
+                limits,
                 ..
             } => {
                 if let Some(on) = on
@@ -817,7 +831,14 @@ impl Machine<'_> {
                         return Ok(None);
                     }
                 };
-                let at = self.start_name(name, &data, flow::written_secrets(args), *warm, path)?;
+                let at = self.start_name(
+                    name,
+                    &data,
+                    flow::written_secrets(args),
+                    *warm,
+                    limits,
+                    path,
+                )?;
                 if let Some(w) = window {
                     let now = self
                         .i
@@ -846,6 +867,7 @@ impl Machine<'_> {
                                 &data,
                                 flow::written_secrets(&m.args),
                                 m.warm,
+                                &m.limits,
                                 path,
                             )?,
                             Err(why) => {
@@ -1134,6 +1156,7 @@ impl Machine<'_> {
         data: &Map<String, Value>,
         secrets: Vec<String>,
         warm: bool,
+        limits: &flow::StepLimits,
         path: &[usize],
     ) -> Result<Option<At>, String> {
         match name {
@@ -1149,6 +1172,7 @@ impl Machine<'_> {
                     output: None,
                     event: None,
                     warm,
+                    limits: limits.clone(),
                 };
                 self.jobs.extend(job(&mut leaf, path));
                 Ok(Some(leaf))
@@ -2014,6 +2038,7 @@ fn job(leaf: &mut At, path: &[usize]) -> Option<StepJob> {
         waiting_since,
         event,
         warm,
+        limits,
         ..
     } = leaf
     else {
@@ -2031,6 +2056,8 @@ fn job(leaf: &mut At, path: &[usize]) -> Option<StepJob> {
         event: event.clone(),
         gate: None,
         warm: *warm,
+        quiet: limits.quiet,
+        most: limits.most,
     })
 }
 

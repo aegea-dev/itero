@@ -153,7 +153,7 @@ fn size_text(bytes: u64) -> String {
 }
 
 /// `"30m"`: a duration of at least a second; `default` is in seconds.
-fn duration(name: &str, v: Option<String>, default: u64) -> Result<std::time::Duration> {
+pub(crate) fn duration(name: &str, v: Option<String>, default: u64) -> Result<std::time::Duration> {
     let Some(t) = v else {
         return Ok(std::time::Duration::from_secs(default));
     };
