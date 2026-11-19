@@ -218,8 +218,9 @@ soak: build ## The whole engine under load for an hour (SOAK_SECS), then a drain
 	sh scripts/soak.sh
 
 # The Alpine image with python3 added (FROM it, then apk add, as its
-# Dockerfile says), for the soak's warm step; the image itself stays small
-SOAK_IMAGE = printf 'FROM itero:dev-alpine\nRUN apk add --no-cache python3\n' | docker build -q -t itero:soak - >/dev/null
+# Dockerfile says), for the soak's warm step; the image itself stays small.
+# The image runs as its user 10001, and apk needs root to install
+SOAK_IMAGE = printf 'FROM itero:dev-alpine\nUSER root\nRUN apk add --no-cache python3\nUSER 10001:10001\n' | docker build -t itero:soak -
 SOAK_LINUX = docker run --rm --network none -v "$(CURDIR)/scripts:/scripts:ro" -v "$(CURDIR)/target/soak:/out" \
 	-e ITERO=/usr/local/bin/itero -e SOAK_OUT=/out $(SOAK_ENV) --entrypoint sh itero:soak /scripts/soak.sh
 
