@@ -95,7 +95,7 @@ fn the_order_example_waits_for_its_payment_then_ships() {
 fn the_hello_world_example_greets_the_name_it_is_given() {
     let d = tempfile::tempdir().unwrap();
     let ws = copy("hello-world", d.path());
-    itero(&ws, &["ws", "emit", "greet.someone", r#"{"name": "Ayşe"}"#]);
+    itero(&ws, &["ws", "emit", "greet.someone", r#"{"name": "world"}"#]);
     let told = ws.join("bildirim.log");
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
         .args(["ws", "daemon", "--once"])
@@ -107,7 +107,7 @@ fn the_hello_world_example_greets_the_name_it_is_given() {
     assert!(o.status.success(), "{o:?}");
     assert_eq!(
         std::fs::read_to_string(&told).unwrap(),
-        "itero\tMerhaba, Ayşe!\n"
+        "itero\tHello, world!\n"
     );
     let runs = runs_of(&ws, "greet");
     assert_eq!(runs.len(), 1, "{runs:?}");

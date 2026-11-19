@@ -27,7 +27,7 @@ what it prints is its result, which `#notify` is given as its text:
 
 ```sh
 #!/bin/sh
-echo "Merhaba, $name!"
+echo "Hello, $name!"
 ```
 
 ```sh
@@ -45,10 +45,10 @@ itero ws daemon
 In another terminal, in the same folder, send an event (a message):
 
 ```sh
-itero ws emit greet.someone '{"name": "Ayşe"}'
+itero ws emit greet.someone '{"name": "world"}'
 ```
 
-Within a second a notification says "Merhaba, Ayşe!". Then:
+Within a second a notification says "Hello, world!". Then:
 
 ```sh
 itero ws wf list          # each workflow, its runs, and whether the daemon runs
