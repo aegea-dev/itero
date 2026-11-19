@@ -318,6 +318,68 @@ fn the_daemon_refuses_what_check_refuses_in_the_manifest_every_problem_at_once()
 }
 
 #[test]
+fn ws_daemon_does_not_start_with_a_problem_and_tells_every_one() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/gözcü.json",
+        r##"{ "on": [{ "event": "saat.geldi" }], "steps": ["#bak"] }"##,
+    );
+    file(d.path(), "actions/bak", "#!/bin/sh\n");
+    file(
+        d.path(),
+        "workflows/bozuk.json",
+        r#"{ "on": [{ "event": "tek" }] }"#,
+    );
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"workflow": {"gözcu": {"off": true}}, "action": {"hayalet": {}}}"#,
+    );
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+        .args(["ws", "daemon", "--no-serve"])
+        .current_dir(d.path())
+        .env("ITERO_NO_SECRET_STORE", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > end {
+            child.kill().unwrap();
+            panic!("ws daemon started with problems in its files");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let o = child.wait_with_output().unwrap();
+    let e = err(&o);
+    assert!(!o.status.success(), "{o:?}");
+    // told as ws check tells it: a line each, then how many
+    let lines: Vec<&str> = e.lines().collect();
+    for told in [
+        "itero.config.json: no workflow gözcu (",
+        "itero.config.json: no action hayalet (",
+        "is not a message type",
+        "a workflow needs steps (",
+    ] {
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("error: ") && l.contains(told)),
+            "{told}: {e}"
+        );
+    }
+    assert!(
+        e.contains("/workflows/gözcu)") && e.contains("/workflows/bozuk)"),
+        "{e}"
+    );
+    assert_eq!(lines.last(), Some(&"4 errors, 0 warnings"), "{e}");
+    assert!(!out(&o).contains("running the workflows"), "{o:?}");
+}
+
+#[test]
 fn check_says_what_each_workflow_uses_and_what_is_not_there() {
     let d = workspace();
     file(

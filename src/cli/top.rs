@@ -2,30 +2,40 @@
 //! `ws info`, `ws check`, `ws which`.
 use super::out::{show, text};
 use crate::answer::Client;
-use crate::answer::workspace::{RunBy, Runner};
+use crate::answer::workspace::{RunBy, Runner, Told};
 use crate::engine::journal::Journal;
 use crate::workspace::Workspace;
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
+/// Problems as `itero ws check` tells them, wherever they are found: a
+/// line each, `error: <message> (<workspace>/<address>)`, the warnings
+/// after, then how many.
+pub fn told(errors: &[Told], warnings: &[Told]) {
+    for (kind, list) in [("error", errors), ("warning", warnings)] {
+        for p in list {
+            crate::say!("{kind}: {} ({})", p.message, p.at);
+        }
+    }
+    crate::say!(
+        "{}",
+        crate::problem::count_line(errors.len(), warnings.len())
+    );
+}
+
 /// Reads every workflow, action and connector and says what is wrong:
 /// every problem, each with its address, then how many; what it found is
 /// printed when nothing is wrong.
 pub fn check(c: &Client, json: bool) -> Result<()> {
     let report = c.check()?;
-    let (errors, warnings) = (report.errors.len(), report.warnings.len());
-    let v = serde_json::to_value(report)?;
+    let errors = report.errors.len();
+    let v = serde_json::to_value(&report)?;
     if errors > 0 {
         if json {
             println!("{}", serde_json::to_string_pretty(&v)?);
         } else {
-            for (kind, list) in [("error", &v["errors"]), ("warning", &v["warnings"])] {
-                for p in list.as_array().into_iter().flatten() {
-                    crate::say!("{kind}: {} ({})", text(&p["message"]), text(&p["at"]));
-                }
-            }
-            crate::say!("{}", crate::problem::count_line(errors, warnings));
+            told(&report.errors, &report.warnings);
         }
         std::process::exit(1);
     }

@@ -82,7 +82,7 @@ pub enum Use {
 }
 
 /// A problem as told: its address under the workspace's name.
-fn told(ws_name: &str, p: &Problem) -> Told {
+pub fn told(ws_name: &str, p: &Problem) -> Told {
     let at = match p.at.as_str() {
         "" => ws_name.to_string(),
         a => format!("{ws_name}/{a}"),

@@ -923,6 +923,20 @@ fn run_one(
         pass?;
         return Ok(());
     }
+    // a problem in its files starts nothing: every one told as ws check
+    // tells it
+    let problems = daemon::refused(&ws)?;
+    if !problems.is_empty() {
+        let name = crate::engine::journal::Journal::open(&ws)?
+            .workspace()?
+            .name;
+        let errors: Vec<_> = problems
+            .iter()
+            .map(|p| crate::answer::workspace::told(&name, p))
+            .collect();
+        top::told(&errors, &[]);
+        std::process::exit(1);
+    }
     use crate::engine::http;
     // its port first: a daemon that cannot listen starts nothing
     let listening = if no_serve {

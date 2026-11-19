@@ -277,15 +277,29 @@ fn look(files: &[PathBuf]) -> Vec<(PathBuf, Option<FileState>)> {
         .collect()
 }
 
+/// The workflows read, and what the daemon refuses in the workspace: the
+/// manifest's problems and the workflows', every one, as itero ws check
+/// finds them. No pass runs while there is one.
+fn read_checked(
+    ws: &Workspace,
+) -> Result<(crate::workspace::ReadFlows, Vec<crate::problem::Problem>)> {
+    let read = ws.read_flows()?;
+    let mut problems = ws.manifest_problems(&read)?;
+    problems.extend(read.problems.iter().cloned());
+    Ok((read, problems))
+}
+
+/// What keeps a daemon from starting on the workspace: every problem
+/// [`read_checked`] finds, each `message (address)`; empty when it can run.
+pub fn refused(ws: &Workspace) -> Result<Vec<crate::problem::Problem>> {
+    Ok(read_checked(ws)?.1)
+}
+
 impl Flows {
     fn load(ws: &Workspace) -> Result<Flows> {
         // looked at first: an edit while they are read is seen next time
         let seen = look(&ws.own_files()?);
-        // what itero ws check refuses, the daemon refuses: the manifest's
-        // problems and the workflows', every one at once
-        let read = ws.read_flows()?;
-        let mut problems = ws.manifest_problems(&read)?;
-        problems.extend(read.problems);
+        let (read, problems) = read_checked(ws)?;
         if !problems.is_empty() {
             return Err(anyhow!("{}", crate::flow::told(&problems)));
         }

@@ -26,10 +26,14 @@ impl Problem {
     }
 }
 
+/// `1 error`, `3 errors`.
+pub fn count(k: usize, one: &str) -> String {
+    format!("{k} {one}{}", if k == 1 { "" } else { "s" })
+}
+
 /// `3 errors, 1 warning`.
 pub fn count_line(errors: usize, warnings: usize) -> String {
-    let n = |k: usize, one: &str| format!("{k} {one}{}", if k == 1 { "" } else { "s" });
-    format!("{}, {}", n(errors, "error"), n(warnings, "warning"))
+    format!("{}, {}", count(errors, "error"), count(warnings, "warning"))
 }
 
 #[cfg(test)]
