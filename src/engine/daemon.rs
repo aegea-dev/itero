@@ -281,17 +281,19 @@ impl Flows {
     fn load(ws: &Workspace) -> Result<Flows> {
         // looked at first: an edit while they are read is seen next time
         let seen = look(&ws.own_files()?);
-        let values = ws.flow_values()?;
-        let entries = ws.entries("workflow")?;
-        let mut read = BTreeMap::new();
-        for (n, v) in &values {
-            read.insert(n.clone(), ws.read_flow(n, v, &entries)?);
+        // what itero ws check refuses, the daemon refuses: the manifest's
+        // problems and the workflows', every one at once
+        let read = ws.read_flows()?;
+        let mut problems = ws.manifest_problems(&read)?;
+        problems.extend(read.problems);
+        if !problems.is_empty() {
+            return Err(anyhow!("{}", crate::flow::told(&problems)));
         }
         Ok(Flows {
-            values,
-            read,
+            values: read.values,
+            read: read.flows.into_iter().collect(),
             config: ws.manifest()?,
-            entries,
+            entries: ws.entries("workflow")?,
             seen,
             pins: Default::default(),
             defined: Default::default(),

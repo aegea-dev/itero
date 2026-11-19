@@ -21,6 +21,8 @@ pub struct ReadFlows {
     pub flows: Flows,
     pub problems: Vec<Problem>,
     pub written: BTreeMap<String, Value>,
+    /// Each workflow read, as its JSON (each file an arg names inlined).
+    pub values: BTreeMap<String, Value>,
 }
 
 /// The workspace's manifest: what it is, how it runs, and what its
@@ -600,9 +602,9 @@ impl Workspace {
         let entries = self.entries("workflow")?;
         let (values, mut problems, written) = self.read_flow_files()?;
         let mut flows = vec![];
-        for (n, v) in values {
-            match self.flow_with_entry(&n, &v, &entries) {
-                Ok(f) => flows.push((n, f)),
+        for (n, v) in &values {
+            match self.flow_with_entry(n, v, &entries) {
+                Ok(f) => flows.push((n.clone(), f)),
                 Err(ps) => problems.extend(ps),
             }
         }
@@ -610,7 +612,99 @@ impl Workspace {
             flows,
             problems,
             written,
+            values,
         })
+    }
+
+    /// What the manifest has wrong, refused by `itero ws check` and the
+    /// daemon alike: an entry naming no workflow, action or connector, an
+    /// entry that is wrong, and the folders from before it (`args/`,
+    /// `config/`). A workflow whose file is there, read or not (`read`),
+    /// is named: a broken file's entry is not missing.
+    pub fn manifest_problems(&self, read: &ReadFlows) -> Result<Vec<Problem>> {
+        let mut wrong = vec![];
+        for (dir, now) in [
+            (
+                "args",
+                "an action's args are written in the step that runs it",
+            ),
+            (
+                "config",
+                "a workflow's values go in .env, a step's args or the event",
+            ),
+        ] {
+            if self.root.join(dir).is_dir() {
+                wrong.push(Problem::new("", format!("{dir}/: is gone: {now}")));
+            }
+        }
+        // a built-in workflow is there even where it is not read (the
+        // machine's daemon scans for models once, for every workspace)
+        let workflows: Vec<String> = self
+            .flow_files()?
+            .into_keys()
+            .chain(read.written.keys().cloned())
+            .chain(BUILT_IN.iter().map(|(n, _)| n.to_string()))
+            .collect();
+        let actions: Vec<String> = self
+            .action_files()?
+            .into_keys()
+            .map(|f| f.split('@').next().unwrap_or(&f).to_string())
+            .chain(
+                crate::engine::worker::BUILT_IN
+                    .iter()
+                    .map(|b| b.to_string()),
+            )
+            .collect();
+        let connectors: Vec<String> = self
+            .connector_files()?
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        for name in self.entries("connector")?.keys() {
+            if let Err(why) = self.no_connector_args(name) {
+                wrong.push(self.entry_problem("connector", name, &format!("{why:#}")));
+            }
+        }
+        for (name, _) in self.entries("action")? {
+            for why in [
+                self.no_args(&name),
+                self.no_repeat(&name),
+                self.no_action_limits(&name),
+            ]
+            .into_iter()
+            .filter_map(Result::err)
+            {
+                wrong.push(self.entry_problem("action", &name, &format!("{why:#}")));
+            }
+        }
+        for (kind, known) in [
+            ("workflow", workflows),
+            ("action", actions),
+            ("connector", connectors),
+        ] {
+            for name in self.entries(kind)?.keys() {
+                if !known.contains(name) {
+                    wrong.push(Problem::new(
+                        format!("{kind}s/{name}"),
+                        format!("{MANIFEST}: no {kind} {name}"),
+                    ));
+                }
+            }
+        }
+        Ok(wrong)
+    }
+
+    /// A manifest entry's problem at the address of what it is about
+    /// (`actions/depo`), its text after the manifest's name, its path and
+    /// the entry's key taken off: `itero.config.json: limits: ...`.
+    fn entry_problem(&self, kind: &str, name: &str, why: &str) -> Problem {
+        let path = format!("{}: ", self.root.join(MANIFEST).display());
+        let why = why.strip_prefix(&path).unwrap_or(why);
+        let why = why
+            .strip_prefix(&format!("{kind}.{name}."))
+            .or_else(|| why.strip_prefix(&format!("{kind}.{name}: ")))
+            .unwrap_or(why);
+        Problem::new(format!("{kind}s/{name}"), format!("{MANIFEST}: {why}"))
     }
 
     /// The workflow `name`, its file read as `v`, with its entry in the

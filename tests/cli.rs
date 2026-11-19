@@ -267,6 +267,57 @@ fn check_refuses_an_entry_naming_nothing_and_folders_from_before() {
 }
 
 #[test]
+fn the_daemon_refuses_what_check_refuses_in_the_manifest_every_problem_at_once() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/gözcü.json",
+        r##"{ "on": [{ "event": "saat.geldi" }], "steps": ["#bak"] }"##,
+    );
+    file(d.path(), "actions/bak", "#!/bin/sh\necho bakıldı\n");
+    std::process::Command::new("chmod")
+        .args(["+x", "actions/bak"])
+        .current_dir(d.path())
+        .status()
+        .unwrap();
+    // a misspelt entry turns nothing off: it is refused, not ignored
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"workflow": {"gözcu": {"off": true}},
+            "action": {"hayalet": {}, "bak": {"args": {"kaç": 1}}},
+            "connector": {"yok.böyle": {}}}"#,
+    );
+    file(d.path(), "args/bak.json", "{}");
+    assert!(
+        itero(d.path(), &["ws", "emit", "saat.geldi", "{}"])
+            .status
+            .success()
+    );
+    let o = itero(d.path(), &["ws", "daemon", "--once"]);
+    let e = err(&o);
+    assert!(!o.status.success(), "{o:?}");
+    for told in [
+        "args/: is gone",
+        "no workflow gözcu",
+        "no action hayalet",
+        "no connector yok.böyle",
+        "args are gone",
+    ] {
+        assert!(e.contains(told), "{told}: {e}");
+    }
+    let runs = out(&itero(d.path(), &["ws", "wf", "runs", "--json"]));
+    assert_eq!(runs.trim(), "[]", "nothing ran: {runs}");
+    // once the manifest is right, the event waiting runs
+    file(d.path(), "itero.config.json", "{}");
+    std::fs::remove_dir_all(d.path().join("args")).unwrap();
+    let o = itero(d.path(), &["ws", "daemon", "--once"]);
+    assert!(o.status.success(), "{o:?}");
+    let runs = out(&itero(d.path(), &["ws", "wf", "runs"]));
+    assert!(runs.contains("gözcü") && runs.contains("done"), "{runs}");
+}
+
+#[test]
 fn check_says_what_each_workflow_uses_and_what_is_not_there() {
     let d = workspace();
     file(
