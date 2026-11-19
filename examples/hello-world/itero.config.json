@@ -1,0 +1,9 @@
+{
+  "name": "hello-world",
+  "description": "Hello world: an event with a name, a greeting shown as a notification",
+  "workflow": {
+    "greet": {
+      "description": "Greets the event's name, then shows the greeting"
+    }
+  }
+}

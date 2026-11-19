@@ -27,7 +27,7 @@ what it prints is its result, which `#notify` is given as its text:
 
 ```sh
 #!/bin/sh
-echo "Merhaba, $name!"
+echo "Hello, $name!"
 ```
 
 ```sh
@@ -45,10 +45,10 @@ itero ws daemon
 In another terminal, in the same folder, send an event (a message):
 
 ```sh
-itero ws emit greet.someone '{"name": "Ayşe"}'
+itero ws emit greet.someone '{"name": "world"}'
 ```
 
-Within a second a notification says "Merhaba, Ayşe!". Then:
+Within a second a notification says "Hello, world!". Then:
 
 ```sh
 itero ws wf list          # each workflow, its runs, and whether the daemon runs
@@ -70,7 +70,8 @@ run it from login on: `itero workspace add`, then `itero service install`
 - [Connectors](/guides/connectors/): where events come from.
 - [The log, IDs and names](/guides/log/): what happened, and how to find
   it.
-- The examples in the repository: `beacon`, `mail-alert`, `mail-servers`,
+- The examples in the repository: `hello-world` (this page's files),
+  `beacon`, `mail-alert`, `mail-servers`,
   `gmail` (new mail pushed as it arrives), `notify-api` (an app's
   notification, its answer posted back), `order`, `page-digest`,
   `messages` (an alert by mail, push notification or iMessage),

@@ -76,11 +76,11 @@ story starts with `from <parent run>`
 ```
 $ itero ws wf runs sunny-lake
 sunny-lake  01a16fd5-46c0-7738-98d2-f87b1211af19  greet  done
-  2026-10-24T21:33:22Z  started  {"name":"Ayşe"}
-  2026-10-24T21:33:22Z  #hello  done  "Merhaba, Ayşe!"
+  2026-10-24T21:33:22Z  started  {"name":"world"}
+  2026-10-24T21:33:22Z  #hello  done  "Hello, world!"
   2026-10-24T21:33:22Z  #notify  done  ""
   2026-10-24T21:33:22Z  ended done
-  state {"event":{"name":"Ayşe"},"output":"","steps":{"hello":"Merhaba, Ayşe!","notify":""}}
+  state {"event":{"name":"world"},"output":"","steps":{"hello":"Hello, world!","notify":""}}
 ```
 
 A name is two random words. Of two runs with one name it shows the newest,
