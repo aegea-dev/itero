@@ -70,7 +70,8 @@ run it from login on: `itero workspace add`, then `itero service install`
 - [Connectors](/guides/connectors/): where events come from.
 - [The log, IDs and names](/guides/log/): what happened, and how to find
   it.
-- The examples in the repository: `beacon`, `mail-alert`, `mail-servers`,
+- The examples in the repository: `hello-world` (this page's files),
+  `beacon`, `mail-alert`, `mail-servers`,
   `gmail` (new mail pushed as it arrives), `notify-api` (an app's
   notification, its answer posted back), `order`, `page-digest`,
   `messages` (an alert by mail, push notification or iMessage),

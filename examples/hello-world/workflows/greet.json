@@ -1,0 +1,3 @@
+{ "on": [{ "event": "greet.someone" }],
+  "steps": [{ "#hello": { "args": { "name": "$event.name" } } },
+            { "#notify": { "args": { "text": "$output" } } }] }

@@ -161,6 +161,8 @@ What the daemon does is in `.itero/itero.log`, one JSON line each.
 
 ## Examples
 
+- [`examples/hello-world`](examples/hello-world): the smallest workspace,
+  an event with a name and a notification that says hello.
 - [`examples/beacon`][beacon]: sites and the disk's free space
   checked on a schedule, with a notification when something changes.
 - [`examples/mail-alert`][mail-alert]: a notification for each
