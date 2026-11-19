@@ -11,10 +11,12 @@
 #   start: curl's, `itero ws emit`'s;
 # - throughput: BENCH_N events saved while no daemon runs, then a daemon
 #   started: runs a second, first start to last end, for 1 and 3 steps,
-#   1 step given a secret (`$$BENCH_TOKEN`), and 1 and 3 steps of a
-#   Python action run fresh (py1, py3) and warm (warm1, warm3), where
-#   python3 is found, and of a Node action (node1, node3, nodewarm1,
-#   nodewarm3), where node is found;
+#   1 step given a secret (`$$BENCH_TOKEN`), and 1, 3 and 5 steps of a
+#   Python action run fresh (py1, py3, py5) and warm (warm1, warm3,
+#   warm5), where python3 is found, and of a Node action (node1, node3,
+#   node5, nodewarm1, nodewarm3, nodewarm5), where node is found; and 4
+#   steps in 4 languages, Python, Node, Bun and sh, all fresh (mix) and
+#   with Python and Node warm (mixwarm), where all of them are found;
 # - the webhook listener: BENCH_REQUESTS requests, 32 at once, refused
 #   (an unlisted path) and saved (a listed path no workflow takes).
 #
@@ -98,14 +100,14 @@ EOF
 # a Python action, run fresh at each step or kept loaded (warm), where
 # there is a python3 (the Alpine image has none)
 if command -v python3 >/dev/null 2>&1; then
-	languages='py1 py3 warm1 warm3'
+	languages='py1 py3 py5 warm1 warm3 warm5'
 else
 	languages=''
 	echo "bench.sh: no python3 here: the Python workflows are not measured" >&2
 fi
 printf '#!/usr/bin/env python3\nimport json, sys\njson.load(sys.stdin)\nprint(json.dumps({"ok": True}))\n' >"$ws/actions/py"
 chmod +x "$ws/actions/py"
-for k in 1 3; do
+for k in 1 3 5; do
 	steps=$(i=0; s=''; while [ $i -lt $k ]; do s="$s${s:+, }\"#py\""; i=$((i + 1)); done; echo "$s")
 	warm=$(i=0; s=''; while [ $i -lt $k ]; do s="$s${s:+, }{ \"#py\": { \"warm\": true } }"; i=$((i + 1)); done; echo "$s")
 	echo "{ \"on\": [{ \"event\": \"bench.sent\" }, { \"\$event.wf\": \"py$k\" }], \"steps\": [$steps] }" >"$ws/workflows/py$k.json"
@@ -113,10 +115,10 @@ for k in 1 3; do
 done
 # the same with a Node action, where there is a node
 if command -v node >/dev/null 2>&1; then
-	languages="$languages node1 node3 nodewarm1 nodewarm3"
+	languages="$languages node1 node3 node5 nodewarm1 nodewarm3 nodewarm5"
 	printf '#!/usr/bin/env node\nJSON.parse(require("fs").readFileSync(0, "utf8"));\nconsole.log(JSON.stringify({ ok: true }));\n' >"$ws/actions/nd"
 	chmod +x "$ws/actions/nd"
-	for k in 1 3; do
+	for k in 1 3 5; do
 		steps=$(i=0; s=''; while [ $i -lt $k ]; do s="$s${s:+, }\"#nd\""; i=$((i + 1)); done; echo "$s")
 		warm=$(i=0; s=''; while [ $i -lt $k ]; do s="$s${s:+, }{ \"#nd\": { \"warm\": true } }"; i=$((i + 1)); done; echo "$s")
 		echo "{ \"on\": [{ \"event\": \"bench.sent\" }, { \"\$event.wf\": \"node$k\" }], \"steps\": [$steps] }" >"$ws/workflows/node$k.json"
@@ -124,6 +126,20 @@ if command -v node >/dev/null 2>&1; then
 	done
 else
 	echo "bench.sh: no node here: the Node workflows are not measured" >&2
+fi
+# one step in each language, as examples/languages' order-flow: Bun has no
+# warm copy, so its step and sh's start fresh in both
+if command -v python3 >/dev/null 2>&1 && command -v node >/dev/null 2>&1 && command -v bun >/dev/null 2>&1; then
+	languages="$languages mix mixwarm"
+	printf '#!/usr/bin/env bun
+JSON.parse(await Bun.stdin.text());
+console.log(JSON.stringify({ ok: true }));
+' >"$ws/actions/bn"
+	chmod +x "$ws/actions/bn"
+	echo '{ "on": [{ "event": "bench.sent" }, { "$event.wf": "mix" }], "steps": ["#py", "#nd", "#bn", "#a"] }' >"$ws/workflows/mix.json"
+	echo '{ "on": [{ "event": "bench.sent" }, { "$event.wf": "mixwarm" }], "steps": [{ "#py": { "warm": true } }, { "#nd": { "warm": true } }, "#bn", "#a"] }' >"$ws/workflows/mixwarm.json"
+else
+	echo "bench.sh: python3, node and bun are not all here: the mixed workflows are not measured" >&2
 fi
 cat >"$ws/workflows/hook.json" <<'EOF'
 { "on": [{ "event": "itero.webhook.received" }, { "$event.path": "/hook" }], "steps": ["#a"] }
@@ -157,7 +173,7 @@ stop_daemon() {
 	daemon=
 }
 # the bench's runs ended so far (the daemon's own workflows run too)
-ended() { count '"event":"run.ended".*"workflow":"(one|three|secret|hook|py1|py3|warm1|warm3|node1|node3|nodewarm1|nodewarm3)"'; }
+ended() { count '"event":"run.ended".*"workflow":"(one|three|secret|hook'"$(for w in $languages; do printf '|%s' "$w"; done)"')"'; }
 # waits until `count` runs have ended in all, 10 minutes at most
 wait_ended() {
 	i=0

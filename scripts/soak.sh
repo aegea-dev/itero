@@ -6,16 +6,18 @@
 #
 # The workspace: the webhook -> `api` (1 step); a connector's lines ->
 # `order` (3 steps, one of them the workflow `ship` used as a step);
-# `slow` (one step that waits 200 ms); `tick`, a schedule every minute;
-# and the built-in `keep` (#forget) and `logs` (#roll-log), with the
-# default limits but for those SOAK_LIMITS sets (default: the log rolled
+# `slow` (one step that waits 200 ms); `warm` (one Python step, run
+# warm: its action kept loaded between steps); `tick`, a schedule every
+# minute; and the built-in `keep` (#forget) and `logs` (#roll-log), with
+# the default limits but for those SOAK_LIMITS sets (default: the log rolled
 # at 100MB, not 10MB, so it is not rolled twice between two looks at the
 # burst's rate).
 #
 # SOAK_MODE=full (default), in phases:
 # - sustained: SOAK_RATE events a second (default 116: 10 million a day),
-#   60% api, 30% order, 10% slow, for SOAK_SECS (default 3600); halfway,
-#   SOAK_BURST a second (default 1200) for SOAK_BURST_SECS (default 60);
+#   50% api, 30% order, 10% slow, 10% warm, for SOAK_SECS (default
+#   3600); halfway, SOAK_BURST a second (default 1200) for
+#   SOAK_BURST_SECS (default 60);
 # - drain: nothing sent; until nothing waits (SOAK_DRAIN_MAX s at most,
 #   default 1800);
 # - restart: the daemon stopped, SOAK_BACKLOG events (default 20000)
@@ -29,7 +31,9 @@
 # sent and refused, runs started and ended, what waits, saved -> started
 # and started -> ended (p50, p95, ms), the daemon's memory and open files,
 # the journal, its WAL, the logs, the files in .itero/jobs, connector
-# restarts. The log is read from where it was left, a rolled one too, so
+# restarts, and each warm copy's Python process: its memory (KB), and
+# its worker's (`itero worker --warm`, the daemon's child it runs
+# under). The log is read from where it was left, a rolled one too, so
 # a long run costs the same each time. Results in
 # SOAK_OUT/<UTC time>/ (default target/soak): samples.jsonl,
 # results.jsonl, summary.json, and the daemon's own output.
@@ -58,7 +62,7 @@ token='çalışkan-arı-0123456789'
 	echo "soak.sh: no itero at $itero (make build, or ITERO=...)" >&2
 	exit 1
 }
-for tool in curl jq; do
+for tool in curl jq python3; do
 	command -v "$tool" >/dev/null || {
 		echo "soak.sh: needs $tool" >&2
 		exit 1
@@ -106,6 +110,15 @@ for a in a check pack close; do
 	printf '#!/bin/sh\ncat >/dev/null\necho '"'"'{"ok":true}'"'"'\n' >"$ws/actions/$a"
 done
 printf '#!/bin/sh\ncat >/dev/null\nsleep 0.2\necho '"'"'{"ok":true}'"'"'\n' >"$ws/actions/wait"
+# plain Python, no packages, as examples/languages/actions/python/price
+cat >"$ws/actions/py" <<'EOF'
+#!/usr/bin/env python3
+import json
+import sys
+
+json.load(sys.stdin)
+print(json.dumps({"ok": True}))
+EOF
 fifo="$ws/lines"
 mkfifo "$fifo"
 # read and write: the fifo never ends, so neither does the connector
@@ -119,6 +132,7 @@ echo '{ "on": [{ "event": "itero.webhook.received" }, { "$event.path": "/api" }]
 echo '{ "on": [{ "event": "soak.sent" }, { "$event.wf": "order" }], "steps": ["#check", "ship", "#close"] }' >"$ws/workflows/order.json"
 echo '{ "steps": ["#pack"] }' >"$ws/workflows/ship.json"
 echo '{ "on": [{ "event": "soak.sent" }, { "$event.wf": "slow" }], "steps": ["#wait"] }' >"$ws/workflows/slow.json"
+echo '{ "on": [{ "event": "soak.sent" }, { "$event.wf": "warm" }], "steps": [{ "#py": { "warm": true } }] }' >"$ws/workflows/warm.json"
 echo '{ "on": [{ "schedule": "* * * * *" }], "steps": ["#a"] }' >"$ws/workflows/tick.json"
 log="$ws/.itero/itero.log"
 export ITERO_NO_SECRET_STORE=1
@@ -209,6 +223,37 @@ mem_files() { # the daemon's memory (KB) and open files
 	fi
 	echo "${rss:-0} ${fds:-0}"
 }
+# every process as "pid ppid rss(KB) command", from /proc on Linux (as
+# mem_files reads it) and ps elsewhere
+procs() {
+	if [ -d /proc/self ]; then
+		# a process may end while it is read: its files are gone, said
+		# nowhere (2>/dev/null before the <, which is opened first)
+		for d in /proc/[0-9]*; do
+			awk -v pid="${d#/proc/}" -v cmd="$(tr '\0' ' ' 2>/dev/null <"$d/cmdline")" '
+				/^PPid:/ { ppid = $2 } /^VmRSS:/ { rss = $2 }
+				END { if (ppid != "") print pid, ppid, rss + 0, cmd }' "$d/status" 2>/dev/null || :
+		done
+	else
+		ps -A -o pid=,ppid=,rss=,command=
+	fi
+}
+# the warm copies, as a JSON array: each one's Python process (the child
+# of an `itero worker --warm` the daemon started), its pid and memory
+# (KB), and its worker's memory
+warm_copies() {
+	procs | awk -v d="$1" '
+		{ ppid[$1] = $2; rss[$1] = $3; cmd = $0; sub(/^ *[0-9]+ +[0-9]+ +[0-9]+ */, "", cmd); line[$1] = cmd }
+		END {
+			n = 0
+			for (p in ppid) {
+				w = ppid[p]
+				if (ppid[w] == d && line[w] ~ /worker --warm/)
+					printf "%s{\"pid\":%s,\"rss_kb\":%s,\"worker_rss_kb\":%s}", (n++ ? "," : "["), p, rss[p], rss[w]
+			}
+			print (n ? "]" : "[]")
+		}'
+}
 sample() {
 	t=$(now)
 	lines=$(new_lines | jq -c "$jq_defs"'
@@ -219,6 +264,7 @@ sample() {
 	logs=0
 	for f in "$log" "$log".*; do [ -f "$f" ] && logs=$((logs + $(bytes "$f"))); done
 	jobs=$(ls "$ws/.itero/jobs" 2>/dev/null | wc -l | tr -d ' ')
+	warm=$(warm_copies "$daemon")
 	health='null'
 	[ -n "$api" ] && health=$(curl -s --max-time 5 "$api/health" | jq -c '{passes, busy_since, connectors: (.connectors | map_values(.restarts))}' 2>/dev/null) || health='null'
 	[ -n "$health" ] || health='null'
@@ -226,7 +272,7 @@ sample() {
 		map(select(. != null)) as $l
 		| ($l | map(select(.event == "run.started"))) as $s
 		| ($l | map(select(.event == "run.ended"))) as $e
-		| {t: $t, phase: $phase, rss_kb: $rss, fds: $fds, journal: $journal, wal: $wal, logs: $logs, jobs: $jobs,
+		| {t: $t, phase: $phase, rss_kb: $rss, fds: $fds, warm: $warm, journal: $journal, wal: $wal, logs: $logs, jobs: $jobs,
 			sent: {api: $api_sent, api_ok: $api_ok, lines: $lines_sent},
 			started: ($s | group_by(.workflow) | map({key: .[0].workflow, value: length}) | from_entries),
 			ended: ($e | group_by(.status) | map({key: .[0].status, value: length}) | from_entries),
@@ -236,7 +282,7 @@ sample() {
 			space_full: ($l | map(select(.type == "itero.space.full")) | length),
 			log_full: ($l | map(select(.type == "itero.log.full")) | length),
 			health: $health}' \
-		--argjson t "$t" --arg phase "$(cat "$ws/phase")" --argjson rss "$rss" --argjson fds "$fds" \
+		--argjson t "$t" --arg phase "$(cat "$ws/phase")" --argjson rss "$rss" --argjson fds "$fds" --argjson warm "$warm" \
 		--argjson journal "$(bytes "$ws/.itero/journal.sqlite")" --argjson wal "$(bytes "$ws/.itero/journal.sqlite-wal")" \
 		--argjson logs "$logs" --argjson jobs "$jobs" \
 		--argjson api_sent "$(wc -l <"$ws/codes" | tr -d ' ')" --argjson api_ok "$(grep -c '^200' "$ws/codes" || :)" \
@@ -251,8 +297,8 @@ sampling() {
 # runs of the soak's own workflows started and ended so far, from the
 # samples (the schedule's and the child runs apart)
 totals() {
-	jq -s '{started: (map(.started | (.api // 0) + (.order // 0) + (.slow // 0)) | add // 0),
-		ended: (map(.ended_by | (.api // 0) + (.order // 0) + (.slow // 0)) | add // 0),
+	jq -s '{started: (map(.started | (.api // 0) + (.order // 0) + (.slow // 0) + (.warm // 0)) | add // 0),
+		ended: (map(.ended_by | (.api // 0) + (.order // 0) + (.slow // 0) + (.warm // 0)) | add // 0),
 		sent: (last | (.sent.api_ok + .sent.lines))}' "$out/samples.jsonl"
 }
 
@@ -269,9 +315,10 @@ drive() { # seconds, burst from, burst to (seconds from the start)
 		at=$((next - start))
 		r=$rate
 		[ "$at" -ge "$2" ] && [ "$at" -lt "$3" ] && r=$burst
-		api_n=$((r * 6 / 10))
+		api_n=$((r * 5 / 10))
 		order_n=$((r * 3 / 10))
-		slow_n_=$((r - api_n - order_n))
+		slow_n_=$((r / 10))
+		warm_n=$((r - api_n - order_n - slow_n_))
 		cfg="$ws/curl.$((n % 4))"
 		awk -v n="$api_n" -v u="$hook/api" 'BEGIN { for (i = 0; i < n; i++) printf "url = \"%s\"\n", u }' >"$cfg"
 		# spread over the second, 32 at once at most (what a hook takes:
@@ -279,10 +326,11 @@ drive() { # seconds, burst from, burst to (seconds from the start)
 		curl -s --parallel --parallel-max 32 --rate "$((api_n > 0 ? api_n : 1))/s" --max-time 30 --config "$cfg" -X POST \
 			-H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d '{"wf":"api"}' \
 			-o /dev/null -w '%{http_code} %{exitcode}\n' >>"$ws/codes" 2>/dev/null &
-		awk -v o="$order_n" -v s="$slow_n_" 'BEGIN {
+		awk -v o="$order_n" -v s="$slow_n_" -v w="$warm_n" 'BEGIN {
 			for (i = 0; i < o; i++) print "{\"wf\":\"order\"}"
-			for (i = 0; i < s; i++) print "{\"wf\":\"slow\"}" }' >"$fifo"
-		sent=$((sent + order_n + slow_n_))
+			for (i = 0; i < s; i++) print "{\"wf\":\"slow\"}"
+			for (i = 0; i < w; i++) print "{\"wf\":\"warm\"}" }' >"$fifo"
+		sent=$((sent + order_n + slow_n_ + warm_n))
 		echo "$sent" >"$ws/lines.sent"
 		n=$((n + 1))
 		next=$((next + 1))
@@ -427,13 +475,16 @@ jq -s '
 		(first) as $a | (last) as $b | (($b.t - $a.t) / 60) as $min
 		| {key: $a.phase, value: {
 			minutes: ($min * 10 | round / 10),
-			started_per_second: ((map(.started | (.api // 0) + (.order // 0) + (.slow // 0)) | add) / ([$b.t - $a.t, 1] | max) | round),
+			started_per_second: ((map(.started | (.api // 0) + (.order // 0) + (.slow // 0) + (.warm // 0)) | add) / ([$b.t - $a.t, 1] | max) | round),
 			ended: (map(.ended) | reduce .[] as $e ({}; reduce ($e | to_entries[]) as $kv (.; .[$kv.key] += $kv.value))),
 			refused: ([$b.sent.api - $b.sent.api_ok, 0] | max),
 			saved_to_start_p95_max: (map(.saved_to_start_ms.p95 // empty) | max),
 			start_to_end_p95_max: (map(.start_to_end_ms.p95 // empty) | max),
 			rss_kb: {first: $a.rss_kb, last: $b.rss_kb, max: (map(.rss_kb) | max)},
 			fds: {first: $a.fds, last: $b.fds, max: (map(.fds) | max)},
+			warm: (map(.warm // [] | .[]) | {copies: (group_by(.pid) | length),
+				python_rss_kb_max: (map(.rss_kb) | max), worker_rss_kb_max: (map(.worker_rss_kb) | max),
+				grew_kb_max: (group_by(.pid) | map(last.rss_kb - first.rss_kb) | max)}),
 			journal: {first: $a.journal, last: $b.journal}, wal_max: (map(.wal) | max),
 			logs: {first: $a.logs, last: $b.logs}, jobs: {first: $a.jobs, last: $b.jobs},
 			space_full: (map(.space_full) | add), log_full: (map(.log_full) | add),
