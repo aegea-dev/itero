@@ -345,7 +345,7 @@ check:
 | `GET /health` | the daemon, each running workspace's passes and connectors by name, itero-ai |
 | `GET /livez` | `ok` while the daemon serves: for a platform's liveness probe. No token, even where `listen` opens the API |
 | `GET /readyz` | `ok` once the daemon has read its list and started its workspaces, `503 starting` before: for a readiness probe. No token |
-| `GET /workspaces` | each listed workspace: `name`, `folder`, `state`, `why`, `last_run`; the same as `itero ws list --json` |
+| `GET /workspaces` | each listed workspace: `name`, `folder`, `state`, `why`, `last_run`, and `errors` when it is `refused` (each a `message` and its address `at`, as [`GET /check`](#get-check) gives them); the same as `itero ws list --json` |
 | `PUT /workspaces/{name}` | a workspace's files: makes it the first time, and makes its folder hold those files after ([below](#put-workspacesname)) |
 | `POST /events` | an event for every workspace on the list, as [`itero emit`](/commands/emit/#every-workspace) sends it |
 | `/ws/<name>/...` | that workspace's routes above: `POST /ws/<name>/events`, `GET /ws/<name>/runs` |

@@ -83,7 +83,9 @@ A step may set its own `quiet` and `most`, in its workflow ([a step's keys](/ref
 ## `workflow`, `action`, `connector`
 
 An entry per workflow, action or connector, by its name. An entry describes;
-it never creates: one that names nothing is an error from `itero ws check`.
+it never creates: one that names nothing is an error, from `itero ws check`
+and from the daemon, which runs nothing in the workspace until it is put
+right ([Problems in your files](/commands/daemon/#problems-in-your-files)).
 An entry may not set `name`, `id`, `version`, `created` or `path`.
 
 | In a `workflow` entry | Is |
