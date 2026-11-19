@@ -227,8 +227,10 @@ mem_files() { # the daemon's memory (KB) and open files
 # mem_files reads it) and ps elsewhere
 procs() {
 	if [ -d /proc/self ]; then
+		# a process may end while it is read: its files are gone, said
+		# nowhere (2>/dev/null before the <, which is opened first)
 		for d in /proc/[0-9]*; do
-			awk -v pid="${d#/proc/}" -v cmd="$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null)" '
+			awk -v pid="${d#/proc/}" -v cmd="$(tr '\0' ' ' 2>/dev/null <"$d/cmdline")" '
 				/^PPid:/ { ppid = $2 } /^VmRSS:/ { rss = $2 }
 				END { if (ppid != "") print pid, ppid, rss + 0, cmd }' "$d/status" 2>/dev/null || :
 		done
