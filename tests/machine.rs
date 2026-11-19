@@ -478,6 +478,70 @@ fn a_stuck_workspace_is_told_and_the_others_run_on() {
 }
 
 #[test]
+fn a_workspace_with_a_problem_is_refused_and_told_the_others_run_on() {
+    let m = Machine::new();
+    let (a, b) = (m.busy_workspace("bir"), m.busy_workspace("iki"));
+    m.ok(&a, &["workspace", "add"]);
+    m.ok(&b, &["workspace", "add"]);
+    let na = m.journal_name(&a);
+    // a's manifest names a workflow and an action it does not have
+    let good = std::fs::read_to_string(a.join("itero.config.json")).unwrap();
+    std::fs::write(
+        a.join("itero.config.json"),
+        r#"{"workflow": {"keep": {"off": true}, "models": {"off": true}, "yzz": {"off": true}},
+            "action": {"hayalet": {}}}"#,
+    )
+    .unwrap();
+    let said = m.d.path().join("söylenen.log");
+    let _d = m.daemon_all_said(&said);
+    let port = m.port();
+    let seen = |n: &str| {
+        let (_, v) = get(port, "/workspaces");
+        v.as_array()
+            .and_then(|l| l.iter().find(|w| w["name"] == n).cloned())
+            .unwrap_or_default()
+    };
+    until("a refused", || seen(&na)["state"] == "refused");
+    // its problems, as ws check tells them: in the listing, and on stderr
+    let errors = seen(&na)["errors"].clone();
+    let at: Vec<&str> = errors
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["at"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        at,
+        [
+            format!("{na}/workflows/yzz"),
+            format!("{na}/actions/hayalet")
+        ],
+        "{errors}"
+    );
+    let text = std::fs::read_to_string(&said).unwrap();
+    assert!(
+        text.contains(&format!(
+            "error: itero.config.json: no workflow yzz ({na}/workflows/yzz)\n"
+        )) && text.contains("2 errors, 0 warnings\n"),
+        "{text}"
+    );
+    // b runs on; a's event waits
+    m.ok(&b, &["ws", "emit", "deneme.geldi"]);
+    m.ok(&a, &["ws", "emit", "deneme.geldi"]);
+    until("b's workflow", || b.join("çıktı").is_file());
+    assert!(!a.join("çıktı").exists());
+    // a's manifest put right: it runs again, by itself, and its event runs
+    std::fs::write(a.join("itero.config.json"), good).unwrap();
+    until("a running", || seen(&na)["state"] == "running");
+    until("a's workflow", || a.join("çıktı").is_file());
+    assert!(seen(&na).get("errors").is_none(), "{}", seen(&na));
+    // told once, not at every pass
+    let text = std::fs::read_to_string(&said).unwrap();
+    assert_eq!(text.matches("2 errors, 0 warnings").count(), 1, "{text}");
+    assert!(text.contains(&format!("itero: {na} runs again")), "{text}");
+}
+
+#[test]
 fn info_in_a_listed_workspace_names_the_machines_daemon() {
     let m = Machine::new();
     let a = m.busy_workspace("bir");

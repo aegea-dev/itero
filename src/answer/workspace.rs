@@ -93,6 +93,21 @@ pub fn told(ws_name: &str, p: &Problem) -> Told {
     }
 }
 
+/// Problems as `itero ws check` tells them, wherever they are found: a
+/// line each on stderr, `error: <message> (<workspace>/<address>)`, the
+/// warnings after, then how many.
+pub fn say(errors: &[Told], warnings: &[Told]) {
+    for (kind, list) in [("error", errors), ("warning", warnings)] {
+        for p in list {
+            crate::say!("{kind}: {} ({})", p.message, p.at);
+        }
+    }
+    crate::say!(
+        "{}",
+        crate::problem::count_line(errors.len(), warnings.len())
+    );
+}
+
 /// Reads every workflow, action and connector and says what is wrong:
 /// every problem, each with its address; and what it found.
 pub fn check(ws: &Workspace) -> Result<Report, Fault> {

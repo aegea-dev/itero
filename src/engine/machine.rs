@@ -174,10 +174,16 @@ impl Machine {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .values()
-            .map(|r| Seen {
-                name: r.name.clone(),
-                state: r.state().to_string(),
-                why: None,
+            .map(|r| {
+                let errors = r.errors();
+                Seen {
+                    name: r.name.clone(),
+                    state: r.state().to_string(),
+                    why: (!errors.is_empty()).then(|| {
+                        "problems in its files: nothing runs until they are fixed".to_string()
+                    }),
+                    errors,
+                }
             })
             .collect();
         out.extend(
@@ -189,6 +195,7 @@ impl Machine {
                     name: e.name.clone(),
                     state: i.state.to_string(),
                     why: Some(i.why.clone()),
+                    errors: vec![],
                 }),
         );
         out

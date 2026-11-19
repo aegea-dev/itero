@@ -9,11 +9,14 @@ use serde::{Deserialize, Serialize};
 pub struct Listed {
     pub name: String,
     pub folder: String,
-    /// What the machine's daemon says of it (`running`, `stopped`,
-    /// `failed`, `missing`); `pending` while a running daemon has not read
+    /// What the machine's daemon says of it (`running`, `stuck`,
+    /// `refused`, `stopped`, `failed`, `missing`); `pending` while a running daemon has not read
     /// it yet; `stopped` when no daemon runs the list.
     pub state: String,
     pub why: Option<String>,
+    /// Refused: the problems in its files, as itero ws check tells them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<crate::answer::workspace::Told>,
     /// When its newest run started.
     pub last_run: Option<String>,
 }
@@ -24,6 +27,8 @@ pub struct Seen {
     pub name: String,
     pub state: String,
     pub why: Option<String>,
+    /// Refused: the problems in its files.
+    pub errors: Vec<crate::answer::workspace::Told>,
 }
 
 /// The state of a listed workspace a running daemon has not read yet.
@@ -39,6 +44,7 @@ pub fn workspaces(seen: Option<&[Seen]>) -> Result<Vec<Listed>, Fault> {
         .workspaces
         .iter()
         .map(|e| {
+            let mut errors = vec![];
             let (mut state, mut why, last_run) = match crate::engine::machine::open(e) {
                 Err(_) => ("missing".to_string(), None, None),
                 Ok((_, j)) => {
@@ -54,6 +60,7 @@ pub fn workspaces(seen: Option<&[Seen]>) -> Result<Vec<Listed>, Fault> {
                 Some(Some(s)) => {
                     state = s.state.clone();
                     why = s.why.clone();
+                    errors = s.errors.clone();
                 }
                 Some(None) if state != "missing" => {
                     state = PENDING.into();
@@ -67,6 +74,7 @@ pub fn workspaces(seen: Option<&[Seen]>) -> Result<Vec<Listed>, Fault> {
                 folder: e.folder.display().to_string(),
                 state,
                 why,
+                errors,
                 last_run,
             }
         })

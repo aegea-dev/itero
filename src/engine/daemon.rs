@@ -277,6 +277,26 @@ fn look(files: &[PathBuf]) -> Vec<(PathBuf, Option<FileState>)> {
         .collect()
 }
 
+/// A pass refused: the workspace's files have these problems, and nothing
+/// runs until they are fixed.
+#[derive(Debug)]
+pub struct Refused(pub Vec<crate::problem::Problem>);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&crate::flow::told(&self.0))
+    }
+}
+
+impl std::error::Error for Refused {}
+
+impl Refused {
+    /// The refusal in `e`, when that is what failed the pass.
+    pub fn of(e: &anyhow::Error) -> Option<&Refused> {
+        e.chain().find_map(|c| c.downcast_ref::<Refused>())
+    }
+}
+
 /// The workflows read, and what the daemon refuses in the workspace: the
 /// manifest's problems and the workflows', every one, as itero ws check
 /// finds them. No pass runs while there is one.
@@ -301,7 +321,7 @@ impl Flows {
         let seen = look(&ws.own_files()?);
         let (read, problems) = read_checked(ws)?;
         if !problems.is_empty() {
-            return Err(anyhow!("{}", crate::flow::told(&problems)));
+            return Err(Refused(problems).into());
         }
         Ok(Flows {
             values: read.values,

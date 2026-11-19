@@ -668,6 +668,8 @@ fn report(pass: &Result<crate::engine::daemon::Pass>, log: Option<&crate::engine
             )
         }
         Ok(_) => {}
+        // told once, as ws check tells it, when it began
+        Err(e) if crate::engine::daemon::Refused::of(e).is_some() => {}
         Err(e) => crate::say!("error: {e:#}"),
     }
 }
@@ -909,6 +911,20 @@ fn run_one(
     let me = daemon::Daemon::current();
     let lock = crate::engine::lock::take(&ws, &format!("{}, pid {}", me.name, me.pid))
         .map_err(|e| anyhow!(e))?;
+    // a problem in its files starts nothing: every one told as ws check
+    // tells it
+    let problems = daemon::refused(&ws)?;
+    if !problems.is_empty() {
+        let name = crate::engine::journal::Journal::open(&ws)?
+            .workspace()?
+            .name;
+        let errors: Vec<_> = problems
+            .iter()
+            .map(|p| crate::answer::workspace::told(&name, p))
+            .collect();
+        crate::answer::workspace::say(&errors, &[]);
+        std::process::exit(1);
+    }
     if once {
         let at = match &now {
             Some(t) => t
@@ -922,20 +938,6 @@ fn run_one(
         report(&pass, None);
         pass?;
         return Ok(());
-    }
-    // a problem in its files starts nothing: every one told as ws check
-    // tells it
-    let problems = daemon::refused(&ws)?;
-    if !problems.is_empty() {
-        let name = crate::engine::journal::Journal::open(&ws)?
-            .workspace()?
-            .name;
-        let errors: Vec<_> = problems
-            .iter()
-            .map(|p| crate::answer::workspace::told(&name, p))
-            .collect();
-        top::told(&errors, &[]);
-        std::process::exit(1);
     }
     use crate::engine::http;
     // its port first: a daemon that cannot listen starts nothing
