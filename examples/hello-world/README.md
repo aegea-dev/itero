@@ -14,12 +14,3 @@ prints is its result, which `#notify` shows as its text (`$output`), and
 the run ends.
 
 Run `itero ws daemon` in this folder.
-
-## Tests
-
-`test/` sends one greeting on a throwaway copy of this folder. It uses
-`itero` from your `PATH` (or `$ITERO_BIN`), and needs Bun:
-
-```sh
-bun test
-```
