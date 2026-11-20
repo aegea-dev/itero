@@ -81,88 +81,8 @@ pub enum Use {
     },
 }
 
-/// A manifest entry's problem at the address of what it is about
-/// (`actions/depo`), its text after the manifest's name, its path and the
-/// entry's key taken off: `itero.config.json: limits: ...`.
-fn entry_problem(ws: &Workspace, kind: &str, name: &str, why: &str) -> Problem {
-    let path = format!("{}: ", ws.root.join(crate::workspace::MANIFEST).display());
-    let why = why.strip_prefix(&path).unwrap_or(why);
-    let why = why
-        .strip_prefix(&format!("{kind}.{name}."))
-        .or_else(|| why.strip_prefix(&format!("{kind}.{name}: ")))
-        .unwrap_or(why);
-    Problem::new(
-        format!("{kind}s/{name}"),
-        format!("{}: {why}", crate::workspace::MANIFEST),
-    )
-}
-
-/// What `itero ws check` refuses in the manifest: an entry naming no
-/// workflow, action or connector, an entry that is wrong, and the folders
-/// from before it (`args/`, `config/`). `workflows` are the workflows'
-/// names, read or not: a broken file's entry is not missing.
-fn check_manifest(ws: &Workspace, workflows: &[String]) -> anyhow::Result<Vec<Problem>> {
-    let mut wrong = vec![];
-    for (dir, now) in [
-        (
-            "args",
-            "an action's args are written in the step that runs it",
-        ),
-        (
-            "config",
-            "a workflow's values go in .env, a step's args or the event",
-        ),
-    ] {
-        if ws.root.join(dir).is_dir() {
-            wrong.push(Problem::new("", format!("{dir}/: is gone: {now}")));
-        }
-    }
-    let actions: Vec<String> = ws
-        .action_files()?
-        .into_keys()
-        .map(|f| f.split('@').next().unwrap_or(&f).to_string())
-        .chain(
-            crate::engine::worker::BUILT_IN
-                .iter()
-                .map(|b| b.to_string()),
-        )
-        .collect();
-    let connectors: Vec<String> = ws.connector_files()?.into_iter().map(|(n, _)| n).collect();
-    for name in ws.entries("connector")?.keys() {
-        if let Err(why) = ws.no_connector_args(name) {
-            wrong.push(entry_problem(ws, "connector", name, &format!("{why:#}")));
-        }
-    }
-    for (name, _) in ws.entries("action")? {
-        if let Err(why) = ws.no_args(&name) {
-            wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
-        }
-        if let Err(why) = ws.no_repeat(&name) {
-            wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
-        }
-        if let Err(why) = ws.no_action_limits(&name) {
-            wrong.push(entry_problem(ws, "action", &name, &format!("{why:#}")));
-        }
-    }
-    for (kind, known) in [
-        ("workflow", workflows.to_vec()),
-        ("action", actions),
-        ("connector", connectors),
-    ] {
-        for name in ws.entries(kind)?.keys() {
-            if !known.contains(name) {
-                wrong.push(Problem::new(
-                    format!("{kind}s/{name}"),
-                    format!("{}: no {kind} {name}", crate::workspace::MANIFEST),
-                ));
-            }
-        }
-    }
-    Ok(wrong)
-}
-
 /// A problem as told: its address under the workspace's name.
-fn told(ws_name: &str, p: &Problem) -> Told {
+pub fn told(ws_name: &str, p: &Problem) -> Told {
     let at = match p.at.as_str() {
         "" => ws_name.to_string(),
         a => format!("{ws_name}/{a}"),
@@ -171,6 +91,21 @@ fn told(ws_name: &str, p: &Problem) -> Told {
         message: p.message.clone(),
         at,
     }
+}
+
+/// Problems as `itero ws check` tells them, wherever they are found: a
+/// line each on stderr, `error: <message> (<workspace>/<address>)`, the
+/// warnings after, then how many.
+pub fn say(errors: &[Told], warnings: &[Told]) {
+    for (kind, list) in [("error", errors), ("warning", warnings)] {
+        for p in list {
+            crate::say!("{kind}: {} ({})", p.message, p.at);
+        }
+    }
+    crate::say!(
+        "{}",
+        crate::problem::count_line(errors.len(), warnings.len())
+    );
 }
 
 /// Reads every workflow, action and connector and says what is wrong:
@@ -183,11 +118,11 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
         }
     }
     let read = ws.read_flows()?;
+    let mut errors = ws.manifest_problems(&read)?;
     let mut flows = read.flows;
     let files = ws.flow_files()?;
     let mut named: Vec<String> = files.keys().cloned().collect();
     named.extend(read.written.keys().cloned());
-    let mut errors = check_manifest(ws, &named)?;
     errors.extend(read.problems);
     // the internal ones last, apart
     flows.sort_by_key(|(_, f)| f.meta.internal);

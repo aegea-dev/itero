@@ -84,7 +84,9 @@ warning: key looks like a token: write it as a $$NAME (home/workflows/sort/steps
 Two things stop it inside one file: JSON that does not parse (nothing past
 the error can be read), and a value of the wrong shape, like `steps` that
 is not a list (nothing inside it is checked, so one mistake is told once).
-Run it after every edit.
+Run it after every edit. The daemon refuses a workflow file that does not
+read and a wrong manifest entry the same way, told the same way
+([Problems in your files](/commands/daemon/#problems-in-your-files)).
 
 `--json` gives the same as `errors` and `warnings`, each a `message` and
 its address `at`, beside what it could read: the same JSON as the API's

@@ -267,6 +267,119 @@ fn check_refuses_an_entry_naming_nothing_and_folders_from_before() {
 }
 
 #[test]
+fn the_daemon_refuses_what_check_refuses_in_the_manifest_every_problem_at_once() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/gözcü.json",
+        r##"{ "on": [{ "event": "saat.geldi" }], "steps": ["#bak"] }"##,
+    );
+    file(d.path(), "actions/bak", "#!/bin/sh\necho bakıldı\n");
+    std::process::Command::new("chmod")
+        .args(["+x", "actions/bak"])
+        .current_dir(d.path())
+        .status()
+        .unwrap();
+    // a misspelt entry turns nothing off: it is refused, not ignored
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"workflow": {"gözcu": {"off": true}},
+            "action": {"hayalet": {}, "bak": {"args": {"kaç": 1}}},
+            "connector": {"yok.böyle": {}}}"#,
+    );
+    file(d.path(), "args/bak.json", "{}");
+    assert!(
+        itero(d.path(), &["ws", "emit", "saat.geldi", "{}"])
+            .status
+            .success()
+    );
+    let o = itero(d.path(), &["ws", "daemon", "--once"]);
+    let e = err(&o);
+    assert!(!o.status.success(), "{o:?}");
+    for told in [
+        "args/: is gone",
+        "no workflow gözcu",
+        "no action hayalet",
+        "no connector yok.böyle",
+        "args are gone",
+    ] {
+        assert!(e.contains(told), "{told}: {e}");
+    }
+    let runs = out(&itero(d.path(), &["ws", "wf", "runs", "--json"]));
+    assert_eq!(runs.trim(), "[]", "nothing ran: {runs}");
+    // once the manifest is right, the event waiting runs
+    file(d.path(), "itero.config.json", "{}");
+    std::fs::remove_dir_all(d.path().join("args")).unwrap();
+    let o = itero(d.path(), &["ws", "daemon", "--once"]);
+    assert!(o.status.success(), "{o:?}");
+    let runs = out(&itero(d.path(), &["ws", "wf", "runs"]));
+    assert!(runs.contains("gözcü") && runs.contains("done"), "{runs}");
+}
+
+#[test]
+fn ws_daemon_does_not_start_with_a_problem_and_tells_every_one() {
+    let d = workspace();
+    file(
+        d.path(),
+        "workflows/gözcü.json",
+        r##"{ "on": [{ "event": "saat.geldi" }], "steps": ["#bak"] }"##,
+    );
+    file(d.path(), "actions/bak", "#!/bin/sh\n");
+    file(
+        d.path(),
+        "workflows/bozuk.json",
+        r#"{ "on": [{ "event": "tek" }] }"#,
+    );
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"workflow": {"gözcu": {"off": true}}, "action": {"hayalet": {}}}"#,
+    );
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_itero"))
+        .args(["ws", "daemon", "--no-serve"])
+        .current_dir(d.path())
+        .env("ITERO_NO_SECRET_STORE", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > end {
+            child.kill().unwrap();
+            panic!("ws daemon started with problems in its files");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let o = child.wait_with_output().unwrap();
+    let e = err(&o);
+    assert!(!o.status.success(), "{o:?}");
+    // told as ws check tells it: a line each, then how many
+    let lines: Vec<&str> = e.lines().collect();
+    for told in [
+        "itero.config.json: no workflow gözcu (",
+        "itero.config.json: no action hayalet (",
+        "is not a message type",
+        "a workflow needs steps (",
+    ] {
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("error: ") && l.contains(told)),
+            "{told}: {e}"
+        );
+    }
+    assert!(
+        e.contains("/workflows/gözcu)") && e.contains("/workflows/bozuk)"),
+        "{e}"
+    );
+    assert_eq!(lines.last(), Some(&"4 errors, 0 warnings"), "{e}");
+    assert!(!out(&o).contains("running the workflows"), "{o:?}");
+}
+
+#[test]
 fn check_says_what_each_workflow_uses_and_what_is_not_there() {
     let d = workspace();
     file(

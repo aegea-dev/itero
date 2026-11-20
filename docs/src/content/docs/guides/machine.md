@@ -51,6 +51,7 @@ The daemon also keeps what the workspaces share:
 |---|---|
 | `running` | the daemon runs it |
 | `stuck` | a pass has run past its limit (ten minutes); the others run on |
+| `refused` | its files have a problem `itero ws check` tells; nothing runs in it until it is fixed, the others run on ([Problems in your files](/commands/daemon/#problems-in-your-files)) |
 | `failed` | its loop kept failing, and was given up on |
 | `stopped` | no daemon runs it: none is running, or another holds it |
 | `missing` | its folder is gone, or holds another workspace |

@@ -1071,14 +1071,14 @@ fn an_actions_repeat_in_the_manifest_is_refused_where_it_goes() {
     ws.entry("kutu", "repeat", json!([{"user": "ayşe@örnek.test"}]));
     ws.action("kutu", "echo bak");
     ws.emit("posta.bak", json!({}));
-    ws.pass(NOW);
-    let why = ws
-        .log()
-        .into_iter()
-        .find(|l| l["event"] == "error")
-        .map(|l| l["why"].to_string())
+    // the pass refuses the workspace, as ws check does: no run starts and
+    // hangs on it
+    let why = run_once(&ws.ws, NOW.parse().unwrap(), exe())
+        .err()
+        .map(|e| format!("{e:#}"))
         .unwrap_or_default();
     assert!(why.contains("repeat goes on the step"), "{why}");
+    assert!(ws.runs().is_empty());
 }
 
 #[test]

@@ -64,6 +64,29 @@ In a terminal it prints a line for each pass that did something. What it
 does goes to `.itero/itero.log`, one JSON line each
 ([The log](/guides/log/)).
 
+## Problems in your files
+
+What [`itero ws check`](/commands/check/) refuses, the daemon refuses:
+a workflow file that does not read, an entry in `itero.config.json`
+that names nothing or is wrong. Nothing runs in that workspace while one
+is there, so an entry's `off` with a typo in its name never leaves a
+workflow running. Every problem is told as `ws check` tells it:
+
+```
+$ itero ws daemon
+error: itero.config.json: no workflow greting (quiet-river/workflows/greting)
+error: itero.config.json: no action helo (quiet-river/actions/helo)
+2 errors, 0 warnings
+```
+
+- `itero ws daemon` does not start: it prints them, and exits 1.
+- `itero daemon` runs the other workspaces. That one is `refused`: its
+  problems are printed once, under `itero: quiet-river is refused`, and
+  `itero ws list --json` gives them as `errors`. Fixed, it runs again by
+  itself, with the events that came meanwhile.
+- An edit that brings a problem while a daemon runs does the same: the
+  workspace is `refused` until the edit is put right.
+
 One daemon per workspace: whichever runs it holds a lock on its
 `.itero/daemon.lock`, and a second one is refused, naming the first. To
 have your workspaces running from login on, without a terminal:

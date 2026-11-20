@@ -14,18 +14,13 @@ use std::path::PathBuf;
 /// printed when nothing is wrong.
 pub fn check(c: &Client, json: bool) -> Result<()> {
     let report = c.check()?;
-    let (errors, warnings) = (report.errors.len(), report.warnings.len());
-    let v = serde_json::to_value(report)?;
+    let errors = report.errors.len();
+    let v = serde_json::to_value(&report)?;
     if errors > 0 {
         if json {
             println!("{}", serde_json::to_string_pretty(&v)?);
         } else {
-            for (kind, list) in [("error", &v["errors"]), ("warning", &v["warnings"])] {
-                for p in list.as_array().into_iter().flatten() {
-                    crate::say!("{kind}: {} ({})", text(&p["message"]), text(&p["at"]));
-                }
-            }
-            crate::say!("{}", crate::problem::count_line(errors, warnings));
+            crate::answer::workspace::say(&report.errors, &report.warnings);
         }
         std::process::exit(1);
     }

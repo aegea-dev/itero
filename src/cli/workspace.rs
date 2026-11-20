@@ -313,6 +313,7 @@ pub fn list(json_out: bool, context: Option<crate::context::Context>) -> Result<
                             name: d["name"].as_str()?.to_string(),
                             state: d["state"].as_str()?.to_string(),
                             why: d["why"].as_str().map(String::from),
+                            errors: serde_json::from_value(d["errors"].clone()).unwrap_or_default(),
                         })
                     })
                     .collect()

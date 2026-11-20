@@ -25,8 +25,10 @@ pub struct Running {
     pub name: String,
     pub engine: Arc<Engine>,
     pub log: Log,
-    /// `running`, `stuck` or `failed`.
+    /// `running`, `stuck`, `refused` or `failed`.
     state: Arc<Mutex<&'static str>>,
+    /// Refused: the problems in its files, as itero ws check tells them.
+    errors: Arc<Mutex<Vec<crate::answer::workspace::Told>>>,
     stop: Arc<Stop>,
     threads: Vec<JoinHandle<()>>,
     _lock: DaemonLock,
@@ -103,6 +105,7 @@ impl Running {
             None => Arc::new(Stop::default()),
         };
         let state = Arc::new(Mutex::new("running"));
+        let errors = Arc::new(Mutex::new(vec![]));
         // the next due time, kept by the kernel; it wakes the loop as
         // everything else does
         let alarm = {
@@ -149,13 +152,14 @@ impl Running {
             }));
         }
         {
-            let (ws, exe, engine, log, stop, state, name) = (
+            let (ws, exe, engine, log, stop, state, errors, name) = (
                 ws.clone(),
                 exe.to_path_buf(),
                 engine.clone(),
                 log.clone(),
                 stop.clone(),
                 state.clone(),
+                errors.clone(),
                 me.name.clone(),
             );
             // the manager runs on this thread (`daemon::ask`): the stack its
@@ -179,7 +183,10 @@ impl Running {
                             &engine.health,
                             &stop,
                             &beat,
-                            |p| report(p, Some(&log)),
+                            |p| {
+                                refused_or_not(&name, p, &state, &errors);
+                                report(p, Some(&log))
+                            },
                         )
                     }));
                     let Err(panic) = ran else { break };
@@ -220,6 +227,7 @@ impl Running {
             engine,
             log,
             state,
+            errors,
             stop,
             threads,
             _lock: lock,
@@ -229,6 +237,14 @@ impl Running {
     /// `running`, `stuck` (a pass past its limit) or `failed` (given up on).
     pub fn state(&self) -> &'static str {
         *self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Refused: the problems in its files; none otherwise.
+    pub fn errors(&self) -> Vec<crate::answer::workspace::Told> {
+        self.errors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// What stops it: set, its connectors' processes are asked to end.
@@ -278,6 +294,43 @@ fn stuck_after() -> Duration {
         .unwrap_or(super::watchdog::Rules::default().stale_after)
 }
 
+/// A pass refused for problems in the workspace's files makes it
+/// `refused`, its problems told as itero ws check tells them, once (again
+/// only when they change); the next pass that runs makes it `running`.
+fn refused_or_not(
+    name: &str,
+    pass: &Result<Pass>,
+    state: &Mutex<&'static str>,
+    errors: &Mutex<Vec<crate::answer::workspace::Told>>,
+) {
+    let mut state = state.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut errors = errors.lock().unwrap_or_else(PoisonError::into_inner);
+    let refused = match pass {
+        Ok(_) => None,
+        Err(e) => daemon::Refused::of(e),
+    };
+    match refused {
+        Some(r) => {
+            let now: Vec<_> =
+                r.0.iter()
+                    .map(|p| crate::answer::workspace::told(name, p))
+                    .collect();
+            if *state != "refused" || *errors != now {
+                crate::say!("itero: {name} is refused: nothing runs in it until these are fixed");
+                crate::answer::workspace::say(&now, &[]);
+            }
+            *state = "refused";
+            *errors = now;
+        }
+        None if pass.is_ok() && *state == "refused" => {
+            *state = "running";
+            errors.clear();
+            crate::say!("itero: {name} runs again");
+        }
+        None => {}
+    }
+}
+
 /// Watches a workspace's passes, told their starts and ends: one past
 /// `limit` makes it stuck, told to every workspace; its end makes it
 /// running again. It waits on the pass's own deadline, never polls.
@@ -305,8 +358,13 @@ fn watch_passes(
                 busy = None;
                 if stuck {
                     stuck = false;
-                    set("running");
-                    crate::say!("itero: {name} runs again");
+                    // a pass refused meanwhile keeps its state
+                    let mut s = state.lock().unwrap_or_else(PoisonError::into_inner);
+                    if *s == "stuck" {
+                        *s = "running";
+                        drop(s);
+                        crate::say!("itero: {name} runs again");
+                    }
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
