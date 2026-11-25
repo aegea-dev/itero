@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "itero.config.json",
+  "description": "itero.config.json: what a workspace is, how it runs, and an entry per\nworkflow, action and connector. Every key is itero's; your own go in\n`metadata`.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "The schema this file follows.",
+      "type": "string"
+    },
+    "name": {
+      "description": "The workspace's name: lowercase letters, digits and hyphens, 1 to 63,\na letter or digit at each end.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "version": {
+      "description": "Its version, as you number it.",
+      "type": "string"
+    },
+    "description": {
+      "description": "What it is.",
+      "type": "string"
+    },
+    "tags": {
+      "description": "Words to find it by.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "port": {
+      "description": "The HTTP API's port, on 127.0.0.1; without it, the OS gives one.",
+      "type": "integer",
+      "format": "uint16",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "folders": {
+      "description": "The folders with its workflows, actions and connectors.",
+      "$ref": "#/$defs/Folders"
+    },
+    "limits": {
+      "description": "How much it may hold and do at once.",
+      "$ref": "#/$defs/RawLimits"
+    },
+    "workflow": {
+      "description": "An entry per workflow, by its file's name.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/WorkflowEntryOrSwitch"
+      }
+    },
+    "action": {
+      "description": "An entry per action, by its file's name.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/PlainEntryOrSwitch"
+      }
+    },
+    "connector": {
+      "description": "An entry per connector, by the event type it sends.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/PlainEntryOrSwitch"
+      }
+    },
+    "metadata": {
+      "description": "Your own keys: anything, never checked.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Folders": {
+      "description": "`folders` as written: each a list of folders, relative to the workspace\n(`~/` is the home folder).",
+      "type": "object",
+      "properties": {
+        "workflows": {
+          "description": "The folders with workflows.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "workflows"
+          ]
+        },
+        "actions": {
+          "description": "The folders with actions.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "actions"
+          ]
+        },
+        "connectors": {
+          "description": "The folders with connectors.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "connectors"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawLimits": {
+      "description": "`limits` as written: sizes and durations are text, `\"1GB\"`, `\"1d\"`.",
+      "type": "object",
+      "properties": {
+        "workflows": {
+          "description": "Workflows in its folders, the internal ones apart.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "default": 100
+        },
+        "runs": {
+          "description": "Runs under way at once; past it, events wait their turn.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "default": 1000
+        },
+        "steps": {
+          "description": "Steps running at once.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "default": 64
+        },
+        "space": {
+          "description": "What `.itero/` may take: a size.",
+          "type": "string",
+          "pattern": "^[0-9]+ ?(KB|MB|GB)$",
+          "default": "1GB"
+        },
+        "keep": {
+          "description": "How long ended runs and their events are kept: a duration.",
+          "type": "string",
+          "pattern": "^ *[0-9]+ *(ns|nsec|us|usec|ms|msec|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|M|month|months|y|year|years)( *[0-9]+ *(ns|nsec|us|usec|ms|msec|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|M|month|months|y|year|years))* *$",
+          "default": "1d"
+        },
+        "log": {
+          "description": "The size the log may reach before it is rolled.",
+          "type": "string",
+          "pattern": "^[0-9]+ ?(KB|MB|GB)$",
+          "default": "10MB"
+        },
+        "logs": {
+          "description": "Rolled logs kept.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "default": 3
+        },
+        "quiet": {
+          "description": "How long a step may say nothing before it is stopped.",
+          "type": "string",
+          "pattern": "^ *[0-9]+ *(ns|nsec|us|usec|ms|msec|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|M|month|months|y|year|years)( *[0-9]+ *(ns|nsec|us|usec|ms|msec|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|M|month|months|y|year|years))* *$",
+          "default": "10m"
+        },
+        "most": {
+          "description": "The longest a step may run.",
+          "type": "string",
+          "pattern": "^ *[0-9]+ *(ns|nsec|us|usec|ms|msec|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|M|month|months|y|year|years)( *[0-9]+ *(ns|nsec|us|usec|ms|msec|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|M|month|months|y|year|years))* *$",
+          "default": "1d"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowEntryOrSwitch": {
+      "description": "`true`: on, with its defaults; `false`: off; or the entry written out.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/WorkflowEntry"
+        }
+      ]
+    },
+    "WorkflowEntry": {
+      "description": "A workflow's entry: what it is, and when it may start.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "What it does.",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Words to find it by.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "off": {
+          "description": "Nothing starts it.",
+          "type": "boolean",
+          "default": false
+        },
+        "from": {
+          "description": "Nothing starts it before then: a date (its first second) or an RFC 3339 time.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T.+)?$"
+        },
+        "until": {
+          "description": "Nothing starts it from then on: a date (after its last second) or an RFC 3339 time.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T.+)?$"
+        },
+        "internal": {
+          "description": "It looks after the workspace: left out of lists, and outside the limits.",
+          "type": "boolean",
+          "default": false
+        },
+        "metadata": {
+          "description": "Your own keys: anything, never checked.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "PlainEntryOrSwitch": {
+      "description": "`true`: on, with its defaults; `false`: off; or the entry written out.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/PlainEntry"
+        }
+      ]
+    },
+    "PlainEntry": {
+      "description": "An action's or a connector's entry: what it is.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "What it does.",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Words to find it by.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "metadata": {
+          "description": "Your own keys: anything, never checked.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

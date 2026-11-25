@@ -288,6 +288,12 @@ test-examples: build-dev ## Run every example's own tests on the itero just buil
 	  ( cd $$e && $(ISOLATED) ITERO_BIN="$(CURDIR)/target/debug/itero" bun test ) || failed="$$failed $${e#examples/}"; \
 	done; [ -z "$$failed" ] || { echo "examples failing:$$failed" >&2; exit 1; }
 
+# itero.config.json's schema, made from the config's types (src/manifest.rs)
+# and served by the docs site; a test fails while the file is older than them.
+.PHONY: schema
+schema: ## Write docs/public/schema/itero.config.json from the config's types
+	ITERO_WRITE_SCHEMA=1 $(CARGO) test -q --test manifest the_published_schema_is_the_generated_one
+
 .PHONY: install
 install: ## Install itero to ~/.cargo/bin, and on macOS Itero.app to ~/Applications
 	$(CARGO) install --path . --force --bin itero

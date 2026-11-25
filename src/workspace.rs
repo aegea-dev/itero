@@ -1,8 +1,8 @@
 //! The workspace: the folder with itero.config.json, and the folders it
 //! lists for workflows, actions and connectors. One daemon runs one workspace.
+use crate::manifest::{Folders, RawLimits};
 use crate::problem::Problem;
 use anyhow::{Context, Result, anyhow, bail};
-use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -39,43 +39,6 @@ const RUNNING: [&str; 6] = [
     "action",
     "connector",
 ];
-
-/// `folders` as written.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Folders {
-    #[serde(default = "default_workflows")]
-    workflows: Vec<String>,
-    #[serde(default = "default_actions")]
-    actions: Vec<String>,
-    #[serde(default = "default_connectors")]
-    connectors: Vec<String>,
-}
-
-impl Default for Folders {
-    fn default() -> Folders {
-        Folders {
-            workflows: default_workflows(),
-            actions: default_actions(),
-            connectors: default_connectors(),
-        }
-    }
-}
-
-/// `limits` as written: sizes and durations are text, `"1GB"`, `"1d"`.
-#[derive(Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-struct RawLimits {
-    workflows: Option<usize>,
-    runs: Option<usize>,
-    steps: Option<usize>,
-    space: Option<String>,
-    keep: Option<String>,
-    log: Option<String>,
-    logs: Option<usize>,
-    quiet: Option<String>,
-    most: Option<String>,
-}
 
 /// How much a workspace may hold and do at once.
 #[derive(Debug, Clone, PartialEq)]
@@ -182,18 +145,6 @@ fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
         _ => return Err(wrong()),
     };
     n.checked_mul(1 << shift).ok_or_else(wrong)
-}
-
-fn default_connectors() -> Vec<String> {
-    vec!["connectors".into()]
-}
-
-fn default_workflows() -> Vec<String> {
-    vec!["workflows".into()]
-}
-
-fn default_actions() -> Vec<String> {
-    vec!["actions".into()]
 }
 
 /// The workflows itero carries, run as if they were in `workflows/`; a
