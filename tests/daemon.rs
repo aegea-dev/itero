@@ -2497,3 +2497,77 @@ fn a_python_step_killed_midway_runs_again_and_ends_the_same() {
         assert_eq!(ws.statuses(), vec!["done"], "warm {warm}");
     });
 }
+
+#[test]
+fn limits_keep_is_how_long_keep_keeps_an_ended_run() {
+    let w = Ws::with(r#"{"limits": {"keep": "1h"}, "workflow": {"models": false}}"#);
+    w.action("yaz", "true");
+    w.flow(
+        "eski",
+        json!({ "on": [{ "event": "iş.geldi" }], "steps": ["#yaz"] }),
+    );
+    w.emit("iş.geldi", json!({}));
+    w.pass("2026-10-10T09:30:00Z");
+    let eski = |w: &Ws| w.runs().iter().filter(|r| r.workflow == "eski").count();
+    assert_eq!(eski(&w), 1);
+    // ended half an hour before keep's pass: kept
+    w.pass("2026-10-10T10:00:00Z");
+    assert_eq!(eski(&w), 1);
+    // an hour and a half: forgotten, where the default (1d) keeps it
+    w.pass("2026-10-10T11:00:00Z");
+    assert_eq!(eski(&w), 0);
+}
+
+#[test]
+fn folders_says_where_workflows_are_read_from() {
+    let w = Ws::with(r#"{"folders": {"workflows": ["akışlar", "ortak"]}}"#);
+    w.action("yaz", "echo \"$kim\" >> yazılan.txt");
+    w.write(
+        "ortak/selam.json",
+        &json!({ "on": [{ "event": "selam.ver" }], "steps": [{"#yaz": {"args": {"kim": "$event.kim"}}}] })
+            .to_string(),
+    );
+    // workflows/ is not among them now: its workflow is not read
+    w.flow(
+        "unutulan",
+        json!({ "on": [{ "event": "selam.ver" }], "steps": [{"#yaz": {"args": {"kim": "yanlış"}}}] }),
+    );
+    std::fs::create_dir_all(w.d.path().join("akışlar")).unwrap();
+    w.emit("selam.ver", json!({ "kim": "ayşe" }));
+    w.pass(NOW);
+    let names: Vec<String> = w.runs().into_iter().map(|r| r.workflow).collect();
+    assert_eq!(names, ["selam"]);
+    assert_eq!(w.read("yazılan.txt"), "ayşe\n");
+}
+
+#[test]
+fn an_entry_of_true_is_on_and_of_false_is_off() {
+    let w = Ws::with(r#"{"workflow": {"kapalı": false, "açık": true}}"#);
+    w.action("yaz", "echo \"$kim\" >> yazılan.txt");
+    for name in ["kapalı", "açık"] {
+        w.flow(
+            name,
+            json!({ "on": [{ "event": "selam.ver" }], "steps": [{"#yaz": {"args": {"kim": "$event.kim"}}}] }),
+        );
+    }
+    w.emit("selam.ver", json!({ "kim": "ayşe" }));
+    w.pass(NOW);
+    let names: Vec<String> = w.runs().into_iter().map(|r| r.workflow).collect();
+    assert_eq!(names, ["açık"]);
+    assert_eq!(w.read("yazılan.txt"), "ayşe\n");
+}
+
+#[test]
+fn a_step_reads_the_configs_metadata() {
+    let w = Ws::with(r#"{"metadata": {"bölge": "avrupa", "ekip": {"ad": "gece"}}}"#);
+    w.action("yaz", "echo \"$b $e\" >> yazılan.txt");
+    w.flow(
+        "bölgeli",
+        json!({ "on": [{ "event": "selam.ver" }], "steps": [{"#yaz": {"args": {
+            "b": "$config.metadata.bölge", "e": "$config.metadata.ekip.ad" }}}] }),
+    );
+    w.emit("selam.ver", json!({}));
+    w.pass(NOW);
+    assert_eq!(w.read("yazılan.txt"), "avrupa gece\n");
+    assert_eq!(w.statuses(), ["done"]);
+}

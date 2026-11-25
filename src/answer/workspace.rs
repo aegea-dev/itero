@@ -51,8 +51,8 @@ pub struct Checked {
     pub until: Option<String>,
     pub off: bool,
     pub internal: bool,
-    /// Its other keys, as written.
-    pub other: Map<String, Value>,
+    pub tags: Vec<String>,
+    pub metadata: Map<String, Value>,
     pub runs: usize,
     pub last_run: Option<LastRun>,
     pub uses: Vec<Use>,
@@ -335,7 +335,8 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
             until: m.until.map(crate::engine::daemon::stamp),
             off: m.off,
             internal: m.internal,
-            other: m.other.clone(),
+            tags: m.tags.clone(),
+            metadata: m.metadata.clone(),
             runs: runs.len(),
             last_run: runs.first().map(|r| LastRun {
                 name: r.name.clone(),
@@ -383,8 +384,11 @@ pub struct About {
     pub path: String,
     /// The itero that made its journal.
     pub itero: String,
-    /// The manifest's other keys about it.
-    pub meta: Map<String, Value>,
+    /// The config's `version`, `description`, `tags` and `metadata`.
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub metadata: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -433,22 +437,30 @@ pub enum RunBy {
 /// ports, a route says it is the daemon itself.
 pub fn info(ws: &Workspace, daemon: Runner) -> Result<Info, Fault> {
     let w = Journal::open(ws)?.workspace()?;
-    let named = ws.meta.get("name").and_then(|n| n.as_str());
-    let meta = ws
-        .meta
-        .iter()
-        .filter(|(k, _)| *k != "name")
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
+    // the config's keys about it, as its schema has them
+    let text = |k: &str| ws.meta.get(k).and_then(|v| v.as_str()).map(String::from);
+    let tags = ws.meta.get("tags").and_then(|t| t.as_array());
     let l = &ws.limits;
     Ok(Info {
         workspace: About {
             id: w.id,
-            name: named.map(String::from).unwrap_or(w.name),
+            name: text("name").unwrap_or(w.name),
             created: w.created,
             path: ws.root.display().to_string(),
             itero: w.itero,
-            meta,
+            version: text("version"),
+            description: text("description"),
+            tags: tags
+                .into_iter()
+                .flatten()
+                .filter_map(|t| t.as_str().map(String::from))
+                .collect(),
+            metadata: ws
+                .meta
+                .get("metadata")
+                .and_then(|m| m.as_object())
+                .cloned()
+                .unwrap_or_default(),
         },
         limits: Limits {
             workflows: l.workflows,

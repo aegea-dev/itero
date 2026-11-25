@@ -524,18 +524,19 @@ fn message_types_are_two_words_or_more() {
 }
 
 #[test]
-fn an_entry_keeps_the_known_keys_and_the_persons_own() {
+fn an_entry_keeps_the_known_keys_its_tags_and_metadata() {
     let meta = flow::entry(&json!({
         "description": "Siparişler dükkândan",
         "from": "2026-11-01", "until": "2026-12-31",
         "internal": true,
-        "sahibi": "ayşe", "etiketler": ["ödeme", "kargo"]
+        "tags": ["ödeme", "kargo"],
+        "metadata": { "sahibi": "ayşe" }
     }))
     .unwrap();
     assert_eq!(meta.description.as_deref(), Some("Siparişler dükkândan"));
     assert!(meta.internal && !meta.off);
-    assert_eq!(meta.other["sahibi"], "ayşe");
-    assert_eq!(meta.other["etiketler"], json!(["ödeme", "kargo"]));
+    assert_eq!(meta.tags, ["ödeme", "kargo"]);
+    assert_eq!(meta.metadata["sahibi"], "ayşe");
     let at = |s: &str| s.parse().unwrap();
     // a date is a whole day: from its start, until its end
     assert!(!flow::active(&meta, at("2026-10-31T23:59:59Z")));

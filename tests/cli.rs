@@ -874,12 +874,17 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
         .local_addr()
         .unwrap()
         .port();
+    // every key about the workspace and the workflow, $schema too
     file(
         d.path(),
         "itero.config.json",
         &format!(
-            r#"{{"name": "dukkan-isleri", "port": {port}, "metadata": {{"sahibi": "ayşe"}}, "limits": {{"runs": 7}},
-                 "workflow": {{"sipariş": {{"description": "Dükkân", "metadata": {{"ekip": "ödeme"}}}}}}}}"#
+            r#"{{"$schema": "https://docs.itero.sh/schema/itero.config.json",
+                 "name": "dukkan-isleri", "version": "0.1.0", "description": "Dükkânın işleri",
+                 "tags": ["dükkân", "gece"], "port": {port}, "metadata": {{"sahibi": "ayşe"}},
+                 "limits": {{"runs": 7}},
+                 "workflow": {{"sipariş": {{"description": "Dükkân", "tags": ["ödeme"],
+                                             "metadata": {{"ekip": "ödeme"}}}}}}}}"#
         ),
     );
     file(
@@ -890,21 +895,50 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
     file(d.path(), "actions/gönder", "#!/bin/sh\n");
     let info = out(&itero(d.path(), &["ws", "info"]));
     for says in [
-        "id ",
-        "name dukkan-isleri",
-        "created ",
-        "path ",
-        "sahibi",
-        "ayşe",
+        "  id ",
+        "  name dukkan-isleri\n",
+        "  created ",
+        "  path ",
+        "  version 0.1.0\n",
+        "  description Dükkânın işleri\n",
+        "  tags dükkân, gece\n",
+        r#"  metadata {"sahibi":"ayşe"}"#,
         "runs 7",
         "daemon: not running",
     ] {
         assert!(info.contains(says), "{says}: {info}");
     }
-    let check = out(&itero(d.path(), &["ws", "check"]));
-    for says in ["sipariş", "id ", "Dükkân", "ekip", "runs so far 0"] {
+    let json = |args: &[&str]| -> serde_json::Value {
+        serde_json::from_str(&out(&itero(d.path(), args))).unwrap()
+    };
+    let w = &json(&["ws", "info", "--json"])["workspace"];
+    assert_eq!(w["version"], "0.1.0", "{w}");
+    assert_eq!(w["description"], "Dükkânın işleri", "{w}");
+    assert_eq!(w["tags"], serde_json::json!(["dükkân", "gece"]), "{w}");
+    assert_eq!(w["metadata"]["sahibi"], "ayşe", "{w}");
+    // $schema is the editor's: ws check takes it
+    let o = itero(d.path(), &["ws", "check"]);
+    assert!(o.status.success(), "{}", err(&o));
+    let check = out(&o);
+    for says in [
+        "sipariş",
+        "  id ",
+        "  description Dükkân\n",
+        "  tags ödeme\n",
+        r#"  metadata {"ekip":"ödeme"}"#,
+        "runs so far 0",
+    ] {
         assert!(check.contains(says), "{says}: {check}");
     }
+    let c = json(&["ws", "check", "--json"]);
+    let w = c["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["name"] == "sipariş")
+        .unwrap();
+    assert_eq!(w["tags"], serde_json::json!(["ödeme"]), "{w}");
+    assert_eq!(w["metadata"]["ekip"], "ödeme", "{w}");
 }
 
 #[test]

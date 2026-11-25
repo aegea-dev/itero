@@ -53,9 +53,7 @@ pub fn check(c: &Client, json: bool) -> Result<()> {
                     println!("  {k}");
                 }
             }
-            for (k, x) in w["other"].as_object().into_iter().flatten() {
-                println!("  {k} {x}");
-            }
+            tags_and_metadata(w, "  ");
             println!("  runs so far {}", w["runs"]);
             if let Some(l) = w["last_run"].as_object() {
                 println!(
@@ -141,12 +139,12 @@ pub fn info(c: &Client, json: bool) -> Result<()> {
         for k in ["id", "name", "created", "path", "itero"] {
             println!("  {k} {}", text(&w[k]));
         }
-        if let Some(m) = w["meta"].as_object().filter(|m| !m.is_empty()) {
-            println!("  meta");
-            for (k, x) in m {
-                println!("    {k} {x}");
+        for k in ["version", "description"] {
+            if let Some(x) = w[k].as_str() {
+                println!("  {k} {x}");
             }
         }
+        tags_and_metadata(w, "  ");
         println!("  limits");
         for (k, x) in v["limits"].as_object().into_iter().flatten() {
             println!("    {k} {}", text(x));
@@ -167,6 +165,22 @@ pub fn info(c: &Client, json: bool) -> Result<()> {
         }
         println!("{}", notifications_line(&v["notifications"]));
     })
+}
+
+/// `w`'s tags and metadata, those it has, a line each after `pad`.
+fn tags_and_metadata(w: &Value, pad: &str) {
+    let tags: Vec<&str> = w["tags"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    if !tags.is_empty() {
+        println!("{pad}tags {}", tags.join(", "));
+    }
+    if let Some(m) = w["metadata"].as_object().filter(|m| !m.is_empty()) {
+        println!("{pad}metadata {}", Value::Object(m.clone()));
+    }
 }
 
 /// What `notifications()` says, as a line.

@@ -84,8 +84,7 @@ fn repeat(v: &Value, workflow: bool) -> Result<Repeat, String> {
     }
 }
 
-/// What a person says about a workflow: a few keys itero knows, and any
-/// others, kept and shown.
+/// What a person says about a workflow: its entry in itero.config.json.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Meta {
     pub description: Option<String>,
@@ -97,8 +96,10 @@ pub struct Meta {
     pub off: bool,
     /// It looks after the workspace.
     pub internal: bool,
-    /// The person's own keys.
-    pub other: Map<String, Value>,
+    /// Words to find it by.
+    pub tags: Vec<String>,
+    /// The person's own keys, anything inside.
+    pub metadata: Map<String, Value>,
 }
 
 /// The names itero gives and nobody sets: in a workflow's entry they are
@@ -142,9 +143,16 @@ pub fn entry(v: &Value) -> Result<Meta, String> {
             "until" => out.until = Some(moment(k, v, true)?),
             "off" => out.off = flag(k, v)?,
             "internal" => out.internal = flag(k, v)?,
-            _ => {
-                out.other.insert(k.clone(), v.clone());
+            "tags" => {
+                out.tags = v
+                    .as_array()
+                    .and_then(|l| l.iter().map(|t| t.as_str().map(String::from)).collect())
+                    .ok_or("tags is a list of text")?
             }
+            "metadata" => out.metadata = v.as_object().ok_or("metadata is an object")?.clone(),
+            // any other key the config's schema tells, before an entry is
+            // read (manifest::problems)
+            _ => {}
         }
     }
     Ok(out)
