@@ -102,6 +102,17 @@ pub fn told(ws_name: &str, p: &Problem) -> Told {
     }
 }
 
+/// `p` as told outside a workspace: its address as it is (`daemon.json`'s
+/// problems, the machine's own).
+pub fn told_as_is(p: &Problem) -> Told {
+    Told {
+        message: p.message.clone(),
+        at: p.at.clone(),
+        file: p.file.clone().unwrap_or_default(),
+        place: p.place.clone(),
+    }
+}
+
 /// Problems as `itero ws check` tells them, wherever they are found, on
 /// stderr: grouped by the file each is in, the workspace's own first; the
 /// file once, then a line each, `  error: <place>: <message>`, its errors

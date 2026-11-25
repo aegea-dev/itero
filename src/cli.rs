@@ -668,6 +668,16 @@ pub fn run(args: Vec<String>) -> i32 {
             }
             1
         }
+        // the daemon's settings with problems: told the same way
+        Err(e) if let Some(bad) = crate::settings::BadSettings::of(e) => {
+            let errors: Vec<_> = bad
+                .problems
+                .iter()
+                .map(crate::answer::workspace::told_as_is)
+                .collect();
+            crate::answer::workspace::say(&errors, &[]);
+            1
+        }
         Err(e) => {
             crate::say!("error: {e:#}");
             1

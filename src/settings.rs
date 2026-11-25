@@ -1,6 +1,7 @@
 //! `daemon.json`: how the machine's daemon serves, in itero's config
 //! folder (or the file `--config` names), read at the daemon's start.
 //! None there is the daemon as it has always been.
+use crate::problem::Problem;
 use anyhow::{Result, bail};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -91,65 +92,134 @@ impl Settings {
 
     /// The file `config` names, else the default one; the default one not
     /// there is no settings, a named one not there is a mistake. Every
-    /// problem is told at once, a `server.json` beside it among them.
+    /// problem is told at once, a `server.json` beside it among them, as
+    /// a [`BadSettings`].
     pub fn read(config: Option<&Path>) -> Result<Settings> {
         let (path, given) = match config {
             Some(p) => (p.to_path_buf(), true),
             None => (Settings::default_path()?, false),
         };
         let mut problems = left_from_before(&path).into_iter().collect::<Vec<_>>();
+        let file = path.display().to_string();
         let settings = match std::fs::read_to_string(&path) {
             Ok(text) => {
                 // the secrets the channels it could read name, beside the
                 // file's own problems: every problem in one run
                 let (s, mut found) = parse_all(&text);
                 found.extend(missing_secrets(&s));
-                let at = path.display();
-                problems.extend(found.iter().map(|p| format!("{at}: {p}")));
+                problems.extend(found.into_iter().map(|p| in_file(p, &file)));
                 Some(s)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && !given => {
                 Some(Settings::default())
             }
             Err(e) => {
-                problems.push(format!("{}: {e}", path.display()));
+                problems.push(in_file(said("", e.to_string()), &file));
                 None
             }
         };
         match settings {
             Some(s) if problems.is_empty() => Ok(s),
-            _ => bail!("{}", problems.join("\n")),
+            _ => Err(BadSettings { problems }.into()),
         }
     }
+}
+
+/// Every problem of the daemon's settings, each in its file at its
+/// place, told as `ws check` tells a workspace's.
+#[derive(Debug)]
+pub struct BadSettings {
+    pub problems: Vec<Problem>,
+}
+
+impl std::fmt::Display for BadSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let lines: Vec<String> = self
+            .problems
+            .iter()
+            .map(|p| {
+                let file = p.file.as_deref().unwrap_or_default();
+                match p.place.as_str() {
+                    "" => format!("{file}: {}", p.message),
+                    place => format!("{file}: {place}: {}", p.message),
+                }
+            })
+            .collect();
+        write!(f, "{}", lines.join("\n"))
+    }
+}
+
+impl std::error::Error for BadSettings {}
+
+impl BadSettings {
+    /// The settings' problems in `e`, when that is what it is.
+    pub fn of(e: &anyhow::Error) -> Option<&BadSettings> {
+        e.chain().find_map(|c| c.downcast_ref::<BadSettings>())
+    }
+}
+
+/// A problem at `place` in the settings (`notify[0].url`; empty for the
+/// whole file).
+fn said(place: impl Into<String>, message: impl Into<String>) -> Problem {
+    let place = place.into();
+    Problem::new(place.clone(), message).placed(String::new(), place)
+}
+
+/// `p` in the file at `file`.
+fn in_file(p: Problem, file: &str) -> Problem {
+    let place = p.place.clone();
+    p.placed(file, place)
+}
+
+/// `"k" is not a key` of an object whose keys are `known`.
+fn not_a_key(k: &str, known: &[&str]) -> String {
+    let known: Vec<String> = known.iter().map(|k| k.to_string()).collect();
+    crate::manifest::not_a_key(k, &known)
 }
 
 /// A `server.json` beside `path`: what itero read before 0.41. Left
 /// alone, its settings would be ignored without a word (a daemon meant
 /// to listen on 0.0.0.0 staying local), so it stops the daemon.
-fn left_from_before(path: &Path) -> Option<String> {
+fn left_from_before(path: &Path) -> Option<Problem> {
     let old = path.with_file_name("server.json");
-    (old != path && old.exists()).then(|| format!("{}: rename it to daemon.json", old.display()))
+    (old != path && old.exists()).then(|| {
+        in_file(
+            said("", "rename it to daemon.json"),
+            &old.display().to_string(),
+        )
+    })
 }
 
-/// The settings in `text`, or every problem in it.
+/// The settings in `text`, or every problem in it, each `place: message`.
 #[cfg(test)]
 fn parse(text: &str) -> Result<Settings, Vec<String>> {
     match parse_all(text) {
         (s, p) if p.is_empty() => Ok(s),
-        (_, p) => Err(p),
+        (_, p) => Err(p
+            .into_iter()
+            .map(|p| match p.place.as_str() {
+                "" => p.message,
+                place => format!("{place}: {}", p.message),
+            })
+            .collect()),
     }
 }
 
 /// The settings in `text` that could be read, and every problem in it.
-fn parse_all(text: &str) -> (Settings, Vec<String>) {
+fn parse_all(text: &str) -> (Settings, Vec<Problem>) {
     let v: Value = match serde_json::from_str(text) {
         Ok(v) => v,
-        Err(e) => return (Settings::default(), vec![format!("not JSON: {e}")]),
+        Err(e) => {
+            return (
+                Settings::default(),
+                vec![said("", format!("not JSON: {e}"))],
+            );
+        }
     };
     let Value::Object(m) = v else {
         return (
             Settings::default(),
-            vec!["daemon.json is a JSON object of settings".into()],
+            vec![said("", "a JSON object of settings")],
         );
     };
     let mut problems = vec![];
@@ -158,20 +228,22 @@ fn parse_all(text: &str) -> (Settings, Vec<String>) {
         match k.as_str() {
             "port" => match v.as_u64().filter(|p| (1..=65535).contains(p)) {
                 Some(p) => s.port = Some(p as u16),
-                None => problems.push(format!("port: a number from 1 to 65535, not {v}")),
+                None => problems.push(said("port", format!("a number from 1 to 65535, not {v}"))),
             },
             "listen" => match v.as_str().and_then(|a| a.parse().ok()) {
                 Some(a) => s.listen = Some(a),
-                None => problems.push(format!(
-                    "listen: an address and a port, like 0.0.0.0:8443, not {v}"
+                None => problems.push(said(
+                    "listen",
+                    format!("an address and a port, like 0.0.0.0:8443, not {v}"),
                 )),
             },
             "secrets" => match v.as_str() {
                 Some(p) if Path::new(p).is_dir() => s.secrets = Some(PathBuf::from(p)),
-                Some(p) => problems.push(format!(
-                    "secrets: {p}: not a folder there (the folder of secrets, a file each)"
+                Some(p) => problems.push(said(
+                    "secrets",
+                    format!("{p}: not a folder there (the folder of secrets, a file each)"),
                 )),
-                None => problems.push(format!("secrets: a folder's path, not {v}")),
+                None => problems.push(said("secrets", format!("a folder's path, not {v}"))),
             },
             "notify" => {
                 let (c, p) = channels_in(v);
@@ -182,14 +254,11 @@ fn parse_all(text: &str) -> (Settings, Vec<String>) {
                 Ok(t) => s.tls = Some(t),
                 Err(p) => problems.extend(p),
             },
-            _ => problems.push(format!(
-                "{k}: not a setting of daemon.json ({})",
-                SETTINGS.join(", ")
-            )),
+            _ => problems.push(said("", not_a_key(k, SETTINGS))),
         }
     }
     if m.contains_key("tls") && !m.contains_key("listen") {
-        problems.push("tls: for listen, which is not given".into());
+        problems.push(said("tls", "for listen, which is not given"));
     }
     (s, problems)
 }
@@ -201,40 +270,42 @@ pub fn secret_of(url: &str) -> Option<&str> {
 
 /// `notify`'s channels that could be read, and every problem in them. A
 /// url is never echoed: one written in the file may be a secret.
-fn channels_in(v: &Value) -> (Vec<Channel>, Vec<String>) {
+fn channels_in(v: &Value) -> (Vec<Channel>, Vec<Problem>) {
     let Value::Array(list) = v else {
         return (
             vec![],
-            vec![format!(
-                "notify: a list of channels, each with url and format, not {}",
-                kind(v)
+            vec![said(
+                "notify",
+                format!(
+                    "a list of channels, each with url and format, not {}",
+                    kind(v)
+                ),
             )],
         );
     };
     if list.is_empty() {
         return (
             vec![],
-            vec!["notify: an empty list: leave notify out for the desktop".into()],
+            vec![said(
+                "notify",
+                "an empty list: leave notify out for the desktop",
+            )],
         );
     }
     let mut problems = vec![];
     let mut out = vec![];
     for (i, c) in list.iter().enumerate() {
+        let at = format!("notify[{i}]");
         let Value::Object(m) = c else {
-            problems.push(format!(
-                "notify[{i}]: a channel is an object with url and format"
-            ));
+            problems.push(said(&at, "a channel is an object with url and format"));
             continue;
         };
         for k in m.keys().filter(|k| !CHANNEL.contains(&k.as_str())) {
-            problems.push(format!(
-                "notify[{i}].{k}: not a setting of a channel ({})",
-                CHANNEL.join(", ")
-            ));
+            problems.push(said(&at, not_a_key(k, CHANNEL)));
         }
         let url = match m.get("url") {
             None => {
-                problems.push(format!("notify[{i}].url: not given"));
+                problems.push(said(format!("{at}.url"), "not given"));
                 None
             }
             Some(Value::String(u))
@@ -245,8 +316,9 @@ fn channels_in(v: &Value) -> (Vec<Channel>, Vec<String>) {
                 Some(u.clone())
             }
             Some(_) => {
-                problems.push(format!(
-                    "notify[{i}].url: an http:// or https:// address, or $$NAME"
+                problems.push(said(
+                    format!("{at}.url"),
+                    "an http:// or https:// address, or $$NAME",
                 ));
                 None
             }
@@ -257,9 +329,9 @@ fn channels_in(v: &Value) -> (Vec<Channel>, Vec<String>) {
                 Some((_, f)) => Some(*f),
                 None => {
                     let names: Vec<&str> = FORMATS.iter().map(|(n, _)| *n).collect();
-                    problems.push(format!(
-                        "notify[{i}].format: one of {}, not {f}",
-                        names.join(", ")
+                    problems.push(said(
+                        format!("{at}.format"),
+                        format!("one of {}, not {f}", names.join(", ")),
                     ));
                     None
                 }
@@ -285,7 +357,7 @@ fn kind(v: &Value) -> &'static str {
 }
 
 /// The channels whose `$$NAME` names no secret of the machine's.
-fn missing_secrets(s: &Settings) -> Vec<String> {
+fn missing_secrets(s: &Settings) -> Vec<Problem> {
     s.notify
         .iter()
         .enumerate()
@@ -294,8 +366,11 @@ fn missing_secrets(s: &Settings) -> Vec<String> {
             crate::engine::secrets::machine(s.secrets.as_deref(), name)
                 .is_none()
                 .then(|| {
-                    format!(
-                        "notify[{i}].url: no secret {name} (the secrets folder, the store, or the environment)"
+                    said(
+                        format!("notify[{i}].url"),
+                        format!(
+                            "no secret {name} (the secrets folder, the store, or the environment)"
+                        ),
                     )
                 })
         })
@@ -303,41 +378,47 @@ fn missing_secrets(s: &Settings) -> Vec<String> {
 }
 
 /// `tls`'s two files, each there and readable; or every problem.
-fn tls(v: &Value) -> Result<Tls, Vec<String>> {
+fn tls(v: &Value) -> Result<Tls, Vec<Problem>> {
     let Value::Object(m) = v else {
-        return Err(vec![format!("tls: an object with cert and key, not {v}")]);
+        return Err(vec![said(
+            "tls",
+            format!("an object with cert and key, not {v}"),
+        )]);
     };
     let mut problems = vec![];
     for k in m.keys().filter(|k| !TLS.contains(&k.as_str())) {
-        problems.push(format!(
-            "tls.{k}: not a setting of tls ({})",
-            TLS.join(", ")
-        ));
+        problems.push(said("tls", not_a_key(k, TLS)));
     }
     let mut file = |k: &str, what: &str| -> Option<PathBuf> {
         match m.get(k).map(|v| v.as_str()) {
             None => {
-                problems.push(format!("tls.{k}: {what} PEM file, not given"));
+                problems.push(said(
+                    format!("tls.{k}"),
+                    format!("{what} PEM file, not given"),
+                ));
                 None
             }
             Some(None) => {
-                problems.push(format!("tls.{k}: {what} PEM file's path, not {}", m[k]));
+                problems.push(said(
+                    format!("tls.{k}"),
+                    format!("{what} PEM file's path, not {}", m[k]),
+                ));
                 None
             }
             Some(Some(p)) => match std::fs::metadata(p) {
                 Ok(m) if !m.is_file() => {
-                    problems.push(format!("tls.{k}: {p} is not a file"));
+                    problems.push(said(format!("tls.{k}"), format!("{p} is not a file")));
                     None
                 }
                 Ok(_) => match std::fs::File::open(p) {
                     Ok(_) => Some(PathBuf::from(p)),
                     Err(e) => {
-                        problems.push(format!("tls.{k}: {p}: {e}"));
+                        problems.push(said(format!("tls.{k}"), format!("{p}: {e}")));
                         None
                     }
                 },
                 Err(e) => {
-                    problems.push(format!("tls.{k}: {p}: {e}"));
+                    problems.push(said(format!("tls.{k}"), format!("{p}: {e}")));
                     None
                 }
             },
@@ -414,7 +495,10 @@ mod tests {
             p[0].starts_with("port: a number from 1 to 65535, not -1"),
             "{p:?}"
         );
-        assert!(p[1].starts_with("dinle: not a setting"), "{p:?}");
+        assert_eq!(
+            p[1], r#""dinle" is not a key: port, listen, tls, secrets, notify"#,
+            "{p:?}"
+        );
         assert_eq!(parse("[]").unwrap_err().len(), 1);
         assert!(parse("{").unwrap_err()[0].starts_with("not JSON"));
     }
@@ -451,7 +535,7 @@ mod tests {
             // a secret
             "notify[0].url: an http:// or https:// address, or $$NAME",
             "notify[0].format: one of json, ntfy, slack, discord, not \"teams\"",
-            "notify[0].renk: not a setting of a channel (url, format)",
+            r#"notify[0]: "renk" is not a key: url, format"#,
             "notify[1].url: not given",
             "notify[2]: a channel is an object with url and format",
             "notify[3].url: an http:// or https:// address, or $$NAME",

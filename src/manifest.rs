@@ -406,12 +406,18 @@ fn unknown_key(place: &[String], k: &str) -> String {
     } else {
         keys_of(def)
     };
-    if let Some(near) = nearest(k, &known) {
-        return format!(r#""{k}" is not a key; did you mean "{near}"?"#);
+    match (def, nearest(k, &known)) {
+        ("Manifest", None) => format!(r#""{k}" is not a key; your own keys go in "metadata""#),
+        _ => not_a_key(k, &known),
     }
-    match def {
-        "Manifest" => format!(r#""{k}" is not a key; your own keys go in "metadata""#),
-        _ => format!(r#""{k}" is not a key: {}"#, known.join(", ")),
+}
+
+/// `"k" is not a key` of an object whose keys are `known`: the one it is
+/// a slip of, else every one.
+pub(crate) fn not_a_key(k: &str, known: &[String]) -> String {
+    match nearest(k, known) {
+        Some(near) => format!(r#""{k}" is not a key; did you mean "{near}"?"#),
+        None => format!(r#""{k}" is not a key: {}"#, known.join(", ")),
     }
 }
 

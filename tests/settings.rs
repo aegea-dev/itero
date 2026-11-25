@@ -123,14 +123,20 @@ fn every_problem_is_told_at_once_and_nothing_is_served() {
     let file = m.daemon_json(r#"{ "port": "sekiz", "dinle": 1, "fazla": true }"#);
     let said = m.refused(&[]);
     let at = file.display().to_string();
-    for problem in [
-        "port: a number from 1 to 65535, not \"sekiz\"",
-        "dinle: not a setting of daemon.json",
-        "fazla: not a setting of daemon.json",
-    ] {
-        assert!(said.contains(&format!("{at}: {problem}")), "{said}");
-    }
+    // as ws check tells a workspace's: the file once, a line each
+    let want = format!(
+        "{at}\n  error: port: a number from 1 to 65535, not \"sekiz\"\n  error: \"dinle\" is not a key: port, listen, tls, secrets, notify\n  error: \"fazla\" is not a key: port, listen, tls, secrets, notify\n3 errors, 0 warnings"
+    );
+    assert!(said.contains(&want), "{said}");
+    assert_eq!(said.matches(&at).count(), 1, "{said}");
     assert!(!m.kept_port().exists(), "nothing listened");
+    // a slip of a known key: did you mean
+    m.daemon_json(r#"{ "prot": 8787 }"#);
+    let said = m.refused(&[]);
+    assert!(
+        said.contains(r#"  error: "prot" is not a key; did you mean "port"?"#),
+        "{said}"
+    );
 }
 
 #[test]
@@ -154,7 +160,10 @@ fn config_reads_that_file_and_a_missing_one_is_an_error() {
     std::fs::write(&other, r#"{ "port": 0 }"#).unwrap();
     let said = m.refused(&["--config", other.to_str().unwrap()]);
     assert!(
-        said.contains("sunucu.json: port: a number from 1 to 65535, not 0"),
+        said.contains(&format!(
+            "{}\n  error: port: a number from 1 to 65535, not 0",
+            other.display()
+        )),
         "{said}"
     );
     let gone = m.d.path().join("yok.json");
@@ -218,7 +227,7 @@ fn a_server_json_left_from_before_stops_the_daemon_saying_to_rename_it() {
     let old = m.d.path().join("ayar/itero/server.json");
     std::fs::create_dir_all(old.parent().unwrap()).unwrap();
     std::fs::write(&old, r#"{ "listen": "0.0.0.0:8443" }"#).unwrap();
-    let rename = format!("{}: rename it to daemon.json", old.display());
+    let rename = format!("{}\n  error: rename it to daemon.json", old.display());
     let said = m.refused(&[]);
     assert!(said.contains(&rename), "{said}");
     assert!(!m.kept_port().exists(), "nothing listened");
@@ -227,7 +236,7 @@ fn a_server_json_left_from_before_stops_the_daemon_saying_to_rename_it() {
     let said = m.refused(&[]);
     assert!(said.contains(&rename), "{said}");
     assert!(
-        said.contains("fazla: not a setting of daemon.json"),
+        said.contains(r#"  error: "fazla" is not a key: port, listen, tls, secrets, notify"#),
         "{said}"
     );
     // beside the file --config names, as a mounted one beside the image's
@@ -238,7 +247,7 @@ fn a_server_json_left_from_before_stops_the_daemon_saying_to_rename_it() {
     std::fs::write(elsewhere.join("server.json"), "{}").unwrap();
     let said = m.refused(&["--config", given.to_str().unwrap()]);
     let rename = format!(
-        "{}: rename it to daemon.json",
+        "{}\n  error: rename it to daemon.json",
         elsewhere.join("server.json").display()
     );
     assert!(said.contains(&rename), "{said}");
@@ -251,11 +260,12 @@ fn a_channel_whose_secret_is_not_there_is_told_with_the_others() {
     let said = m.refused(&[]);
     let at = file.display().to_string();
     assert!(
-        said.contains(&format!("{at}: notify[0].url: no secret YOK_KANAL")),
+        said.contains("\n  error: notify[0].url: no secret YOK_KANAL"),
         "{said}"
     );
+    assert_eq!(said.matches(&at).count(), 1, "{said}");
     assert!(
-        said.contains(&format!("{at}: notify[1].url: an http://")),
+        said.contains("\n  error: notify[1].url: an http://"),
         "{said}"
     );
 }
