@@ -152,7 +152,7 @@ pub fn entry(v: &Value) -> Result<Meta, String> {
 
 /// A date or an RFC 3339 time. A date is a whole day: `from` it starts at
 /// its first second, `until` it ends after its last.
-fn moment(key: &str, v: &Value, end: bool) -> Result<DateTime<Utc>, String> {
+pub(crate) fn moment(key: &str, v: &Value, end: bool) -> Result<DateTime<Utc>, String> {
     let wrong = || format!("{key}: a date (2026-11-01) or a time (2026-11-01T09:00:00Z)");
     let s = v.as_str().ok_or_else(wrong)?;
     if let Ok(t) = DateTime::parse_from_rfc3339(s) {

@@ -131,7 +131,7 @@ pub(crate) fn duration(name: &str, v: Option<String>, default: u64) -> Result<st
 }
 
 /// `"10MB"`: a number and KB, MB or GB (of 1024).
-fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
+pub(crate) fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
     let Some(s) = v else {
         return Ok(default);
     };
