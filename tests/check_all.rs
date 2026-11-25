@@ -88,7 +88,7 @@ fn ws_check_reports_every_problem_then_counts_them() {
                              "key": "sk-proj-4f9aB2cD8eF1gH3iJ5kL", "message": "x" } } },
         "#gönder", "kayıp" ] }"##,
     );
-    let ws = itero::workspace::find(d.path()).unwrap();
+    let ws = itero::workspace::find_as_is(d.path()).unwrap();
     let name = itero::engine::journal::Journal::open(&ws)
         .unwrap()
         .workspace()
@@ -98,20 +98,18 @@ fn ws_check_reports_every_problem_then_counts_them() {
     let err = String::from_utf8_lossy(&o.stderr);
     assert_eq!(o.status.code(), Some(1), "{err}");
     assert!(o.stdout.is_empty(), "no listing with errors");
+    // each file once, then its problems at their places
     for line in [
-        format!("({name}/workflows/yok-böyle)\n"),
-        format!("({name}/workflows/bozuk)\n"),
-        format!("error: it needs $message ({name}/workflows/posta/steps/#ai/1)\n"),
-        format!(
-            "error: no action gönder in the actions folders ({name}/workflows/posta/steps/#gönder)\n"
-        ),
-        format!("({name}/workflows/posta/steps/kayıp)\n"),
-        format!(
-            "warning: key looks like a token: write it as a $$NAME ({name}/workflows/posta/steps/#ai/2)\n"
-        ),
-        "5 errors, 2 warnings\n".to_string(),
+        "itero.config.json\n  error: workflow.yok-böyle: no workflow yok-böyle\n",
+        "workflows/bozuk.json\n  error: not JSON: ",
+        "workflows/posta.json\n",
+        "  error: steps.#ai.1: it needs $message\n",
+        "  error: steps.#gönder: no action gönder in the actions folders\n",
+        "  error: steps.kayıp: ",
+        "  warning: steps.#ai.2: key looks like a token: write it as a $$NAME\n",
+        "5 errors, 2 warnings\n",
     ] {
-        assert!(err.contains(&line), "{line}\n{err}");
+        assert!(err.contains(line), "{line}\n{err}");
     }
     // a broken file's entry is not called missing
     assert_eq!(err.matches("bozuk").count(), 1, "{err}");
@@ -152,18 +150,23 @@ fn the_steps_of_a_workflow_with_mistakes_are_checked_too() {
     }
     let o = ws_check(d.path(), false);
     let err = String::from_utf8_lossy(&o.stderr);
-    for at in [
-        "/workflows/posta)",
-        "/workflows/posta/steps/#ai)",
-        "/workflows/posta/steps/all/#yok)",
-        "/workflows/posta/steps/all/#depo/2)",
-        "/workflows/posta/steps/#kargola)",
-        "/workflows/posta/steps/#depo/undo)",
-        "/workflows/posta/error)",
+    assert!(err.starts_with("workflows/posta.json\n"), "{err}");
+    assert!(err.contains("  error: unknown key \"renk\""), "{err}");
+    for place in [
+        "steps.#ai",
+        "steps.all.#yok",
+        "steps.all.#depo.2",
+        "steps.#kargola",
+        "steps.#depo.undo",
+        "error",
     ] {
-        assert!(err.contains(at), "{at}\n{err}");
+        let line = format!("  error: {place}: ");
+        assert!(err.contains(&line), "{line}\n{err}");
     }
-    assert!(err.contains("it needs $message ("), "{err}");
+    assert!(
+        err.contains("  error: steps.#ai: it needs $message"),
+        "{err}"
+    );
     assert!(err.contains("7 errors"), "{err}");
 }
 
@@ -188,17 +191,15 @@ fn ws_check_says_every_problem_of_every_browser_step() {
     let o = ws_check(d.path(), false);
     let err = String::from_utf8_lossy(&o.stderr);
     assert_eq!(o.status.code(), Some(1), "{err}");
+    let _ = name;
     for line in [
-        format!(
-            "error: #browser: one action per step, not open and click; open is an http or https address, not \"ftp://örnek\" ({name}/workflows/tarayıcı/steps/#browser/1)\n"
-        ),
-        format!(
-            "error: #browser: type needs into: the field to type in; timeout is seconds, more than 0 and at most 3600, not 0 ({name}/workflows/tarayıcı/steps/#browser/2)\n"
-        ),
-        "warning: #browser takes ".to_string(),
-        "2 errors, 1 warning\n".to_string(),
+        "workflows/tarayıcı.json\n",
+        "  error: steps.#browser.1: #browser: one action per step, not open and click; open is an http or https address, not \"ftp://örnek\"\n",
+        "  error: steps.#browser.2: #browser: type needs into: the field to type in; timeout is seconds, more than 0 and at most 3600, not 0\n",
+        "  warning: steps.#browser.3: #browser takes ",
+        "2 errors, 1 warning\n",
     ] {
-        assert!(err.contains(&line), "{line}\n{err}");
+        assert!(err.contains(line), "{line}\n{err}");
     }
     assert!(err.contains("not bekle"), "{err}");
 }
@@ -210,7 +211,7 @@ fn ws_check_shows_warm_steps_and_says_each_that_cannot_be() {
     file(
         d.path(),
         "itero.config.json",
-        r#"{ "name": "ılık", "description": "warm" }"#,
+        r#"{ "name": "ilik", "description": "warm" }"#,
     );
     for (name, text) in [
         ("şeftali", "#!/usr/bin/env python3\nprint('ılık')\n"),
@@ -241,14 +242,14 @@ fn ws_check_shows_warm_steps_and_says_each_that_cannot_be() {
     );
     assert!(!out.status.success(), "{text}");
     for says in [
-        "error: warm: only Python and Node actions can be warm: its first line runs sh (",
-        "error: warm: only Python and Node actions can be warm: its first line runs bun (",
-        "error: warm: only Python and Node actions can be warm: #notify is built in (",
+        "workflows/sepet.json\n",
+        "  error: steps.#üzüm: warm: only Python and Node actions can be warm: its first line runs sh\n",
+        ": warm: only Python and Node actions can be warm: its first line runs bun\n",
+        "  error: steps.#notify: warm: only Python and Node actions can be warm: #notify is built in\n",
         "3 errors",
     ] {
         assert!(text.contains(says), "{says}: {text}");
     }
-    assert!(text.contains("workflows/sepet/steps/#üzüm"), "{text}");
     // the one that can: shown warm in the listing
     let out = ws_check(d.path(), true);
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -306,9 +307,12 @@ fn ws_check_says_an_actions_entry_limits_are_gone_beside_another_problem() {
         String::from_utf8_lossy(&out.stderr).to_string() + &String::from_utf8_lossy(&out.stdout);
     assert!(!out.status.success(), "{text}");
     assert!(
-        text.contains("itero.config.json: limits are gone: write them on the steps that run it:"),
+        text.contains("itero.config.json\n  error: action.depo: limits are gone: write them on the steps that run it:"),
         "{text}"
     );
-    assert!(text.contains("no action yok"), "{text}");
+    assert!(
+        text.contains("workflows/sepet.json\n  error: steps.#yok: no action yok"),
+        "{text}"
+    );
     assert!(text.contains("2 errors"), "{text}");
 }

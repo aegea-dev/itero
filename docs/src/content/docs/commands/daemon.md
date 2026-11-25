@@ -74,8 +74,9 @@ workflow running. Every problem is told as `ws check` tells it:
 
 ```
 $ itero ws daemon
-error: itero.config.json: no workflow greting (quiet-river/workflows/greting)
-error: itero.config.json: no action helo (quiet-river/actions/helo)
+itero.config.json
+  error: workflow.greting: no workflow greting
+  error: action.helo: no action helo
 2 errors, 0 warnings
 ```
 

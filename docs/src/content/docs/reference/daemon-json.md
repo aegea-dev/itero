@@ -59,12 +59,16 @@ restart`. With no file there, the daemon runs as it always has; a file
 named by `--config` must be there.
 
 A setting it does not know, or a value that is wrong, stops the daemon
-before it serves anything, with every problem told at once:
+before it serves anything, with every problem told at once, as
+[`itero ws check`](/commands/check/) tells a workspace's: the file, then
+a line each with its place in the file:
 
 ```
 $ itero daemon
-error: /Users/me/.config/itero/daemon.json: port: a number from 1 to 65535, not "8787"
-/Users/me/.config/itero/daemon.json: prot: not a setting of daemon.json (port)
+/Users/me/.config/itero/daemon.json
+  error: port: a number from 1 to 65535, not "8787"
+  error: "prot" is not a key; did you mean "port"?
+2 errors, 0 warnings
 ```
 
 Up to 0.40 the file was `server.json`. A `server.json` left beside the

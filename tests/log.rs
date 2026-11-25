@@ -185,7 +185,11 @@ fn a_message_nothing_wants_says_so() {
 fn a_daemon_says_when_it_starts_and_stops() {
     let d = tempfile::tempdir().unwrap();
     let root = d.path();
-    write(root, "itero.config.json", r#"{"sahibi": "ayşe"}"#);
+    write(
+        root,
+        "itero.config.json",
+        r#"{"metadata": {"sahibi": "ayşe"}}"#,
+    );
     executable(
         root,
         "connectors/kapı.çaldı",
@@ -237,7 +241,7 @@ fn a_daemon_says_when_it_starts_and_stops() {
     // system has it
     let here = std::fs::canonicalize(root).unwrap();
     assert_eq!(started["path"], here.display().to_string());
-    assert_eq!(started["meta"]["sahibi"], "ayşe");
+    assert_eq!(started["meta"]["metadata"]["sahibi"], "ayşe");
     assert_eq!(
         started["daemon_name"].as_str().unwrap().split('-').count(),
         2

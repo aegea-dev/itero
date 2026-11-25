@@ -61,7 +61,7 @@ fn answers(dir: &Path, port: u16) -> bool {
 #[test]
 fn without_a_port_the_os_gives_one_which_is_kept() {
     let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("itero.config.json"), r#"{"name": "kapısız"}"#).unwrap();
+    std::fs::write(d.path().join("itero.config.json"), r#"{"name": "kapisiz"}"#).unwrap();
     let first = daemon(d.path());
     until("a port", || saved(d.path()).is_some());
     let port = saved(d.path()).unwrap();

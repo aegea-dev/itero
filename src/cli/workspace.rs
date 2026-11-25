@@ -25,6 +25,10 @@ pub fn chosen(name: Option<&str>) -> Result<Workspace> {
         None => {
             let here = std::env::current_dir()?;
             crate::workspace::find(&here).map_err(|e| {
+                // a workspace here whose config has problems: those, as they are
+                if crate::workspace::BadConfig::of(&e).is_some() {
+                    return e;
+                }
                 let names: Vec<String> = List::read(&list_path().unwrap_or_default())
                     .map(|l| l.workspaces.into_iter().map(|e| e.name).collect())
                     .unwrap_or_default();

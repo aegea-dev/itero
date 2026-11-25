@@ -303,10 +303,15 @@ impl Refused {
 fn read_checked(
     ws: &Workspace,
 ) -> Result<(crate::workspace::ReadFlows, Vec<crate::problem::Problem>)> {
-    let read = ws.read_flows()?;
-    let mut problems = ws.manifest_problems(&read)?;
+    let mut problems = ws.manifest_problems()?;
+    // with the config's problems, the workflows' too, as far as they read
+    let read = match ws.read_flows() {
+        Ok(read) => read,
+        Err(_) if !problems.is_empty() => crate::workspace::ReadFlows::default(),
+        Err(e) => return Err(e),
+    };
     problems.extend(read.problems.iter().cloned());
-    Ok((read, problems))
+    Ok((read, ws.placed(problems)))
 }
 
 /// What keeps a daemon from starting on the workspace: every problem
@@ -349,22 +354,12 @@ impl Flows {
             return Ok(p.clone());
         }
         let read = |root: String, values: BTreeMap<String, Value>| -> Result<Pinned, String> {
-            let mut seen = std::collections::BTreeSet::new();
             let mut meta = None;
             let mut names = vec![];
             for (n, v) in &values {
                 let f = ws
                     .read_flow(n, v, &self.entries)
                     .map_err(|e| format!("{e:#}"))?;
-                for u in f.uses() {
-                    if let Name::Action { name, .. } = u
-                        && seen.insert(name.clone())
-                    {
-                        ws.no_args(&name)
-                            .and_then(|()| ws.no_repeat(&name))
-                            .map_err(|e| format!("{e:#}"))?;
-                    }
-                }
                 names.extend(f.defined_names());
                 if *n == root {
                     meta = Some(f.meta);
@@ -2155,8 +2150,6 @@ fn step_run(ws: &Workspace, j: &Journal, data: &Value, now: &str) -> Result<Step
         super::warm::runtime(&first)?;
     }
     // a step's own quiet and most, else the workspace's
-    ws.no_action_limits(&job.action)
-        .map_err(|e| format!("{e:#}"))?;
     let quiet = job
         .quiet
         .map_or(ws.limits.quiet, std::time::Duration::from_secs);

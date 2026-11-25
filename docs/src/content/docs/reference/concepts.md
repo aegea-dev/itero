@@ -120,8 +120,10 @@ See [Connectors](/guides/connectors/).
 ## Addresses
 
 Any part of a workspace is named by one address, from the workspace's
-name down, by kind, then the workflow file's own keys. `itero ws check`
-says where each problem is with one.
+name down, by kind, then the workflow file's own keys. Each problem
+`itero ws check --json` reports has its address as `at`; read by people,
+problems are shown under the file each is in, at its place there
+([ws check](/commands/check/)).
 
 | Address | Names |
 |---|---|

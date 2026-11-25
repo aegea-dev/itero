@@ -1,8 +1,8 @@
 //! The workspace: the folder with itero.config.json, and the folders it
 //! lists for workflows, actions and connectors. One daemon runs one workspace.
+use crate::manifest::{Folders, RawLimits};
 use crate::problem::Problem;
 use anyhow::{Context, Result, anyhow, bail};
-use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,7 @@ type Values = BTreeMap<String, Value>;
 /// problems of the rest, and every file that is JSON as written (with
 /// the built-in ones), so its steps can be checked even when the
 /// workflow as a whole cannot be read.
+#[derive(Default)]
 pub struct ReadFlows {
     pub flows: Flows,
     pub problems: Vec<Problem>,
@@ -28,54 +29,6 @@ pub struct ReadFlows {
 /// The workspace's manifest: what it is, how it runs, and what its
 /// workflows, actions and connectors are.
 pub const MANIFEST: &str = "itero.config.json";
-
-/// The manifest's keys for how the workspace runs, and for its entries:
-/// every other key at its top says what the workspace is.
-const RUNNING: [&str; 6] = [
-    "port",
-    "folders",
-    "limits",
-    "workflow",
-    "action",
-    "connector",
-];
-
-/// `folders` as written.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Folders {
-    #[serde(default = "default_workflows")]
-    workflows: Vec<String>,
-    #[serde(default = "default_actions")]
-    actions: Vec<String>,
-    #[serde(default = "default_connectors")]
-    connectors: Vec<String>,
-}
-
-impl Default for Folders {
-    fn default() -> Folders {
-        Folders {
-            workflows: default_workflows(),
-            actions: default_actions(),
-            connectors: default_connectors(),
-        }
-    }
-}
-
-/// `limits` as written: sizes and durations are text, `"1GB"`, `"1d"`.
-#[derive(Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-struct RawLimits {
-    workflows: Option<usize>,
-    runs: Option<usize>,
-    steps: Option<usize>,
-    space: Option<String>,
-    keep: Option<String>,
-    log: Option<String>,
-    logs: Option<usize>,
-    quiet: Option<String>,
-    most: Option<String>,
-}
 
 /// How much a workspace may hold and do at once.
 #[derive(Debug, Clone, PartialEq)]
@@ -168,7 +121,7 @@ pub(crate) fn duration(name: &str, v: Option<String>, default: u64) -> Result<st
 }
 
 /// `"10MB"`: a number and KB, MB or GB (of 1024).
-fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
+pub(crate) fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
     let Some(s) = v else {
         return Ok(default);
     };
@@ -182,18 +135,6 @@ fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
         _ => return Err(wrong()),
     };
     n.checked_mul(1 << shift).ok_or_else(wrong)
-}
-
-fn default_connectors() -> Vec<String> {
-    vec!["connectors".into()]
-}
-
-fn default_workflows() -> Vec<String> {
-    vec!["workflows".into()]
-}
-
-fn default_actions() -> Vec<String> {
-    vec!["actions".into()]
 }
 
 /// The workflows itero carries, run as if they were in `workflows/`; a
@@ -250,9 +191,11 @@ fn read_manifest(path: &Path) -> Result<Map<String, Value>> {
     }
 }
 
-/// The workspace `cwd` is in: the nearest folder upwards with
-/// itero.config.json.
-pub fn find(cwd: &Path) -> Result<Workspace> {
+/// The workspace `cwd` is in, the nearest folder upwards with
+/// itero.config.json, as far as its config can be read: what `ws check`
+/// looks into when the config has problems. Every other use goes through
+/// `find`, which refuses them.
+pub fn find_as_is(cwd: &Path) -> Result<Workspace> {
     let Some(root) = cwd.ancestors().find(|d| d.join(MANIFEST).is_file()) else {
         if let Some(old) = cwd.ancestors().find(|d| d.join("itero.toml").is_file()) {
             bail!(
@@ -265,32 +208,31 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
         );
     };
     let path = root.join(MANIFEST);
-    let mut m = read_manifest(&path)?;
-    let at = |e: serde_json::Error, key: &str| anyhow!("{}: {key}: {e}", path.display());
-    let port = match m.remove("port") {
-        Some(v) => Some(serde_json::from_value(v).map_err(|e| at(e, "port"))?),
-        None => None,
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("cannot read {}", path.display()))?;
+    let (v, _) = crate::manifest::problems(&text);
+    let m = match v {
+        Some(Value::Object(m)) => m,
+        _ => Map::new(),
     };
-    let folders: Folders = match m.remove("folders") {
-        Some(v) => serde_json::from_value(v).map_err(|e| at(e, "folders"))?,
-        None => Folders::default(),
-    };
-    let limits: RawLimits = match m.remove("limits") {
-        Some(v) => serde_json::from_value(v).map_err(|e| at(e, "limits"))?,
-        None => RawLimits::default(),
-    };
+    // what can be read of it makes the workspace: enough to check its
+    // entries against its folders; a config with a problem is refused below
+    let port = m
+        .get("port")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+    let folders: Folders = m
+        .get("folders")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let limits = m
+        .get("limits")
+        .and_then(|v| serde_json::from_value::<RawLimits>(v.clone()).ok())
+        .and_then(|l| l.read().ok())
+        .unwrap_or_else(|| RawLimits::default().read().expect("the defaults read"));
     let meta: Map<String, Value> = m
         .into_iter()
-        .filter(|(k, _)| !RUNNING.contains(&k.as_str()))
+        .filter(|(k, _)| ABOUT.contains(&k.as_str()))
         .collect();
-    for k in meta.keys() {
-        if matches!(k.as_str(), "id" | "created" | "path") {
-            bail!(
-                "{}: {k} is given by itero and cannot be set",
-                path.display()
-            );
-        }
-    }
     Ok(Workspace {
         root: root.to_path_buf(),
         port,
@@ -298,12 +240,73 @@ pub fn find(cwd: &Path) -> Result<Workspace> {
         actions: folders.actions.iter().map(|a| folder(root, a)).collect(),
         connectors: folders.connectors.iter().map(|x| folder(root, x)).collect(),
         meta,
-        limits: limits
-            .read()
-            .with_context(|| format!("{}", path.display()))?,
+        limits,
         machine: on_the_list(root),
         known_id: std::sync::OnceLock::new(),
     })
+}
+
+/// The workspace `cwd` is in, refused when its config has a problem: every
+/// one, in a `BadConfig`.
+pub fn find(cwd: &Path) -> Result<Workspace> {
+    let ws = find_as_is(cwd)?;
+    let root = ws.root.clone();
+    let root = root.as_path();
+    let problems = ws.manifest_problems()?;
+    if !problems.is_empty() {
+        let name = match ws.journal().is_file() {
+            true => {
+                crate::engine::journal::Journal::open(&ws)?
+                    .workspace()?
+                    .name
+            }
+            false => root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        };
+        return Err(BadConfig {
+            root: root.to_path_buf(),
+            name,
+            problems: ws.placed(problems),
+        }
+        .into());
+    }
+    Ok(ws)
+}
+
+/// The config's keys that say what the workspace is: kept as written, for
+/// `ws info`, `/health` and the log's start.
+const ABOUT: [&str; 5] = ["name", "version", "description", "tags", "metadata"];
+
+/// A workspace whose config has problems: every one, each in its file at
+/// its place, for every command to tell as `ws check` does.
+#[derive(Debug)]
+pub struct BadConfig {
+    pub root: PathBuf,
+    /// The workspace's name, for the problems' addresses.
+    pub name: String,
+    pub problems: Vec<Problem>,
+}
+
+impl std::fmt::Display for BadConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: {}",
+            self.root.join(MANIFEST).display(),
+            crate::flow::told(&self.problems)
+        )
+    }
+}
+
+impl std::error::Error for BadConfig {}
+
+impl BadConfig {
+    /// The config's problems in `e`, when that is what it is.
+    pub fn of(e: &anyhow::Error) -> Option<&BadConfig> {
+        e.chain().find_map(|c| c.downcast_ref::<BadConfig>())
+    }
 }
 
 /// Whether the machine's list holds the workspace at `root`.
@@ -577,9 +580,9 @@ impl Workspace {
         let counted = out.iter().filter(|(n, v)| !internal(n, v)).count();
         if counted > self.limits.workflows {
             problems.push(Problem::new(
-                "",
+                "limits",
                 format!(
-                    "{counted} workflows: limits.workflows in {MANIFEST} allows {}",
+                    "{counted} workflows, and limits.workflows allows {}",
                     self.limits.workflows
                 ),
             ));
@@ -615,14 +618,16 @@ impl Workspace {
             values,
         })
     }
-
-    /// What the manifest has wrong, refused by `itero ws check` and the
-    /// daemon alike: an entry naming no workflow, action or connector, an
-    /// entry that is wrong, and the folders from before it (`args/`,
-    /// `config/`). A workflow whose file is there, read or not (`read`),
-    /// is named: a broken file's entry is not missing.
-    pub fn manifest_problems(&self, read: &ReadFlows) -> Result<Vec<Problem>> {
-        let mut wrong = vec![];
+    /// What the config has wrong, refused by every command and the daemon
+    /// alike: what its schema refuses (`manifest::problems`), an entry naming
+    /// no workflow, action or connector, and the folders from before it
+    /// (`args/`, `config/`). Read from the file as it is now, so an edit
+    /// counts from the next pass.
+    pub fn manifest_problems(&self) -> Result<Vec<Problem>> {
+        let path = self.root.join(MANIFEST);
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("cannot read {}", path.display()))?;
+        let (v, mut wrong) = crate::manifest::problems(&text);
         for (dir, now) in [
             (
                 "args",
@@ -637,12 +642,15 @@ impl Workspace {
                 wrong.push(Problem::new("", format!("{dir}/: is gone: {now}")));
             }
         }
+        // entries are checked against what is there once they can be read
+        let Some(Value::Object(m)) = v else {
+            return Ok(wrong);
+        };
         // a built-in workflow is there even where it is not read (the
         // machine's daemon scans for models once, for every workspace)
         let workflows: Vec<String> = self
             .flow_files()?
             .into_keys()
-            .chain(read.written.keys().cloned())
             .chain(BUILT_IN.iter().map(|(n, _)| n.to_string()))
             .collect();
         let actions: Vec<String> = self
@@ -660,51 +668,24 @@ impl Workspace {
             .into_iter()
             .map(|(n, _)| n)
             .collect();
-        for name in self.entries("connector")?.keys() {
-            if let Err(why) = self.no_connector_args(name) {
-                wrong.push(self.entry_problem("connector", name, &format!("{why:#}")));
-            }
-        }
-        for (name, _) in self.entries("action")? {
-            for why in [
-                self.no_args(&name),
-                self.no_repeat(&name),
-                self.no_action_limits(&name),
-            ]
-            .into_iter()
-            .filter_map(Result::err)
-            {
-                wrong.push(self.entry_problem("action", &name, &format!("{why:#}")));
-            }
-        }
         for (kind, known) in [
             ("workflow", workflows),
             ("action", actions),
             ("connector", connectors),
         ] {
-            for name in self.entries(kind)?.keys() {
+            let Some(Value::Object(entries)) = m.get(kind) else {
+                continue;
+            };
+            for name in entries.keys() {
                 if !known.contains(name) {
-                    wrong.push(Problem::new(
-                        format!("{kind}s/{name}"),
-                        format!("{MANIFEST}: no {kind} {name}"),
-                    ));
+                    wrong.push(
+                        Problem::new(format!("{kind}s/{name}"), format!("no {kind} {name}"))
+                            .placed(MANIFEST, format!("{kind}.{name}")),
+                    );
                 }
             }
         }
         Ok(wrong)
-    }
-
-    /// A manifest entry's problem at the address of what it is about
-    /// (`actions/depo`), its text after the manifest's name, its path and
-    /// the entry's key taken off: `itero.config.json: limits: ...`.
-    fn entry_problem(&self, kind: &str, name: &str, why: &str) -> Problem {
-        let path = format!("{}: ", self.root.join(MANIFEST).display());
-        let why = why.strip_prefix(&path).unwrap_or(why);
-        let why = why
-            .strip_prefix(&format!("{kind}.{name}."))
-            .or_else(|| why.strip_prefix(&format!("{kind}.{name}: ")))
-            .unwrap_or(why);
-        Problem::new(format!("{kind}s/{name}"), format!("{MANIFEST}: {why}"))
     }
 
     /// The workflow `name`, its file read as `v`, with its entry in the
@@ -738,8 +719,48 @@ impl Workspace {
             entry.extend(e.clone());
         }
         f.meta = crate::flow::entry(&Value::Object(entry))
-            .map_err(|e| vec![Problem::new(at, format!("{MANIFEST}: {e}"))])?;
+            .map_err(|e| vec![Problem::new(at, e).placed(MANIFEST, format!("workflow.{name}"))])?;
         Ok(f)
+    }
+
+    /// Each problem with no file of its own put in its file, at its place
+    /// there, from its address: a workflow's, an action's or a connector's
+    /// file, the config for `limits` and `folders`; the workspace's own
+    /// (`""`) keep none.
+    pub fn placed(&self, ps: Vec<Problem>) -> Vec<Problem> {
+        let flows = self.flow_files().unwrap_or_default();
+        let actions = self.action_files().unwrap_or_default();
+        let connectors: BTreeMap<String, PathBuf> = self
+            .connector_files()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        ps.into_iter()
+            .map(|p| {
+                if p.file.is_some() {
+                    return p;
+                }
+                let mut parts = p.at.splitn(3, '/');
+                let (kind, name, rest) = (parts.next(), parts.next(), parts.next());
+                let file = match (kind, name) {
+                    (Some("workflows"), Some(n)) => flows.get(n),
+                    (Some("actions"), Some(n)) => actions.get(n),
+                    (Some("connectors"), Some(n)) => connectors.get(n),
+                    (Some("limits" | "folders"), None) => {
+                        let place = p.at.clone();
+                        return p.placed(MANIFEST, place);
+                    }
+                    _ => None,
+                };
+                match file {
+                    Some(f) => {
+                        let (file, place) = (self.shown(f), rest.unwrap_or("").replace('/', "."));
+                        p.placed(file, place)
+                    }
+                    None => p,
+                }
+            })
+            .collect()
     }
 
     /// The manifest as written now: read again each time, so an edit
@@ -754,15 +775,19 @@ impl Workspace {
         let path = self.root.join(MANIFEST);
         match self.manifest()?.remove(kind) {
             None => Ok(Map::new()),
-            Some(Value::Object(m)) => {
-                if let Some((name, _)) = m.iter().find(|(_, e)| !e.is_object()) {
-                    bail!(
-                        "{}: {kind}.{name} is an object: {{\"description\": \"...\"}}",
+            Some(Value::Object(m)) => m
+                .into_iter()
+                .map(|(name, e)| match e {
+                    // true: on, with its defaults; false: off
+                    Value::Bool(true) => Ok((name, Value::Object(Map::new()))),
+                    Value::Bool(false) => Ok((name, serde_json::json!({ "off": true }))),
+                    Value::Object(_) => Ok((name, e)),
+                    _ => bail!(
+                        "{}: {kind}.{name} is true, false or an object",
                         path.display()
-                    );
-                }
-                Ok(m)
-            }
+                    ),
+                })
+                .collect(),
             Some(_) => bail!(
                 "{}: {kind} is an object: {{\"<name>\": {{...}}}}",
                 path.display()
@@ -881,60 +906,5 @@ impl Workspace {
             }
         }
         Ok(named("connector", files)?.into_iter().collect())
-    }
-
-    /// An action's entry holds no args: they are written in the step that
-    /// runs it.
-    pub fn no_args(&self, action: &str) -> Result<()> {
-        if self.entry_key("action", action, "args")?.is_some() {
-            bail!(
-                "{}: action.{action}.args are gone: an action's args are written in the step that runs it",
-                self.root.join(MANIFEST).display()
-            );
-        }
-        Ok(())
-    }
-
-    /// An action's entry holds no repeat: it goes on the step.
-    pub fn no_repeat(&self, action: &str) -> Result<()> {
-        if self.entry_key("action", action, "repeat")?.is_some() {
-            bail!(
-                "{}: action.{action}.repeat is gone: repeat goes on the step: {{ \"#{action}\": {{ \"repeat\": ... }} }}",
-                self.root.join(MANIFEST).display()
-            );
-        }
-        Ok(())
-    }
-
-    /// An action's entry holds no limits: a step gives its own, in its
-    /// workflow, `{ "#x": { "limits": { "quiet": "1h" } } }`.
-    pub fn no_action_limits(&self, action: &str) -> Result<()> {
-        if self.entry_key("action", action, "limits")?.is_some() {
-            bail!(
-                r##"{}: action.{action}.limits are gone: write them on the steps that run it: {{ "#{action}": {{ "limits": {{ "quiet": "1h" }} }} }}"##,
-                self.root.join(MANIFEST).display()
-            );
-        }
-        Ok(())
-    }
-
-    /// A connector's entry holds no args: they are written in the `on`
-    /// entry of each workflow that listens.
-    pub fn no_connector_args(&self, connector: &str) -> Result<()> {
-        if self.entry_key("connector", connector, "args")?.is_some() {
-            bail!(
-                "{}: connector.{connector}.args are gone: write them in the on entry of each workflow that listens: {{ \"event\": \"{connector}\", \"args\": {{...}} }}",
-                self.root.join(MANIFEST).display()
-            );
-        }
-        Ok(())
-    }
-
-    /// `<kind>.<name>.<key>` in the manifest, as written; `null` is none.
-    fn entry_key(&self, kind: &str, name: &str, key: &str) -> Result<Option<Value>> {
-        Ok(match self.entries(kind)?.remove(name) {
-            Some(Value::Object(mut e)) => e.remove(key).filter(|v| !v.is_null()),
-            _ => None,
-        })
     }
 }

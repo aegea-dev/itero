@@ -20,6 +20,11 @@ chrono = "~0.4.45"
 anyhow = "~1.0.104"
 sha2 = "~0.11.1"
 humantime = "~2.4.0"
+# itero.config.json described once as types, its JSON Schema made from
+# them, and every config checked against that schema; never fetching a
+# schema from anywhere (no default features)
+schemars = "~1.2.3"
+jsonschema = { version = "~0.63.1", default-features = false }
 rusqlite = { version = "~0.41.1", features = ["bundled"] }
 uuid = { version = "~1.28.0", features = ["v7"] }
 # rustls with ring, not reqwest's default aws-lc-rs (not MIT, Apache or

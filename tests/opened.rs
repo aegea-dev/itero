@@ -304,10 +304,10 @@ fn tls_needs_listen_and_both_files_every_problem_told() {
     assert!(!o.status.success());
     let said = String::from_utf8_lossy(&o.stderr);
     for problem in [
-        "tls: for listen, which is not given",
-        "tls.key: the private key's PEM file, not given",
-        "tls.fazla: not a setting of tls (cert, key)",
-        "tls.cert: /yok/sertifika.pem:",
+        "  error: tls: for listen, which is not given",
+        "  error: tls.key: the private key's PEM file, not given",
+        r#"  error: tls: "fazla" is not a key: cert, key"#,
+        "  error: tls.cert: /yok/sertifika.pem:",
     ] {
         assert!(said.contains(problem), "{problem}: {said}");
     }

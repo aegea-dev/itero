@@ -24,11 +24,18 @@ pub struct Report {
     pub warnings: Vec<Told>,
 }
 
-/// A problem as told: its message, and where (`<workspace>/<address>`).
+/// A problem as told: its message; where, as its address
+/// (`<workspace>/<address>`); and as the file it is in, with its place there.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Told {
     pub message: String,
     pub at: String,
+    /// The file, from the workspace; empty for the workspace's own.
+    #[serde(default)]
+    pub file: String,
+    /// Its place in that file; empty for the whole file.
+    #[serde(default)]
+    pub place: String,
 }
 
 /// A workflow as check reads it.
@@ -44,8 +51,8 @@ pub struct Checked {
     pub until: Option<String>,
     pub off: bool,
     pub internal: bool,
-    /// Its other keys, as written.
-    pub other: Map<String, Value>,
+    pub tags: Vec<String>,
+    pub metadata: Map<String, Value>,
     pub runs: usize,
     pub last_run: Option<LastRun>,
     pub uses: Vec<Use>,
@@ -90,16 +97,47 @@ pub fn told(ws_name: &str, p: &Problem) -> Told {
     Told {
         message: p.message.clone(),
         at,
+        file: p.file.clone().unwrap_or_default(),
+        place: p.place.clone(),
     }
 }
 
-/// Problems as `itero ws check` tells them, wherever they are found: a
-/// line each on stderr, `error: <message> (<workspace>/<address>)`, the
-/// warnings after, then how many.
+/// `p` as told outside a workspace: its address as it is (`daemon.json`'s
+/// problems, the machine's own).
+pub fn told_as_is(p: &Problem) -> Told {
+    Told {
+        message: p.message.clone(),
+        at: p.at.clone(),
+        file: p.file.clone().unwrap_or_default(),
+        place: p.place.clone(),
+    }
+}
+
+/// Problems as `itero ws check` tells them, wherever they are found, on
+/// stderr: grouped by the file each is in, the workspace's own first; the
+/// file once, then a line each, `  error: <place>: <message>`, its errors
+/// before its warnings; then how many.
 pub fn say(errors: &[Told], warnings: &[Told]) {
-    for (kind, list) in [("error", errors), ("warning", warnings)] {
-        for p in list {
-            crate::say!("{kind}: {} ({})", p.message, p.at);
+    // the files in the order first met, the workspace's own ("") first
+    let mut files: Vec<&str> = vec![];
+    for p in errors.iter().chain(warnings) {
+        if !files.contains(&p.file.as_str()) {
+            files.push(&p.file);
+        }
+    }
+    files.sort_by_key(|f| !f.is_empty());
+    for file in files {
+        let pad = if file.is_empty() { "" } else { "  " };
+        if !file.is_empty() {
+            crate::say!("{file}");
+        }
+        for (kind, list) in [("error", errors), ("warning", warnings)] {
+            for p in list.iter().filter(|p| p.file == file) {
+                match p.place.as_str() {
+                    "" => crate::say!("{pad}{kind}: {}", p.message),
+                    place => crate::say!("{pad}{kind}: {place}: {}", p.message),
+                }
+            }
         }
     }
     crate::say!(
@@ -118,7 +156,7 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
         }
     }
     let read = ws.read_flows()?;
-    let mut errors = ws.manifest_problems(&read)?;
+    let mut errors = ws.manifest_problems()?;
     let mut flows = read.flows;
     let files = ws.flow_files()?;
     let mut named: Vec<String> = files.keys().cloned().collect();
@@ -297,7 +335,8 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
             until: m.until.map(crate::engine::daemon::stamp),
             off: m.off,
             internal: m.internal,
-            other: m.other.clone(),
+            tags: m.tags.clone(),
+            metadata: m.metadata.clone(),
             runs: runs.len(),
             last_run: runs.first().map(|r| LastRun {
                 name: r.name.clone(),
@@ -321,8 +360,8 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
         workflows,
         connectors,
         notes,
-        errors: told_all(&errors),
-        warnings: told_all(&warnings),
+        errors: told_all(&ws.placed(errors)),
+        warnings: told_all(&ws.placed(warnings)),
     })
 }
 
@@ -345,8 +384,11 @@ pub struct About {
     pub path: String,
     /// The itero that made its journal.
     pub itero: String,
-    /// The manifest's other keys about it.
-    pub meta: Map<String, Value>,
+    /// The config's `version`, `description`, `tags` and `metadata`.
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub metadata: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -395,22 +437,30 @@ pub enum RunBy {
 /// ports, a route says it is the daemon itself.
 pub fn info(ws: &Workspace, daemon: Runner) -> Result<Info, Fault> {
     let w = Journal::open(ws)?.workspace()?;
-    let named = ws.meta.get("name").and_then(|n| n.as_str());
-    let meta = ws
-        .meta
-        .iter()
-        .filter(|(k, _)| *k != "name")
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
+    // the config's keys about it, as its schema has them
+    let text = |k: &str| ws.meta.get(k).and_then(|v| v.as_str()).map(String::from);
+    let tags = ws.meta.get("tags").and_then(|t| t.as_array());
     let l = &ws.limits;
     Ok(Info {
         workspace: About {
             id: w.id,
-            name: named.map(String::from).unwrap_or(w.name),
+            name: text("name").unwrap_or(w.name),
             created: w.created,
             path: ws.root.display().to_string(),
             itero: w.itero,
-            meta,
+            version: text("version"),
+            description: text("description"),
+            tags: tags
+                .into_iter()
+                .flatten()
+                .filter_map(|t| t.as_str().map(String::from))
+                .collect(),
+            metadata: ws
+                .meta
+                .get("metadata")
+                .and_then(|m| m.as_object())
+                .cloned()
+                .unwrap_or_default(),
         },
         limits: Limits {
             workflows: l.workflows,

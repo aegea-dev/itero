@@ -45,8 +45,10 @@ A step with `"warm": true` shows `warm` under its action. Only a Python
 or Node action can be warm; on any other, the check fails at that step:
 
 ```
-error: warm: only Python and Node actions can be warm: its first line runs sh (home/workflows/sepet/steps/#üzüm)
-error: warm: only Python and Node actions can be warm: #notify is built in (home/workflows/sepet/steps/#notify)
+workflows/sepet.json
+  error: steps.#üzüm: warm: only Python and Node actions can be warm: its first line runs sh
+  error: steps.#notify: warm: only Python and Node actions can be warm: #notify is built in
+2 errors, 0 warnings
 ```
 
 See [Warm actions](/guides/actions/#warm-actions).
@@ -68,28 +70,37 @@ the machine's defaults say. See
 It reports every problem in every file in one run, not only the first: a
 key it does not know, an event type of one word, an action or a workflow
 that is not there, an action that is not executable, a file an arg names that
-cannot be used, a manifest entry that is wrong. Each is its message, then where it is, as an
-[address](/reference/concepts/#addresses); then how many, and the check
-fails (exit 1), printing nothing else:
+cannot be used, a key of `itero.config.json` that is not itero's or a value
+of the wrong form. They are grouped by the file each is in: the file once,
+then a line for each problem with its place in that file (a key path in the
+config, a step in a workflow), errors before warnings; then how many, and
+the check fails (exit 1), printing nothing else:
 
 ```
 $ itero ws check
-error: it needs $message (home/workflows/posta/steps/#ai)
-error: no action ship in the actions folders (home/workflows/order/steps/#ship)
-error: not JSON: expected `,` or `}` at line 7 column 3 (home/workflows/report)
-warning: key looks like a token: write it as a $$NAME (home/workflows/sort/steps/#ai/2)
-3 errors, 1 warning
+itero.config.json
+  error: limits.keep: a duration like 30m or 1d, not "1x"
+  error: workflow.greet: "of" is not a key; did you mean "off"?
+workflows/order.json
+  error: steps.#ship: no action ship in the actions folders
+workflows/posta.json
+  error: steps.#ai: it needs $message
+  warning: steps.#ai.2: key looks like a token: write it as a $$NAME
+workflows/report.json
+  error: not JSON: expected `,` or `}` at line 7 column 3
+5 errors, 1 warning
 ```
 
 Two things stop it inside one file: JSON that does not parse (nothing past
 the error can be read), and a value of the wrong shape, like `steps` that
 is not a list (nothing inside it is checked, so one mistake is told once).
 Run it after every edit. The daemon refuses a workflow file that does not
-read and a wrong manifest entry the same way, told the same way
+read and a config with any problem, told the same way
 ([Problems in your files](/commands/daemon/#problems-in-your-files)).
 
-`--json` gives the same as `errors` and `warnings`, each a `message` and
-its address `at`, beside what it could read: the same JSON as the API's
+`--json` gives the same as `errors` and `warnings`, each a `message`, its
+`file` and `place` there, and its [address](/reference/concepts/#addresses)
+`at`, beside what it could read: the same JSON as the API's
 [`GET /check`](/reference/http/#get-check), which answers 200 with the
 errors in it.
 
@@ -101,5 +112,6 @@ read (it takes `title`, `text`, `subtitle`, `sound`, `url`, `buttons`,
 let the log and its rolled copies take all of `space`:
 
 ```
-warning: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Price (home/workflows/price/steps/#notify)
+workflows/price.json
+  warning: steps.#notify: #notify takes title, text, subtitle, sound, url, buttons, wait and data, not Price
 ```

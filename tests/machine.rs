@@ -520,25 +520,30 @@ fn a_workspace_with_a_problem_is_refused_and_told_the_others_run_on() {
     );
     let text = std::fs::read_to_string(&said).unwrap();
     assert!(
-        text.contains(&format!(
-            "error: itero.config.json: no workflow yzz ({na}/workflows/yzz)\n"
-        )) && text.contains("2 errors, 0 warnings\n"),
+        text.contains("itero.config.json\n  error: workflow.yzz: no workflow yzz\n")
+            && text.contains("2 errors, 0 warnings\n"),
         "{text}"
     );
-    // b runs on; a's event waits
+    // b runs on; a takes no event while its config is wrong
     m.ok(&b, &["ws", "emit", "deneme.geldi"]);
-    m.ok(&a, &["ws", "emit", "deneme.geldi"]);
     until("b's workflow", || b.join("çıktı").is_file());
-    assert!(!a.join("çıktı").exists());
-    // a's manifest put right: it runs again, by itself, and its event runs
+    let o = m
+        .command(&a)
+        .args(["ws", "emit", "deneme.geldi"])
+        .output()
+        .unwrap();
+    assert!(!o.status.success(), "{o:?}");
+    // a's manifest put right: it runs again, by itself, and takes events
     std::fs::write(a.join("itero.config.json"), good).unwrap();
     until("a running", || seen(&na)["state"] == "running");
+    m.ok(&a, &["ws", "emit", "deneme.geldi"]);
     until("a's workflow", || a.join("çıktı").is_file());
     assert!(seen(&na).get("errors").is_none(), "{}", seen(&na));
     // told once, not at every pass
     let text = std::fs::read_to_string(&said).unwrap();
     assert_eq!(text.matches("2 errors, 0 warnings").count(), 1, "{text}");
-    assert!(text.contains(&format!("itero: {na} runs again")), "{text}");
+    // refused at the start, it starts once its files are right
+    assert!(text.contains(&format!("itero: running {na} (")), "{text}");
 }
 
 #[test]

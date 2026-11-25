@@ -19,11 +19,16 @@ use std::time::{Duration, Instant};
 pub struct Idle {
     pub state: &'static str,
     pub why: String,
+    /// Refused: the problems in its files.
+    pub errors: Vec<crate::answer::workspace::Told>,
 }
 
 /// The file in itero's state folder a worker touches when a step names a
 /// model the machine's list of models has not: the daemon scans again.
 pub const MODELS_WANTED: &str = "models.wanted";
+
+/// How often a refused workspace's files are read again.
+const AGAIN: Duration = Duration::from_secs(5);
 
 pub struct Machine {
     /// Asks for a scan for models (`start_scans`).
@@ -116,7 +121,24 @@ impl Machine {
                         .insert(e.id.clone(), r);
                 }
                 Err(i) => {
-                    crate::say!("itero: {} is {}: {}", e.name, i.state, i.why);
+                    let before = self
+                        .idle
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .get(&e.id)
+                        .map(|(_, b)| (b.state, b.errors.clone()));
+                    if before != Some((i.state, i.errors.clone())) {
+                        match i.state {
+                            "refused" => {
+                                crate::say!(
+                                    "itero: {} is refused: nothing runs in it until these are fixed",
+                                    e.name
+                                );
+                                crate::answer::workspace::say(&i.errors, &[]);
+                            }
+                            _ => crate::say!("itero: {} is {}: {}", e.name, i.state, i.why),
+                        }
+                    }
                     idle.insert(e.id.clone(), (e.clone(), i));
                 }
             }
@@ -127,9 +149,20 @@ impl Machine {
 
     /// Starts one listed workspace, or says why not.
     fn start(&self, e: &Entry) -> Result<Running, Idle> {
-        let (ws, _) = open(e).map_err(|err| Idle {
-            state: "missing",
-            why: err.to_string(),
+        let (ws, _) = open(e).map_err(|err| match err {
+            NotOpen::Refused(ps) => Idle {
+                state: "refused",
+                why: REFUSED.into(),
+                errors: ps
+                    .iter()
+                    .map(|p| crate::answer::workspace::told(&e.name, p))
+                    .collect(),
+            },
+            err => Idle {
+                state: "missing",
+                why: err.to_string(),
+                errors: vec![],
+            },
         })?;
         let d = super::daemon::Daemon::current();
         let who = format!("{}, pid {}", d.name, d.pid);
@@ -147,6 +180,7 @@ impl Machine {
                     return Err(Idle {
                         state: "stopped",
                         why,
+                        errors: vec![],
                     });
                 }
             }
@@ -163,7 +197,17 @@ impl Machine {
         .map_err(|err| Idle {
             state: "failed",
             why: format!("{err:#}"),
+            errors: vec![],
         })
+    }
+
+    /// Whether a listed workspace is refused for problems in its files.
+    fn any_refused(&self) -> bool {
+        self.idle
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .any(|(_, i)| i.state == "refused")
     }
 
     /// What it says of each workspace it has: its state and why.
@@ -195,7 +239,7 @@ impl Machine {
                     name: e.name.clone(),
                     state: i.state.to_string(),
                     why: Some(i.why.clone()),
-                    errors: vec![],
+                    errors: i.errors.clone(),
                 }),
         );
         out
@@ -303,7 +347,21 @@ impl Machine {
             let timeout = d
                 .due()
                 .map(|at| at.saturating_duration_since(Instant::now()));
+            // a refused workspace is looked at again every few seconds:
+            // its files may be put right, and nothing else would say so
+            let refused = self.any_refused();
+            let timeout = match (timeout, refused) {
+                (Some(t), true) => Some(t.min(AGAIN)),
+                (None, true) => Some(AGAIN),
+                (t, false) => t,
+            };
             let changes = backend.wait(timeout)?;
+            if refused
+                && changes.is_empty()
+                && let Err(e) = self.sync()
+            {
+                crate::say!("itero: reading the machine's list: {e:#}");
+            }
             d.add(changes, Instant::now());
             let (wanted, other): (Vec<_>, Vec<_>) = d
                 .take(Instant::now())
@@ -329,6 +387,9 @@ pub enum NotOpen {
     Missing(String),
     /// It is there, but its journal could not be read.
     Failed(anyhow::Error),
+    /// Its config has problems: each in its file at its place, its
+    /// addresses under the workspace's name.
+    Refused(Vec<crate::problem::Problem>),
 }
 
 impl std::fmt::Display for NotOpen {
@@ -336,6 +397,7 @@ impl std::fmt::Display for NotOpen {
         match self {
             NotOpen::Missing(why) => f.write_str(why),
             NotOpen::Failed(e) => write!(f, "{e:#}"),
+            NotOpen::Refused(_) => f.write_str(REFUSED),
         }
     }
 }
@@ -346,15 +408,27 @@ impl std::error::Error for NotOpen {}
 /// its files (completion).
 pub fn folder(e: &Entry) -> std::result::Result<Workspace, NotOpen> {
     let folder = e.folder.display();
-    let ws = crate::workspace::find(&e.folder)
-        .ok()
-        .filter(|ws| ws.root == e.folder)
-        .ok_or_else(|| NotOpen::Missing(format!("no workspace in {folder}")))?;
+    let ws = match crate::workspace::find(&e.folder) {
+        Ok(ws) => ws,
+        // its config has problems: refused, not missing
+        Err(err) => match crate::workspace::BadConfig::of(&err) {
+            Some(bad) if bad.root == e.folder => {
+                return Err(NotOpen::Refused(bad.problems.clone()));
+            }
+            _ => return Err(NotOpen::Missing(format!("no workspace in {folder}"))),
+        },
+    };
+    if ws.root != e.folder {
+        return Err(NotOpen::Missing(format!("no workspace in {folder}")));
+    }
     if !ws.journal().is_file() {
         return Err(NotOpen::Missing(format!("no journal in {folder}")));
     }
     Ok(ws)
 }
+
+/// What a refused workspace's state says.
+pub const REFUSED: &str = "problems in its files: nothing runs until they are fixed";
 
 /// A listed workspace, opened: missing when its folder is gone or holds
 /// another workspace now.

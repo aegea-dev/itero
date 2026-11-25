@@ -8,6 +8,7 @@ pub mod engine;
 mod file_arg;
 pub mod flow;
 pub mod machine;
+pub mod manifest;
 pub mod names;
 pub mod needs;
 pub mod net;
