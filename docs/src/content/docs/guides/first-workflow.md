@@ -100,3 +100,5 @@ a notification says the site is down.
 - [Workflows](/guides/workflows/): more examples, steps side by side,
   workflows as steps, what runs at the end.
 - [Actions](/guides/actions/): what an action gets and how it answers.
+- [Writing itero.config.json](/guides/config/): the workspace's name,
+  limits, an entry for each workflow, and keys of your own.

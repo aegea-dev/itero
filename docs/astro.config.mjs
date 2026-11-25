@@ -90,6 +90,7 @@ export default defineConfig({
 					label: 'Guides',
 					items: [
 						{ label: 'Writing your first workflow', slug: 'guides/first-workflow' },
+						{ label: 'Writing itero.config.json', slug: 'guides/config' },
 						{ label: 'Workflows ●', slug: 'guides/workflows' },
 						{ label: 'Actions ■', slug: 'guides/actions' },
 						{ label: 'Connectors ▲', slug: 'guides/connectors' },
