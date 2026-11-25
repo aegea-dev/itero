@@ -58,8 +58,7 @@ fn check_refuses_values_in_the_manifest() {
     let o = itero(d.path(), &["ws", "check"]);
     assert!(
         !o.status.success()
-            && err(&o).contains("itero.config.json: args are gone")
-            && err(&o).contains("/actions/kargola)"),
+            && err(&o).contains("itero.config.json\n  error: action.kargola: args are gone"),
         "{o:?}"
     );
     file(
@@ -80,9 +79,7 @@ fn check_refuses_values_in_the_manifest() {
     );
     let o = itero(d.path(), &["ws", "check"]);
     assert!(
-        !o.status.success()
-            && err(&o).contains("repeat is gone")
-            && err(&o).contains("/actions/kargola)"),
+        !o.status.success() && err(&o).contains("  error: action.kargola: repeat is gone"),
         "{o:?}"
     );
     // a connector's args: into each on entry that listens
@@ -95,9 +92,8 @@ fn check_refuses_values_in_the_manifest() {
     let o = itero(d.path(), &["ws", "check"]);
     assert!(
         !o.status.success()
-            && err(&o).contains("itero.config.json: args are gone")
-            && err(&o).contains("on entry")
-            && err(&o).contains("/connectors/posta.geldi)"),
+            && err(&o).contains("  error: connector.posta.geldi: args are gone")
+            && err(&o).contains("on entry"),
         "{o:?}"
     );
 }
@@ -249,10 +245,8 @@ fn check_refuses_an_entry_naming_nothing_and_folders_from_before() {
     let o = itero(d.path(), &["ws", "check"]);
     assert!(
         !o.status.success()
-            && err(&o).contains("no workflow yok-böyle (")
-            && err(&o).contains("/workflows/yok-böyle)")
-            && err(&o).contains("no action hayalet (")
-            && err(&o).contains("/actions/hayalet)"),
+            && err(&o).contains("  error: workflow.yok-böyle: no workflow yok-böyle\n")
+            && err(&o).contains("  error: action.hayalet: no action hayalet\n"),
         "{o:?}"
     );
     file(d.path(), "itero.config.json", "{}");
@@ -280,6 +274,12 @@ fn the_daemon_refuses_what_check_refuses_in_the_manifest_every_problem_at_once()
         .current_dir(d.path())
         .status()
         .unwrap();
+    // an event saved while the config is right
+    assert!(
+        itero(d.path(), &["ws", "emit", "saat.geldi", "{}"])
+            .status
+            .success()
+    );
     // a misspelt entry turns nothing off: it is refused, not ignored
     file(
         d.path(),
@@ -289,25 +289,20 @@ fn the_daemon_refuses_what_check_refuses_in_the_manifest_every_problem_at_once()
             "connector": {"yok.böyle": {}}}"#,
     );
     file(d.path(), "args/bak.json", "{}");
-    assert!(
-        itero(d.path(), &["ws", "emit", "saat.geldi", "{}"])
-            .status
-            .success()
-    );
-    let o = itero(d.path(), &["ws", "daemon", "--once"]);
-    let e = err(&o);
-    assert!(!o.status.success(), "{o:?}");
-    for told in [
-        "args/: is gone",
-        "no workflow gözcu",
-        "no action hayalet",
-        "no connector yok.böyle",
-        "args are gone",
-    ] {
-        assert!(e.contains(told), "{told}: {e}");
+    for args in [&["ws", "daemon", "--once"][..], &["ws", "wf", "runs"]] {
+        let o = itero(d.path(), args);
+        let e = err(&o);
+        assert!(!o.status.success(), "{args:?}: {o:?}");
+        for told in [
+            "error: args/: is gone",
+            "  error: workflow.gözcu: no workflow gözcu",
+            "  error: action.hayalet: no action hayalet",
+            "  error: connector.yok.böyle: no connector yok.böyle",
+            "  error: action.bak: args are gone",
+        ] {
+            assert!(e.contains(told), "{args:?} {told}: {e}");
+        }
     }
-    let runs = out(&itero(d.path(), &["ws", "wf", "runs", "--json"]));
-    assert_eq!(runs.trim(), "[]", "nothing ran: {runs}");
     // once the manifest is right, the event waiting runs
     file(d.path(), "itero.config.json", "{}");
     std::fs::remove_dir_all(d.path().join("args")).unwrap();
@@ -359,24 +354,63 @@ fn ws_daemon_does_not_start_with_a_problem_and_tells_every_one() {
     // told as ws check tells it: a line each, then how many
     let lines: Vec<&str> = e.lines().collect();
     for told in [
-        "itero.config.json: no workflow gözcu (",
-        "itero.config.json: no action hayalet (",
+        "itero.config.json\n  error: workflow.gözcu: no workflow gözcu\n  error: action.hayalet: no action hayalet\n",
+        "workflows/bozuk.json\n",
+        "  error: on.1: ",
         "is not a message type",
-        "a workflow needs steps (",
+        "  error: a workflow needs steps\n",
     ] {
-        assert!(
-            lines
-                .iter()
-                .any(|l| l.starts_with("error: ") && l.contains(told)),
-            "{told}: {e}"
-        );
+        assert!(e.contains(told), "{told}: {e}");
     }
-    assert!(
-        e.contains("/workflows/gözcu)") && e.contains("/workflows/bozuk)"),
-        "{e}"
-    );
     assert_eq!(lines.last(), Some(&"4 errors, 0 warnings"), "{e}");
     assert!(!out(&o).contains("running the workflows"), "{o:?}");
+}
+
+#[test]
+fn check_shows_each_problem_under_its_file_at_its_place() {
+    let d = workspace();
+    file(
+        d.path(),
+        "itero.config.json",
+        r#"{"limits": {"keep": "1x"}}"#,
+    );
+    file(
+        d.path(),
+        "workflows/gözcü.json",
+        r##"{ "on": [{ "event": "saat.geldi" }],
+              "steps": ["#gönder", { "#notify": { "args": { "text": "x", "renk": "kırmızı" } } }] }"##,
+    );
+    let o = itero(d.path(), &["ws", "check"]);
+    assert!(!o.status.success(), "{o:?}");
+    let e = err(&o);
+    let notify = "#notify takes";
+    let lines: Vec<&str> = e.lines().collect();
+    assert_eq!(lines[0], "itero.config.json", "{e}");
+    assert_eq!(
+        lines[1], r#"  error: limits.keep: a duration like 30m or 1d, not "1x""#,
+        "{e}"
+    );
+    assert_eq!(lines[2], "workflows/gözcü.json", "{e}");
+    assert!(
+        lines[3].starts_with("  error: steps.#gönder: no action gönder"),
+        "{e}"
+    );
+    assert!(
+        lines[4].starts_with("  warning: steps.#notify: ") && lines[4].contains(notify),
+        "{e}"
+    );
+    assert_eq!(lines[5], "2 errors, 1 warning", "{e}");
+    assert_eq!(lines.len(), 6, "{e}");
+    let o = itero(d.path(), &["ws", "check", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&out(&o)).unwrap();
+    let first = &v["errors"][0];
+    assert_eq!(first["file"], "itero.config.json", "{v}");
+    assert_eq!(first["place"], "limits.keep", "{v}");
+    assert_eq!(
+        first["message"], r#"a duration like 30m or 1d, not "1x""#,
+        "{v}"
+    );
+    assert!(first["at"].as_str().unwrap().ends_with("/limits"), "{v}");
 }
 
 #[test]
@@ -439,11 +473,13 @@ fn check_names_a_wrong_limit_of_an_action_once() {
     let e = err(&o);
     assert!(
         e.contains(
-            r##"itero.config.json: limits are gone: write them on the steps that run it: { "#depo": { "limits": { "quiet": "1h" } } } ("##
-        ) && e.contains("/actions/depo)"),
+            r##"itero.config.json
+  error: action.depo: limits are gone: write them on the steps that run it: { "#depo": { "limits": { "quiet": "1h" } } }
+"##
+        ),
         "{e}"
     );
-    assert_eq!(e.matches("itero.config.json").count(), 1, "{e}");
+    assert_eq!(e.matches("limits are gone").count(), 1, "{e}");
 }
 
 #[test]
@@ -842,8 +878,8 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
         d.path(),
         "itero.config.json",
         &format!(
-            r#"{{"name": "dükkân-işleri", "port": {port}, "sahibi": "ayşe", "limits": {{"runs": 7}},
-                 "workflow": {{"sipariş": {{"description": "Dükkân", "ekip": "ödeme"}}}}}}"#
+            r#"{{"name": "dukkan-isleri", "port": {port}, "metadata": {{"sahibi": "ayşe"}}, "limits": {{"runs": 7}},
+                 "workflow": {{"sipariş": {{"description": "Dükkân", "metadata": {{"ekip": "ödeme"}}}}}}}}"#
         ),
     );
     file(
@@ -855,7 +891,7 @@ fn info_shows_the_workspace_and_check_each_workflows_identity() {
     let info = out(&itero(d.path(), &["ws", "info"]));
     for says in [
         "id ",
-        "name dükkân-işleri",
+        "name dukkan-isleri",
         "created ",
         "path ",
         "sahibi",

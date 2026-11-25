@@ -24,11 +24,18 @@ pub struct Report {
     pub warnings: Vec<Told>,
 }
 
-/// A problem as told: its message, and where (`<workspace>/<address>`).
+/// A problem as told: its message; where, as its address
+/// (`<workspace>/<address>`); and as the file it is in, with its place there.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Told {
     pub message: String,
     pub at: String,
+    /// The file, from the workspace; empty for the workspace's own.
+    #[serde(default)]
+    pub file: String,
+    /// Its place in that file; empty for the whole file.
+    #[serde(default)]
+    pub place: String,
 }
 
 /// A workflow as check reads it.
@@ -90,16 +97,36 @@ pub fn told(ws_name: &str, p: &Problem) -> Told {
     Told {
         message: p.message.clone(),
         at,
+        file: p.file.clone().unwrap_or_default(),
+        place: p.place.clone(),
     }
 }
 
-/// Problems as `itero ws check` tells them, wherever they are found: a
-/// line each on stderr, `error: <message> (<workspace>/<address>)`, the
-/// warnings after, then how many.
+/// Problems as `itero ws check` tells them, wherever they are found, on
+/// stderr: grouped by the file each is in, the workspace's own first; the
+/// file once, then a line each, `  error: <place>: <message>`, its errors
+/// before its warnings; then how many.
 pub fn say(errors: &[Told], warnings: &[Told]) {
-    for (kind, list) in [("error", errors), ("warning", warnings)] {
-        for p in list {
-            crate::say!("{kind}: {} ({})", p.message, p.at);
+    // the files in the order first met, the workspace's own ("") first
+    let mut files: Vec<&str> = vec![];
+    for p in errors.iter().chain(warnings) {
+        if !files.contains(&p.file.as_str()) {
+            files.push(&p.file);
+        }
+    }
+    files.sort_by_key(|f| !f.is_empty());
+    for file in files {
+        let pad = if file.is_empty() { "" } else { "  " };
+        if !file.is_empty() {
+            crate::say!("{file}");
+        }
+        for (kind, list) in [("error", errors), ("warning", warnings)] {
+            for p in list.iter().filter(|p| p.file == file) {
+                match p.place.as_str() {
+                    "" => crate::say!("{pad}{kind}: {}", p.message),
+                    place => crate::say!("{pad}{kind}: {place}: {}", p.message),
+                }
+            }
         }
     }
     crate::say!(
@@ -118,7 +145,7 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
         }
     }
     let read = ws.read_flows()?;
-    let mut errors = ws.manifest_problems(&read)?;
+    let mut errors = ws.manifest_problems()?;
     let mut flows = read.flows;
     let files = ws.flow_files()?;
     let mut named: Vec<String> = files.keys().cloned().collect();
@@ -321,8 +348,8 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
         workflows,
         connectors,
         notes,
-        errors: told_all(&errors),
-        warnings: told_all(&warnings),
+        errors: told_all(&ws.placed(errors)),
+        warnings: told_all(&ws.placed(warnings)),
     })
 }
 

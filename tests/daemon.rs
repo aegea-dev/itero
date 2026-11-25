@@ -34,7 +34,8 @@ impl Ws {
     fn with(manifest: &str) -> Ws {
         let d = tempfile::tempdir().unwrap();
         std::fs::write(d.path().join("itero.config.json"), manifest).unwrap();
-        let ws = itero::workspace::find(d.path()).unwrap();
+        // its entries name workflows written after it: each pass checks them
+        let ws = itero::workspace::find_as_is(d.path()).unwrap();
         Ws { d, ws }
     }
 
@@ -1107,12 +1108,12 @@ fn a_run_reads_its_event_the_env_file_and_the_manifest() {
                } } }]}),
     );
     ws.action("bak", r#"echo "$liste $en_az $ad" >> görülen.txt"#);
-    ws.write("itero.config.json", r#"{"name": "gözcü-alanı"}"#);
+    ws.write("itero.config.json", r#"{"name": "gozcu-alani"}"#);
     ws.write(".env", "GOZCU_SITELER=https://örnek.test\n");
     ws.emit("saat.geldi", json!({"bölge": "avrupa", "en_az": 5}));
     ws.pass(NOW);
     assert_eq!(ws.statuses(), vec!["done"]);
-    assert_eq!(ws.read("görülen.txt"), "https://örnek.test 5 gözcü-alanı\n");
+    assert_eq!(ws.read("görülen.txt"), "https://örnek.test 5 gozcu-alani\n");
     let state = &ws.runs()[0].runtime.state;
     assert_eq!(state["event"]["en_az"], 5);
     assert!(

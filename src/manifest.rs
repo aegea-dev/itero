@@ -218,7 +218,7 @@ const GONE: [(&str, &str, &str); 8] = [
     (
         "workflow",
         "settings",
-        "settings are gone: itero.config.json holds no values; give them in .env ($$NAME), in a step's args, or in the event",
+        "settings are gone: the config holds no values; give them in .env ($$NAME), in a step's args, or in the event",
     ),
     (
         "action",
@@ -245,21 +245,22 @@ const GONE: [(&str, &str, &str); 8] = [
     ("", "path", "path is given by itero and cannot be set"),
 ];
 
-/// A config's JSON, when it parses, and every problem in it, each at its
-/// address in the workspace (`""`, `limits`, `workflows/<name>`): what the
-/// schema refuses, worded as itero words it, and what a value's own
-/// parser refuses that its pattern let through.
+/// A config's JSON, when it parses, and every problem in it, each in
+/// itero.config.json at its place there (`limits.keep`, `workflow.gözcü`)
+/// and at its address in the workspace (`limits`, `workflows/gözcü`):
+/// what the schema refuses, worded as itero words it, and what a value's
+/// own parser refuses that its pattern let through.
 pub fn problems(text: &str) -> (Option<Value>, Vec<Problem>) {
     let v: Value = match serde_json::from_str(text) {
         Ok(v) => v,
         // past a syntax error nothing more of the file can be read
-        Err(e) => return (None, vec![said("", format!("not JSON: {e}"))]),
+        Err(e) => return (None, vec![said(&[], format!("not JSON: {e}"))]),
     };
     let mut out = vec![];
     for e in validator().iter_errors(&v) {
         out.extend(worded(&e, &v));
     }
-    let told: Vec<String> = out.iter().map(|p| p.at.clone()).collect();
+    let told: Vec<String> = out.iter().map(|p| p.place.clone()).collect();
     out.extend(read_values(&v, &told));
     (Some(v), out)
 }
@@ -276,9 +277,10 @@ fn validator() -> &'static jsonschema::Validator {
     V.get_or_init(|| jsonschema::validator_for(made()).expect("itero's schema compiles"))
 }
 
-/// A problem at `at`, its message after the file's name.
-fn said(at: &str, message: impl std::fmt::Display) -> Problem {
-    Problem::new(at, format!("{MANIFEST}: {message}"))
+/// A problem at `place` in the config (its keys as written), with its
+/// address in the workspace.
+fn said(place: &[String], message: impl Into<String>) -> Problem {
+    Problem::new(address(place), message).placed(MANIFEST, place.join("."))
 }
 
 /// An error's place in the file, as names: `["workflow", "gözcü", "from"]`.
@@ -305,25 +307,23 @@ fn address(place: &[String]) -> String {
 const ENTRIES: [&str; 3] = ["workflow", "action", "connector"];
 
 /// The keys an object of the schema's `$defs` may hold, in its order.
-fn keys_of(def: &str) -> String {
-    let keys: Vec<String> = made()["$defs"][def]["properties"]
+fn keys_of(def: &str) -> Vec<String> {
+    made()["$defs"][def]["properties"]
         .as_object()
         .map(|p| p.keys().cloned().collect())
-        .unwrap_or_default();
-    keys.join(", ")
+        .unwrap_or_default()
 }
 
 /// One of the schema's errors as itero tells it: one problem, or the
 /// problems of an entry written out as an object.
 fn worded(e: &ValidationError, v: &Value) -> Vec<Problem> {
     let place = segments_of(e);
-    let at = address(&place);
-    let key = place.last().cloned().unwrap_or_default();
-    let one = |m: String| vec![said(&at, m)];
+    let was = pointer(v, &place).map(shown).unwrap_or_default();
+    let one = |m: String| vec![said(&place, m)];
     match e.kind() {
         ValidationErrorKind::AdditionalProperties { unexpected } => unexpected
             .iter()
-            .map(|k| said(&at, unknown_key(&place, k)))
+            .map(|k| said(&place, unknown_key(&place, k)))
             .collect(),
         // an entry: true, false, or an object; told by the object's keys
         ValidationErrorKind::AnyOf { context } if entry(&place) => {
@@ -339,14 +339,7 @@ fn worded(e: &ValidationError, v: &Value) -> Vec<Problem> {
                     .flat_map(|e| worded(e, v))
                     .collect()
             } else {
-                let what = match place[0].as_str() {
-                    "workflow" => "a workflow",
-                    "action" => "an action",
-                    _ => "a connector",
-                };
-                one(format!(
-                    r#"{what} entry is true, false or an object: {{ "description": "..." }}"#
-                ))
+                one(format!("true, false or an object, not {was}"))
             }
         }
         ValidationErrorKind::Type { .. }
@@ -354,20 +347,20 @@ fn worded(e: &ValidationError, v: &Value) -> Vec<Problem> {
         | ValidationErrorKind::Maximum { .. }
             if place == ["port"] =>
         {
-            one("port is a number from 1 to 65535".into())
+            one(format!("a number from 1 to 65535, not {was}"))
         }
-        ValidationErrorKind::Minimum { limit } => one(format!("{key} is at least {limit}")),
-        ValidationErrorKind::Maximum { limit } => one(format!("{key} is at most {limit}")),
-        ValidationErrorKind::Type { kind } => one(format!("{key} is {}", expected(kind))),
-        ValidationErrorKind::Pattern { .. } => {
-            let was = pointer(v, &place)
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            one(pattern_said(&place, &key, was))
-        }
+        ValidationErrorKind::Minimum { limit } => one(format!("at least {limit}, not {was}")),
+        ValidationErrorKind::Maximum { limit } => one(format!("at most {limit}, not {was}")),
+        ValidationErrorKind::Type { kind } => one(format!("{}, not {was}", expected(kind))),
+        ValidationErrorKind::Pattern { .. } => one(format!("{}, not {was}", form(&place))),
         // a kind itero has no words for: jsonschema's own, never dropped
         _ => one(e.to_string()),
     }
+}
+
+/// A value as it is written in the file.
+fn shown(v: &Value) -> String {
+    v.to_string()
 }
 
 /// Whether a place is an entry itself: `["workflow", "gözcü"]`.
@@ -385,7 +378,8 @@ fn pointer<'v>(v: &'v Value, place: &[String]) -> Option<&'v Value> {
 }
 
 /// A key the schema does not have, where it was found: where it went, if
-/// it is one from before, else which keys there are.
+/// it is one from before; the known key it is a slip of; else which keys
+/// there are.
 fn unknown_key(place: &[String], k: &str) -> String {
     let kind = match place {
         [] => "",
@@ -396,32 +390,66 @@ fn unknown_key(place: &[String], k: &str) -> String {
         let name = place.get(1).map(String::as_str).unwrap_or_default();
         return went.replace("<name>", name);
     }
-    match place {
-        [] => format!(r#""{k}" is not a key of itero.config.json; your own keys go in "metadata""#),
-        [kind, _] if kind == "workflow" => {
-            format!(
-                r#""{k}" is not a key of a workflow entry: {}"#,
-                keys_of("WorkflowEntry")
-            )
-        }
-        [kind, _] if kind == "action" => {
-            format!(
-                r#""{k}" is not a key of an action entry: {}"#,
-                keys_of("PlainEntry")
-            )
-        }
-        [kind, _] if kind == "connector" => {
-            format!(
-                r#""{k}" is not a key of a connector entry: {}"#,
-                keys_of("PlainEntry")
-            )
-        }
-        [key] if key == "limits" => format!(r#""{k}" is not a limit: {}"#, keys_of("RawLimits")),
-        [key] if key == "folders" => {
-            format!(r#""{k}" is not a key of folders: {}"#, keys_of("Folders"))
-        }
-        _ => format!(r#""{k}" is not a key here"#),
+    let def = match place {
+        [] => "Manifest",
+        [kind, _] if kind == "workflow" => "WorkflowEntry",
+        [kind, _] if ENTRIES.contains(&kind.as_str()) => "PlainEntry",
+        [key] if key == "limits" => "RawLimits",
+        [key] if key == "folders" => "Folders",
+        _ => "",
+    };
+    let known = if def == "Manifest" {
+        made()["properties"]
+            .as_object()
+            .map(|p| p.keys().cloned().collect())
+            .unwrap_or_default()
+    } else {
+        keys_of(def)
+    };
+    if let Some(near) = nearest(k, &known) {
+        return format!(r#""{k}" is not a key; did you mean "{near}"?"#);
     }
+    match def {
+        "Manifest" => format!(r#""{k}" is not a key; your own keys go in "metadata""#),
+        _ => format!(r#""{k}" is not a key: {}"#, known.join(", ")),
+    }
+}
+
+/// The known key `k` is a slip of: one letter added, taken away, changed
+/// or two swapped (two for a key longer than four letters), the nearest.
+fn nearest<'k>(k: &str, known: &'k [String]) -> Option<&'k str> {
+    let most = if k.chars().count() > 4 { 2 } else { 1 };
+    known
+        .iter()
+        .map(|c| (edits(k, c), c))
+        .filter(|(d, _)| *d <= most)
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, c)| c.as_str())
+}
+
+/// How many letters to add, take away, change or swap with the next to
+/// make `a` into `b`.
+fn edits(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut d = vec![vec![0; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let change = usize::from(a[i - 1] != b[j - 1]);
+            d[i][j] = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + change);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    d[a.len()][b.len()]
 }
 
 /// What a value of the type the schema wants is, in words.
@@ -437,25 +465,21 @@ fn expected(kind: &TypeKind) -> &'static str {
         "integer" | "number" => "a number",
         "array" => "a list of text",
         "object" => "an object",
-        _ => "of another type",
+        _ => "another type",
     }
 }
 
-/// A text that does not have the form of its key.
-fn pattern_said(place: &[String], key: &str, was: &str) -> String {
+/// The form a text of this place has.
+fn form(place: &[String]) -> &'static str {
+    let key = place.last().map(String::as_str).unwrap_or_default();
     match (place.first().map(String::as_str), key) {
         (Some("name"), _) => {
-            "name: lowercase letters, digits and hyphens, 1 to 63, a letter or digit at each end"
-                .into()
+            "lowercase letters, digits and hyphens, 1 to 63, a letter or digit at each end"
         }
-        (Some("limits"), "space" | "log") => {
-            format!(r#"{key}: a size is like 10MB or 1GB, not "{was}""#)
-        }
-        (Some("limits"), _) => format!(r#"{key}: a duration is like 30m, 2h or 1d, not "{was}""#),
-        (_, "from" | "until") => {
-            format!("{key}: a date (2026-11-01) or a time (2026-11-01T09:00:00Z)")
-        }
-        _ => format!(r#"{key} is not of its form: "{was}""#),
+        (Some("limits"), "space" | "log") => "a size like 10MB or 1GB",
+        (Some("limits"), _) => "a duration like 30m or 1d",
+        (_, "from" | "until") => "a date (2026-11-01) or a time (2026-11-01T09:00:00Z)",
+        _ => "text of another form",
     }
 }
 
@@ -463,35 +487,42 @@ fn pattern_said(place: &[String], key: &str, was: &str) -> String {
 /// duration of 0s, a size too big to count, a date that is no day.
 fn read_values(v: &Value, told: &[String]) -> Vec<Problem> {
     let mut out = vec![];
-    let fresh = |at: &str| !told.iter().any(|t| t == at);
-    if let Some(Value::Object(limits)) = v.get("limits")
-        && fresh("limits")
-    {
+    let fresh = |place: &[String]| !told.contains(&place.join("."));
+    let at = |path: &[&str]| -> Vec<String> { path.iter().map(|s| s.to_string()).collect() };
+    if let Some(Value::Object(limits)) = v.get("limits") {
         for (k, x) in limits {
+            let place = at(&["limits", k]);
             let Some(t) = x.as_str() else { continue };
-            let read = match k.as_str() {
-                "space" | "log" => crate::workspace::size(k, Some(t.into()), 0).err(),
-                "keep" | "quiet" | "most" => crate::workspace::duration(k, Some(t.into()), 0).err(),
+            if !fresh(&place) {
+                continue;
+            }
+            let wrong = match k.as_str() {
+                "space" | "log" => crate::workspace::size(k, Some(t.into()), 0)
+                    .err()
+                    .map(|_| format!("{}, not {}", form(&place), shown(x))),
+                "keep" | "quiet" | "most" => crate::workspace::duration(k, Some(t.into()), 0)
+                    .err()
+                    .map(|e| match e.to_string().contains("at least 1s") {
+                        true => format!("at least 1s, not {}", shown(x)),
+                        false => format!("{}, not {}", form(&place), shown(x)),
+                    }),
                 _ => None,
             };
-            if let Some(e) = read {
-                let m = e.to_string();
-                out.push(said("limits", m.strip_prefix("limits: ").unwrap_or(&m)));
+            if let Some(m) = wrong {
+                out.push(said(&place, m));
             }
         }
     }
     if let Some(Value::Object(flows)) = v.get("workflow") {
         for (name, e) in flows {
-            let at = format!("workflows/{name}");
             let Value::Object(e) = e else { continue };
-            if !fresh(&at) {
-                continue;
-            }
             for (k, end) in [("from", false), ("until", true)] {
+                let place = at(&["workflow", name, k]);
                 if let Some(x) = e.get(k)
-                    && let Err(m) = crate::flow::moment(k, x, end)
+                    && fresh(&place)
+                    && crate::flow::moment(k, x, end).is_err()
                 {
-                    out.push(said(&at, m));
+                    out.push(said(&place, format!("{}, not {}", form(&place), shown(x))));
                 }
             }
         }

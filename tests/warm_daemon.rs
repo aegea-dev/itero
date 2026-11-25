@@ -21,7 +21,7 @@ struct Ws {
 impl Ws {
     fn new(manifest: Value) -> Ws {
         let d = tempfile::tempdir().unwrap();
-        let mut m = json!({ "name": "ılık", "description": "warm steps" });
+        let mut m = json!({ "name": "ilik", "description": "warm steps" });
         m.as_object_mut()
             .unwrap()
             .extend(manifest.as_object().unwrap().clone());

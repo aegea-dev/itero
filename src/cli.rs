@@ -412,6 +412,19 @@ pub enum ConnectorCmd {
     },
 }
 
+impl Cmd {
+    /// Whether it asks for JSON, so a config's problems are told as JSON.
+    fn json_wanted(&self) -> bool {
+        matches!(
+            self,
+            Cmd::Workspace {
+                cmd: WorkspaceCmd::Check { json: true },
+                ..
+            }
+        )
+    }
+}
+
 #[derive(Subcommand)]
 pub enum WorkspaceCmd {
     /// Add this workspace to the machine's list: the machine's daemon runs it
@@ -636,8 +649,25 @@ pub fn run(args: Vec<String>) -> i32 {
             return e.exit_code();
         }
     };
-    match dispatch(cli) {
+    let json = cli.cmd.json_wanted();
+    let ran = dispatch(cli);
+    match &ran {
         Ok(()) => 0,
+        // a config with problems: every one, as ws check tells them
+        Err(e) if let Some(bad) = crate::workspace::BadConfig::of(e) => {
+            let errors: Vec<_> = bad
+                .problems
+                .iter()
+                .map(|p| crate::answer::workspace::told(&bad.name, p))
+                .collect();
+            if json {
+                let v = serde_json::json!({ "errors": errors, "warnings": [] });
+                println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+            } else {
+                crate::answer::workspace::say(&errors, &[]);
+            }
+            1
+        }
         Err(e) => {
             crate::say!("error: {e:#}");
             1
@@ -1216,7 +1246,17 @@ fn dispatch(cli: Cli) -> Result<()> {
                     once,
                     now,
                     no_serve,
-                } => run_one(chosen()?, once, now, no_serve)?,
+                } => {
+                    // a config with problems: told by run_one with the rest
+                    let ws = match chosen() {
+                        Ok(ws) => ws,
+                        Err(e) => match crate::workspace::BadConfig::of(&e) {
+                            Some(bad) => crate::workspace::find_as_is(&bad.root)?,
+                            None => return Err(e),
+                        },
+                    };
+                    run_one(ws, once, now, no_serve)?
+                }
                 WorkspaceCmd::Apply { dry_run, json } => {
                     let Some(c) = crate::context::chosen(context.as_deref())? else {
                         bail!(
@@ -1228,7 +1268,19 @@ fn dispatch(cli: Cli) -> Result<()> {
                     apply::run(&to, &here.root, dry_run, json)?
                 }
                 WorkspaceCmd::Info { json } => top::info(&client()?, json)?,
-                WorkspaceCmd::Check { json } => top::check(&client()?, json)?,
+                WorkspaceCmd::Check { json } => {
+                    // a config with problems is told with everything else wrong
+                    let c = match client() {
+                        Ok(c) => c,
+                        Err(e) => match crate::workspace::BadConfig::of(&e) {
+                            Some(bad) => crate::answer::Client::Local(Box::new(
+                                crate::workspace::find_as_is(&bad.root)?,
+                            )),
+                            None => return Err(e),
+                        },
+                    };
+                    top::check(&c, json)?
+                }
                 WorkspaceCmd::Which { name, json } => top::which(&client()?, &name, json)?,
                 WorkspaceCmd::Emit(args) => emit::one(&client()?, args)?,
                 WorkspaceCmd::Secret { name, file } => {

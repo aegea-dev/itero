@@ -119,60 +119,56 @@ fn the_schema_refuses_what_is_not_itero_and_takes_what_is() {
     }
 }
 
-/// What `problems` says of `text`: each problem's address and message.
+/// What `problems` says of `text`: each problem's place in the config and
+/// its message, all in itero.config.json.
 fn told(text: &str) -> Vec<(String, String)> {
     let (_, ps) = itero::manifest::problems(text);
-    ps.into_iter().map(|p| (p.at, p.message)).collect()
+    assert!(
+        ps.iter()
+            .all(|p| p.file.as_deref() == Some("itero.config.json")),
+        "{ps:?}"
+    );
+    ps.into_iter().map(|p| (p.place, p.message)).collect()
 }
 
 #[test]
-fn every_problem_of_a_config_is_told_at_once_with_its_place() {
+fn every_problem_of_a_config_is_told_at_once_at_its_place() {
     let ps = told(
         r#"{
         "prot": 8787,
+        "pirt": 1,
         "port": "8787",
         "limits": { "keep": "1x", "steps": 0 },
         "workflow": { "gözcü": { "of": true }, "eski": { "settings": {} } },
         "action": { "kargola": { "args": { "kaç": 1 } } }
     }"#,
     );
-    let has = |at: &str, says: &str| ps.iter().any(|(a, m)| a == at && m.contains(says));
-    assert!(
-        has(
-            "",
-            r#""prot" is not a key of itero.config.json; your own keys go in "metadata""#
+    let want = [
+        ("", r#""prot" is not a key; did you mean "port"?"#),
+        ("", r#""pirt" is not a key; did you mean "port"?"#),
+        ("port", r#"a number from 1 to 65535, not "8787""#),
+        ("limits.keep", r#"a duration like 30m or 1d, not "1x""#),
+        ("limits.steps", "at least 1, not 0"),
+        (
+            "workflow.gözcü",
+            r#""of" is not a key; did you mean "off"?"#,
         ),
-        "{ps:?}"
-    );
-    assert!(has("", "port is a number from 1 to 65535"), "{ps:?}");
-    assert!(
-        has(
-            "limits",
-            "keep: a duration is like 30m, 2h or 1d, not \"1x\""
+        (
+            "workflow.eski",
+            "settings are gone: the config holds no values; give them in .env ($$NAME), in a step's args, or in the event",
         ),
-        "{ps:?}"
-    );
-    assert!(has("limits", "steps is at least 1"), "{ps:?}");
-    assert!(
-        has(
-            "workflows/gözcü",
-            r#""of" is not a key of a workflow entry: description, tags, off, from, until, internal, metadata"#
+        (
+            "action.kargola",
+            "args are gone: an action's args are written in the step that runs it",
         ),
-        "{ps:?}"
-    );
-    assert!(has("workflows/eski", "settings are gone"), "{ps:?}");
-    assert!(
-        has(
-            "actions/kargola",
-            "args are gone: an action's args are written in the step that runs it"
-        ),
-        "{ps:?}"
-    );
-    assert_eq!(ps.len(), 7, "{ps:?}");
-    assert!(
-        ps.iter().all(|(_, m)| m.starts_with("itero.config.json: ")),
-        "{ps:?}"
-    );
+    ];
+    for (place, says) in want {
+        assert!(
+            ps.iter().any(|(p, m)| p == place && m == says),
+            "{place} {says}: {ps:?}"
+        );
+    }
+    assert_eq!(ps.len(), want.len(), "{ps:?}");
 }
 
 #[test]
@@ -201,15 +197,25 @@ fn values_the_patterns_let_through_are_still_read() {
     // each pattern takes these, and the parsers refuse them
     let ps = told(
         r#"{ "limits": { "keep": "0s", "space": "99999999999999999999GB" },
-                       "workflow": { "gözcü": { "from": "2026-13-45" } } }"#,
+             "workflow": { "gözcü": { "from": "2026-13-45" } } }"#,
     );
-    let has = |at: &str, says: &str| ps.iter().any(|(a, m)| a == at && m.contains(says));
-    assert!(has("limits", "keep is at least 1s"), "{ps:?}");
-    assert!(has("limits", "space: a size is like 10MB or 1GB"), "{ps:?}");
-    assert!(
-        has("workflows/gözcü", "from: a date (2026-11-01) or a time"),
-        "{ps:?}"
-    );
+    let want = [
+        ("limits.keep", r#"at least 1s, not "0s""#),
+        (
+            "limits.space",
+            r#"a size like 10MB or 1GB, not "99999999999999999999GB""#,
+        ),
+        (
+            "workflow.gözcü.from",
+            r#"a date (2026-11-01) or a time (2026-11-01T09:00:00Z), not "2026-13-45""#,
+        ),
+    ];
+    for (place, says) in want {
+        assert!(
+            ps.iter().any(|(p, m)| p == place && m == says),
+            "{place}: {ps:?}"
+        );
+    }
     assert_eq!(ps.len(), 3, "{ps:?}");
 }
 
@@ -218,15 +224,20 @@ fn each_kind_of_mistake_is_told_in_itero_words() {
     let cases = [
         (
             r#"{ "name": "ev-işleri" }"#,
-            "",
-            "name: lowercase letters, digits and hyphens, 1 to 63, a letter or digit at each end",
+            "name",
+            r#"lowercase letters, digits and hyphens, 1 to 63, a letter or digit at each end, not "ev-işleri""#,
         ),
         (
             r#"{ "port": 70000 }"#,
-            "",
-            "port is a number from 1 to 65535",
+            "port",
+            "a number from 1 to 65535, not 70000",
         ),
-        (r#"{ "tags": "ev" }"#, "", "tags is a list of text"),
+        (r#"{ "tags": "ev" }"#, "tags", r#"a list of text, not "ev""#),
+        (
+            r#"{ "sahibi": "ayşe" }"#,
+            "",
+            r#""sahibi" is not a key; your own keys go in "metadata""#,
+        ),
         (
             r#"{ "id": "x" }"#,
             "",
@@ -235,48 +246,53 @@ fn each_kind_of_mistake_is_told_in_itero_words() {
         (
             r#"{ "limits": { "kep": "1d" } }"#,
             "limits",
-            r#""kep" is not a limit: workflows, runs, steps, space, keep, log, logs, quiet, most"#,
+            r#""kep" is not a key; did you mean "keep"?"#,
+        ),
+        (
+            r#"{ "limits": { "renk": 1 } }"#,
+            "limits",
+            r#""renk" is not a key: workflows, runs, steps, space, keep, log, logs, quiet, most"#,
         ),
         (
             r#"{ "limits": { "space": "lots" } }"#,
-            "limits",
-            "space: a size is like 10MB or 1GB, not \"lots\"",
+            "limits.space",
+            r#"a size like 10MB or 1GB, not "lots""#,
         ),
         (
             r#"{ "folders": { "workflow": ["x"] } }"#,
             "folders",
-            r#""workflow" is not a key of folders: workflows, actions, connectors"#,
+            r#""workflow" is not a key; did you mean "workflows"?"#,
         ),
         (
             r#"{ "workflow": { "gözcü": "açık" } }"#,
-            "workflows/gözcü",
-            r#"a workflow entry is true, false or an object: { "description": "..." }"#,
+            "workflow.gözcü",
+            r#"true, false or an object, not "açık""#,
         ),
         (
             r#"{ "workflow": { "gözcü": { "from": "yarın" } } }"#,
-            "workflows/gözcü",
-            "from: a date (2026-11-01) or a time (2026-11-01T09:00:00Z)",
+            "workflow.gözcü.from",
+            r#"a date (2026-11-01) or a time (2026-11-01T09:00:00Z), not "yarın""#,
         ),
         (
-            r#"{ "action": { "bak": { "off": true } } }"#,
-            "actions/bak",
-            r#""off" is not a key of an action entry: description, tags, metadata"#,
+            r#"{ "action": { "bak": { "renk": true } } }"#,
+            "action.bak",
+            r#""renk" is not a key: description, tags, metadata"#,
         ),
         (
             r#"{ "action": { "bak": { "repeat": [] } } }"#,
-            "actions/bak",
+            "action.bak",
             r##"repeat is gone: repeat goes on the step: { "#bak": { "repeat": ... } }"##,
         ),
         (
             r#"{ "connector": { "posta.geldi": { "args": {} } } }"#,
-            "connectors/posta.geldi",
+            "connector.posta.geldi",
             r#"args are gone: write them in the on entry of each workflow that listens: { "event": "posta.geldi", "args": {...} }"#,
         ),
     ];
-    for (text, at, says) in cases {
+    for (text, place, says) in cases {
         let ps = told(text);
         assert!(
-            ps.len() == 1 && ps[0].0 == at && ps[0].1 == format!("itero.config.json: {says}"),
+            ps.len() == 1 && ps[0].0 == place && ps[0].1 == says,
             "{text}: {ps:?}"
         );
     }

@@ -58,10 +58,10 @@ fn the_manifest_says_how_it_runs_and_what_it_is() {
         d.path(),
         "itero.config.json",
         r#"{
-          "name": "ev-işleri",
+          "name": "ev-isleri",
           "version": "0.1.0",
           "description": "Posta ve siparişler",
-          "kapı": 1,
+          "metadata": { "kapı": 1 },
           "port": 8799,
           "folders": { "workflows": ["iş akışları"], "actions": ["eylemler", "~/ortak"], "connectors": ["kaynaklar"] }
         }"#,
@@ -73,10 +73,10 @@ fn the_manifest_says_how_it_runs_and_what_it_is() {
     assert_eq!(ws.actions[0], d.path().join("eylemler"));
     assert!(ws.actions[1].ends_with("ortak"));
     assert_eq!(ws.connectors, [d.path().join("kaynaklar")]);
-    // what it is: its own keys too, kept; how it runs is not among them
-    assert_eq!(ws.meta["name"], "ev-işleri");
+    // what it is, a person's own keys in metadata; how it runs is not among them
+    assert_eq!(ws.meta["name"], "ev-isleri");
     assert_eq!(ws.meta["version"], "0.1.0");
-    assert_eq!(ws.meta["kapı"], 1);
+    assert_eq!(ws.meta["metadata"]["kapı"], 1);
     assert!(!ws.meta.contains_key("port") && !ws.meta.contains_key("folders"));
 }
 
@@ -169,19 +169,42 @@ fn an_action_entry_holds_no_args() {
               "kargola": { "description": "Kargoya verir", "args": { "firma": "PTT Kargo" } },
               "sade": { "description": "Args yok" } } }"##,
     );
-    ws.no_args("sade").unwrap();
-    let e = format!("{:#}", ws.no_args("kargola").unwrap_err());
+    let _ = ws;
+    let ps = refused(d.path());
     assert!(
-        e.contains("action.kargola.args are gone") && e.contains("the step that runs it"),
-        "{e}"
+        ps.iter().any(|(place, m)| place == "action.kargola"
+            && m == "args are gone: an action's args are written in the step that runs it"),
+        "{ps:?}"
     );
+    assert!(
+        !ps.iter()
+            .any(|(place, m)| place == "action.sade" && m.contains("gone")),
+        "{ps:?}"
+    );
+}
+
+/// What `find` refuses in the workspace at `d`: each problem's place in
+/// itero.config.json and its message.
+fn refused(d: &Path) -> Vec<(String, String)> {
+    let e = workspace::find(d).map(|_| ()).unwrap_err();
+    let bad = workspace::BadConfig::of(&e).unwrap_or_else(|| panic!("not the config's: {e:#}"));
+    assert!(
+        bad.problems
+            .iter()
+            .all(|p| p.file.as_deref() == Some("itero.config.json")),
+        "{:?}",
+        bad.problems
+    );
+    bad.problems
+        .iter()
+        .map(|p| (p.place.clone(), p.message.clone()))
+        .collect()
 }
 
 #[test]
 fn a_connectors_entry_holds_no_args() {
     let d = tempfile::tempdir().unwrap();
-    let ws = simple(d.path());
-    ws.no_connector_args("posta.geldi").unwrap();
+    simple(d.path());
     write(
         d.path(),
         "itero.config.json",
@@ -189,12 +212,17 @@ fn a_connectors_entry_holds_no_args() {
               "posta.geldi": { "args": { "user": "ayşe@örnek.test" } },
               "sade.olay": { "description": "Args yok" } } }"#,
     );
-    ws.no_connector_args("sade.olay").unwrap();
-    let e = format!("{:#}", ws.no_connector_args("posta.geldi").unwrap_err());
+    let ps = refused(d.path());
     assert!(
-        e.contains("connector.posta.geldi.args are gone")
-            && e.contains(r#"{ "event": "posta.geldi", "args": {...} }"#),
-        "{e}"
+        ps.iter().any(|(place, m)| place == "connector.posta.geldi"
+            && m.starts_with("args are gone")
+            && m.contains(r#"{ "event": "posta.geldi", "args": {...} }"#)),
+        "{ps:?}"
+    );
+    assert!(
+        !ps.iter()
+            .any(|(place, m)| place == "connector.sade.olay" && m.contains("gone")),
+        "{ps:?}"
     );
 }
 
@@ -212,12 +240,12 @@ fn meta_is_free_and_limits_have_defaults() {
     write(
         d.path(),
         "itero.config.json",
-        r#"{ "description": "Ev: posta ve siparişler", "sahibi": "ayşe", "etiketler": ["ev", "küçük"],
+        r#"{ "description": "Ev: posta ve siparişler", "tags": ["ev", "küçük"], "metadata": { "sahibi": "ayşe" },
              "limits": { "runs": 5, "space": "500MB", "keep": "2h", "log": "64KB", "quiet": "30m", "most": "6h" } }"#,
     );
     let ws = workspace::find(d.path()).unwrap();
-    assert_eq!(ws.meta["sahibi"], "ayşe");
-    assert_eq!(ws.meta["etiketler"], serde_json::json!(["ev", "küçük"]));
+    assert_eq!(ws.meta["metadata"]["sahibi"], "ayşe");
+    assert_eq!(ws.meta["tags"], serde_json::json!(["ev", "küçük"]));
     assert_eq!(ws.limits.runs, 5);
     assert_eq!(ws.limits.workflows, 100);
     assert_eq!(ws.limits.space, 500 << 20);
@@ -235,43 +263,78 @@ fn an_actions_entry_limits_are_gone_and_say_where_to_write_them() {
         "itero.config.json",
         r#"{ "action": { "uzun-iş": { "limits": { "quiet": "2h" } }, "kısa": {} } }"#,
     );
-    let ws = workspace::find(d.path()).unwrap();
-    let e = format!("{:#}", ws.no_action_limits("uzun-iş").unwrap_err());
+    let ps = refused(d.path());
     assert!(
-        e.ends_with(
-            r##"action.uzun-iş.limits are gone: write them on the steps that run it: { "#uzun-iş": { "limits": { "quiet": "1h" } } }"##
-        ),
-        "{e}"
+        ps.iter().any(|(place, m)| place == "action.uzun-iş"
+            && m == r##"limits are gone: write them on the steps that run it: { "#uzun-iş": { "limits": { "quiet": "1h" } } }"##),
+        "{ps:?}"
     );
-    ws.no_action_limits("kısa").unwrap();
-    ws.no_action_limits("hiç").unwrap();
+    assert!(
+        !ps.iter()
+            .any(|(_, m)| m.contains("gone") && !m.contains("uzun-iş")),
+        "{ps:?}"
+    );
 }
 
 #[test]
 fn limit_mistakes_are_named() {
-    for (manifest, says) in [
-        (r#"{"limits": {"koşu": 5}}"#, "koşu"),
+    // each as find refuses it: its place in the config and what it says
+    for (manifest, place, says) in [
+        (
+            r#"{"limits": {"koşu": 5}}"#,
+            "limits",
+            r#""koşu" is not a key"#,
+        ),
         (
             r#"{"limits": {"space": "çok"}}"#,
-            "a size is like 10MB or 1GB",
+            "limits.space",
+            r#"a size like 10MB or 1GB, not "çok""#,
         ),
-        (r#"{"limits": {"keep": "bir gün"}}"#, "a duration is like"),
-        (r#"{"limits": {"steps": 0}}"#, "steps is at least 1"),
+        (
+            r#"{"limits": {"keep": "bir gün"}}"#,
+            "limits.keep",
+            r#"a duration like 30m or 1d, not "bir gün""#,
+        ),
+        (
+            r#"{"limits": {"steps": 0}}"#,
+            "limits.steps",
+            "at least 1, not 0",
+        ),
         (
             r#"{"limits": {"quiet": "sessiz"}}"#,
-            "quiet: a duration is like",
+            "limits.quiet",
+            r#"a duration like 30m or 1d, not "sessiz""#,
         ),
-        (r#"{"limits": {"most": "0s"}}"#, "most is at least 1s"),
-        (r#"{"id": "01a0"}"#, "id is given by itero"),
-        (r#"{"port": "sekiz"}"#, "port"),
-        (r#"{"folders": {"eylemler": ["x"]}}"#, "eylemler"),
-        (r#"["ş"]"#, "an object"),
-        ("{ bozuk", "itero.config.json"),
+        (
+            r#"{"limits": {"most": "0s"}}"#,
+            "limits.most",
+            r#"at least 1s, not "0s""#,
+        ),
+        (
+            r#"{"id": "01a0"}"#,
+            "",
+            "id is given by itero and cannot be set",
+        ),
+        (
+            r#"{"port": "sekiz"}"#,
+            "port",
+            r#"a number from 1 to 65535, not "sekiz""#,
+        ),
+        (
+            r#"{"folders": {"eylemler": ["x"]}}"#,
+            "folders",
+            r#""eylemler" is not a key"#,
+        ),
+        (r#"["ş"]"#, "", r#"an object, not ["ş"]"#),
+        ("{ bozuk", "", "not JSON: "),
     ] {
         let d = tempfile::tempdir().unwrap();
         write(d.path(), "itero.config.json", manifest);
-        let e = format!("{:#}", workspace::find(d.path()).err().unwrap());
-        assert!(e.contains(says), "{manifest}: {e}");
+        let ps = refused(d.path());
+        assert!(
+            ps.iter().any(|(p, m)| p == place && m.starts_with(says)),
+            "{manifest}: {ps:?}"
+        );
     }
 }
 
@@ -481,29 +544,35 @@ fn a_workflow_files_meta_is_refused_and_built_ins_are_internal() {
 
 #[test]
 fn entry_mistakes_name_the_manifest_and_the_workflow() {
-    for (manifest, says) in [
+    for (manifest, place, says) in [
         (
             r#"{"workflow": {"gözcü": {"off": "evet"}}}"#,
-            "off is true or false",
+            "workflow.gözcü.off",
+            r#"true or false, not "evet""#,
         ),
         (
             r#"{"workflow": {"gözcü": {"settings": 3}}}"#,
+            "workflow.gözcü",
             "settings are gone",
         ),
-        (r#"{"workflow": ["gözcü"]}"#, "workflow is an object"),
+        (
+            r#"{"workflow": ["gözcü"]}"#,
+            "workflow",
+            r#"an object, not ["gözcü"]"#,
+        ),
     ] {
         let d = tempfile::tempdir().unwrap();
-        let ws = simple(d.path());
+        simple(d.path());
         write(
             d.path(),
             "workflows/gözcü.json",
             r##"{ "steps": ["#bak"] }"##,
         );
         write(d.path(), "itero.config.json", manifest);
-        let e = format!("{:#}", ws.flows().unwrap_err());
+        let ps = refused(d.path());
         assert!(
-            e.contains(says) && e.contains("itero.config.json"),
-            "{manifest}: {e}"
+            ps.iter().any(|(p, m)| p == place && m.starts_with(says)),
+            "{manifest}: {ps:?}"
         );
     }
 }
@@ -541,11 +610,16 @@ fn an_actions_entry_holds_no_repeat() {
               "posta": { "repeat": [ { "user": "ayşe@örnek.test" } ] },
               "sade": { "description": "Tekrar yok" } } }"##,
     );
-    ws.no_repeat("sade").unwrap();
-    let e = format!("{:#}", ws.no_repeat("posta").unwrap_err());
+    let _ = ws;
+    let ps = refused(d.path());
     assert!(
-        e.contains("action.posta.repeat is gone")
-            && e.contains(r##"{ "#posta": { "repeat": ... } }"##),
-        "{e}"
+        ps.iter().any(|(place, m)| place == "action.posta"
+            && m == r##"repeat is gone: repeat goes on the step: { "#posta": { "repeat": ... } }"##),
+        "{ps:?}"
+    );
+    assert!(
+        !ps.iter()
+            .any(|(place, m)| place == "action.sade" && m.contains("gone")),
+        "{ps:?}"
     );
 }
