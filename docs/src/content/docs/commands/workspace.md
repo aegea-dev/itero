@@ -147,7 +147,8 @@ itero ws info [--json]
 ```
 
 The workspace: its id, name, when it was made, its folder, the itero that
-made it, what its manifest says it is, and its `limits`. Then the daemon running it, when
+made it, what its config says it is (`version`, `description`, `tags`
+and `metadata`, those it has), and its `limits`. Then the daemon running it, when
 one answers on the port: its id, name, start, pid, host, itero version and port.
 Last, whether notifications can be shown: on macOS, macOS's setting for
 Itero (`allowed`, `off`, `not asked`) and the copy of Itero.app that
@@ -162,6 +163,8 @@ workspace
   created 2026-10-21T19:46:51Z
   path /Users/me/home
   itero 0.15.0
+  version 0.1.0
+  tags home, mail
   limits
     workflows 100
     runs 1000

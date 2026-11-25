@@ -64,7 +64,7 @@ tunnel at this API: it can stop runs.
 ```json
 { "ok": true, "pid": 4242,
   "workspace": { "id": "01a0f3…", "name": "quiet-river", "created": "...", "itero": "0.15.0",
-                 "path": "/Users/me/home", "meta": { "owner": "ayşe" } },
+                 "path": "/Users/me/home", "meta": { "metadata": { "owner": "ayşe" } } },
   "daemon": { "id": "01a15f2c…", "name": "brave-otter", "started": "...", "pid": 4242,
               "host": "mini", "itero": "0.15.0" },
   "started": "...", "passes": 42, "last_pass": "...", "last_error": null,
