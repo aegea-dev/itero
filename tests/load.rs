@@ -66,8 +66,10 @@ fn the_machines_parts_are_there_of_their_type_and_plausible() {
     );
     let total = number(&v, "/memory/total");
     assert!(total > 0);
-    assert!(
-        number(&v, "/memory/used") <= total && number(&v, "/memory/free") <= total,
+    // what is used and what is free make the whole, on macOS as on Linux
+    assert_eq!(
+        number(&v, "/memory/used") + number(&v, "/memory/free"),
+        total,
         "{v}"
     );
     let _ = number(&v, "/memory/swap_used");

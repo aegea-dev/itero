@@ -118,13 +118,19 @@ fn cpu() -> Result<Value, String> {
     Ok(json!({ "count": count, "load": [l.one, l.five, l.fifteen] }))
 }
 
+/// Memory: what is used, and the rest free, so the two make the total on
+/// every system. sysinfo's own "available" cannot be the rest: on macOS it
+/// counts the pages apps are using too (active + inactive + free), so it
+/// and "used" (apps, wired and compressed, as Activity Monitor has it) add
+/// up to more than there is. On Linux, used is total minus available.
 fn memory() -> Result<Value, String> {
     let mut s = sysinfo::System::new().map_err(|e| format!("memory: {e}"))?;
     s.refresh_memory_specifics(sysinfo::MemoryRefreshKind::everything());
+    let (total, used) = (s.total_memory(), s.used_memory());
     Ok(json!({
-        "total": s.total_memory(),
-        "used": s.used_memory(),
-        "free": s.available_memory(),
+        "total": total,
+        "used": used,
+        "free": total.saturating_sub(used),
         "swap_used": s.used_swap(),
     }))
 }
