@@ -1,6 +1,8 @@
 //! The built-in `#load`: the machine and itero, measured at once. Each
 //! part is a read of the OS, the journal or the files, with no waiting,
 //! and only the parts asked for (`measure`) are read.
+pub mod record;
+
 use super::worker::{Failure, Outcome, StepRun};
 use serde_json::{Map, Value, json};
 use std::path::Path;

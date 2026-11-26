@@ -186,7 +186,7 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
     );
     // an arg a built-in does not read: likely a mix-up, not an error (it
     // still joins the state)
-    let built_ins: [(&str, &[&str]); 4] = [
+    let built_ins: [(&str, &[&str]); 5] = [
         (
             crate::engine::worker::NOTIFY,
             &crate::engine::worker::NOTIFY_ARGS,
@@ -194,6 +194,7 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
         (crate::engine::worker::AI, &crate::ai::step::ARGS),
         (crate::engine::worker::BROWSER, &crate::browser::step::ARGS),
         (crate::engine::worker::LOAD, &["measure"]),
+        (crate::engine::worker::RECORD_LOAD, &["load"]),
     ];
     // #ai's own messages name it: the address says the step
     let ai = |m: String| m.strip_prefix("#ai: ").map(String::from).unwrap_or(m);

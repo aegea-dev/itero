@@ -51,6 +51,8 @@ pub struct Limits {
     pub quiet: std::time::Duration,
     /// How long a step may run at most, printing or not.
     pub most: std::time::Duration,
+    /// How long the files of `load` results are kept.
+    pub history: std::time::Duration,
 }
 
 impl RawLimits {
@@ -70,6 +72,7 @@ impl RawLimits {
             logs: count("logs", self.logs, 3)?,
             quiet: duration("quiet", self.quiet, 10 * 60)?,
             most: duration("most", self.most, DAY)?,
+            history: duration("history", self.history, 30 * DAY)?,
         })
     }
 }
@@ -139,9 +142,10 @@ pub(crate) fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
 
 /// The workflows itero carries, run as if they were in `workflows/`; a
 /// file of the same name there is used instead.
-pub const BUILT_IN: [(&str, &str); 4] = [
+pub const BUILT_IN: [(&str, &str); 5] = [
     ("keep", include_str!("builtin/keep.json")),
     ("load", include_str!("builtin/load.json")),
+    ("load-record", include_str!("builtin/load-record.json")),
     ("logs", include_str!("builtin/logs.json")),
     ("models", include_str!("builtin/models.json")),
 ];

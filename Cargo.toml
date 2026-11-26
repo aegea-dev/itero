@@ -60,6 +60,8 @@ tungstenite = { version = "~0.30.0", default-features = false, features = ["hand
 # #load: the machine's memory, load and processes, read the same way on
 # macOS and Linux (only what `system` reads, no threads of its own)
 sysinfo = { version = "~0.40.4", default-features = false, features = ["system"] }
+# #record-load: a past day's file of load results gzipped, in Rust
+flate2 = { version = "~1.1.11", default-features = false, features = ["rust_backend"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "~0.2.190"

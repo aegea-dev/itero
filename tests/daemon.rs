@@ -1524,6 +1524,67 @@ fn load_is_off_until_its_entry_is_true_then_measures_every_minute() {
     }
 }
 
+#[test]
+fn load_record_keeps_each_load_in_the_days_file_gzips_past_days_and_deletes_past_history() {
+    let w = Ws::with(
+        r#"{"limits": {"history": "2d"}, "workflow": {"models": {"off": true}, "load": true}}"#,
+    );
+    // a workspace's own load: only memory; and a #load in another workflow
+    w.flow(
+        "load",
+        json!({ "on": [{ "schedule": "* * * * *" }],
+                "steps": [{ "#load": { "args": { "measure": ["memory"] } } }] }),
+    );
+    w.flow(
+        "başka",
+        json!({ "on": [{ "event": "ölç.istendi" }], "steps": ["#load"] }),
+    );
+    w.write(".itero/load/2026-11-23.jsonl", "{\"eski\":1}\n");
+    w.write(".itero/load/2026-11-25.jsonl", "{\"dün\":1}\n");
+    w.write(".itero/load/notlar.txt", "benim\n");
+    w.pass("2026-11-26T00:00:30Z"); // seen: counting starts
+    w.emit("ölç.istendi", json!({}));
+    w.pass("2026-11-26T00:01:10Z");
+    w.pass("2026-11-26T00:01:10Z");
+    let today = w.read(".itero/load/2026-11-26.jsonl");
+    let lines: Vec<Value> = today
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 1, "only load's runs: {today}");
+    assert!(lines[0]["memory"]["total"].as_u64().unwrap() > 0, "{today}");
+    let dir = w.d.path().join(".itero/load");
+    assert!(!dir.join("2026-11-25.jsonl").exists());
+    let gz = std::fs::File::open(dir.join("2026-11-25.jsonl.gz")).unwrap();
+    let mut was = String::new();
+    std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(gz), &mut was).unwrap();
+    assert_eq!(was, "{\"dün\":1}\n");
+    // 2026-11-23 ended more than 2 days ago
+    assert!(!dir.join("2026-11-23.jsonl").exists() && !dir.join("2026-11-23.jsonl.gz").exists());
+    // what is not #record-load's stays
+    assert_eq!(w.read(".itero/load/notlar.txt"), "benim\n");
+    let record = w
+        .runs()
+        .into_iter()
+        .find(|r| r.workflow == "load-record")
+        .unwrap();
+    assert_eq!(
+        record.runtime.state["output"]["file"],
+        ".itero/load/2026-11-26.jsonl"
+    );
+}
+
+#[test]
+fn load_record_can_be_turned_off() {
+    let w =
+        Ws::with(r#"{"workflow": {"models": {"off": true}, "load": true, "load-record": false}}"#);
+    w.pass("2026-11-26T10:00:30Z");
+    w.pass("2026-11-26T10:01:10Z");
+    w.pass("2026-11-26T10:01:10Z");
+    assert!(w.runs().iter().any(|r| r.workflow == "load"));
+    assert!(!w.d.path().join(".itero/load").exists());
+}
+
 /// Waits up to 20 seconds for `ok`.
 fn soon(mut ok: impl FnMut() -> bool) -> bool {
     let end = std::time::Instant::now() + std::time::Duration::from_secs(20);

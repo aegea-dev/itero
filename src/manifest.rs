@@ -167,6 +167,9 @@ pub struct RawLimits {
     /// The longest a step may run.
     #[schemars(regex(pattern = DURATION), extend("default" = "1d"))]
     pub most: Option<String>,
+    /// How long the files of `load` results are kept: a duration.
+    #[schemars(regex(pattern = DURATION), extend("default" = "30d"))]
+    pub history: Option<String>,
 }
 
 /// The schema of itero.config.json, as published.
@@ -506,12 +509,14 @@ fn read_values(v: &Value, told: &[String]) -> Vec<Problem> {
                 "space" | "log" => crate::workspace::size(k, Some(t.into()), 0)
                     .err()
                     .map(|_| format!("{}, not {}", form(&place), shown(x))),
-                "keep" | "quiet" | "most" => crate::workspace::duration(k, Some(t.into()), 0)
-                    .err()
-                    .map(|e| match e.to_string().contains("at least 1s") {
-                        true => format!("at least 1s, not {}", shown(x)),
-                        false => format!("{}, not {}", form(&place), shown(x)),
-                    }),
+                "keep" | "quiet" | "most" | "history" => {
+                    crate::workspace::duration(k, Some(t.into()), 0)
+                        .err()
+                        .map(|e| match e.to_string().contains("at least 1s") {
+                            true => format!("at least 1s, not {}", shown(x)),
+                            false => format!("{}, not {}", form(&place), shown(x)),
+                        })
+                }
                 _ => None,
             };
             if let Some(m) = wrong {

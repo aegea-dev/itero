@@ -170,6 +170,12 @@
           "type": "string",
           "pattern": "^ *[0-9]+ *(ns|nsec|us|usec|ms|msec|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|M|month|months|y|year|years)( *[0-9]+ *(ns|nsec|us|usec|ms|msec|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|M|month|months|y|year|years))* *$",
           "default": "1d"
+        },
+        "history": {
+          "description": "How long the files of `load` results are kept: a duration.",
+          "type": "string",
+          "pattern": "^ *[0-9]+ *(ns|nsec|us|usec|ms|msec|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|M|month|months|y|year|years)( *[0-9]+ *(ns|nsec|us|usec|ms|msec|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|M|month|months|y|year|years))* *$",
+          "default": "30d"
         }
       },
       "additionalProperties": false

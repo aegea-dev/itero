@@ -157,6 +157,38 @@ fn every_part_costs_little() {
 }
 
 #[test]
+fn record_load_wants_a_load_result() {
+    let d = workspace();
+    for (args, says) in [
+        (
+            json!({}),
+            "#record-load: load is needed: the #load result to keep",
+        ),
+        (
+            json!({ "load": "çok" }),
+            "#record-load: load is a #load result, an object, not \"çok\"",
+        ),
+    ] {
+        let out = run_step(&StepRun {
+            file: itero::engine::worker::RECORD_LOAD.into(),
+            root: d.path().to_path_buf(),
+            workflow: "load-record".into(),
+            env: Default::default(),
+            input: json!({ "args": args }).as_object().cloned().unwrap(),
+            memory: d.path().join(".itero/memory/load-record"),
+            waiting_since: None,
+            quiet: 10,
+            most: 10,
+            now: "2026-11-26T10:00:00Z".into(),
+        });
+        match out {
+            Err(Failure::Error(why)) => assert_eq!(why, says),
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[test]
 fn wrong_parts_are_all_told_at_once() {
     assert_eq!(
         problems(&json!({ "measure": ["memroy", 3, "disk"] }), true),

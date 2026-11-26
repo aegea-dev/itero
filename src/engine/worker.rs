@@ -675,8 +675,21 @@ pub const FIND_MODELS: &str = "find-models";
 /// (`crate::engine::load`).
 pub const LOAD: &str = "load";
 
+/// The built-in `#record-load`: a `load` result kept in the day's file
+/// (`crate::engine::load::record`).
+pub const RECORD_LOAD: &str = "record-load";
+
 /// The actions itero carries, used when the workspace has none of the name.
-pub const BUILT_IN: [&str; 7] = [NOTIFY, FORGET, ROLL_LOG, AI, FIND_MODELS, BROWSER, LOAD];
+pub const BUILT_IN: [&str; 8] = [
+    NOTIFY,
+    FORGET,
+    ROLL_LOG,
+    AI,
+    FIND_MODELS,
+    BROWSER,
+    LOAD,
+    RECORD_LOAD,
+];
 
 fn forget(r: &StepRun) -> Result<Outcome, Failure> {
     let failed = |e: anyhow::Error| Failure::Error(format!("#forget: {e:#}"));
@@ -834,6 +847,9 @@ pub fn run_step_telling(
     }
     if r.file == Path::new(LOAD) {
         return super::load::run(r);
+    }
+    if r.file == Path::new(RECORD_LOAD) {
+        return super::load::record::run(r);
     }
     if r.file == Path::new(BROWSER) {
         return crate::browser::step::run(r, told);
