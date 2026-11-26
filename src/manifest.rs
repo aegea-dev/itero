@@ -423,7 +423,7 @@ pub(crate) fn not_a_key(k: &str, known: &[String]) -> String {
 
 /// The known key `k` is a slip of: one letter added, taken away, changed
 /// or two swapped (two for a key longer than four letters), the nearest.
-fn nearest<'k>(k: &str, known: &'k [String]) -> Option<&'k str> {
+pub(crate) fn nearest<'k>(k: &str, known: &'k [String]) -> Option<&'k str> {
     let most = if k.chars().count() > 4 { 2 } else { 1 };
     known
         .iter()

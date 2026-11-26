@@ -205,6 +205,42 @@ fn ws_check_says_every_problem_of_every_browser_step() {
 }
 
 #[test]
+fn ws_check_and_the_daemon_refuse_every_wrong_part_of_a_load_step() {
+    let d = tempfile::tempdir().unwrap();
+    file(d.path(), "itero.config.json", "{}");
+    file(
+        d.path(),
+        "workflows/ölçüm.json",
+        r##"{ "on": [{ "event": "ölç.istendi" }], "steps": [
+        { "#load": { "args": { "measure": ["memroy", 3] } } },
+        { "#load": { "args": { "ölç": true } } } ] }"##,
+    );
+    let o = ws_check(d.path(), false);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    for line in [
+        "workflows/ölçüm.json\n",
+        "#load: measure: \"memroy\" is not a part; did you mean \"memory\"?\n",
+        "#load: measure: a part is text, not 3\n",
+        "#load takes measure, not ölç\n",
+        "2 errors, 1 warning\n",
+    ] {
+        assert!(err.contains(line), "{line}\n{err}");
+    }
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let refused = itero::engine::daemon::refused(&ws).unwrap();
+    let said: Vec<&str> = refused.iter().map(|p| p.message.as_str()).collect();
+    assert!(
+        said.iter().any(|m| m.contains("\"memroy\" is not a part")),
+        "{said:?}"
+    );
+    assert!(
+        said.iter().any(|m| m.contains("a part is text, not 3")),
+        "{said:?}"
+    );
+}
+
+#[test]
 fn ws_check_shows_warm_steps_and_says_each_that_cannot_be() {
     use std::os::unix::fs::PermissionsExt;
     let d = tempfile::tempdir().unwrap();

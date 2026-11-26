@@ -186,13 +186,14 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
     );
     // an arg a built-in does not read: likely a mix-up, not an error (it
     // still joins the state)
-    let built_ins: [(&str, &[&str]); 3] = [
+    let built_ins: [(&str, &[&str]); 4] = [
         (
             crate::engine::worker::NOTIFY,
             &crate::engine::worker::NOTIFY_ARGS,
         ),
         (crate::engine::worker::AI, &crate::ai::step::ARGS),
         (crate::engine::worker::BROWSER, &crate::browser::step::ARGS),
+        (crate::engine::worker::LOAD, &["measure"]),
     ];
     // #ai's own messages name it: the address says the step
     let ai = |m: String| m.strip_prefix("#ai: ").map(String::from).unwrap_or(m);
@@ -245,14 +246,14 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
                         }
                         for arg in crate::flow::arg_names_of(args) {
                             if !taken.contains(&arg.as_str()) {
-                                let (last, rest) =
-                                    taken.split_last().expect("a built-in takes args");
+                                let takes = match taken.split_last() {
+                                    Some((last, [])) => last.to_string(),
+                                    Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+                                    None => unreachable!("a built-in takes args"),
+                                };
                                 warnings.push(Problem::new(
                                     at.clone(),
-                                    format!(
-                                        "#{action} takes {} and {last}, not {arg}",
-                                        rest.join(", ")
-                                    ),
+                                    format!("#{action} takes {takes}, not {arg}"),
                                 ));
                             }
                         }

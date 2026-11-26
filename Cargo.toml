@@ -57,6 +57,9 @@ clap_complete = { version = "~4.6.11", features = ["unstable-dynamic"] }
 itero-ai-index = { path = "itero-ai-index" }
 # the browser: CDP over a WebSocket on 127.0.0.1, so no TLS
 tungstenite = { version = "~0.30.0", default-features = false, features = ["handshake"] }
+# #load: the machine's memory, load and processes, read the same way on
+# macOS and Linux (only what `system` reads, no threads of its own)
+sysinfo = { version = "~0.40.4", default-features = false, features = ["system"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "~0.2.190"

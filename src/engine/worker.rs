@@ -671,8 +671,12 @@ pub const BROWSER: &str = "browser";
 /// the index itero-ai reads (`crate::ai::find`).
 pub const FIND_MODELS: &str = "find-models";
 
+/// The built-in `#load`: the machine and itero, measured
+/// (`crate::engine::load`).
+pub const LOAD: &str = "load";
+
 /// The actions itero carries, used when the workspace has none of the name.
-pub const BUILT_IN: [&str; 6] = [NOTIFY, FORGET, ROLL_LOG, AI, FIND_MODELS, BROWSER];
+pub const BUILT_IN: [&str; 7] = [NOTIFY, FORGET, ROLL_LOG, AI, FIND_MODELS, BROWSER, LOAD];
 
 fn forget(r: &StepRun) -> Result<Outcome, Failure> {
     let failed = |e: anyhow::Error| Failure::Error(format!("#forget: {e:#}"));
@@ -827,6 +831,9 @@ pub fn run_step_telling(
     }
     if r.file == Path::new(FIND_MODELS) {
         return crate::ai::find::run(r);
+    }
+    if r.file == Path::new(LOAD) {
+        return super::load::run(r);
     }
     if r.file == Path::new(BROWSER) {
         return crate::browser::step::run(r, told);

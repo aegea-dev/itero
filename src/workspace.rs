@@ -554,6 +554,11 @@ impl Workspace {
             problems.extend(files.into_iter().map(|why| Problem::new(at.clone(), why)));
             match crate::flow::read(&v) {
                 Ok(_) if usable => {
+                    problems.extend(
+                        self.built_in_problems(&v)
+                            .into_iter()
+                            .map(|(place, m)| Problem::new(format!("{at}/{place}"), m)),
+                    );
                     out.insert(name, v);
                 }
                 Ok(_) => {}
@@ -698,6 +703,31 @@ impl Workspace {
     ) -> Result<crate::flow::Flow> {
         self.flow_with_entry(name, v, entries)
             .map_err(|ps| anyhow!("{}", crate::flow::told(&ps)))
+    }
+
+    /// What is wrong with the args of the built-in actions a workflow's
+    /// steps run, each at its step's address: refused by `ws check` and the
+    /// daemon alike, since both read the workflows through here. A step of
+    /// an action the workspace has its own file for is that file's.
+    fn built_in_problems(&self, v: &Value) -> Vec<(String, String)> {
+        let mut out = vec![];
+        for (place, step, args, _) in crate::flow::addressed(v) {
+            let crate::flow::Name::Action {
+                name,
+                version: None,
+            } = &step
+            else {
+                continue;
+            };
+            if name == crate::engine::worker::LOAD && self.action_file(name, None).is_err() {
+                out.extend(
+                    crate::engine::load::problems(&args, true)
+                        .into_iter()
+                        .map(|m| (place.clone(), format!("#load: {m}"))),
+                );
+            }
+        }
+        out
     }
 
     fn flow_with_entry(
