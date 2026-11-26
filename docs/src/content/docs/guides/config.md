@@ -68,9 +68,10 @@ it off, or on only between two dates:
 }
 ```
 
-`true` is an entry with nothing to say, `false` turns it off (`keep` is
-one of [itero's own workflows](/guides/maintenance/#built-in-keep-logs-and-models):
-off, nothing forgets ended runs). An entry
+`true` turns it on, `false` turns it off (`keep` is one of
+[itero's own workflows](/guides/maintenance/#built-in-workflows): off,
+nothing forgets ended runs; `load`, off until then, is turned on by
+`true`). An entry
 that names nothing is an error: a name with a typo never leaves a workflow
 running that you meant to turn off.
 

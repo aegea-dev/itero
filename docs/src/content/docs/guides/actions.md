@@ -152,14 +152,51 @@ Notifications, Itero. [`itero ws info`](/commands/workspace/#info) says whether 
 may notify.
 
 `#forget` forgets ended runs and their events past `keep`, `#roll-log`
-rolls the log, and `#find-models` finds the models on the machine; the
-built-in workflows use them
+rolls the log, `#find-models` finds the models on the machine, and
+`#record-load` keeps a `#load` result (its arg `load`) in the day's file;
+the built-in workflows use them
 ([The daemon's own workflows](/guides/maintenance/)). `#ai` asks a
 model, on this machine or behind a URL ([#ai in a workflow](/ai/workflows/)).
 `#browser` opens, reads, clicks through, inspects, photographs and
 saves pages in Chrome ([The browser](/guides/browser/)).
 
 A workspace action of the same name is used instead of a built-in one.
+
+### `#load`
+
+`#load` measures the machine and itero at once, on macOS and Linux alike,
+and never waits: each part is a read of the system, the journal or the
+files. The built-in workflow `load` runs it every minute
+([Measuring the machine and itero](/guides/maintenance/#measuring-the-machine-and-itero)),
+and any workflow can run it as a step.
+
+| Arg | Is |
+|---|---|
+| `measure` | a list of the parts to measure; every part when not given. A part it does not know is an error of `itero ws check` and the daemon, with the one you may have meant |
+
+```json
+{ "#load": { "args": { "measure": ["memory", "disk"] } } }
+```
+
+Its result has `at` (when it measured), each part asked for, and `took`
+(what measuring took). Sizes are bytes; CPU time is milliseconds.
+
+| Part | Fields |
+|---|---|
+| `os` | `name` (`macos`, `linux`), `version`, `arch` (`aarch64`, `x86_64`), `host` |
+| `cpu` | `count` (the CPUs itero may use), `load` (the 1, 5 and 15 minute load averages) |
+| `memory` | `total`, `used`, `free` (what can be had without swapping), `swap_used` |
+| `disk` | `total`, `free` (what may still be written), of the disk the workspace is on |
+| `daemon` | `pid`, `cpu_ms` (its CPU time so far), `memory` (resident), `files` (open), `workers` (steps running, this one apart), `workers_memory` (theirs and the warm copies', with all they started), `warm` (warm copies), `machine` (`true` under the machine's daemon, `itero daemon`) |
+| `queue` | `events` (not handled yet, the daemon's own among them), `running`, `waiting` (runs) |
+| `runs` | `last_minute` (runs started), `pick_up_ms` (`p50`, `p95`: from an event's saving to its run's start, in the last minute; `null` with none) |
+| `journal` | `size` (the journal), `wal` (its write-ahead log), `itero` (all of `.itero/`) |
+| `took` | `ms`, `cpu_ms`: what this `#load` cost |
+
+Under the machine's daemon, `daemon` is that one daemon, shared by every
+workspace on the list; `queue`, `runs` and `journal` are the workspace's
+own. `journal` measures every file in `.itero/`: the one part to leave out
+of a frequent `#load` that does not need it.
 
 ## Other languages, and their dependencies
 

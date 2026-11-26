@@ -29,6 +29,7 @@ or its step's own `limits`); a
 lost or stopped step runs again, up to 3 times. A step with `"warm": true` runs a
 Python or Node action's file again in a copy kept loaded, with the same result
 and exit code ([Warm actions](/guides/actions/#warm-actions)). Built in, unless the workspace has an action of the name:
-`#notify` (shows its args `text` and `title`), `#ai` (asks a model), `#forget`,
-`#roll-log` and `#find-models`. See
+`#notify` (shows its args `text` and `title`), `#ai` (asks a model), `#browser`
+(drives Chrome), `#load` (measures the machine and itero), `#forget`,
+`#roll-log`, `#find-models` and `#record-load`. See
 [Actions](/guides/actions/).
