@@ -30,7 +30,11 @@ fn a_workspace_without_its_folders_has_no_workflows_and_its_daemon_idles() {
     write(d.path(), "itero.config.json", "{}");
     let ws = workspace::find(d.path()).unwrap();
     let names: Vec<String> = ws.flows().unwrap().into_iter().map(|(n, _)| n).collect();
-    assert_eq!(names, ["keep", "logs", "models"], "only the built-in ones");
+    assert_eq!(
+        names,
+        ["keep", "load", "logs", "models"],
+        "only the built-in ones"
+    );
     assert!(ws.connector_files().unwrap().is_empty());
     let exe = Path::new(env!("CARGO_BIN_EXE_itero"));
     let pass = itero::engine::daemon::run_once(&ws, chrono::Utc::now(), exe).unwrap();
@@ -109,7 +113,7 @@ fn workflows_are_named_after_their_files() {
     let names: Vec<&str> = flows.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(
         names,
-        vec!["keep", "logs", "models", "posta-uyarısı", "sipariş"]
+        vec!["keep", "load", "logs", "models", "posta-uyarısı", "sipariş"]
     );
     write(d.path(), "workflows/bozuk.json", r##"{ "steps": [] }"##);
     let e = format!("{:#}", ws.flows().unwrap_err());
@@ -386,7 +390,10 @@ fn subfolders_group_and_names_stay_the_file_names() {
         );
         executable(d.path(), "connectors/.cache/eski.kaynak", "#!/bin/sh\n");
         let names: Vec<String> = ws.flows().unwrap().into_iter().map(|(n, _)| n).collect();
-        assert_eq!(names, ["keep", "logs", "models", "sipariş", "uyarı"]);
+        assert_eq!(
+            names,
+            ["keep", "load", "logs", "models", "sipariş", "uyarı"]
+        );
         let file = |n: &str, v: Option<&str>| ws.action_file(n, v).unwrap();
         assert!(file("gönder", None).ends_with("actions/kargo/eski/gönder@0.1"));
         assert!(file("gönder", Some("0.1")).ends_with("gönder@0.1"));

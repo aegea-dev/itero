@@ -1491,6 +1491,39 @@ fn a_built_in_workflow_is_turned_off_by_its_entry() {
     assert!(!w.d.path().join(".itero/itero.log.1").exists());
 }
 
+#[test]
+fn load_is_off_until_its_entry_is_true_then_measures_every_minute() {
+    for (config, runs) in [
+        (r#"{"workflow": {"models": {"off": true}}}"#, 0),
+        // an object leaves the built-in's own off as it is
+        (
+            r#"{"workflow": {"models": {"off": true}, "load": {"tags": ["ölçüm"]}}}"#,
+            0,
+        ),
+        (
+            r#"{"workflow": {"models": {"off": true}, "load": true}}"#,
+            1,
+        ),
+    ] {
+        let w = Ws::with(config);
+        w.pass("2026-11-26T10:00:30Z"); // seen: counting starts
+        w.pass("2026-11-26T10:01:10Z");
+        let loads: Vec<Run> = w
+            .runs()
+            .into_iter()
+            .filter(|r| r.workflow == "load")
+            .collect();
+        assert_eq!(loads.len(), runs, "{config}");
+        for r in loads {
+            assert_eq!(steps::status(&r.runtime), "done", "{config}");
+            let out = &r.runtime.state["output"];
+            for part in itero::engine::load::PARTS {
+                assert!(out[part].is_object(), "{part}: {out}");
+            }
+        }
+    }
+}
+
 /// Waits up to 20 seconds for `ok`.
 fn soon(mut ok: impl FnMut() -> bool) -> bool {
     let end = std::time::Instant::now() + std::time::Duration::from_secs(20);

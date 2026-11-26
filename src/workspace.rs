@@ -139,8 +139,9 @@ pub(crate) fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
 
 /// The workflows itero carries, run as if they were in `workflows/`; a
 /// file of the same name there is used instead.
-pub const BUILT_IN: [(&str, &str); 3] = [
+pub const BUILT_IN: [(&str, &str); 4] = [
     ("keep", include_str!("builtin/keep.json")),
+    ("load", include_str!("builtin/load.json")),
     ("logs", include_str!("builtin/logs.json")),
     ("models", include_str!("builtin/models.json")),
 ];
@@ -828,8 +829,8 @@ impl Workspace {
             Some(Value::Object(m)) => m
                 .into_iter()
                 .map(|(name, e)| match e {
-                    // true: on, with its defaults; false: off
-                    Value::Bool(true) => Ok((name, Value::Object(Map::new()))),
+                    // true: on, a built-in off by default too; false: off
+                    Value::Bool(true) => Ok((name, serde_json::json!({ "off": false }))),
                     Value::Bool(false) => Ok((name, serde_json::json!({ "off": true }))),
                     Value::Object(_) => Ok((name, e)),
                     _ => bail!(
