@@ -6,7 +6,9 @@ use serde_json::{Map, Value, json};
 use std::path::Path;
 
 /// The parts `#load` measures, in the order its output has them.
-pub const PARTS: [&str; 4] = ["os", "cpu", "memory", "disk"];
+pub const PARTS: [&str; 8] = [
+    "os", "cpu", "memory", "disk", "daemon", "queue", "runs", "journal",
+];
 
 /// What is wrong with `#load`'s args, every problem: `measure` is a list
 /// of parts. `written`: the args as the workflow has them, where a
@@ -69,6 +71,10 @@ pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
             "cpu" => cpu(),
             "memory" => memory(),
             "disk" => disk(&ws.root),
+            "daemon" => daemon(ws.machine),
+            "queue" => queue(&ws),
+            "runs" => runs(&ws),
+            "journal" => journal(&ws),
             _ => unreachable!("every part is measured: {part}"),
         }
         .map_err(failed)?;
@@ -135,4 +141,144 @@ fn disk(root: &Path) -> Result<Value, String> {
     }
     let block = s.f_frsize as u64;
     Ok(json!({ "total": s.f_blocks as u64 * block, "free": s.f_bavail as u64 * block }))
+}
+
+/// The daemon: this worker's parent. Its own CPU time, memory and open
+/// files; the steps running (its `itero worker` children, this one apart),
+/// the warm copies (`itero worker --warm`), and the memory of both and of
+/// everything they started.
+fn daemon(machine: bool) -> Result<Value, String> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
+    // SAFETY: getppid only reads this process's parent's id
+    let pid = Pid::from_u32(unsafe { libc::getppid() } as u32);
+    let me = Pid::from_u32(std::process::id());
+    let mut s = sysinfo::System::new().map_err(|e| format!("daemon: {e}"))?;
+    // every process once, for its parent only
+    s.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    let mut children: std::collections::HashMap<Pid, Vec<Pid>> = Default::default();
+    for p in s.processes().values() {
+        if let Some(parent) = p.parent() {
+            children.entry(parent).or_default().push(p.pid());
+        }
+    }
+    // a process and everything under it
+    let below = |from: Pid| {
+        let mut all = vec![from];
+        let mut i = 0;
+        while i < all.len() {
+            all.extend(children.get(&all[i]).into_iter().flatten().copied());
+            i += 1;
+        }
+        all
+    };
+    let mut asked = below(pid);
+    asked.retain(|p| *p != me);
+    s.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&asked),
+        true,
+        ProcessRefreshKind::nothing()
+            .with_memory()
+            .with_cpu()
+            .with_cmd(UpdateKind::OnlyIfNotSet),
+    );
+    let d = s.process(pid).ok_or("daemon: its process is gone")?;
+    let files = d.open_files().ok_or("daemon.files: cannot be read")?;
+    let is_worker = |p: &sysinfo::Process| p.cmd().get(1).is_some_and(|a| a == "worker");
+    let is_warm = |p: &sysinfo::Process| p.cmd().iter().any(|a| a == "--warm");
+    let (mut workers, mut warm, mut memory) = (0u64, 0u64, 0u64);
+    for c in children
+        .get(&pid)
+        .into_iter()
+        .flatten()
+        .filter(|c| **c != me)
+    {
+        let Some(p) = s.process(*c).filter(|p| is_worker(p)) else {
+            continue;
+        };
+        if is_warm(p) {
+            warm += 1
+        } else {
+            workers += 1
+        }
+        memory += below(*c)
+            .iter()
+            .filter_map(|x| s.process(*x))
+            .map(|x| x.memory())
+            .sum::<u64>();
+    }
+    Ok(json!({
+        "pid": pid.as_u32(),
+        "cpu_ms": d.accumulated_cpu_time(),
+        "memory": d.memory(),
+        "files": files,
+        "workers": workers,
+        "workers_memory": memory,
+        "warm": warm,
+        "machine": machine,
+    }))
+}
+
+fn queue(ws: &crate::workspace::Workspace) -> Result<Value, String> {
+    let j = super::journal::Journal::open(ws).map_err(|e| format!("queue: {e:#}"))?;
+    let (events, running, waiting) = j.queue().map_err(|e| format!("queue: {e:#}"))?;
+    Ok(json!({ "events": events, "running": running, "waiting": waiting }))
+}
+
+/// The runs started in the last minute, and how long each waited from its
+/// event's saving to its start, as `make bench` measures it: the time in
+/// each one's UUIDv7.
+fn runs(ws: &crate::workspace::Workspace) -> Result<Value, String> {
+    let j = super::journal::Journal::open(ws).map_err(|e| format!("runs: {e:#}"))?;
+    let since = (chrono::Utc::now().timestamp_millis() as u64).saturating_sub(60_000);
+    // the smallest UUIDv7 of that millisecond
+    let first = format!(
+        "{:08x}-{:04x}-7000-8000-000000000000",
+        since >> 16,
+        since & 0xffff
+    );
+    let started = j
+        .started_since(&first)
+        .map_err(|e| format!("runs: {e:#}"))?;
+    let ms = |id: &str| {
+        uuid::Uuid::parse_str(id)
+            .ok()
+            .and_then(|u| u.get_timestamp())
+            .map(|t| {
+                let (s, n) = t.to_unix();
+                s * 1000 + u64::from(n) / 1_000_000
+            })
+    };
+    let mut waits: Vec<u64> = started
+        .iter()
+        .filter_map(|(run, event)| Some(ms(run)?.saturating_sub(ms(event.as_deref()?)?)))
+        .collect();
+    waits.sort_unstable();
+    // nearest rank; none in the minute: none to tell
+    let at = |p: f64| -> Value {
+        match waits.len() {
+            0 => Value::Null,
+            n => waits[((p * n as f64).ceil() as usize).clamp(1, n) - 1].into(),
+        }
+    };
+    Ok(json!({
+        "last_minute": started.len(),
+        "pick_up_ms": { "p50": at(0.5), "p95": at(0.95) },
+    }))
+}
+
+/// The journal's file and its write-ahead log, and all of `.itero/`.
+fn journal(ws: &crate::workspace::Workspace) -> Result<Value, String> {
+    let file = ws.journal();
+    let size = |p: &Path| match std::fs::metadata(p) {
+        Ok(m) => Ok(m.len()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(e) => Err(format!("journal: {}: {e}", p.display())),
+    };
+    let mut wal = file.clone().into_os_string();
+    wal.push("-wal");
+    Ok(json!({
+        "size": size(&file)?,
+        "wal": size(Path::new(&wal))?,
+        "itero": ws.used(),
+    }))
 }
