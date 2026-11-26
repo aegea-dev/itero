@@ -159,7 +159,10 @@ The config's JSON Schema is at
 made from the same definitions itero reads the config with, so what your
 editor underlines is what itero refuses. `"$schema"` with that URL, at the
 top of the file, gives VS Code, JetBrains IDEs and other editors that read
-JSON Schema its keys, their types and their descriptions as you type.
+JSON Schema its keys, their types and their descriptions as you type. The
+schema is in [SchemaStore](https://www.schemastore.org)'s catalog under the
+file's name, so JetBrains IDEs and other editors that use the catalog find
+it without `$schema`.
 
 Itero reads values the schema cannot check too: a size or a duration it
 can read (`"0s"` is not one), and a date that is a real day. Every problem

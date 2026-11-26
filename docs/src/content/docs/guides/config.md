@@ -29,7 +29,9 @@ so it can go in an address. `itero ws info` shows them all.
 that read JSON Schema then suggest every key as you type, say what each
 is, and underline a mistake before itero sees it. What the editor
 underlines is what itero refuses: both read the same
-[schema](/reference/itero-config/#the-schema).
+[schema](/reference/itero-config/#the-schema). JetBrains IDEs and other
+editors that use [SchemaStore](https://www.schemastore.org)'s catalog find
+it by the file's name, without `$schema`; VS Code needs the line.
 
 ## How it runs
 
