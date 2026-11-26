@@ -538,6 +538,12 @@ impl Workspace {
                 }
             };
             written.insert(name.clone(), v.clone());
+            // every step that can be read, whatever else is wrong
+            problems.extend(
+                self.built_in_problems(&v)
+                    .into_iter()
+                    .map(|(place, m)| Problem::new(format!("{at}/{place}"), m)),
+            );
             if v.get("meta").is_some() {
                 problems.push(Problem::new(
                     at,
@@ -554,11 +560,6 @@ impl Workspace {
             problems.extend(files.into_iter().map(|why| Problem::new(at.clone(), why)));
             match crate::flow::read(&v) {
                 Ok(_) if usable => {
-                    problems.extend(
-                        self.built_in_problems(&v)
-                            .into_iter()
-                            .map(|(place, m)| Problem::new(format!("{at}/{place}"), m)),
-                    );
                     out.insert(name, v);
                 }
                 Ok(_) => {}
@@ -719,12 +720,31 @@ impl Workspace {
             else {
                 continue;
             };
-            if name == crate::engine::worker::LOAD && self.action_file(name, None).is_err() {
-                out.extend(
+            use crate::engine::worker::{AI, BROWSER, LOAD};
+            // looked up for the built-ins checked here alone
+            if ![AI, BROWSER, LOAD].contains(&name.as_str()) || self.action_file(name, None).is_ok()
+            {
+                continue;
+            }
+            match name.as_str() {
+                LOAD => out.extend(
                     crate::engine::load::problems(&args, true)
                         .into_iter()
                         .map(|m| (place.clone(), format!("#load: {m}"))),
-                );
+                ),
+                BROWSER => {
+                    if let Err(e) = crate::browser::step::check(&args) {
+                        out.push((place.clone(), format!("#browser: {e}")));
+                    }
+                }
+                AI => {
+                    if let Err(e) = crate::ai::step::check(&args) {
+                        // the address says the step
+                        let e = e.strip_prefix("#ai: ").map(String::from).unwrap_or(e);
+                        out.push((place.clone(), e));
+                    }
+                }
+                _ => {}
             }
         }
         out

@@ -258,21 +258,18 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
                             }
                         }
                     }
+                    // the errors of #ai's, #browser's and #load's args are
+                    // the workflows' own (Workspace::read_flows), the
+                    // daemon's too; #ai's warnings are told here
                     if built_in
-                        && a == crate::engine::worker::BROWSER
-                        && let Err(e) = crate::browser::step::check(args)
+                        && a == crate::engine::worker::AI
+                        && let Ok(seen) = crate::ai::step::check(args)
                     {
-                        errors.push(Problem::new(at.clone(), format!("#browser: {e}")));
-                    }
-                    if built_in && a == crate::engine::worker::AI {
-                        match crate::ai::step::check(args) {
-                            Ok(seen) => warnings.extend(
-                                crate::ai::step::warnings(&seen)
-                                    .into_iter()
-                                    .map(|w| Problem::new(at.clone(), ai(w))),
-                            ),
-                            Err(e) => errors.push(Problem::new(at.clone(), ai(e))),
-                        }
+                        warnings.extend(
+                            crate::ai::step::warnings(&seen)
+                                .into_iter()
+                                .map(|w| Problem::new(at.clone(), ai(w))),
+                        );
                     }
                 }
                 Name::Workflow(w) => {

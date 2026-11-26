@@ -205,6 +205,35 @@ fn ws_check_says_every_problem_of_every_browser_step() {
 }
 
 #[test]
+fn the_daemon_refuses_the_browser_and_ai_steps_ws_check_refuses() {
+    let d = tempfile::tempdir().unwrap();
+    file(d.path(), "itero.config.json", "{}");
+    file(
+        d.path(),
+        "workflows/tarayıcı.json",
+        r##"{ "on": [{ "event": "sayfa.istendi" }], "steps": [
+        { "#browser": { "args": { "open": "ftp://örnek", "click": "Gönder" } } },
+        { "#ai": { "args": { "model": "u/var" } } } ] }"##,
+    );
+    let o = ws_check(d.path(), false);
+    let check = String::from_utf8_lossy(&o.stderr).to_string();
+    assert_eq!(o.status.code(), Some(1), "{check}");
+    let ws = itero::workspace::find(d.path()).unwrap();
+    let refused = itero::engine::daemon::refused(&ws).unwrap();
+    assert_eq!(refused.len(), 2, "{refused:?}");
+    // the same problems, told once each by ws check
+    for p in &refused {
+        assert_eq!(
+            check.matches(p.message.as_str()).count(),
+            1,
+            "{}\n{check}",
+            p.message
+        );
+    }
+    assert!(check.contains("2 errors"), "{check}");
+}
+
+#[test]
 fn ws_check_and_the_daemon_refuse_every_wrong_part_of_a_load_step() {
     let d = tempfile::tempdir().unwrap();
     file(d.path(), "itero.config.json", "{}");
