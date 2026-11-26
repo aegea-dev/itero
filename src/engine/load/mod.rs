@@ -161,14 +161,11 @@ fn daemon(machine: bool) -> Result<Value, String> {
     let pid = Pid::from_u32(unsafe { libc::getppid() } as u32);
     let me = Pid::from_u32(std::process::id());
     let mut s = sysinfo::System::new().map_err(|e| format!("daemon: {e}"))?;
-    // every process once, for its parent only
-    s.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-    let mut children: std::collections::HashMap<Pid, Vec<Pid>> = Default::default();
-    for p in s.processes().values() {
-        if let Some(parent) = p.parent() {
-            children.entry(parent).or_default().push(p.pid());
-        }
-    }
+    let children: std::collections::HashMap<Pid, Vec<Pid>> = tree(pid.as_u32())
+        .map_err(|e| format!("daemon.workers: {e}"))?
+        .into_iter()
+        .map(|(p, c)| (Pid::from_u32(p), c.into_iter().map(Pid::from_u32).collect()))
+        .collect();
     // a process and everything under it
     let below = |from: Pid| {
         let mut all = vec![from];
@@ -224,6 +221,92 @@ fn daemon(machine: bool) -> Result<Value, String> {
         "warm": warm,
         "machine": machine,
     }))
+}
+
+/// The processes under `pid`, each with its children, down to the last:
+/// asked of the kernel one process at a time, from `pid` down, never by
+/// listing every process on the machine (5 ms with 700 of them). A process
+/// started or ended while it is read may be missed, as by any listing.
+pub fn tree(pid: u32) -> Result<std::collections::HashMap<u32, Vec<u32>>, String> {
+    // without the lists, every process would seem to have no children
+    #[cfg(target_os = "linux")]
+    {
+        let me = std::process::id();
+        let own = format!("/proc/{me}/task/{me}/children");
+        if let Err(e) = std::fs::metadata(&own) {
+            return Err(format!(
+                "{own}: {e}: this kernel keeps no list of a process's children (CONFIG_PROC_CHILDREN)"
+            ));
+        }
+    }
+    let mut tree = std::collections::HashMap::new();
+    let mut todo = vec![pid];
+    while let Some(p) = todo.pop() {
+        let c = children(p)?;
+        todo.extend(&c);
+        tree.insert(p, c);
+    }
+    Ok(tree)
+}
+
+/// A process's children, from the kernel's list of them.
+#[cfg(target_os = "macos")]
+fn children(pid: u32) -> Result<Vec<u32>, String> {
+    let mut room = 64;
+    loop {
+        let mut ids: Vec<libc::pid_t> = vec![0; room];
+        let bytes = (room * std::mem::size_of::<libc::pid_t>()) as libc::c_int;
+        // SAFETY: the kernel writes at most `bytes` into `ids`, and says how
+        // many ids it wrote
+        let n =
+            unsafe { libc::proc_listchildpids(pid as libc::pid_t, ids.as_mut_ptr().cast(), bytes) };
+        if n < 0 {
+            let e = std::io::Error::last_os_error();
+            return Err(format!("the children of {pid}: {e}"));
+        }
+        let n = n as usize;
+        // a full list may have had more: ask again with more room
+        if n < room {
+            return Ok(ids[..n].iter().map(|p| *p as u32).collect());
+        }
+        room *= 2;
+    }
+}
+
+/// A process's children, from the kernel's list of them: one for each of
+/// its threads (`/proc/<pid>/task/<thread>/children`), since a child is
+/// listed under the thread that started it.
+#[cfg(target_os = "linux")]
+fn children(pid: u32) -> Result<Vec<u32>, String> {
+    use std::io::ErrorKind::NotFound;
+    let tasks = format!("/proc/{pid}/task");
+    let threads = match std::fs::read_dir(&tasks) {
+        Ok(t) => t,
+        // it ended: nothing under it
+        Err(e) if e.kind() == NotFound => return Ok(vec![]),
+        Err(e) => return Err(format!("{tasks}: {e}")),
+    };
+    let mut all = vec![];
+    for t in threads {
+        let file = t
+            .map_err(|e| format!("{tasks}: {e}"))?
+            .path()
+            .join("children");
+        let list = match std::fs::read_to_string(&file) {
+            Ok(l) => l,
+            // the thread or its process ended as it was read: a thread's
+            // children go to another one
+            Err(e) if e.kind() == NotFound || e.raw_os_error() == Some(libc::ESRCH) => continue,
+            Err(e) => return Err(format!("{}: {e}", file.display())),
+        };
+        for id in list.split_whitespace() {
+            all.push(
+                id.parse()
+                    .map_err(|e| format!("{}: {id:?}: {e}", file.display()))?,
+            );
+        }
+    }
+    Ok(all)
 }
 
 fn queue(ws: &crate::workspace::Workspace) -> Result<Value, String> {

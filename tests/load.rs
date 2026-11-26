@@ -233,3 +233,42 @@ fn a_wrong_part_filled_at_run_time_fails_the_step_saying_it() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn the_tree_under_a_process_has_its_children_and_theirs_started_from_any_thread() {
+    // a child from this thread, one from another, each with a child of its own
+    let start = || {
+        std::process::Command::new("sh")
+            .args(["-c", "sleep 30 & wait"])
+            // sh says the sleep was killed
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    let mut kids = vec![start(), std::thread::spawn(start).join().unwrap()];
+    let me = std::process::id();
+    let ids: Vec<u32> = kids.iter().map(|k| k.id()).collect();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let tree = loop {
+        let t = itero::engine::load::tree(me).unwrap();
+        // each sh has started its sleep
+        if ids.iter().all(|k| t.get(k).is_some_and(|c| c.len() == 1)) {
+            break t;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "not every child and grandchild: {t:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    let mine = &tree[&me];
+    assert!(ids.iter().all(|k| mine.contains(k)), "{tree:?}");
+    for k in &ids {
+        let sleep = tree[k][0];
+        // SAFETY: kill only sends a signal, to the sleep this test started
+        unsafe { libc::kill(sleep as i32, libc::SIGKILL) };
+    }
+    for k in &mut kids {
+        k.wait().unwrap();
+    }
+}
