@@ -185,7 +185,7 @@ Its result has `at` (when it measured), each part asked for, and `took`
 |---|---|
 | `os` | `name` (`macos`, `linux`), `version`, `arch` (`aarch64`, `x86_64`), `host` |
 | `cpu` | `count` (the CPUs itero may use), `load` (the 1, 5 and 15 minute load averages) |
-| `memory` | `total`, `used`, `free` (what can be had without swapping), `swap_used` |
+| `memory` | `total`, `used` (by apps and the system, as Activity Monitor counts it on macOS), `free` (the rest: `total` minus `used`), `swap_used` |
 | `disk` | `total`, `free` (what may still be written), of the disk the workspace is on |
 | `daemon` | `pid`, `cpu_ms` (its CPU time so far), `memory` (resident), `files` (open), `workers` (steps running, this one apart), `workers_memory` (theirs and the warm copies', with all they started), `warm` (warm copies), `machine` (`true` under the machine's daemon, `itero daemon`) |
 | `queue` | `events` (not handled yet, the daemon's own among them), `running`, `waiting` (runs) |
