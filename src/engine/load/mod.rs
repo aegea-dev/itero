@@ -67,6 +67,9 @@ pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
     let ws = crate::workspace::find(&r.root).map_err(|e| failed(format!("{e:#}")))?;
     let mut out = Map::new();
     out.insert("at".into(), super::daemon::stamp(chrono::Utc::now()).into());
+    // one connection for every part that reads the journal: each new one
+    // costs its WAL's setup, 0.1 to 0.2 ms
+    let mut j = None;
     for part in asked {
         let v = match part {
             "os" => os(),
@@ -74,8 +77,8 @@ pub fn run(r: &StepRun) -> Result<Outcome, Failure> {
             "memory" => memory(),
             "disk" => disk(&ws.root),
             "daemon" => daemon(ws.machine),
-            "queue" => queue(&ws),
-            "runs" => runs(&ws),
+            "queue" => opened(&mut j, &ws, part).and_then(queue),
+            "runs" => opened(&mut j, &ws, part).and_then(runs),
             "journal" => journal(&ws),
             _ => unreachable!("every part is measured: {part}"),
         }
@@ -309,8 +312,19 @@ fn children(pid: u32) -> Result<Vec<u32>, String> {
     Ok(all)
 }
 
-fn queue(ws: &crate::workspace::Workspace) -> Result<Value, String> {
-    let j = super::journal::Journal::open(ws).map_err(|e| format!("queue: {e:#}"))?;
+/// The journal, opened by the first part that reads it.
+fn opened<'a>(
+    j: &'a mut Option<super::journal::Journal>,
+    ws: &crate::workspace::Workspace,
+    part: &str,
+) -> Result<&'a super::journal::Journal, String> {
+    if j.is_none() {
+        *j = Some(super::journal::Journal::open(ws).map_err(|e| format!("{part}: {e:#}"))?);
+    }
+    Ok(j.as_ref().expect("just opened"))
+}
+
+fn queue(j: &super::journal::Journal) -> Result<Value, String> {
     let (events, running, waiting) = j.queue().map_err(|e| format!("queue: {e:#}"))?;
     Ok(json!({ "events": events, "running": running, "waiting": waiting }))
 }
@@ -318,8 +332,7 @@ fn queue(ws: &crate::workspace::Workspace) -> Result<Value, String> {
 /// The runs started in the last minute, and how long each waited from its
 /// event's saving to its start, as `make bench` measures it: the time in
 /// each one's UUIDv7.
-fn runs(ws: &crate::workspace::Workspace) -> Result<Value, String> {
-    let j = super::journal::Journal::open(ws).map_err(|e| format!("runs: {e:#}"))?;
+fn runs(j: &super::journal::Journal) -> Result<Value, String> {
     let since = (chrono::Utc::now().timestamp_millis() as u64).saturating_sub(60_000);
     // the smallest UUIDv7 of that millisecond
     let first = format!(
