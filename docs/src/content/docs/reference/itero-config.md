@@ -95,6 +95,7 @@ anything.
 | `logs` | integer, at least 1 | rolled logs kept | `3` |
 | `quiet` | string, a duration | how long a step may print nothing; past it, it is stopped and runs again | `"10m"` |
 | `most` | string, a duration | how long a step may run, printing or not | `"1d"` |
+| `history` | string, a duration | how long the files of `load`'s results are kept ([Measuring the machine and itero](/guides/maintenance/#measuring-the-machine-and-itero)) | `"30d"` |
 
 A size is a whole number and `KB`, `MB` or `GB` (`"500MB"`, 1024 to a
 step); a duration, a number and a unit (`s`, `m`, `h`, `d`, `w` among
@@ -109,10 +110,12 @@ An entry per workflow, action or connector, by its name. An entry describes;
 it never creates: one that names nothing is an error, from `itero ws check`
 and from the daemon, which runs nothing in the workspace until it is put
 right ([Problems in your files](/commands/daemon/#problems-in-your-files)).
-The built-in workflows (`keep`, `logs`, `models`) always have one to name.
+The built-in workflows (`keep`, `load`, `load-record`, `logs`, `models`)
+always have one to name.
 
-An entry is an object, or `true` or `false`: `true` is on, as `{}`;
-`false` is off, as `{ "off": true }`.
+An entry is an object, or `true` or `false`: `true` is on, as
+`{ "off": false }`, and so turns on a built-in workflow that is off until
+then (`load`); `false` is off, as `{ "off": true }`.
 
 | In a `workflow` entry | JSON type | Is |
 |---|---|---|

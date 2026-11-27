@@ -182,8 +182,8 @@ own.
 ### internal
 
 A workflow whose entry says `"internal": true`: it looks after the
-workspace. Listed apart, outside the limits. `keep`, `logs` and `models`
-are built in. See [The daemon's own workflows](/guides/maintenance/).
+workspace. Listed apart, outside the limits. `keep`, `load`,
+`load-record`, `logs` and `models` are built in. See [The daemon's own workflows](/guides/maintenance/).
 
 ### service
 

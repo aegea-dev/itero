@@ -51,6 +51,8 @@ pub struct Limits {
     pub quiet: std::time::Duration,
     /// How long a step may run at most, printing or not.
     pub most: std::time::Duration,
+    /// How long the files of `load` results are kept.
+    pub history: std::time::Duration,
 }
 
 impl RawLimits {
@@ -70,6 +72,7 @@ impl RawLimits {
             logs: count("logs", self.logs, 3)?,
             quiet: duration("quiet", self.quiet, 10 * 60)?,
             most: duration("most", self.most, DAY)?,
+            history: duration("history", self.history, 30 * DAY)?,
         })
     }
 }
@@ -139,8 +142,10 @@ pub(crate) fn size(name: &str, v: Option<String>, default: u64) -> Result<u64> {
 
 /// The workflows itero carries, run as if they were in `workflows/`; a
 /// file of the same name there is used instead.
-pub const BUILT_IN: [(&str, &str); 3] = [
+pub const BUILT_IN: [(&str, &str); 5] = [
     ("keep", include_str!("builtin/keep.json")),
+    ("load", include_str!("builtin/load.json")),
+    ("load-record", include_str!("builtin/load-record.json")),
     ("logs", include_str!("builtin/logs.json")),
     ("models", include_str!("builtin/models.json")),
 ];
@@ -538,6 +543,12 @@ impl Workspace {
                 }
             };
             written.insert(name.clone(), v.clone());
+            // every step that can be read, whatever else is wrong
+            problems.extend(
+                self.built_in_problems(&v)
+                    .into_iter()
+                    .map(|(place, m)| Problem::new(format!("{at}/{place}"), m)),
+            );
             if v.get("meta").is_some() {
                 problems.push(Problem::new(
                     at,
@@ -700,6 +711,50 @@ impl Workspace {
             .map_err(|ps| anyhow!("{}", crate::flow::told(&ps)))
     }
 
+    /// What is wrong with the args of the built-in actions a workflow's
+    /// steps run, each at its step's address: refused by `ws check` and the
+    /// daemon alike, since both read the workflows through here. A step of
+    /// an action the workspace has its own file for is that file's.
+    fn built_in_problems(&self, v: &Value) -> Vec<(String, String)> {
+        let mut out = vec![];
+        for (place, step, args, _) in crate::flow::addressed(v) {
+            let crate::flow::Name::Action {
+                name,
+                version: None,
+            } = &step
+            else {
+                continue;
+            };
+            use crate::engine::worker::{AI, BROWSER, LOAD};
+            // looked up for the built-ins checked here alone
+            if ![AI, BROWSER, LOAD].contains(&name.as_str()) || self.action_file(name, None).is_ok()
+            {
+                continue;
+            }
+            match name.as_str() {
+                LOAD => out.extend(
+                    crate::engine::load::problems(&args, true)
+                        .into_iter()
+                        .map(|m| (place.clone(), format!("#load: {m}"))),
+                ),
+                BROWSER => {
+                    if let Err(e) = crate::browser::step::check(&args) {
+                        out.push((place.clone(), format!("#browser: {e}")));
+                    }
+                }
+                AI => {
+                    if let Err(e) = crate::ai::step::check(&args) {
+                        // the address says the step
+                        let e = e.strip_prefix("#ai: ").map(String::from).unwrap_or(e);
+                        out.push((place.clone(), e));
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
     fn flow_with_entry(
         &self,
         name: &str,
@@ -778,8 +833,8 @@ impl Workspace {
             Some(Value::Object(m)) => m
                 .into_iter()
                 .map(|(name, e)| match e {
-                    // true: on, with its defaults; false: off
-                    Value::Bool(true) => Ok((name, Value::Object(Map::new()))),
+                    // true: on, a built-in off by default too; false: off
+                    Value::Bool(true) => Ok((name, serde_json::json!({ "off": false }))),
                     Value::Bool(false) => Ok((name, serde_json::json!({ "off": true }))),
                     Value::Object(_) => Ok((name, e)),
                     _ => bail!(

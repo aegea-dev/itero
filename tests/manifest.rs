@@ -85,7 +85,8 @@ fn the_schema_refuses_what_is_not_itero_and_takes_what_is() {
         "port": 8787,
         "folders": { "workflows": ["iş akışları"], "actions": ["eylemler"], "connectors": ["kaynaklar"] },
         "limits": { "workflows": 5, "runs": 7, "steps": 2, "logs": 1,
-                    "space": "500MB", "log": "64KB", "keep": "2h", "quiet": "30m", "most": "1h 30m" },
+                    "space": "500MB", "log": "64KB", "keep": "2h", "quiet": "30m", "most": "1h 30m",
+                    "history": "30d" },
         "workflow": { "keep": false, "load": true,
                       "gözcü": { "description": "Siteler", "tags": ["gece"], "off": false,
                                  "from": "2026-11-01", "until": "2026-12-01T09:00:00Z",
@@ -106,6 +107,7 @@ fn the_schema_refuses_what_is_not_itero_and_takes_what_is() {
         json!({ "limits": { "steps": 0 } }),
         json!({ "limits": { "space": "lots" } }),
         json!({ "limits": { "keep": "1x" } }),
+        json!({ "limits": { "history": "uzun" } }),
         json!({ "limits": { "kep": "1d" } }),
         json!({ "folders": { "workflow": ["x"] } }),
         json!({ "workflow": { "gözcü": { "of": true } } }),
@@ -251,7 +253,7 @@ fn each_kind_of_mistake_is_told_in_itero_words() {
         (
             r#"{ "limits": { "renk": 1 } }"#,
             "limits",
-            r#""renk" is not a key: workflows, runs, steps, space, keep, log, logs, quiet, most"#,
+            r#""renk" is not a key: workflows, runs, steps, space, keep, log, logs, quiet, most, history"#,
         ),
         (
             r#"{ "limits": { "space": "lots" } }"#,

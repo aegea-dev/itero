@@ -1,6 +1,6 @@
 ---
 title: The daemon's own workflows
-description: The events the daemon sends about itself, internal workflows, the built-in keep and logs, and the workspace's limits.
+description: The events the daemon sends about itself, internal workflows, the built-in ones, measuring the machine and itero, and the workspace's limits.
 ---
 
 The daemon looks after itself with the same parts as everything else:
@@ -65,19 +65,21 @@ rather than doing its work. Nothing in its name says so. Being internal:
 - its runs do not count against `runs`, nor it against `workflows`;
 - its lines in the log carry `"internal": true`.
 
-## Built in: `keep`, `logs` and `models`
+## Built-in workflows
 
-itero carries three internal workflows and runs them as if they were in
+itero carries five internal workflows and runs them as if they were in
 `workflows/`:
 
 | Workflow | On | Does |
 |---|---|---|
 | `keep` | every hour, and `itero.space.full` | `#forget`: forgets ended runs and their events past `keep`; all ended ones while space is short |
+| `load` | every minute, once its entry turns it on: `"workflow": {"load": true}` | `#load`: measures the machine and itero ([below](#measuring-the-machine-and-itero)) |
+| `load-record` | `itero.run.done` of `load` | `#record-load`: keeps each result of `load` in a file of the day |
 | `logs` | `itero.log.full` | `#roll-log`: `itero.log` becomes `itero.log.1`, `.1` becomes `.2`, keeping `logs` of them |
 | `models` | the daemon's start, `itero.ai.model.missing`, and every hour | `#find-models`: the models in LM Studio's folder, Hugging Face's cache and `~/.cache/itero/models`, into the list `#ai` steps pick from ([`itero ai`](/commands/ai/)); it reads only new or changed files, and does nothing without itero-ai. A workspace on the machine's list has none: the machine's daemon looks once for all ([One itero per machine](/guides/machine/)) |
 
-`#forget`, `#roll-log` and `#find-models` are built-in actions, like
-`#notify`.
+`#forget`, `#roll-log`, `#find-models`, `#load` and `#record-load` are
+built-in actions, like `#notify`.
 
 - **Changing one:** a file of its name in `workflows/` is used instead,
   such as `workflows/logs.json` rolling the log and then sending the
@@ -92,6 +94,88 @@ itero carries three internal workflows and runs them as if they were in
   so it stays internal.
 
 - **Turning one off:** its entry, `"workflow": {"logs": {"off": true}}`.
+  `load` is off until its entry is `true` (or says `"off": false`).
+
+## Measuring the machine and itero
+
+`load` measures the machine and itero every minute, once it is on:
+
+```json
+{ "workflow": { "load": true } }
+```
+
+Its result is `#load`'s: the OS, the CPUs and their load, memory, the
+workspace's disk, the daemon and its workers, the queue, the last
+minute's runs and the journal's size ([`#load`](/guides/actions/#load)).
+
+### The files
+
+`load-record` keeps each result as a line of `.itero/load/<UTC date>.jsonl`.
+A day's file is gzipped once the day is over (`.jsonl.gz`), and a file
+whose day ended more than `limits.history` ago (30 days unless set) is
+deleted. The files count toward `space`. Read them with `jq`, an old day
+through `zcat`:
+
+```
+$ jq -c '{at, used: .memory.used, load: .cpu.load[0]}' .itero/load/2026-11-26.jsonl
+$ zcat .itero/load/2026-11-25.jsonl.gz | jq -c .runs
+```
+
+`"workflow": {"load-record": false}` keeps no files; each result is still
+its run's output, and a workflow of your own can take it on
+`itero.run.done`, as `load-record` does.
+
+### How often, and what
+
+A workspace's own `workflows/load.json` is used instead of the built-in:
+its own schedule, only the parts it needs, steps of its own after it.
+
+```json
+{ "on": [{ "schedule": "*/5 * * * *" }],
+  "steps": [{ "#load": { "args": { "measure": ["memory", "disk", "queue"] } } }] }
+```
+
+with `"workflow": {"load": {"internal": true}}`, so it stays internal.
+`load-record` keeps its results as it does the built-in's.
+
+### In a step
+
+`#load` is a step like any other, in any workflow: it measures at once.
+Twice in a workflow, each is told by its number
+([`$steps`](/guides/workflows/#steps-every-step-by-its-name)):
+
+```json
+{ "steps": [
+    { "#load": { "args": { "measure": ["memory"] } } },
+    "#resize-photos",
+    { "#load": { "args": { "measure": ["memory"] } } },
+    { "#report": { "args": { "before": "$steps.load/1.memory.used",
+                             "after":  "$steps.load/2.memory.used" } } } ] }
+```
+
+Only the `load` workflow's results go to the files: a `#load` step
+elsewhere is its run's.
+
+### By the machine
+
+`os.name` is `macos` or `linux` and `os.arch` `aarch64` or `x86_64`, so a
+step can run on one kind of machine alone:
+
+```json
+{ "steps": [
+    { "#load": { "args": { "measure": ["os"] } } },
+    { "#build-metal": { "on": [{ "$steps.load.os.name": "macos" }] } },
+    { "#build-cuda":  { "on": [{ "$steps.load.os.name": "linux" }] } } ] }
+```
+
+### What it costs
+
+`load` and `load-record` are two internal runs a minute, each one step,
+forgotten by `keep` after `limits.keep`. `#load` reads only what it is
+asked for and never waits: each result says what measuring took, in
+`took.ms` and `took.cpu_ms`. CPU use is given as CPU time
+(`daemon.cpu_ms`), not a percentage: two results in a row give the
+percentage over the minute between them.
 
 ## Limits
 

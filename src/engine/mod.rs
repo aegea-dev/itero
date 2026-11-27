@@ -11,6 +11,7 @@ pub mod follow;
 pub mod handover;
 pub mod http;
 pub mod journal;
+pub mod load;
 pub mod lock;
 pub mod log;
 pub mod machine;

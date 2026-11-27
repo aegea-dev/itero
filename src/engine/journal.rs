@@ -1129,6 +1129,34 @@ impl Journal {
     /// out.
     /// The runs under way with a step waiting for data, oldest first: the
     /// ones a message for the workspace reaches.
+    /// What waits: events not handled yet, and the runs under way, those
+    /// running and those waiting for an event or a time.
+    pub fn queue(&self) -> Result<(u64, u64, u64)> {
+        // counts are never negative: SQLite gives them as i64
+        let events: i64 = self.db.query_row(
+            "SELECT count(*) FROM events WHERE handled IS NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        let (open, waiting): (i64, i64) = self.db.query_row(
+            "SELECT count(*), coalesce(sum(waiting), 0) FROM runs WHERE ended IS NULL",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok((events as u64, (open - waiting) as u64, waiting as u64))
+    }
+
+    /// The runs started from the run id `first` on (ids are UUIDv7, so in
+    /// the order they started): each id, and the id of the event that
+    /// started it; none for a run a schedule or a parent run started.
+    pub fn started_since(&self, first: &str) -> Result<Vec<(String, Option<String>)>> {
+        let mut q = self.db.prepare_cached(
+            "SELECT id, CASE WHEN parent IS NULL THEN message END FROM runs WHERE id >= ?1",
+        )?;
+        let rows = q.query_map([first], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn waiting_runs(&self) -> Result<Vec<String>> {
         let mut s = self.db.prepare_cached(
             "SELECT id FROM runs WHERE ended IS NULL AND waiting = 1 ORDER BY started, id",

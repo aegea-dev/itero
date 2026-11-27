@@ -764,3 +764,41 @@ fn forgetting_goes_in_batches_with_writers_let_in_between() {
         .unwrap();
     assert_eq!(jobs, 0);
 }
+
+#[test]
+fn the_queue_counts_events_not_handled_and_runs_running_or_waiting() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = ws(d.path());
+    let mut j = Journal::open(&ws).unwrap();
+    assert_eq!(j.queue().unwrap(), (0, 0, 0));
+    itero::engine::events::emit(&ws, "iş.geldi", Some(json!({})), NOW).unwrap();
+    let flows = json!({"sipariş": {"on": [{ "event": "order.placed" }], "steps": ["#gönder"]}});
+    assert_eq!(j.queue().unwrap(), (1, 0, 0));
+    j.start_run(&start("sipariş", flows), NOW, None).unwrap();
+    // a run's start is an event of its own, for its manager: the daemon's
+    // work as much as the one that came in
+    assert_eq!(j.queue().unwrap(), (2, 1, 0));
+}
+
+#[test]
+fn the_runs_started_since_an_id_come_with_the_event_that_started_each() {
+    let d = tempfile::tempdir().unwrap();
+    let mut j = Journal::open(&ws(d.path())).unwrap();
+    let flows = json!({"sipariş": {"on": [{ "event": "order.placed" }], "steps": ["#gönder"]}});
+    let event = uuid::Uuid::now_v7().to_string();
+    let mut by_event = start("sipariş", flows.clone());
+    by_event.cause = Some(event.clone());
+    let a = j.start_run(&by_event, NOW, None).unwrap();
+    let b = j.start_run(&start("sipariş", flows), NOW, None).unwrap();
+    let mut since = j.started_since(&a).unwrap();
+    since.sort();
+    let mut want = vec![(a.clone(), Some(event)), (b.clone(), None)];
+    want.sort();
+    assert_eq!(since, want);
+    assert_eq!(j.started_since(&b).unwrap(), [(b, None)]);
+    assert!(
+        j.started_since("ffffffff-ffff-7fff-bfff-ffffffffffff")
+            .unwrap()
+            .is_empty()
+    );
+}

@@ -1,0 +1,5 @@
+{
+  "meta": { "internal": true, "description": "Keeps each load result in a file of the day" },
+  "on": [{ "event": "itero.run.done" }, { "$event.workflow": "load" }],
+  "steps": [{ "#record-load": { "args": { "load": "$event.output" } } }]
+}

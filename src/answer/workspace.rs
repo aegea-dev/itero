@@ -186,13 +186,15 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
     );
     // an arg a built-in does not read: likely a mix-up, not an error (it
     // still joins the state)
-    let built_ins: [(&str, &[&str]); 3] = [
+    let built_ins: [(&str, &[&str]); 5] = [
         (
             crate::engine::worker::NOTIFY,
             &crate::engine::worker::NOTIFY_ARGS,
         ),
         (crate::engine::worker::AI, &crate::ai::step::ARGS),
         (crate::engine::worker::BROWSER, &crate::browser::step::ARGS),
+        (crate::engine::worker::LOAD, &["measure"]),
+        (crate::engine::worker::RECORD_LOAD, &["load"]),
     ];
     // #ai's own messages name it: the address says the step
     let ai = |m: String| m.strip_prefix("#ai: ").map(String::from).unwrap_or(m);
@@ -245,33 +247,30 @@ pub fn check(ws: &Workspace) -> Result<Report, Fault> {
                         }
                         for arg in crate::flow::arg_names_of(args) {
                             if !taken.contains(&arg.as_str()) {
-                                let (last, rest) =
-                                    taken.split_last().expect("a built-in takes args");
+                                let takes = match taken.split_last() {
+                                    Some((last, [])) => last.to_string(),
+                                    Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+                                    None => unreachable!("a built-in takes args"),
+                                };
                                 warnings.push(Problem::new(
                                     at.clone(),
-                                    format!(
-                                        "#{action} takes {} and {last}, not {arg}",
-                                        rest.join(", ")
-                                    ),
+                                    format!("#{action} takes {takes}, not {arg}"),
                                 ));
                             }
                         }
                     }
+                    // the errors of #ai's, #browser's and #load's args are
+                    // the workflows' own (Workspace::read_flows), the
+                    // daemon's too; #ai's warnings are told here
                     if built_in
-                        && a == crate::engine::worker::BROWSER
-                        && let Err(e) = crate::browser::step::check(args)
+                        && a == crate::engine::worker::AI
+                        && let Ok(seen) = crate::ai::step::check(args)
                     {
-                        errors.push(Problem::new(at.clone(), format!("#browser: {e}")));
-                    }
-                    if built_in && a == crate::engine::worker::AI {
-                        match crate::ai::step::check(args) {
-                            Ok(seen) => warnings.extend(
-                                crate::ai::step::warnings(&seen)
-                                    .into_iter()
-                                    .map(|w| Problem::new(at.clone(), ai(w))),
-                            ),
-                            Err(e) => errors.push(Problem::new(at.clone(), ai(e))),
-                        }
+                        warnings.extend(
+                            crate::ai::step::warnings(&seen)
+                                .into_iter()
+                                .map(|w| Problem::new(at.clone(), ai(w))),
+                        );
                     }
                 }
                 Name::Workflow(w) => {

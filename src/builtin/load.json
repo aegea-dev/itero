@@ -1,0 +1,5 @@
+{
+  "meta": { "internal": true, "off": true, "description": "Measures the machine and itero, every minute" },
+  "on": [{ "schedule": "* * * * *" }],
+  "steps": ["#load"]
+}

@@ -33,6 +33,9 @@ $ itero ws ac list
 #roll-log        built in
 #ai              built in
 #find-models     built in
+#browser         built in
+#load            built in
+#record-load     built in
 ```
 
 ## errors
