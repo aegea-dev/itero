@@ -802,3 +802,48 @@ fn the_runs_started_since_an_id_come_with_the_event_that_started_each() {
             .is_empty()
     );
 }
+
+#[test]
+fn opening_a_journal_that_is_up_to_date_writes_nothing() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = ws(d.path());
+    let id = Journal::open(&ws).unwrap().workspace().unwrap();
+    // another connection sees data_version change when anything is committed
+    let watch = rusqlite::Connection::open(ws.journal()).unwrap();
+    let version = || -> i64 {
+        watch
+            .query_row("PRAGMA data_version", [], |r| r.get(0))
+            .unwrap()
+    };
+    let before = version();
+    for _ in 0..3 {
+        assert_eq!(Journal::open(&ws).unwrap().workspace().unwrap(), id);
+    }
+    assert_eq!(version(), before, "an open committed a write");
+    // a write is still seen, so the watch is not blind
+    Journal::open(&ws)
+        .unwrap()
+        .set_flag(itero::engine::journal::LOG_FULL, true)
+        .unwrap();
+    assert_ne!(version(), before);
+}
+
+#[test]
+fn a_new_journal_opened_by_many_at_once_is_made_once() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = std::sync::Arc::new(ws(d.path()));
+    let start = std::sync::Arc::new(std::sync::Barrier::new(8));
+    let ids: Vec<String> = (0..8)
+        .map(|_| {
+            let (ws, start) = (ws.clone(), start.clone());
+            std::thread::spawn(move || {
+                start.wait();
+                Journal::open(&ws).unwrap().workspace().unwrap().id
+            })
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|t| t.join().unwrap())
+        .collect();
+    assert!(ids.iter().all(|i| *i == ids[0]), "{ids:?}");
+}

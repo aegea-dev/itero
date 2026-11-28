@@ -335,6 +335,30 @@ fn write_ahead(db: &Connection) -> Result<()> {
     }
 }
 
+/// Whether the journal is made, at this itero's schema, with its
+/// workspace: what `Journal::open` would otherwise write. A journal being
+/// made is made in one transaction, so it is seen whole or not at all.
+fn up_to_date(db: &Connection) -> Result<bool> {
+    if !has_meta(db)? {
+        return Ok(false);
+    }
+    Ok(db.query_row(
+        "SELECT coalesce((SELECT value FROM meta WHERE key = 'schema') = ?1, 0)
+            AND EXISTS (SELECT 1 FROM meta WHERE key = 'workspace')",
+        params![SCHEMA_VERSION.to_string()],
+        |r| r.get(0),
+    )?)
+}
+
+/// Whether the journal has its `meta` table: one being made has not.
+fn has_meta(db: &Connection) -> Result<bool> {
+    Ok(db.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
+        [],
+        |r| r.get(0),
+    )?)
+}
+
 /// Whether SQLite said the database is busy or locked.
 fn busy(e: &anyhow::Error) -> bool {
     use rusqlite::ErrorCode::{DatabaseBusy, DatabaseLocked};
@@ -768,14 +792,14 @@ impl Journal {
         db.busy_timeout(BUSY_WAIT)?;
         write_ahead(&db)?;
         db.pragma_update(None, "synchronous", "FULL")?;
+        // made and up to date, as nearly every open finds it: only read, so
+        // no commit to sync (an fsync of up to a millisecond on Linux)
+        if up_to_date(&db)? {
+            return Ok(Journal { db });
+        }
         // immediate: two processes opening at once make it one after the other
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let has_meta: bool = tx.query_row(
-            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
-            [],
-            |r| r.get(0),
-        )?;
-        let version: Option<String> = if has_meta {
+        let version: Option<String> = if has_meta(&tx)? {
             tx.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| {
                 r.get(0)
             })
